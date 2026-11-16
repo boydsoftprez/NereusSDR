@@ -5,6 +5,9 @@
 // 2026-11-15  J.J. Boyd / KG4VCF; the Core's recording and Digital
 //             Spectrum Recorder settings (spec 6.5, 6.7). AI tooling:
 //             Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; recording plan Task 10b: the Digital
+//             Spectrum Recorder's default by host. AI tooling: Anthropic
+//             Claude Code.
 
 #include "RecordingSettings.h"
 
@@ -69,7 +72,7 @@ QString diskFolder(const QString& disk, const QString& leaf)
 
 }  // namespace
 
-RecordingSettings RecordingSettings::load()
+RecordingSettings RecordingSettings::load(Host host)
 {
     const AppSettings& s = AppSettings::instance();
     RecordingSettings r;
@@ -86,7 +89,7 @@ RecordingSettings RecordingSettings::load()
     r.onAirUseLeveler = readBool(s, kOnAirUseLeveler, r.onAirUseLeveler);
     r.onAirUseCfc = readBool(s, kOnAirUseCfc, r.onAirUseCfc);
     r.onAirUsePhaseRotator = readBool(s, kOnAirUsePhaseRotator, r.onAirUsePhaseRotator);
-    r.dsrEnabled = readBool(s, kDsrEnabled, r.dsrEnabled);
+    r.dsrEnabled = readBool(s, kDsrEnabled, dsrEnabledByDefault(host));
     r.dsrDisk = s.value(kDsrDisk, QString()).toString();
     r.dsrSizeLimitGb = std::max(readInt(s, kDsrSizeLimitGb, r.dsrSizeLimitGb), kDsrSizeLimitGbMin);
     return r;

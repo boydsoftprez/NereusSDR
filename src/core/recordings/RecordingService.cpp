@@ -24,6 +24,10 @@
 //             the recorder (read ahead on the worker, switched in on the DSP
 //             worker), LIVE, seek, and PTT while rewound (spec 3, 6.7,
 //             recording plan Task 22). AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; setHost: the Digital Spectrum Recorder is
+//             off by default in a desktop window running its own radio and
+//             on in a Core (recording plan Task 10b). AI tooling: Anthropic
+//             Claude Code.
 
 #include "RecordingService.h"
 
@@ -131,7 +135,7 @@ RecordingService::RecordingService(RadioModel* radio, QObject* parent)
     : QObject(parent)
     , m_radio(radio)
     , m_store(std::make_unique<RecordingStore>())
-    , m_settings(RecordingSettings::load())
+    , m_settings(RecordingSettings::load(m_host))
     , m_clock([] { return QDateTime::currentMSecsSinceEpoch(); })
     , m_onAir(std::make_unique<OnAirSource>(*this))
 {
@@ -280,6 +284,17 @@ void RecordingService::setSettings(const RecordingSettings& s)
         }
     }
     applyArming();
+    applyDsr();
+}
+
+void RecordingService::setHost(RecordingSettings::Host host)
+{
+    if (host == m_host) {
+        return;
+    }
+    m_host = host;
+    // A saved value is kept; only a missing key takes the new default.
+    m_settings.dsrEnabled = RecordingSettings::load(m_host).dsrEnabled;
     applyDsr();
 }
 

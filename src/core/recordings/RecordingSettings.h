@@ -7,6 +7,10 @@
 //             Anthropic Claude Code.
 // 2026-11-16  J.J. Boyd / KG4VCF; the largest size limit the recorder
 //             takes. AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; recording plan Task 10b: the Digital
+//             Spectrum Recorder's default for a missing key depends on
+//             where it runs (off in a desktop window running its own
+//             radio, on in a Core). AI tooling: Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -19,6 +23,10 @@ namespace NereusSDR {
 // Core AppSettings keys of spec 6.5 and 6.7. Core-owned: load() and save()
 // use the Core's own AppSettings; a remote window never stores them.
 struct NEREUS_CORE_EXPORT RecordingSettings {
+    // Where the recordings run: a desktop window running its own radio
+    // (RadioModel Role::Local in the app) or a Core (nereusd).
+    enum class Host { DesktopRadio, Core };
+
     static constexpr int kQuietMinutesMin = 1;
     static constexpr int kQuietMinutesMax = 60;
     static constexpr int kDsrSizeLimitGbMin = 1;
@@ -32,7 +40,12 @@ struct NEREUS_CORE_EXPORT RecordingSettings {
          onAirUseCfc = false, onAirUsePhaseRotator = false;
     bool dsrEnabled = true; QString dsrDisk; int dsrSizeLimitGb = 10;
 
-    static RecordingSettings load();
+    // The Digital Spectrum Recorder with no saved value: on in a new Core
+    // (spec 6.7), off in a desktop window running its own radio (JJ,
+    // 2026-11-16). A saved value is always kept.
+    static bool dsrEnabledByDefault(Host host) { return host == Host::Core; }
+
+    static RecordingSettings load(Host host);
     void save() const;
     QString recordingsFolder() const;   // <disk>/NereusSDR/Recordings, or the Core's data folder
     QString dsrFolder() const;          // <dsrDisk>/NereusSDR/Spectrum Recorder, or the Core's data folder

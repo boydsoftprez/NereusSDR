@@ -48,6 +48,10 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 21: version 4, the
 //                 `dsr` part and its settings over the link. AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 10b: the document
+//                 test's Core says it is a Core, as nereusd does, so its
+//                 Digital Spectrum Recorder starts on. AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -779,6 +783,8 @@ private slots:
     void thePeerThatDeclaredItGetsTheDocument()
     {
         Core core;
+        // As DaemonApp does: the Digital Spectrum Recorder starts on in a Core.
+        core.model->recordingService()->setHost(RecordingSettings::Host::Core);
         useTestDisk(core);
         Device phone;
         core.pair(phone);

@@ -176,6 +176,9 @@
 //   2026-11-15: recording plan Task 3: stop() keeps every recording before
 //               the radio goes. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-11-16: recording plan Task 10b: the Core's recordings run as a
+//               Core, so the Digital Spectrum Recorder starts on here.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/cat/CatService.h"
@@ -322,6 +325,12 @@ bool DaemonApp::start(const DaemonConfig& cfg)
     // can connect the model, so no local-session capture demand is ever
     // taken and the capture helper is never started.
     m_radioModel->setPcCaptureAllowed(false);
+    // Recording plan Task 10b: a new Core starts with the Digital Spectrum
+    // Recorder on (spec 6.7); a desktop window running its own radio starts
+    // with it off (JJ, 2026-11-16).
+    if (RecordingService* recordings = m_radioModel->recordingService()) {
+        recordings->setHost(RecordingSettings::Host::Core);
+    }
     // Fix wave, M3: a key that arrives while the Core changes its radio is
     // refused.
     m_radioModel->setStationRadioChangeUnderway(m_stationRadios->switching());

@@ -14,6 +14,10 @@
 // Modification history (NereusSDR):
 //   2026-11-16 - Created. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code. Recording plan Task 21.
+//   2026-11-16 - The service's default by host: off in a desktop window
+//                 running its own radio, on once it is told it is a Core,
+//                 a saved value kept. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code. Recording plan Task 10b.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -26,6 +30,7 @@
 #include <QTemporaryDir>
 #include <QTimeZone>
 
+#include "core/AppSettings.h"
 #include "core/recordings/RecordingService.h"
 #include "core/recordings/RecordingSettings.h"
 #include "core/recordings/dsr/DsrRecorder.h"
@@ -181,6 +186,35 @@ private slots:
         svc.setRadioStreaming(false);
         QVERIFY(!svc.dsrStatus().recording);
         QCOMPARE(svc.dsrStatus().reason, QString());
+    }
+
+    // Recording plan Task 10b (JJ, 2026-11-16): a desktop window running
+    // its own radio starts with it off; a Core starts with it on; a saved
+    // value is kept.
+    void theDefaultFollowsWhereItRuns()
+    {
+        AppSettings::instance().clear();
+        {
+            RecordingService svc(nullptr);
+            svc.setDsrVolumesForTest([] { return QList<RecordingVolume>{volume(QDir::rootPath(), true, false)}; });
+            QVERIFY(!svc.settings().dsrEnabled);
+            svc.setRadioStreaming(true);
+            QVERIFY(!svc.dsrStatus().enabled);
+            QVERIFY(!svc.dsrStatus().recording);
+            svc.setHost(RecordingSettings::Host::Core);
+            QVERIFY(svc.settings().dsrEnabled);
+            QVERIFY(svc.dsrStatus().enabled);
+            QVERIFY(svc.dsrStatus().recording);
+            svc.setRadioStreaming(false);
+        }
+        // Nothing was saved by either: a fresh file still says nothing.
+        QVERIFY(!AppSettings::instance().contains(QStringLiteral("DsrEnabled")));
+        AppSettings::instance().setValue(QStringLiteral("DsrEnabled"), QStringLiteral("True"));
+        {
+            RecordingService svc(nullptr);
+            QVERIFY(svc.settings().dsrEnabled);
+        }
+        AppSettings::instance().clear();
     }
 
     // A10, spec 6.7: one receiver at 192 kHz for 60 fake seconds through

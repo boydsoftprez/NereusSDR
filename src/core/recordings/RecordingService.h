@@ -26,6 +26,9 @@
 // 2026-11-16  J.J. Boyd / KG4VCF; rewind sound: a slice plays the past from
 //             the recorder, LIVE, seek, and PTT while rewound (spec 3, 6.7,
 //             recording plan Task 22). AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; setHost: the Digital Spectrum Recorder's
+//             default for a missing key follows where the service runs
+//             (recording plan Task 10b). AI tooling: Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -118,6 +121,11 @@ public:
     RecordingStore* store() const;
     RecordingSettings settings() const;
     void setSettings(const RecordingSettings& s);
+    // Where this service runs. It starts as Host::DesktopRadio (RadioModel
+    // builds it); nereusd says Host::Core. Only the Digital Spectrum
+    // Recorder's default with no saved value changes: on in a Core, off in
+    // a desktop window running its own radio.
+    void setHost(RecordingSettings::Host host);
 
     void startRecording(int sliceId, const QString& byDeviceName);
     void stopRecording(int sliceId, const QString& byDeviceName);
@@ -420,6 +428,7 @@ private:
     RadioModel* m_radio = nullptr;
     mutable std::unique_ptr<RecordingStore> m_store;
     mutable QString m_storeFolder;
+    RecordingSettings::Host m_host = RecordingSettings::Host::DesktopRadio;
     RecordingSettings m_settings;
     QHash<int, SliceRecord> m_records;
     QHash<quint64, Finishing> m_finishing;

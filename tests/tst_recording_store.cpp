@@ -11,6 +11,10 @@
 // Modification history (NereusSDR):
 //   2026-11-15 - Created. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-11-16 - The Digital Spectrum Recorder's default by host: off in a
+//                 desktop window running its own radio, on in a Core, a
+//                 saved value kept. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code. Recording plan Task 10b.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -228,7 +232,7 @@ private slots:
 
     void settingsDefaults()
     {
-        const RecordingSettings s = RecordingSettings::load();
+        const RecordingSettings s = RecordingSettings::load(RecordingSettings::Host::Core);
         QCOMPARE(s.keepMyVoice, true);
         QCOMPARE(s.sidesApart, false);
         QCOMPARE(s.autoStartOnTransmit, false);
@@ -285,7 +289,7 @@ private slots:
         QCOMPARE(a.value(QStringLiteral("DsrDisk")).toString(), QStringLiteral("/media/ssd"));
         QCOMPARE(a.value(QStringLiteral("DsrSizeLimitGb")).toInt(), 40);
 
-        const RecordingSettings back = RecordingSettings::load();
+        const RecordingSettings back = RecordingSettings::load(RecordingSettings::Host::Core);
         QCOMPARE(back.keepMyVoice, false);
         QCOMPARE(back.sidesApart, true);
         QCOMPARE(back.format, AudioFileFormat::Wav);
@@ -298,12 +302,27 @@ private slots:
         QCOMPARE(a.value(QStringLiteral("RecordingsFormat")).toString(), QStringLiteral("Mp3"));
     }
 
+    void dsrDefaultFollowsTheHost()
+    {
+        // A fresh settings file: off in a desktop window running its own
+        // radio, on in a Core (JJ, 2026-11-16; spec 6.7).
+        AppSettings::instance().clear();
+        QCOMPARE(RecordingSettings::load(RecordingSettings::Host::DesktopRadio).dsrEnabled, false);
+        QCOMPARE(RecordingSettings::load(RecordingSettings::Host::Core).dsrEnabled, true);
+        // A saved value is kept in either.
+        AppSettings::instance().setValue(QStringLiteral("DsrEnabled"), QStringLiteral("True"));
+        QCOMPARE(RecordingSettings::load(RecordingSettings::Host::DesktopRadio).dsrEnabled, true);
+        AppSettings::instance().setValue(QStringLiteral("DsrEnabled"), QStringLiteral("False"));
+        QCOMPARE(RecordingSettings::load(RecordingSettings::Host::Core).dsrEnabled, false);
+        AppSettings::instance().clear();
+    }
+
     void quietMinutesClamped()
     {
         AppSettings::instance().setValue(QStringLiteral("RecordingsQuietMinutes"), 0);
-        QCOMPARE(RecordingSettings::load().quietMinutes, 1);
+        QCOMPARE(RecordingSettings::load(RecordingSettings::Host::Core).quietMinutes, 1);
         AppSettings::instance().setValue(QStringLiteral("RecordingsQuietMinutes"), 99);
-        QCOMPARE(RecordingSettings::load().quietMinutes, 60);
+        QCOMPARE(RecordingSettings::load(RecordingSettings::Host::Core).quietMinutes, 60);
     }
 
     void sdCardDevices()
