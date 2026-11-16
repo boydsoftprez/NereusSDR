@@ -2,6 +2,8 @@
 // Modification history (NereusSDR):
 //   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 1.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 13: "Escape" reads
+//                as Esc. AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "core/hotkeys/HotKeyChord.h"
 
@@ -60,6 +62,10 @@ QString canonicalKey(QStringView text)
         if (text.compare(name, Qt::CaseInsensitive) == 0) {
             return QString(name);
         }
+    }
+    // The key's full name reads as Qt's short one.
+    if (text.compare(QLatin1String("Escape"), Qt::CaseInsensitive) == 0) {
+        return QStringLiteral("Esc");
     }
 
     if (text.size() >= 2 && (text.at(0) == QLatin1Char('F') || text.at(0) == QLatin1Char('f'))

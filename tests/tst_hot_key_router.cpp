@@ -2,6 +2,8 @@
 // Modification history (NereusSDR):
 //   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 7.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 13: the fake records
+//                runVoiceMessage. AI-assisted via Anthropic Claude Code.
 // no-port-check: NereusSDR-original test.
 // The keyboard router on a real offscreen window: which keys act where
 // (design section 6), repeats, releases, failsafes and the off switch.
@@ -191,6 +193,7 @@ public:
     }
     void runTransmitAction(const QString& id) override { ran.append(id); }
     void runCwMessage(const QString& id) override { ran.append(id); }
+    void runVoiceMessage(const QString& id) override { ran.append(id); }
     void setCwKeyDown(const QString& id, bool isDown) override
     {
         cwKeys.append({id, isDown});

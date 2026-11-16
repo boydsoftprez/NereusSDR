@@ -203,8 +203,56 @@
       "Tooltip": "Voice message 4"
     },
     {
+      "Name": "Voice message 5",
+      "Tooltip": "Voice message 5"
+    },
+    {
+      "Name": "Voice message 6",
+      "Tooltip": "Voice message 6"
+    },
+    {
+      "Name": "Voice message 7",
+      "Tooltip": "Voice message 7"
+    },
+    {
+      "Name": "Voice message 8",
+      "Tooltip": "Voice message 8"
+    },
+    {
       "Name": "Stop voice message",
       "Tooltip": "Stop voice message"
+    },
+    {
+      "Name": "Message 1",
+      "Tooltip": "Message 1"
+    },
+    {
+      "Name": "Message 2",
+      "Tooltip": "Message 2"
+    },
+    {
+      "Name": "Message 3",
+      "Tooltip": "Message 3"
+    },
+    {
+      "Name": "Message 4",
+      "Tooltip": "Message 4"
+    },
+    {
+      "Name": "Message 5",
+      "Tooltip": "Message 5"
+    },
+    {
+      "Name": "Message 6",
+      "Tooltip": "Message 6"
+    },
+    {
+      "Name": "Message 7",
+      "Tooltip": "Message 7"
+    },
+    {
+      "Name": "Message 8",
+      "Tooltip": "Message 8"
     }
   ],
   "Localization": {

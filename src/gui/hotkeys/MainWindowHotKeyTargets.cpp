@@ -15,6 +15,9 @@
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-07 - J.J. Boyd (KG4VCF), hot keys: VOX on or off (vox.toggle).
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 13: voice messages
+//                through RecordingsAccess, and F1 to F8 (msg.N) by the transmit
+//                slice's mode. AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "gui/hotkeys/MainWindowHotKeyTargets.h"
 
@@ -24,7 +27,6 @@
 #include "core/CwxSender.h"
 #include "core/LogCategories.h"
 #include "core/MoxController.h"
-#include "core/UnbuiltFeatureList.h"
 #include "core/WdspTypes.h"
 #include "core/safety/TxRefusal.h"
 #include "core/session/IStationLink.h"
@@ -39,6 +41,7 @@
 #include "gui/containers/ContainerWidget.h"
 #include "gui/multidevice/TakeTransmitDialog.h"
 #include "gui/applets/TxApplet.h"
+#include "gui/recordings/VoiceButton.h"
 #include "gui/widgets/StatusToast.h"
 #include "gui/widgets/VfoWidget.h"
 #include "models/Band.h"
@@ -48,6 +51,7 @@
 #include "models/FilterPresetStore.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
+#include "models/recordings/RecordingsAccess.h"
 
 #include <QApplication>
 #include <QList>
@@ -88,12 +92,6 @@ constexpr std::array<DSPMode, 15> kModeWalk = {
 const QString& bandStackNotReadyReason()
 {
     static const QString kReason = QStringLiteral("Band stacking is not ready.");
-    return kReason;
-}
-
-const QString& voiceNotBuiltReason()
-{
-    static const QString kReason = QStringLiteral("Voice messages aren't built.");
     return kReason;
 }
 
@@ -224,6 +222,13 @@ MainWindowHotKeyTargets::MainWindowHotKeyTargets(MainWindow* window)
     m_clock.start();
 }
 
+MainWindowHotKeyTargets::~MainWindowHotKeyTargets()
+{
+    for (const QMetaObject::Connection& connection : std::as_const(m_voiceConnections)) {
+        QObject::disconnect(connection);
+    }
+}
+
 SliceModel* MainWindowHotKeyTargets::windowSlice() const
 {
     return m_window->windowRxSlice(true);
@@ -327,8 +332,14 @@ void MainWindowHotKeyTargets::runWindowAction(const QString& id)
 
 QString MainWindowHotKeyTargets::unavailableReason(const QString& id) const
 {
-    if (id.startsWith(QLatin1String("voice.")) && !UnbuiltFeatures::isBuilt(UnbuiltFeature::Voice)) {
-        return voiceNotBuiltReason();
+    // Stop with nothing to stop does nothing, so Escape says nothing either.
+    if (id == QLatin1String("voice.stop")) {
+        return {};
+    }
+    // msg.N in CW is a CW message, which the voice keyer has no say in.
+    if (id.startsWith(QLatin1String("voice."))
+        || (id.startsWith(QLatin1String("msg.")) && !transmitSliceInCw())) {
+        return voiceReason();
     }
     // Only in CW: in a voice mode these keys do nothing and say nothing.
     if (transmitSliceInCw() && remotePaddleMissing(id)) {
@@ -339,7 +350,38 @@ QString MainWindowHotKeyTargets::unavailableReason(const QString& id) const
 
 QString MainWindowHotKeyTargets::setupUnavailableReason(const QString& id) const
 {
-    return remotePaddleMissing(id) ? remotePaddleReason() : unavailableReason(id);
+    if (remotePaddleMissing(id)) {
+        return remotePaddleReason();
+    }
+    // A message key serves CW too, whatever the voice keyer can do.
+    if (id.startsWith(QLatin1String("msg."))) {
+        return {};
+    }
+    if (id.startsWith(QLatin1String("voice."))) {
+        return voiceReason();
+    }
+    return unavailableReason(id);
+}
+
+void MainWindowHotKeyTargets::setRecordingsForTest(RecordingsAccess* access)
+{
+    m_recordingsForTest = access;
+}
+
+RecordingsAccess* MainWindowHotKeyTargets::recordings() const
+{
+    if (m_recordingsForTest) {
+        return m_recordingsForTest.data();
+    }
+    RadioModel* const model = m_window->m_radioModel;
+    return model != nullptr ? model->recordings() : nullptr;
+}
+
+QString MainWindowHotKeyTargets::voiceReason() const
+{
+    const RecordingsAccess* const access = recordings();
+    return access != nullptr ? access->unavailableReason(RecordingsAccess::kVoiceKeyerVersion)
+                             : RecordingsAccess::notConnectedReason();
 }
 
 bool MainWindowHotKeyTargets::remotePaddleMissing(const QString& id) const
@@ -646,6 +688,99 @@ void MainWindowHotKeyTargets::runCwMessage(const QString& id)
     if (remote == nullptr || remote->sendCwMemory(number) == 0) {
         toast(MainWindow::cwxRemoteSendReason());
     }
+}
+
+void MainWindowHotKeyTargets::runVoiceMessage(const QString& id)
+{
+    if (m_window->m_radioModel == nullptr || m_window->m_shuttingDown) {
+        return;
+    }
+    if (id == QLatin1String("voice.stop")) {
+        stopVoiceMessage();
+        return;
+    }
+    bool isNumber = false;
+    int number = 0;
+    if (id.startsWith(QLatin1String("msg."))) {
+        number = id.mid(4).toInt(&isNumber);
+        // Design V8: in CW the key is CW message N, on the CW path.
+        if (isNumber && transmitSliceInCw()) {
+            runCwMessage(QStringLiteral("cw.msg%1").arg(number));
+            return;
+        }
+    } else if (id.startsWith(QLatin1String("voice.msg"))) {
+        number = id.mid(9).toInt(&isNumber);
+    }
+    if (!isNumber || number < 1 || number > RecordingsAccess::kVoiceKeyerSlots) {
+        qCWarning(lcHotKeys) << "No voice message for:" << id;
+        return;
+    }
+    RecordingsAccess* const access = recordings();
+    const QString reason = voiceReason();
+    if (access == nullptr || !reason.isEmpty()) {
+        toast(reason);
+        return;
+    }
+    // As the voice keyer panel's sends: the window's transmit gate first. The
+    // Core refuses the rest (an empty message, another device holding transmit).
+    if (!m_window->transmitControlsPermitted()) {
+        toast(m_window->remoteTransmitReason());
+        return;
+    }
+    watchVoiceAnswers(access);
+    m_voiceAwaitingAnswer = true;
+    access->sendVoice(number);
+}
+
+void MainWindowHotKeyTargets::stopVoiceMessage()
+{
+    RecordingsAccess* const access = recordings();
+    if (access == nullptr || !voiceReason().isEmpty()) {
+        return;
+    }
+    // Nothing going out: Escape keeps quiet. Another device's message is not
+    // this window's to stop (ruling 8.5), and the Core says so with the
+    // holder's words.
+    if (!VoiceKeyerSnapshot::from(access->document()).sending.has_value()) {
+        return;
+    }
+    watchVoiceAnswers(access);
+    m_voiceAwaitingAnswer = true;
+    access->stopVoice();
+}
+
+void MainWindowHotKeyTargets::watchVoiceAnswers(RecordingsAccess* access)
+{
+    if (m_voiceAccess == access) {
+        return;
+    }
+    for (const QMetaObject::Connection& connection : std::as_const(m_voiceConnections)) {
+        QObject::disconnect(connection);
+    }
+    m_voiceAccess = access;
+    m_voiceAwaitingAnswer = false;
+    m_voiceSending = VoiceKeyerSnapshot::from(access->document()).sending.has_value();
+    m_voiceConnections = {
+        QObject::connect(access, &RecordingsAccess::refused, m_window,
+                         [this](const QString& words) {
+                             if (!m_voiceAwaitingAnswer) {
+                                 return;
+                             }
+                             m_voiceAwaitingAnswer = false;
+                             toast(words);
+                         }),
+        QObject::connect(access, &RecordingsAccess::documentChanged, m_window,
+                         [this, access]() {
+                             // What was asked has happened: a later refusal is
+                             // another control's answer.
+                             const bool sending =
+                                 VoiceKeyerSnapshot::from(access->document()).sending.has_value();
+                             if (sending != m_voiceSending) {
+                                 m_voiceSending = sending;
+                                 m_voiceAwaitingAnswer = false;
+                             }
+                         }),
+    };
 }
 
 void MainWindowHotKeyTargets::setCwKeyDown(const QString& id, bool down)

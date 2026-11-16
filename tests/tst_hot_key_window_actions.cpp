@@ -5,6 +5,9 @@
 //   2026-11-08 - J.J. Boyd (KG4VCF), hot keys: with band stacking in main, a real
 //                window's band stack keys find its functions.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 13: the voice keys,
+//                F1 to F8 by the transmit slice's mode, and Escape.
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original test.
 // Each non-transmit hot key on a real offscreen local window: fire the action
 // through the window's dispatcher, then read the model.
@@ -19,14 +22,15 @@
 #include <memory>
 
 #include "UnusedLoopbackPort.h"
+#include "core/CwxSender.h"
 #include "core/AppSettings.h"
 #include "core/NbFamily.h"
 #include "core/SliceOwnership.h"
-#include "core/UnbuiltFeatureList.h"
 #include "core/hotkeys/HotKeyBindings.h"
 #include "core/session/DeviceSessionRegistry.h"
 #include "core/session/SliceAccessController.h"
 #include "core/session/StationServer.h"
+#include "fakes/FakeRecordingsAccess.h"
 #include "gui/MainWindow.h"
 #include "gui/PanFloatingWindow.h"
 #include "gui/PanadapterStack.h"
@@ -40,6 +44,7 @@
 #include "models/FilterPresetStore.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
+#include "models/recordings/RecordingsAccess.h"
 
 using namespace NereusSDR;
 
@@ -47,7 +52,8 @@ namespace {
 
 const HotKeySource kKeyboard{HotKeySourceKind::Keyboard, QString()};
 
-const QString kVoiceReason = QStringLiteral("Voice messages aren't built.");
+const QString kOlderCore = QStringLiteral("This Core needs an update for recordings.");
+const QString kHeld = QStringLiteral("iPhone has the transmitter. Take it to transmit from here.");
 const QString kBandStackReason = QStringLiteral("Band stacking is not ready.");
 
 bool applyLayout(MainWindow& window, const QString& layoutId)
@@ -73,6 +79,51 @@ bool toastShown(MainWindow& window, const QString& message)
         }
     }
     return false;
+}
+
+int toastCount(MainWindow& window)
+{
+    return int(window.findChildren<StatusToast*>().size());
+}
+
+// The recordings document with M1 to M8 (`filled` hold a message) and what
+// goes out, as the Core publishes it.
+QJsonObject voiceDocument(const QList<int>& filled, const QJsonValue& sending = QJsonValue::Null)
+{
+    QJsonArray slotList;
+    for (int n = 1; n <= RecordingsAccess::kVoiceKeyerSlots; ++n) {
+        const bool has = filled.contains(n);
+        slotList.append(QJsonObject{{QStringLiteral("n"), n},
+                                    {QStringLiteral("name"), QString()},
+                                    {QStringLiteral("lengthMs"), has ? 6000 : 0},
+                                    {QStringLiteral("empty"), !has}});
+    }
+    QJsonObject doc = FakeRecordingsAccess::document({}, 1);
+    doc.insert(QStringLiteral("voiceKeyer"), QJsonObject{{QStringLiteral("slots"), slotList},
+                                                          {QStringLiteral("repeat"), false},
+                                                          {QStringLiteral("repeatDelaySec"), 5},
+                                                          {QStringLiteral("sending"), sending}});
+    return doc;
+}
+
+QJsonObject sendingFrom(int n, const QString& deviceId)
+{
+    return QJsonObject{{QStringLiteral("n"), n},
+                       {QStringLiteral("positionMs"), 1000},
+                       {QStringLiteral("lengthMs"), 6000},
+                       {QStringLiteral("waitingMs"), 0},
+                       {QStringLiteral("by"), QStringLiteral("iPhone")},
+                       {QStringLiteral("deviceId"), deviceId}};
+}
+
+QStringList voiceCalls(const FakeRecordingsAccess& access)
+{
+    QStringList out;
+    for (const FakeRecordingsAccess::Call& call : access.calls) {
+        out.append(call.verb == QLatin1String("sendVoice") ? QStringLiteral("sendVoice %1").arg(call.sliceId)
+                                                           : call.verb);
+    }
+    return out;
 }
 
 Band gridBand(const SliceModel* slice)
@@ -114,6 +165,26 @@ struct LocalWindow {
     {
         keys->press(QString::fromLatin1(id), kKeyboard, pin);
     }
+};
+
+// A local window whose voice keys talk to a fake recordings access, run
+// through a dispatcher of their own, as the window's runs them.
+struct VoiceBench {
+    LocalWindow w;
+    FakeRecordingsAccess access;
+    MainWindowHotKeyTargets targets{&w.window};
+    HotKeyBindings bindings;
+    HotKeyDispatcher keys{&bindings, &targets};
+
+    VoiceBench()
+    {
+        w.openA();
+        access.version = RecordingsAccess::kVoiceKeyerVersion;
+        access.setDocument(voiceDocument({1, 2, 3, 4, 5, 6, 7, 8}));
+        targets.setRecordingsForTest(&access);
+    }
+
+    void press(const char* id) { keys.press(QString::fromLatin1(id), kKeyboard); }
 };
 
 // The four slots band stack will add to MainWindow.
@@ -457,7 +528,6 @@ private slots:
 
     void disabledKeysShowTheirReasonAndChangeNothing()
     {
-        QVERIFY(!UnbuiltFeatures::isBuilt(UnbuiltFeature::Voice));
         LocalWindow w;
         w.openA();
         if (QTest::currentTestFailed()) {
@@ -469,18 +539,125 @@ private slots:
         QSignalSpy mode(w.a, &SliceModel::dspModeChanged);
 
         MainWindowHotKeyTargets targets(&w.window);
-        QCOMPARE(targets.unavailableReason(QStringLiteral("voice.msg1")), kVoiceReason);
-        QCOMPARE(targets.unavailableReason(QStringLiteral("voice.stop")), kVoiceReason);
+        // The voice keys go by the window's own recordings.
+        const QString voiceReason = w.model->recordings()->unavailableReason(RecordingsAccess::kVoiceKeyerVersion);
+        QCOMPARE(targets.unavailableReason(QStringLiteral("voice.msg1")), voiceReason);
+        QCOMPARE(targets.setupUnavailableReason(QStringLiteral("voice.stop")), voiceReason);
         // The window has band stacking now, and its own functions say why when
         // the stack can't be used, so the hot key holds no reason of its own.
         QCOMPARE(targets.unavailableReason(QStringLiteral("bandstack.panel")), QString());
         QCOMPARE(targets.unavailableReason(QStringLiteral("tune.up")), QString());
 
-        w.press("voice.msg1");
-        QVERIFY(toastShown(w.window, kVoiceReason));
-
         QCOMPARE(frequency.count(), 0);
         QCOMPARE(mode.count(), 0);
+    }
+
+    // ---- Voice messages and F1 to F8 (recording plan Task 13) ----
+
+    void inAVoiceModeTheMessageKeysSendTheVoiceMessage()
+    {
+        VoiceBench b;
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        b.w.a->setDspMode(DSPMode::USB);
+        QCOMPARE(b.targets.unavailableReason(QStringLiteral("msg.3")), QString());
+        b.press("msg.3");
+        b.press("voice.msg7");
+        QCOMPARE(voiceCalls(b.access), (QStringList{QStringLiteral("sendVoice 3"), QStringLiteral("sendVoice 7")}));
+    }
+
+    void inCwTheMessageKeysSendTheCwMessage()
+    {
+        VoiceBench b;
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        b.w.a->setDspMode(DSPMode::CWU);
+        CwxSender* const sender = b.w.model->cwxSender();
+        QVERIFY(sender != nullptr);
+        QSignalSpy cw(sender, &CwxSender::refused);
+        // Nothing in CW message 3 here: the CW path answers, in its own words
+        // (tst_hot_key_cw has the message going out).
+        b.press("msg.3");
+        QCOMPARE(cw.count(), 1);
+        QVERIFY(toastShown(b.w.window, cw.first().first().toString()));
+        QVERIFY(b.access.calls.isEmpty());
+    }
+
+    void anOlderCoreRefusesTheVoiceKeysAndLeavesCw()
+    {
+        VoiceBench b;
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        b.access.version = 2;
+        b.w.a->setDspMode(DSPMode::USB);
+        for (const char* id : {"voice.msg1", "voice.msg8", "msg.1"}) {
+            QCOMPARE(b.targets.unavailableReason(QLatin1String(id)), kOlderCore);
+            QCOMPARE(b.targets.setupUnavailableReason(QLatin1String(id)),
+                     QLatin1String(id).startsWith(QLatin1String("msg.")) ? QString() : kOlderCore);
+        }
+        // The Keyboard page shows Stop disabled with the reason; the key itself
+        // has nothing to stop, so it says nothing.
+        QCOMPARE(b.targets.setupUnavailableReason(QStringLiteral("voice.stop")), kOlderCore);
+        QCOMPARE(b.targets.unavailableReason(QStringLiteral("voice.stop")), QString());
+        b.press("msg.1");
+        QVERIFY(toastShown(b.w.window, kOlderCore));
+        const int toasts = toastCount(b.w.window);
+        b.press("voice.stop");
+        QCOMPARE(toastCount(b.w.window), toasts);
+        QVERIFY(b.access.calls.isEmpty());
+
+        b.w.a->setDspMode(DSPMode::CWU);
+        QCOMPARE(b.targets.unavailableReason(QStringLiteral("msg.1")), QString());
+        QSignalSpy cw(b.w.model->cwxSender(), &CwxSender::refused);
+        b.press("msg.1");
+        QCOMPARE(cw.count(), 1);
+        QVERIFY(b.access.calls.isEmpty());
+    }
+
+    void escapeStopsOnlyAMessageGoingOut()
+    {
+        VoiceBench b;
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QCOMPARE(b.bindings.actionForChord(QStringLiteral("Escape")), QStringLiteral("voice.stop"));
+        const int toasts = toastCount(b.w.window);
+        // Nothing going out: Escape does nothing and says nothing.
+        b.press("voice.stop");
+        QVERIFY(b.access.calls.isEmpty());
+        QCOMPARE(toastCount(b.w.window), toasts);
+
+        // Another device's message: the Core refuses this window's stop with
+        // the holder's words (ruling 8.5), once.
+        b.access.setDocument(voiceDocument({1, 2, 3}, sendingFrom(2, QStringLiteral("token:phone"))));
+        b.press("voice.stop");
+        QCOMPARE(voiceCalls(b.access), QStringList{QStringLiteral("stopVoice")});
+        emit b.access.refused(kHeld);
+        QVERIFY(toastShown(b.w.window, kHeld));
+        emit b.access.refused(QStringLiteral("The panel's answer."));
+        QVERIFY(!toastShown(b.w.window, QStringLiteral("The panel's answer.")));
+    }
+
+    void onlyTheKeysOwnRefusalReachesTheToast()
+    {
+        VoiceBench b;
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        b.w.a->setDspMode(DSPMode::USB);
+        const QString empty = QStringLiteral("M6 is empty.");
+        b.press("voice.msg6");
+        emit b.access.refused(empty);
+        QVERIFY(toastShown(b.w.window, empty));
+
+        // The message went out: a later refusal is another control's answer.
+        b.press("voice.msg1");
+        b.access.setDocument(voiceDocument({1}, sendingFrom(1, QStringLiteral("station"))));
+        emit b.access.refused(QStringLiteral("Something else."));
+        QVERIFY(!toastShown(b.w.window, QStringLiteral("Something else.")));
     }
 
     void aPinnedKeyActsOnItsSliceAndAClosedLetterSaysSo()
