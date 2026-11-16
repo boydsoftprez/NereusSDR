@@ -56,10 +56,16 @@
 //                 recordings.* verbs Task 25 added at version 4
 //                 (saveSoundOnly, openStretch) are checked at 4, not 1.
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan final review fix: the
+//                 rewind verbs and recordings.openStretch are refused on
+//                 another device's slice; a device's past spectrum carries
+//                 the Core's receive calibration. AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
 
+#include <QFileInfo>
 #include <QLoggingCategory>
 #include <QRandomGenerator>
 #include <QSignalSpy>
@@ -73,8 +79,11 @@
 #include "core/recordings/AudioFileWriter.h"
 #include "core/recordings/OnAirSource.h"
 #include "core/recordings/RecordingService.h"
+#include "core/recordings/RecordingDisks.h"
 #include "core/recordings/RecordingStore.h"
 #include "core/recordings/VoiceKeyer.h"
+#include "core/recordings/dsr/DsrRecorder.h"
+#include "core/recordings/dsr/DsrReplay.h"
 #include "core/safety/RemoteTxWatchdog.h"
 #include "core/session/RecordingsFacade.h"
 #include "core/session/SessionCommandDispatcher.h"
@@ -173,6 +182,35 @@ QStringList listedNames(const QJsonObject& result)
         names.append(value.toObject().value(QStringLiteral("name")).toString());
     }
     return names;
+}
+
+// The radio as the past picture sees it: slice A on receiver 0 at 192 kHz
+// around 7.1 MHz.
+constexpr qint64 kPastCentreHz = 7100000;
+constexpr int kPastRate = 192000;
+
+class PastHost final : public DsrRewindHost {
+public:
+    bool sliceOpen(int slice) const override { return slice == 0; }
+    qint64 sliceFrequencyHz(int) const override { return kPastCentreHz; }
+    void setSliceFrequencyHz(int, qint64) override {}
+    int sliceReceiver(int slice) const override { return slice == 0 ? 0 : -1; }
+    qint64 receiverCentreHz(int receiver) const override { return receiver == 0 ? kPastCentreHz : 0; }
+    int receiverRateHz(int receiver) const override { return receiver == 0 ? kPastRate : 0; }
+    bool sliceOnDiversity(int) const override { return false; }
+    bool feedSlice(int, std::shared_ptr<DsrReplay>) override { return false; }
+};
+
+RecordingVolume pastVolume(const QString& root, bool own)
+{
+    RecordingVolume v;
+    v.rootPath = root;
+    v.displayName = QFileInfo(root).fileName();
+    v.freeBytes = 500LL * 1000000000LL;
+    v.totalBytes = 1000LL * 1000000000LL;
+    v.isCoreOwnDisk = own;
+    v.isSdCard = false;
+    return v;
 }
 
 }  // namespace
@@ -1099,6 +1137,124 @@ private slots:
         QTRY_VERIFY(!valueIn(playbackPushes(first).last(), QStringLiteral("onAir")).toBool(true));
         QCOMPARE(playbackPushes(second).size(), toldSecond);
         QCOMPARE(refusalOf(core.invoke(first, "recordings.stopPlay")), QString());
+    }
+
+    // Rewind, LIVE, seek and an opened stretch act on a slice: another
+    // device is refused in the slice access words and nothing changes.
+    void theRewindVerbsAreRefusedOnAnotherDevicesSlice()
+    {
+        Core core;
+        useTestDisk(core);
+        Device phone;
+        Device tablet(QStringLiteral("iPad"), QStringLiteral("tablet"));
+        core.pair(phone);
+        core.pair(tablet);
+        QHash<QByteArray, int> sharesSlices = kRecordings;
+        sharesSlices.insert("sliceAccess", 1);
+        LoopbackTransport* owner = core.signIn(phone, sharesSlices);
+        LoopbackTransport* other = core.signIn(tablet, kRecordings);
+        QVERIFY(admitted(owner));
+        QVERIFY(admitted(other));
+        SliceModel* slice = core.model->sliceById(0);
+        QVERIFY(slice != nullptr);
+        const double frequency = slice->frequency();
+        const QString elsewhere =
+            QStringLiteral("That slice belongs to iPhone. It can be changed only there.");
+        const QList<QPair<QByteArray, QList<MirrorUpdate>>> verbs{
+            {"dsr.rewind", {int64("slice", 0), int64("utcNs", 1), int64("frequencyHz", 7100000)}},
+            {"dsr.seek", {int64("slice", 0), int64("utcNs", 1)}},
+            {"dsr.live", {int64("slice", 0)}},
+            {"recordings.openStretch", {utf8("id", QStringLiteral("any"))}}};
+        for (const auto& verb : verbs) {
+            QCOMPARE(reasonOf(core.invoke(other, verb.first, verb.second)), elsewhere);
+        }
+        QCOMPARE(slice->frequency(), frequency);
+        QVERIFY(core.model->recordingService()->rewound().isEmpty());
+        // The slice's own controller reaches the recorder, which answers.
+        QCOMPARE(refusalOf(core.invoke(owner, "dsr.live", verbs.at(2).second)), QString());
+        QCOMPARE(reasonOf(core.invoke(owner, "recordings.openStretch", verbs.at(3).second)),
+                 QString::fromLatin1(RecordingService::kPlayGoneReason));
+    }
+
+    // A device's past spectrum carries the Core's receive calibration, as
+    // its live frames do, so the past meets live with no step.
+    void thePastCarriesTheCoresReceiveCalibration()
+    {
+        Core core;
+        useTestDisk(core);
+        RadioModel& model = *core.model;
+        if (model.rxMeterOffsetDbForSlice(0) == 0.0) {
+            model.setRxMeterCalOverrideDb(5.0);
+        }
+        const double offsetDb = model.rxMeterOffsetDbForSlice(0);
+        QVERIFY(offsetDb != 0.0);
+
+        RecordingService* service = model.recordingService();
+        const QString ssd = m_dir.filePath(QStringLiteral("ssd-past"));
+        QVERIFY(QDir().mkpath(ssd));
+        service->setDsrVolumesForTest([ssd] {
+            return QList<RecordingVolume>{pastVolume(QDir::rootPath(), true), pastVolume(ssd, false)};
+        });
+        RecordingSettings s = service->settings();
+        s.dsrEnabled = true;
+        s.dsrDisk = ssd;
+        s.dsrSizeLimitGb = 1;
+        service->setSettings(s);
+        service->setDsrRewindHostForTest(std::make_unique<PastHost>());
+        service->setRadioStreaming(true);
+        service->dsrRecorder()->setStream(0, kPastCentreHz, kPastRate);
+        constexpr int kChunkFrames = 4800;
+        std::vector<float> chunk(size_t(kChunkFrames) * 2);
+        QRandomGenerator rng(11);
+        for (int sec = 0; sec < 2; ++sec) {
+            for (int at = 0; at < kPastRate; at += kChunkFrames) {
+                for (float& v : chunk) {
+                    v = float(rng.generateDouble() * 0.02 - 0.01);
+                }
+                service->dsrRecorder()->consumeIq(0, chunk.data(), kChunkFrames);
+            }
+            m_clockMs += 1000;
+            service->pumpForTest();
+        }
+        const qint64 at = service->dsrRecorder()->ring().oldestUtcNs(0) + 500000000;
+        QVERIFY(at > 500000000);
+
+        DsrPanView view;
+        view.fftSize = 4096;
+        view.windowType = 1;
+        view.centreHz = kPastCentreHz;
+        view.spanHz = 48000;
+        view.pixels = 64;
+        DsrPastFrames local;
+        bool answered = false;
+        service->pastSpectrum(0, view, at, [&](bool ok, const QString&, const DsrPastFrames& frames) {
+            answered = ok;
+            local = frames;
+        });
+        QTRY_VERIFY(answered);
+        QCOMPARE(local.rows.size(), 1);
+
+        Device phone;
+        core.pair(phone);
+        LoopbackTransport* app = core.signIn(phone, kRecordings);
+        QVERIFY(admitted(app));
+        const QJsonObject result = core.invoke(
+            app, "dsr.spectrum",
+            {int64("slice", 0), int64("fftSize", view.fftSize), int64("windowType", view.windowType),
+             int64("centreHz", view.centreHz), int64("spanHz", view.spanHz), int64("pixels", view.pixels),
+             int64("utcNs", at)});
+        QCOMPARE(refusalOf(result), QString());
+        const int binCount = int(valueIn(result, QStringLiteral("binCount")).toInteger());
+        QCOMPARE(binCount, local.binCount);
+        const QList<QVector<float>> remote = DsrPastRenderer::unpackRows(
+            QByteArray::fromBase64(valueIn(result, QStringLiteral("bins")).toString().toLatin1()), binCount);
+        QCOMPARE(remote.size(), 1);
+        const float step = 1.0f / DsrPastRenderer::kWireStepsPerDb;
+        for (int k = 0; k < binCount; ++k) {
+            const float want = local.rows.first()[k] + float(offsetDb);
+            QVERIFY2(std::abs(remote.first()[k] - want) <= step,
+                     qPrintable(QStringLiteral("bin %1: %2 vs %3").arg(k).arg(remote.first()[k]).arg(want)));
+        }
     }
 
     // A copy of 3 MB in chunks comes back byte for byte.

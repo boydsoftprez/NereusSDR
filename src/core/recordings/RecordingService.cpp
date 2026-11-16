@@ -38,6 +38,9 @@
 // 2026-11-16  J.J. Boyd / KG4VCF; eraseDsr, and the receivers the recorder
 //             keeps (and their bytes an hour) in its status (spec 3, 6.7,
 //             recording plan Task 26). AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; final review fixes: a closed slice and a
+//             lost radio end their rewinds; an erase fails a save running
+//             from the recorder. AI tooling: Anthropic Claude Code.
 
 #include "RecordingService.h"
 
@@ -797,6 +800,12 @@ void RecordingService::onSliceRemoved(int sliceId)
 {
     stopSlice(sliceId, KeptReason::StoppedHere, QString());
     m_records.remove(sliceId);
+    // A closed slice's replay is switched out: the next slice on that id
+    // hears the radio. Slice A closing closes the stretch it plays.
+    endRewind(sliceId, false);
+    if (sliceId == kStretchSlice) {
+        closeStretch();
+    }
 }
 
 // ---- Worker thread.
@@ -1493,6 +1502,13 @@ void RecordingService::eraseDsr()
             endRewind(slice, true);
         }
     }
+    // A save running from the recorder cannot finish whole: it fails when
+    // it ends. One from a saved stretch reads its own file.
+    for (PendingSave& save : m_saves) {
+        if (save.fromRecorder) {
+            save.erased = true;
+        }
+    }
     const QString path = QDir(m_settings.dsrFolder()).filePath(QString::fromLatin1(kDsrFileName));
     const QString runningPath = m_dsrPath;
     const qint64 limit = m_dsrLimit;
@@ -1538,6 +1554,11 @@ void RecordingService::setRadioStreaming(bool on)
     m_radioStreaming = on;
     if (!on) {
         m_liveAfterKey.clear();
+        // The radio is gone: no slice stays switched to the past into a
+        // reconnect (the teardown drops the worker's replays), a stretch
+        // slice A plays included. They go back to their frequency before,
+        // as stopDsr does.
+        endAllRewinds(true);
     }
     applyDsr();
 }
@@ -2462,6 +2483,7 @@ bool RecordingService::startSave(std::shared_ptr<DsrRingFile> source, const DsrS
                                                              pending.suffix));
     pending.entry = std::move(entry);
     pending.lengthMs = (extent.toUtcNs - extent.fromUtcNs) / kNsPerMs;
+    pending.fromRecorder = !source;
     const quint64 token = m_nextSaveToken++;
     m_saves.insert(token, pending);
 
@@ -2553,6 +2575,13 @@ void RecordingService::onSaveDone(quint64 token, bool ok, qint64 lengthMs, const
     }
     PendingSave pending = it.value();
     m_saves.erase(it);
+    if (pending.erased) {
+        // What it read from was erased under it: never a whole stretch.
+        QFile::remove(pending.workPath);
+        emit stretchSaveFailed(QString::fromLatin1(kSaveErasedReason));
+        emit dsrChanged();
+        return;
+    }
     if (!ok) {
         qCWarning(lcRecordings) << "a stretch was not saved:" << error;
         QFile::remove(pending.workPath);

@@ -6,6 +6,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Recording plan final review fix: dsr.rewind, dsr.live,
+//               dsr.seek and recordings.openStretch (slice A) are refused
+//               on a slice the device may not change; dsr.rows and
+//               dsr.spectrum carry the Core's receive calibration, as the
+//               live frames do.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: Recording plan Task 26: dsr.eraseAll, erase what the
 //               Digital Spectrum Recorder keeps (handleDsr,
 //               recordingsVersion 4).
@@ -5477,6 +5483,19 @@ void SessionCommandDispatcher::handleDsr(const SessionMessage& invoke)
             {MirrorUpdate{0, "note", MirrorWireKind::Utf8, QVariant(note)}}));
         return;
     }
+    // Rewind, LIVE, seek and an opened stretch retune a slice and replace
+    // its sound: only a device that may change that slice (slice A for a
+    // stretch), as the band stack verbs (bandStackSliceRefusal).
+    if (verb == "dsr.rewind" || verb == "dsr.live" || verb == "dsr.seek" || verb == "recordings.openStretch") {
+        const int target = verb == "recordings.openStretch" ? RecordingService::kStretchSlice : slice;
+        if (m_sliceAccess && !m_requester.isEmpty()) {
+            const QString access = m_sliceAccess(m_requester, target);
+            if (!access.isEmpty()) {
+                refuse(access);
+                return;
+            }
+        }
+    }
     if (verb == "recordings.openStretch") {
         ok = service->openStretch(arguments.value(QStringLiteral("id")).toString(), &refusal);
     } else if (verb == "dsr.eraseAll") {
@@ -5552,9 +5571,23 @@ void SessionCommandDispatcher::handleDsrPast(const SessionMessage& invoke, const
         view.pixels = -1;
     }
     const auto answer = [self, owner, verb, commandId](bool ok, const QString& refusal,
-                                                      const DsrPastFrames& frames) {
+                                                      const DsrPastFrames& drawn) {
         if (self.isNull()) {
             return;
+        }
+        // The Core's receive calibration, as its live frames to a device
+        // carry it (DaemonMediaController adds rxMeterOffsetDbForStream to
+        // each), so the past meets the live rows with no step. A window on
+        // the Core adds its own and never comes here.
+        DsrPastFrames frames = drawn;
+        const double offsetDb = ok && !self->m_radioModel.isNull()
+            ? self->m_radioModel->rxMeterOffsetDbForSlice(frames.slice) : 0.0;
+        if (std::isfinite(offsetDb) && offsetDb != 0.0) {
+            for (QVector<float>& row : frames.rows) {
+                for (float& dbm : row) {
+                    dbm += float(offsetDb);
+                }
+            }
         }
         if (!ok) {
             self->emitResultAs(owner, SessionMessages::commandResult(

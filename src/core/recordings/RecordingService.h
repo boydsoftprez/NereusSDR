@@ -42,6 +42,8 @@
 // 2026-11-16  J.J. Boyd / KG4VCF; eraseDsr: erase what the recorder keeps
 //             now, and the receivers it keeps in its status (spec 3, 6.7,
 //             recording plan Task 26). AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; final review fixes: kSaveErasedReason,
+//             sliceRemovedForTest. AI tooling: Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -285,6 +287,7 @@ public:
     // What rewind talks to; the radio's (RadioModel) unless a test sets one.
     void setDsrRewindHostForTest(std::unique_ptr<DsrRewindHost> host);
     std::shared_ptr<DsrReplay> replayForTest(int slice) const;
+    void sliceRemovedForTest(int sliceId) { onSliceRemoved(sliceId); }
 
     // ---- The past picture (spec 3 "Rewind picture", "Moving through
     // hours", 6.7, A12; recording plan Task 23): the Core draws past
@@ -322,6 +325,7 @@ public:
     static constexpr const char* kSaveNoFolderReason = "The Core has nowhere to keep recordings.";
     static constexpr const char* kSaveSliceReason = "Slice A is not on a frequency kept in that stretch.";
     static constexpr const char* kSaveFailedReason = "The stretch could not be saved.";
+    static constexpr const char* kSaveErasedReason = "The recorder was erased before the stretch was saved.";
     // The slice whose sound a stretch gives, and that an opened stretch
     // plays on (slice A).
     static constexpr int kStretchSlice = 0;
@@ -543,6 +547,10 @@ private:
         QString suffix;
         qint64 lengthMs = 0;
         bool asWav = false;
+        // Read from the recorder's own ring (not a saved stretch's file),
+        // and that ring erased while it ran: the save fails.
+        bool fromRecorder = false;
+        bool erased = false;
     };
     bool startSave(std::shared_ptr<DsrRingFile> source, const DsrStretchExtent& extent, bool wholePan,
                    const DsrSoundSettings& sound, int soundReceiver, int soundRateHz, RecordingEntry entry,

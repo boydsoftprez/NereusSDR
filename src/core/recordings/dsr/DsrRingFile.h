@@ -11,6 +11,9 @@
 //             rewind (recording plan Task 22) can walk the blocks without
 //             reading the disk to find them. AI tooling: Anthropic Claude
 //             Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; stopBeforeHeaderForTest: a write cut
+//             short between a block's samples and its header. AI tooling:
+//             Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -125,6 +128,10 @@ public:
     // How long `frames` last at `sampleRateHz`.
     static qint64 durationNs(qint64 frames, qint64 sampleRateHz);
 
+    // A crash in the middle of a write: append() stops after the samples,
+    // before the header, and returns false.
+    void stopBeforeHeaderForTest(bool stop) { m_stopBeforeHeaderForTest = stop; }
+
 private:
     struct Block {
         qint64 offset = 0;
@@ -148,6 +155,7 @@ private:
     qint64 m_writePos = 0;
     quint64 m_nextSeq = 1;
     QMap<quint64, Block> m_blocks;   // by sequence: oldest first
+    bool m_stopBeforeHeaderForTest = false;
 };
 
 }  // namespace NereusSDR

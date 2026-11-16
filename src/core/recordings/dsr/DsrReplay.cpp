@@ -13,6 +13,9 @@
 // 2026-11-16  J.J. Boyd / KG4VCF; saving a stretch: the extent, the copy
 //             and slice A's sound (recording plan Task 25). AI tooling:
 //             Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; final review fixes: a stretch's sound
+//             drops WDSP's start-up silence; two Thetis cites carry their
+//             version. AI tooling: Anthropic Claude Code.
 
 #include "DsrReplay.h"
 
@@ -832,9 +835,18 @@ bool DsrSoundRender::begin(int receiver, int sampleRateHz, qint64 fromUtcNs, qin
     m_read.assign(size_t(m_inSize) * 2, 0);
     m_pending.clear();
     m_pendingAt = 0;
+    // The channel's output starts with frames of exact silence before the
+    // stretch's first samples come through: WDSP's output ring is primed
+    // with (DSP_MULT - 1) * r2_size zero frames (third_party/wdsp/src/
+    // iobuffs.c:420-422), and the first blocks through its filters add
+    // more. Measured here, about 175 ms at 48 kHz. Those leading zeros are
+    // dropped (at most a second) and the end runs on by as much, so the
+    // sound starts with the signal and keeps the stretch's length. Kept I/Q
+    // is never exactly silent once it arrives.
+    m_leadFramesLeft = outRateHz;
 #ifdef HAVE_WDSP
     // As a live receive channel opens (WdspEngine::openRxChannelWdsp).
-    // From Thetis cmaster.c:72-86 (create_rcvr OpenChannel call)
+    // From Thetis cmaster.c:72-86 [v2.10.3.15] (create_rcvr OpenChannel call)
     OpenChannel(channel,
                 m_inSize,       // in_size
                 kDspSize,       // dsp_size (4096 from Thetis)
@@ -852,7 +864,7 @@ bool DsrSoundRender::begin(int receiver, int sampleRateHz, qint64 fromUtcNs, qin
     // channel (RxChannel::setMode, setFilterFreqs, setAgcMode, and the
     // AGC seeds WdspEngine::openRxChannelWdsp gives every channel).
     SetRXAMode(channel, static_cast<int>(RxChannel::wdspModeFor(static_cast<DSPMode>(sound.dspMode))));
-    // From Thetis rxa.cs:110-111, radio.cs:603-604 — both bp1 and nbp0
+    // From Thetis rxa.cs:110-111, radio.cs:605-606 [v2.10.3.15] — both bp1 and nbp0
     // filters must be updated together.
     SetRXABandpassFreqs(channel, sound.filterLowHz, sound.filterHighHz);
     RXANBPSetFreqs(channel, sound.filterLowHz, sound.filterHighHz);
@@ -976,6 +988,17 @@ int DsrSoundRender::render(const DsrRingFile& ring, float* out, int maxFrames)
             // audio and tst_dsr_rewind's tone take it).
             m_pending.assign(m_outI.begin(), m_outI.begin() + m_outSize);
             m_pendingAt = 0;
+            if (m_leadFramesLeft > 0) {
+                int drop = 0;
+                while (drop < int(m_pending.size()) && qint64(drop) < m_leadFramesLeft
+                       && m_pending[size_t(drop)] == 0.0f) {
+                    ++drop;
+                }
+                // The first sound ends the drop.
+                m_leadFramesLeft = drop < int(m_pending.size()) ? 0 : m_leadFramesLeft - drop;
+                m_pendingAt = drop;
+                continue;
+            }
         }
         const int take = int(std::min<qint64>({qint64(maxFrames - produced), qint64(m_pending.size()) - m_pendingAt,
                                                 m_totalFrames - m_framesDone}));

@@ -22,6 +22,8 @@
 //             by a WDSP receive channel of its own); DsrRewindHost says how
 //             a slice is set (spec 3, 6.3, 6.4, 6.7, A13, recording plan
 //             Task 25). AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; DsrSoundRender drops WDSP's start-up
+//             silence (m_leadFramesLeft). AI tooling: Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -470,6 +472,9 @@ private:
     std::vector<float> m_outQ;
     std::vector<float> m_pending;
     int m_pendingAt = 0;
+    // How much more leading silence may still be dropped, so the sound
+    // starts with the signal (begin); 0 once the first sound is out.
+    qint64 m_leadFramesLeft = 0;
 };
 
 }  // namespace NereusSDR

@@ -17,6 +17,9 @@
 // Modification history (NereusSDR):
 //   2026-11-16 - Created. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code. Recording plan Task 22.
+//   2026-11-16 - J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. Final review fix: a closed slice's replay is
+//                 switched out.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -405,6 +408,34 @@ private slots:
 
         QVERIFY(svc.goLive(0, &why));
         QCOMPARE(radio->frequency.value(0), kSliceAHz);
+        radio->worker = nullptr;
+    }
+
+    // A rewound slice that closes is switched back to the radio: the next
+    // slice on that id hears the live I/Q, and nothing is left rewound.
+    void aClosedSliceIsSwitchedOutOfThePast()
+    {
+        RecordingService svc(nullptr);
+        FakeRadio* radio = prepare(svc);
+        RxDspWorker worker;
+        prepareWorker(worker);
+        radio->worker = &worker;
+        keepCarrier(svc, 5);
+        const DsrRingFile& ring = svc.dsrRecorder()->ring();
+        QString why;
+        QVERIFY(svc.rewind(1, ring.oldestUtcNs(0) + kNs, kPlayHz, &why));
+        svc.pumpForTest();
+        QVERIFY(worker.sliceReplay(1) != nullptr);
+
+        radio->frequency.remove(1);
+        svc.sliceRemovedForTest(1);
+        QCOMPARE(worker.sliceReplay(1), nullptr);
+        QVERIFY(!radio->held[1]);
+        QVERIFY(svc.rewound().isEmpty());
+        radio->frequency.insert(1, kSliceBHz);
+        m_inputs.clear();
+        feedLiveBlock(worker);
+        QVERIFY(isLiveBlock(m_inputs.i[1].last(), m_inputs.q[1].last()));
         radio->worker = nullptr;
     }
 

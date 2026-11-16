@@ -21,6 +21,10 @@
 // Modification history (NereusSDR):
 //   2026-11-16 - Created. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code. Recording plan Task 25.
+//   2026-11-16 - J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. Final review fixes: an opened stretch ends with the
+//                 radio or slice A; an erase fails a save from the recorder;
+//                 sound only starts with the signal.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -471,7 +475,38 @@ private slots:
         // Most of the sound is that one tone.
         QVERIFY2(std::abs(hz - 1000.0) <= 10.0 && share > 0.5,
                  qPrintable(QStringLiteral("tone %1 Hz, %2 of the sound").arg(hz).arg(share)));
+        // It starts with the signal: WDSP's start-up silence (about 175
+        // ms) is not in the file, only its filters' first rise.
+        size_t quiet = 0;
+        while (quiet < s.size() && std::abs(int(s[quiet])) <= 1) {
+            ++quiet;
+        }
+        QVERIFY2(quiet < size_t(rate / 20), qPrintable(QStringLiteral("%1 quiet samples at the start").arg(quiet)));
 #endif
+    }
+
+    // Erasing the recorder while a save from it runs fails that save with
+    // the reason; nothing is listed as saved.
+    void anEraseFailsASaveRunningFromTheRecorder()
+    {
+        RecordingService svc(nullptr);
+        prepare(svc);
+        keepCarrier(svc, 12);
+        const DsrRingFile& ring = svc.dsrRecorder()->ring();
+        const qint64 from = ring.oldestUtcNs(0) + kNs;
+        QSignalSpy saved(&svc, &RecordingService::stretchSaved);
+        QSignalSpy failed(&svc, &RecordingService::stretchSaveFailed);
+        QString note;
+        QString why;
+        QVERIFY2(svc.saveStretch(from, from + 10 * kNs, true, &note, &why), qPrintable(why));
+        svc.eraseDsr();
+        QTRY_COMPARE_WITH_TIMEOUT(failed.count(), 1, kSaveWaitMs);
+        QCOMPARE(failed.first().first().toString(), QString::fromLatin1(RecordingService::kSaveErasedReason));
+        QCOMPARE(saved.count(), 0);
+        QCOMPARE(svc.savesInProgress(), 0);
+        QVERIFY(svc.store()->entries().isEmpty());
+        QVERIFY(QDir(svc.store()->folder()).entryList({QStringLiteral(".stretch-*")},
+                                                      QDir::Files | QDir::Hidden).isEmpty());
     }
 
     // Save sound only from a whole-pan recording makes a Sound recording of
@@ -548,6 +583,49 @@ private slots:
         QVERIFY2(svc.goLive(0, &why), qPrintable(why));
         QVERIFY(svc.openStretchId().isEmpty());
         QVERIFY(svc.dsrStatus().stretchId.isEmpty());
+        radio->worker = nullptr;
+    }
+
+    // An opened stretch (the recorder off) ends with the radio: a reconnect
+    // starts with slice A live and nothing open. Slice A closing closes it
+    // too.
+    void anOpenedStretchEndsWithTheRadioOrSliceA()
+    {
+        RecordingService svc(nullptr);
+        FakeRadio* radio = prepare(svc);
+        RxDspWorker worker;
+        worker.setBufferSizes(kInSize, 64);
+        worker.setStreamSlices(0, {0});
+        radio->worker = &worker;
+        keepCarrier(svc, 8);
+        const DsrRingFile& ring = svc.dsrRecorder()->ring();
+        const qint64 from = ring.oldestUtcNs(0) + kNs;
+        const QString id = saveAndWait(svc, from, from + 4 * kNs, true, nullptr);
+        QVERIFY(!id.isEmpty());
+        RecordingSettings s = svc.settings();
+        s.dsrEnabled = false;
+        svc.setSettings(s);
+        svc.pumpForTest();
+
+        QString why;
+        QVERIFY2(svc.openStretch(id, &why), qPrintable(why));
+        svc.pumpForTest();
+        QVERIFY(worker.sliceReplay(0) != nullptr);
+        svc.setRadioStreaming(false);
+        QVERIFY(svc.rewound().isEmpty());
+        QVERIFY(svc.openStretchId().isEmpty());
+        QCOMPARE(worker.sliceReplay(0), nullptr);
+        QVERIFY(!radio->held);
+        svc.setRadioStreaming(true);
+        QVERIFY(svc.rewound().isEmpty());
+
+        QVERIFY2(svc.openStretch(id, &why), qPrintable(why));
+        svc.pumpForTest();
+        QVERIFY(worker.sliceReplay(0) != nullptr);
+        svc.sliceRemovedForTest(0);
+        QVERIFY(svc.rewound().isEmpty());
+        QVERIFY(svc.openStretchId().isEmpty());
+        QCOMPARE(worker.sliceReplay(0), nullptr);
         radio->worker = nullptr;
     }
 

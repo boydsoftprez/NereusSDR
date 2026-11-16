@@ -7,6 +7,10 @@
 // 2026-11-16  J.J. Boyd / KG4VCF; blockAt, nextBlock and frameUtcNs for
 //             rewind (recording plan Task 22). AI tooling: Anthropic Claude
 //             Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; a block's samples are written before its
+//             checked header, and every header a block lands on is erased
+//             first, so a cut-short write is never taken on a restart. AI
+//             tooling: Anthropic Claude Code.
 
 #include "DsrRingFile.h"
 
@@ -290,13 +294,15 @@ bool DsrRingFile::appendLocked(const DsrBlockHeader& h, const qint16* iq, int fr
         m_writePos = 0;
     }
 
-    // Every block this one lands on goes. A block whose header this write
-    // does not cover has its header erased, so a restart does not find it.
+    // Every block this one lands on goes, its header erased first, so a
+    // restart never finds an old header over new samples. The new samples
+    // go down before the new header: a write cut short leaves no header
+    // that checks over a torn block.
     const qint64 start = m_writePos;
     const qint64 end = start + bytes;
     for (auto it = m_blocks.begin(); it != m_blocks.end();) {
         if (it->offset < end && it->offset + it->bytes > start) {
-            if ((it->offset < start || it->offset >= start + actual) && !eraseHeader(it->offset)) {
+            if (!eraseHeader(it->offset)) {
                 return false;
             }
             it = m_blocks.erase(it);
@@ -317,14 +323,9 @@ bool DsrRingFile::appendLocked(const DsrBlockHeader& h, const qint16* iq, int fr
     blk.audioRateHz = txAudioRateHz;
     blk.audioFrames = static_cast<quint32>(std::max(0, txAudioFrames));
 
-    const HeaderBytes head = encode(blk.header, blk.seq, blk.audioRateHz, blk.audioFrames);
-    if (!m_file.seek(start)
-        || m_file.write(reinterpret_cast<const char*>(head.data()), kHeaderBytes) != kHeaderBytes) {
-        qCWarning(lcRecordings) << "the spectrum recorder cannot write:" << m_file.errorString();
-        return false;
-    }
     const qint64 iqBytes = qint64(frames) * kIqFrameBytes;
-    if (m_file.write(reinterpret_cast<const char*>(iq), iqBytes) != iqBytes) {
+    if (!m_file.seek(start + kHeaderBytes)
+        || m_file.write(reinterpret_cast<const char*>(iq), iqBytes) != iqBytes) {
         qCWarning(lcRecordings) << "the spectrum recorder cannot write:" << m_file.errorString();
         return false;
     }
@@ -334,6 +335,15 @@ bool DsrRingFile::appendLocked(const DsrBlockHeader& h, const qint16* iq, int fr
             qCWarning(lcRecordings) << "the spectrum recorder cannot write:" << m_file.errorString();
             return false;
         }
+    }
+    if (m_stopBeforeHeaderForTest) {
+        return false;
+    }
+    const HeaderBytes head = encode(blk.header, blk.seq, blk.audioRateHz, blk.audioFrames);
+    if (!m_file.seek(start)
+        || m_file.write(reinterpret_cast<const char*>(head.data()), kHeaderBytes) != kHeaderBytes) {
+        qCWarning(lcRecordings) << "the spectrum recorder cannot write:" << m_file.errorString();
+        return false;
     }
     m_blocks.insert(blk.seq, blk);
     ++m_nextSeq;

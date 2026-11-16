@@ -14,6 +14,9 @@
 // Modification history (NereusSDR):
 //   2026-11-16 - Created. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code. Recording plan Task 21.
+//   2026-11-16 - J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. Final review fix: a write cut short before its
+//                 header leaves no block a restart takes.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -295,6 +298,37 @@ private slots:
         QCOMPARE(ring.read(0, kT0 + 4 * kNs, back.data(), 50, &hdr), 50);
         QCOMPARE(back[0], sampleAt(4, 0, 0));
         QCOMPARE(int(hdr.transmit), 1);
+    }
+
+    // A write cut short (a crash) after a block's samples and before its
+    // header: the restart finds neither the new block nor the old one it
+    // landed on, and every other block reads back as kept.
+    void aWriteCutShortLeavesNoTornBlock()
+    {
+        const QString path = ringPath(QStringLiteral("torn"));
+        const qint64 block = DsrRingFile::blockBytes(48000);
+        {
+            DsrRingFile ring;
+            QString error;
+            QVERIFY2(ring.open(path, 10 * block, &error), qPrintable(error));
+            QVERIFY(appendSeconds(ring, 0, 10, 48000));
+            QCOMPARE(ring.writePosition(), 10 * block);
+            ring.stopBeforeHeaderForTest(true);
+            // Second 10 lands where second 0 was, at the front.
+            QVERIFY(!appendSeconds(ring, 10, 1, 48000));
+        }
+        DsrRingFile again;
+        QString error;
+        QVERIFY2(again.open(path, 10 * block, &error), qPrintable(error));
+        QCOMPARE(again.blockCount(), 9);
+        QCOMPARE(again.oldestUtcNs(0), kT0 + kNs);
+        QCOMPARE(again.newestUtcNs(0), kT0 + 10 * kNs);
+        std::vector<qint16> iq(4);
+        QCOMPARE(again.read(0, kT0, iq.data(), 2, nullptr), 0);
+        QCOMPARE(again.read(0, kT0 + kNs, iq.data(), 2, nullptr), 2);
+        QCOMPARE(iq[0], sampleAt(1, 0, 0));
+        QCOMPARE(again.read(0, kT0 + 9 * kNs, iq.data(), 2, nullptr), 2);
+        QCOMPARE(iq[0], sampleAt(9, 0, 0));
     }
 
     // A restart scans the headers and takes up where it was: oldest,
