@@ -1492,26 +1492,68 @@ jobs:
           Copy-Item fftw-tmp/fftw3.lib "$fftw_dir/lib/"
 
       # LAME, the MP3 encoder for recordings on the Core
-      # (docs/attribution/LAME-PROVENANCE.md): the MSYS2 MINGW64 package, the
-      # one ci.yml's Windows leg links. It is a C DLL, so this MSVC build
+      # (docs/attribution/LAME-PROVENANCE.md): LAME 3.100 built from source
+      # with MSYS2's MINGW64 toolchain, as the Intel macOS row builds it.
+      # MSYS2's own mingw-w64-x86_64-lame package imports libmpg123-0.dll,
+      # which this package does not ship. It is a C DLL, so this MSVC build
       # links it through an import library made from its exports, as the
       # FFTW DLL above, and ships it beside NereusSDR.exe.
-      - name: Set up MSYS2 MINGW64 with LAME
+      - name: Set up MSYS2 MINGW64 toolchain for LAME
         id: msys2
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
           update: true
-          install: mingw-w64-x86_64-lame
+          install: mingw-w64-x86_64-gcc make
+
+      - name: Download LAME source
+        shell: pwsh
+        run: |
+          # The tarball and SHA-256 the Intel macOS row pins (Homebrew's
+          # lame formula's values).
+          # Windows' own curl.exe, the same fetch as that row.
+          & curl.exe -fsSL https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz -o lame.tar.gz
+          if ($LASTEXITCODE -ne 0) { Write-Error "lame.tar.gz download failed"; exit 1 }
+          $sha = (Get-FileHash -LiteralPath lame.tar.gz -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($sha -ne 'ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e') {
+            Write-Error "lame.tar.gz SHA-256 is $sha, not the pinned value"
+            exit 1
+          }
+
+      - name: Build LAME from source
+        shell: msys2 {0}
+        # Shared only (LGPL-2.1 section 6(b): a user can swap the library),
+        # no frontend, and no decoder: minimp3 decodes MP3 on every
+        # platform, so the library carries LAME's encoder alone. Names the
+        # library does not define are taken out of include/libmp3lame.sym,
+        # its export list, or the -no-undefined DLL link fails:
+        # lame_init_old (Homebrew's fix, as on the Intel macOS row), and
+        # the hip_* and lame_decode* functions, which mpglib_interface.c
+        # defines only with the decoder (HAVE_MPGLIB).
+        run: |
+          set -euo pipefail
+          PREFIX="$(cygpath -u '${{ github.workspace }}')/lame-win64"
+          tar xzf lame.tar.gz
+          cd lame-3.100
+          sed -i -e '/^lame_init_old$/d' -e '/^hip_/d' -e '/^lame_decode/d' include/libmp3lame.sym
+
+          ./configure --disable-dependency-tracking --disable-debug \
+            --enable-shared --disable-static --disable-frontend --disable-decoder \
+            --prefix="$PREFIX"
+          make -j"$(nproc)"
+          make install
+
+          test -f "$PREFIX/include/lame/lame.h"     || { echo "::error::lame/lame.h not installed"; exit 1; }
+          test -f "$PREFIX/bin/libmp3lame-0.dll"    || { echo "::error::libmp3lame-0.dll not installed"; exit 1; }
 
       - name: Stage LAME
         shell: pwsh
         run: |
-          $mingw = Join-Path '${{ steps.msys2.outputs.msys2-location }}' 'mingw64'
+          $built = Join-Path '${{ github.workspace }}' 'lame-win64'
           $lame = "third_party/lame"
           New-Item -ItemType Directory -Force -Path "$lame/include/lame", "$lame/lib", "$lame/bin" | Out-Null
-          Copy-Item (Join-Path $mingw 'include/lame/lame.h') "$lame/include/lame/"
-          Copy-Item (Join-Path $mingw 'bin/libmp3lame-0.dll') "$lame/bin/"
+          Copy-Item (Join-Path $built 'include/lame/lame.h') "$lame/include/lame/"
+          Copy-Item (Join-Path $built 'bin/libmp3lame-0.dll') "$lame/bin/"
           # The DLL must need only Windows' own DLLs: nothing else of MSYS2's
           # is shipped beside it.
           $deps = & dumpbin /dependents "$lame/bin/libmp3lame-0.dll" |

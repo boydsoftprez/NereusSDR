@@ -32,8 +32,8 @@ into NereusSDR files.
 | macOS Intel release | LAME 3.100 built from source for x86_64 by `.github/workflows/release.yml` (the Apple Silicon runner's Homebrew has no x86_64 LAME): the SourceForge `lame-3.100.tar.gz`, SHA-256 checked against the value Homebrew's formula pins, with Homebrew's one fix (`lame_init_old` taken out of `include/libmp3lame.sym`), shared only; `libmp3lame.0.dylib` is bundled in `Contents/Frameworks` |
 | Linux CI, self-hosted CI image, AppImage, .deb | `libmp3lame-dev`; runtime `libmp3lame0` (dpkg-shlibdeps adds it to a .deb's Depends) |
 | Debian 13 arm64 Core package (the Pi image) | `libmp3lame-dev` in `packaging/station-image/build-trixie-deb.sh` |
-| Windows CI (MinGW) | MSYS2 `mingw-w64-x86_64-lame`, `LAME_ROOT` = the MINGW64 folder |
-| Windows release (MSVC) | MSYS2 `mingw-w64-x86_64-lame`, staged in `third_party/lame` with an MSVC import library made from the DLL's exports; `libmp3lame-0.dll` is copied beside `NereusSDR.exe` |
+| Windows CI (MinGW) | MSYS2 `mingw-w64-x86_64-lame`, `LAME_ROOT` = the MINGW64 folder; its `libmpg123-0.dll` dependency is staged for the tests by `scripts/ci/test-windows-audio.ps1` (CI only, not shipped) |
+| Windows release (MSVC) | LAME 3.100 built from source by `.github/workflows/release.yml` with the MSYS2 MINGW64 toolchain: the same SourceForge tarball and SHA-256 as the macOS Intel row, shared only, `--disable-frontend --disable-decoder`, with `lame_init_old` and the decoder's `hip_*` and `lame_decode*` names taken out of `include/libmp3lame.sym` (undefined without the decoder). MSYS2's own `mingw-w64-x86_64-lame` (4.0) imports `libmpg123-0.dll`, which the package would otherwise have to ship. Staged in `third_party/lame` with an MSVC import library made from the DLL's exports; the step fails if the DLL imports anything but Windows' own DLLs; `libmp3lame-0.dll` is copied beside `NereusSDR.exe` |
 
 LGPL: the library stays a separate, replaceable shared library on every
 platform (`find_library` asks for the shared names first), which meets
@@ -80,3 +80,4 @@ change can revisit the choice with evidence.
 | Date | Change |
 | --- | --- |
 | 2026-11-15 | Created: LAME for MP3 recordings, minimp3 vendored for decoding (recording, voice keyer and spectrum recorder plan, Task 1). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code. |
+| 2026-11-16 | Windows release builds LAME 3.100 from source without its decoder instead of shipping MSYS2's package, which imports libmpg123. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code. |

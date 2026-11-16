@@ -26,7 +26,11 @@ Homebrew lame dylib on macOS (on Intel Macs, LAME 3.100 built from its
 source tarball and bundled in the app; its code is unchanged, and as in
 Homebrew's build the undefined name lame_init_old is left out of
 include/libmp3lame.sym, the library's export list), and libmp3lame-0.dll
-from the MSYS2 mingw-w64-x86_64-lame package on Windows, shipped beside the program. A
+on Windows, LAME 3.100 built from the same source tarball with the MSYS2
+MinGW toolchain and shipped beside the program; its code is unchanged, it
+is configured without LAME's decoder, and the names that leaves undefined
+(lame_init_old and the hip_* and lame_decode* decoder functions) are left
+out of include/libmp3lame.sym. A
 user may replace that library with a modified build of LAME with the
 same interface. NereusSDR uses LAME's encoder only; MP3 files are decoded
 with minimp3 (`minimp3.txt`).
