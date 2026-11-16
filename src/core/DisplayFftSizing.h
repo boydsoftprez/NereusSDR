@@ -111,6 +111,22 @@ inline DisplayFftSizing readDisplayFftSizing(const AppSettings& settings)
     return sizing;
 }
 
+/// The rate a window on a Core paints at and asks the Core to send frames at:
+/// its own DisplayPaintFps once the Display pill has set one, otherwise the
+/// Core's DisplaySpectrumFps, so a window's first run changes nothing on sight
+/// and a window with no rate of its own keeps following the Core's. Not read
+/// direct to a radio, where DisplaySpectrumFps is the one rate.
+inline int readDisplayPaintFps(const AppSettings& settings)
+{
+    using namespace ControlRanges;
+    const int own = settings.value(QLatin1String(kDisplayPaintFpsKey)).toString().toInt();
+    const int fps = own > 0 ? own
+                            : settings.value(QLatin1String(kDisplaySpectrumFpsKey),
+                                             QString::number(kDisplaySpectrumFpsDefault))
+                                  .toString().toInt();
+    return qBound(1, fps, 60);
+}
+
 /// The mode alone (readDisplayFftSizing(settings).mode).
 inline ControlRanges::DisplayFftSizingMode readDisplayFftSizingMode(const AppSettings& settings)
 {

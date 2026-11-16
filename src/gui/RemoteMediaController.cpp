@@ -1,5 +1,31 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-11-06: a display with no frame in its session moves nothing on a
+//               direct path during a speaker fault, so that path has no
+//               restart loop either. receiveDisplayForTest. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-06: A pan refused for a slice asks again when this window comes to
+//               control it, and a source retirement with a display budget
+//               clears a pan's wide state. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
+//   2026-11-05: a speaker failure says nothing about display, so a display
+//               that stops during one still moves a direct path to the tunnel
+//               and, on its own clock lastDisplayMs, once per outage, still
+//               takes the stall rule's recovery on a relayed path.
+//               setDisplaysSuspendingForTest, markDisplaysAcceptedForTest.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05: the unmute restarts the silence rules' clocks, so a long mute
+//               on a relayed path no longer ends the session at the next
+//               tick; restartSilenceClocks is the one place that restarts
+//               them. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
+//   2026-11-05: silence the window caused by stopping its own audio for a
+//               speaker failure no longer moves the media connection or ends
+//               the session; the silence rules count from the end of that
+//               stop. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
+//   2026-11-05: A window asks the Core at its own paint rate. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-30: bounded passive retry schedule history and a hold boundary
 //               for canceled startup steps. J.J. Boyd (KG4VCF),
 //               AI-assisted via OpenAI Codex.
@@ -903,10 +929,9 @@ DbmWindow heldDbmWindow(const SpectrumWidget* widget, double binWidthHz,
 
 int requestedFps()
 {
-    return qBound(1, AppSettings::instance().value(
-                         QLatin1String(ControlRanges::kDisplaySpectrumFpsKey),
-                         QString::number(ControlRanges::kDisplaySpectrumFpsDefault))
-                         .toString().toInt(), 60);
+    // This window's own rate: each endpoint is sent at the rate its window
+    // asks (DaemonMediaController), so a slow machine asks for less.
+    return readDisplayPaintFps(AppSettings::instance());
 }
 
 // The FFT size a pan asks for, from the station's sizing mode (design D38,
@@ -1387,6 +1412,30 @@ struct RemoteMediaController::Private {
     bool replacementFallback = false;
     qint64 fallbackFinishedMs = -1;
     bool txSilenceSuppressed = false;
+    // 2026-11-06: when a display frame last came in this session
+    // (allocationClock; -1 before the first). Other streams don't feed it, so
+    // it can judge a display while the speakers' audio is off.
+    qint64 lastDisplayMs = -1;
+    // 2026-11-05: silence this window expected is over (it was muted, keyed,
+    // its radio was down, or it stopped its own audio for a speaker failure),
+    // so the silence rules count from now, each with its full wait.
+    void restartSilenceClocks()
+    {
+        const qint64 now = allocationClock();
+        if (lastAudio.isValid()) { lastAudio.restart(); }
+        if (lastMediaMs >= 0) { lastMediaMs = now; }
+        if (lastDisplayMs >= 0) { lastDisplayMs = now; }
+        if (fallbackFinishedMs >= 0) { fallbackFinishedMs = now; }
+    }
+    // 2026-11-05: a display the Core has accepted and is sending, so its
+    // silence says something about the path whatever the audio is doing.
+    bool displayExpected() const
+    {
+        return std::any_of(bindings.cbegin(), bindings.cend(), [](const auto& entry) {
+            const Binding& binding = entry.second;
+            return binding.accepted && !binding.suspending && !binding.retiring;
+        });
+    }
     bool coreTransmitting() const
     {
         if (!client || client->capabilities().txStateVersion < 1) { return false; }
@@ -1441,6 +1490,8 @@ struct RemoteMediaController::Private {
     // the Core said (CoreBusy); None for a pan at its requested quality.
     // The pan status builder maps it to words.
     QHash<QString, DisplayBudgetReason> panBudgetReason;
+    /// Whether this window controlled each slice at the mirror's last word.
+    QHash<int, bool> sliceControlledHere;
     // Parity Task 17 (R-R3-01, R-R3-04): each pan's dBm window, settled
     // once it has held for a frame period so a drag of the dBm strip asks
     // the Core again when it stops, not at every step.
@@ -1921,6 +1972,11 @@ struct RemoteMediaController::Private {
     // A persistent local playback failure and the identity it was recorded
     // against; only matching recovery with real speaker progress clears it.
     std::optional<RemoteAudioFailure> audioFailure;
+    // 2026-11-05: this window stopped its own audio because its speaker
+    // failed, so the Core's silence says nothing about the path. Set by the
+    // failure; ended by packets reaching a running receiver, by a receiver
+    // that ran dry (the Core was asked and sent nothing), or by stop().
+    bool audioStoppedForSpeaker = false;
     // An interruption whose automatic retry is scheduled, until the next
     // accepted context or stop().
     bool audioRestarting = false;
@@ -2166,6 +2222,39 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         // silence rules wait for the radio's return, which restarts their
         // clocks (connectionStateChanged below).
         if (!d->model->isConnected()) { return; }
+        // 2026-11-05: the same for a window that stopped its own audio for a
+        // speaker failure: asking the Core for nothing is no outage, and a
+        // failed speaker is this computer's, not the path's. Both rules count
+        // from the end of the stop, so a retry that reaches a dead path still
+        // gets their full wait and no less. A display the Core is sending
+        // still counts: a fault can last the whole session, and waiting it
+        // out would leave that display frozen. On a relayed path a display
+        // that delivered in this session and then stopped takes the stall
+        // rule's recovery, on its own clock, since headphones or a receiver
+        // stream can keep running beside it. The next session has no frame,
+        // so this restarts the session once per outage, not on every fault.
+        if (d->audioStoppedForSpeaker) {
+            // A display with no frame in this session has nothing to have
+            // stopped. On a direct path it would otherwise move media, then
+            // recover, then the same in the next session, for as long as the
+            // fault lasts.
+            if (!d->displayExpected() || d->lastDisplayMs < 0) {
+                d->restartSilenceClocks();
+                return;
+            }
+            d->lastAudio.restart();
+            const qint64 displaySilentMs = d->allocationClock() - d->lastDisplayMs;
+            if (slowPath && displaySilentMs > kMediaStallMs) {
+                qCInfo(lcRemoteMedia) << "No display from the Core for" << displaySilentMs
+                                      << "ms on a relayed path; starting audio and display again";
+                d->lastAudio.invalidate();
+                requestRecovery(d->epoch, QStringLiteral("The display from the Core stopped. "
+                                                         "Starting audio and display again."));
+                return;
+            }
+            checkMediaSilence();
+            return;
+        }
         if (slowPath && d->lastAudio.elapsed() > kMediaStallMs) {
             qCInfo(lcRemoteMedia) << "No audio from the Core for" << d->lastAudio.elapsed()
                                   << "ms on a relayed path; starting audio and display again";
@@ -2313,6 +2402,11 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         }
         d->audioEnabled = false;
         d->audio->stop();
+        // 2026-11-06: a display can be frozen, or just resumed, as the fault
+        // begins. With no fault nothing was judging it, so its wait starts now.
+        if (!std::exchange(d->audioStoppedForSpeaker, true) && d->lastDisplayMs >= 0) {
+            d->lastDisplayMs = d->allocationClock();
+        }
         // A restart waiting on its backoff step ends here (the disable below
         // moves the revision on, so it could never run); the failure's own
         // retry, below, takes the next step.
@@ -2342,6 +2436,11 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
             [this](const QString& reason, RemoteAudioReceiver::Fault fault) {
         qCWarning(lcRemoteMedia) << reason;
         d->audio->stop();
+        // 2026-11-05: the speaker was not what stopped this one, so what the
+        // silence rules see from here is the path's again.
+        if (std::exchange(d->audioStoppedForSpeaker, false)) {
+            d->restartSilenceClocks();
+        }
         // R-R3-21, R-R3-51: while the Core transmits it sends this device no
         // receive audio, so running out of packets is expected silence, not
         // an outage (nor a lossless link interruption). Nothing is asked
@@ -2366,8 +2465,14 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         scheduleAudioRetry();
         refreshAudioStatus();
     });
-    connect(model->audioEngine(), &AudioEngine::masterMutedChanged,
-            this, &RemoteMediaController::requestAudio);
+    connect(model->audioEngine(), &AudioEngine::masterMutedChanged, this, [this](bool muted) {
+        // 2026-11-05: a muted window asks the Core for nothing and the
+        // silence rules wait, but their clocks kept running, so the unmute
+        // found them expired and the next tick ended the session unless the
+        // first packet got there first.
+        if (!muted) { d->restartSilenceClocks(); }
+        requestAudio();
+    });
     // R-R3-45: the headphones mix plays on this computer's headphones with
     // its own receiver and rate matcher. A failure there stops only it.
     d->headphones = std::make_unique<RemoteAudioReceiver>(model->audioEngine(),
@@ -2507,16 +2612,11 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
             d->txSilenceSuppressed = onAir;
             // Only the actual TX-to-RX transition restarts a clock already
             // armed by RTP. Periodic txState fields cannot defer recovery.
-            if (returningToRx && d->lastAudio.isValid()) {
-                d->lastAudio.restart();
-            }
             // The direct media ladder: the silence while keyed is expected,
             // so the silence fallback's clock (and a finished fallback's
             // wait) restarts on the return to receive too.
             if (returningToRx) {
-                const qint64 now = d->allocationClock();
-                if (d->lastMediaMs >= 0) { d->lastMediaMs = now; }
-                if (d->fallbackFinishedMs >= 0) { d->fallbackFinishedMs = now; }
+                d->restartSilenceClocks();
                 // R-R3-51: streams the transmit silence stopped are asked
                 // for again now, not at a backoff step.
                 resumeAudioAfterTransmit();
@@ -2653,9 +2753,10 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         // Slice control plan Task 14a: a change in who controls a slice may
         // turn a refused C-Tune pin into an accepted one, so the next fresh
         // picture may ask again.
-        connect(client->sliceAccess(), &SliceAccessMirror::changed, this, [this](int) {
+        connect(client->sliceAccess(), &SliceAccessMirror::changed, this, [this](int sliceId) {
             for (auto& state : d->ctunStreams) { state.refused = false; }
             refreshCtunState();
+            askAgainForRefusedDisplaysOf(sliceId);
         });
     }
     // The pin delta may follow its command result. Budgeted displays do
@@ -2692,10 +2793,7 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
             // was down, and the radio's first audio can come after this
             // news does. The silence rules count from the radio's return,
             // as they do from the return to receive.
-            const qint64 now = d->allocationClock();
-            if (d->lastAudio.isValid()) { d->lastAudio.restart(); }
-            if (d->lastMediaMs >= 0) { d->lastMediaMs = now; }
-            if (d->fallbackFinishedMs >= 0) { d->fallbackFinishedMs = now; }
+            d->restartSilenceClocks();
             refreshSubscriptions();
             requestAudio();
         }
@@ -4146,6 +4244,7 @@ void RemoteMediaController::stop()
     }
     d->directUpgradeStep = 0;
     d->lastMediaMs = -1;
+    d->lastDisplayMs = -1;
     d->currentRouted = false;
     d->replacementRouted = false;
     d->replacementDirect = false;
@@ -4241,6 +4340,7 @@ void RemoteMediaController::stop()
     d->displayCounters = {};
     // A playback problem belongs to its session and ends with it.
     d->audioFailure.reset();
+    d->audioStoppedForSpeaker = false;
     d->audioRestarting = false;
     d->audioFailureDisableSent = false;
     d->audioRequestUnsent = false;
@@ -4664,6 +4764,7 @@ void RemoteMediaController::promoteReplacement()
     d->replacementDirect = false;
     d->replacementMoveFolded = false;
     d->lastMediaMs = d->allocationClock();
+    if (d->lastDisplayMs >= 0) { d->lastDisplayMs = d->lastMediaMs; }
     // The fix wave: a finished fallback waits one window for media; the
     // tunnel's stall rule counts from here too, not from the old silence.
     if (std::exchange(d->replacementFallback, false)) {
@@ -5114,6 +5215,27 @@ void RemoteMediaController::raiseAudioRestartForTest(RemoteAudioReceiver::Fault 
                                     fault);
 }
 
+void RemoteMediaController::setDisplaysSuspendingForTest(bool suspending)
+{
+    for (auto& [id, binding] : d->bindings) {
+        Q_UNUSED(id);
+        binding.suspending = suspending && binding.accepted;
+    }
+}
+
+void RemoteMediaController::receiveDisplayForTest(const QByteArray& packet)
+{
+    receiveDisplay(packet);
+}
+
+void RemoteMediaController::markDisplaysAcceptedForTest()
+{
+    for (auto& [id, binding] : d->bindings) {
+        Q_UNUSED(id);
+        binding.accepted = true;
+    }
+}
+
 void RemoteMediaController::raiseAudioFailureForTest(RemoteAudioReceiver::Fault fault)
 {
     emit d->audio->errorOccurred(QStringLiteral("raised by a test"), fault);
@@ -5347,6 +5469,9 @@ void RemoteMediaController::routeRtp(const QByteArray& arrived, const MediaPeer*
 {
     // Step 2b: the stall rule's clock.
     d->lastAudio.start();
+    // 2026-11-05: packets still in flight when the speaker failed reach a
+    // stopped receiver and change nothing; these answer a later request.
+    if (d->audio->isRunning()) { d->audioStoppedForSpeaker = false; }
     d->lastMediaMs = d->allocationClock();
     d->silenceFallbackFired = false;
     d->fallbackFinishedMs = -1;
@@ -5405,6 +5530,7 @@ void RemoteMediaController::deliverRtp(const QByteArray& packet)
 
 void RemoteMediaController::start()
 {
+    d->sliceControlledHere.clear();
     // stop() reports the retired audio status, and a listener may retire
     // this controller in turn.
     const QPointer<RemoteMediaController> self(this);
@@ -5741,6 +5867,31 @@ bool RemoteMediaController::retireSubscriptions(const QList<quint32>& endpointId
             || d->connectionId != connectionId) { return false; }
     }
     return true;
+}
+
+// A pan refused for a slice this window has just come to control may now be
+// granted, and with its request unchanged nothing else would ask. Only the arrival
+// of control: the mirror reports any change to the slice's entry, MOX edges and
+// listeners included, and a refused pan must not ask again for those.
+void RemoteMediaController::askAgainForRefusedDisplaysOf(int sliceId)
+{
+    const SliceAccessMirror* access = d->client ? d->client->sliceAccess() : nullptr;
+    if (!access) { return; }
+    const bool controlled = access->controlledHere(sliceId);
+    const bool wasControlled = d->sliceControlledHere.value(sliceId, false);
+    d->sliceControlledHere.insert(sliceId, controlled);
+    if (!controlled || wasControlled) { return; }
+    bool cleared = false;
+    for (auto& [endpointId, binding] : d->bindings) {
+        Q_UNUSED(endpointId);
+        if (!binding.slice || binding.slice->sliceIndex() != sliceId
+            || (!binding.rejected && binding.refusedIdentity.isEmpty())) { continue; }
+        binding.observed = {};
+        binding.refusedIdentity.clear();
+        binding.refusalReason.clear();
+        cleared = true;
+    }
+    if (cleared) { refreshSubscriptions(); }
 }
 
 void RemoteMediaController::refreshSubscriptions()
@@ -7829,7 +7980,14 @@ void RemoteMediaController::receiveAllocationResult(const QJsonObject& payload)
             // is SpectrumEndpoint.h's, the constant the Core sends.
             binding.sliceLeftCore = reason == QLatin1String(kRetireReasonSliceRemoved);
             if (erase) { d->bindings.erase(found); }
-            if (widget) { widget->invalidateRemoteSpectrumFrame(); }
+            if (widget) {
+                // A wide view has nothing left to hold it open.
+                if (widget->remoteWidebandActive()) {
+                    widget->clearRemoteSpectrum();
+                } else {
+                    widget->invalidateRemoteSpectrumFrame();
+                }
+            }
             if (!self) { return; }
             refreshSubscriptions();
         }
@@ -7901,7 +8059,12 @@ void RemoteMediaController::receiveAllocationResult(const QJsonObject& payload)
                 }
                 if (erase) { d->bindings.erase(found); }
                 if (widget) {
-                    widget->invalidateRemoteSpectrumFrame();
+                    // A wide view has nothing left to hold it open.
+                    if (widget->remoteWidebandActive()) {
+                        widget->clearRemoteSpectrum();
+                    } else {
+                        widget->invalidateRemoteSpectrumFrame();
+                    }
                     if (!self || !widget) { return; }
                     widget->applyRemoteCtunState(false, false);
                     if (!self) { return; }
@@ -8627,6 +8790,7 @@ void RemoteMediaController::receiveDisplay(const QByteArray& packet)
     // before any plane can reach the renderer.
     if (packet.size() < 42 || packet.size() > DisplayCodecEncoder::kMaxEncodedBytes
         || packet.first(4) != QByteArrayLiteral("NSDC")) { return; }
+    d->lastDisplayMs = d->allocationClock();
     const quint32 id = qFromBigEndian<quint32>(packet.constData() + 8);
     const quint32 generation = qFromBigEndian<quint32>(packet.constData() + 12);
     auto it = d->bindings.find(id);

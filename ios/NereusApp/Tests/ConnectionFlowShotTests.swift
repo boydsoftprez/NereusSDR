@@ -60,10 +60,12 @@ struct ConnectionFlowShotTests {
     private func setup(factory: @escaping LinkTransportFactory, paired: [PairedStation] = [],
                        keyItem: InMemorySecretItem = InMemorySecretItem(), appMajors: [UInt16] = [1],
                        browser: FakeStationBrowser? = nil, service: FakeRemoteAccess? = nil,
-                       rendezvous: FakeStation? = nil) throws -> Setup {
+                       rendezvous: FakeStation? = nil, lastUsed: PairedStation? = nil) throws -> Setup {
         let defaults = try #require(UserDefaults(suiteName: "ConnectionFlowShotTests-\(UUID().uuidString)"))
         let displayDefaults = try #require(UserDefaults(suiteName: "ConnectionFlowShotTests-display"))
-        let app = AppModel(phoneSettings: PhoneSettings(defaults: defaults),
+        let phoneSettings = PhoneSettings(defaults: defaults)
+        phoneSettings.lastUsedCore = lastUsed.map { Base64URL.encode($0.identityKey) }
+        let app = AppModel(phoneSettings: phoneSettings,
                            displaySettings: BandDisplaySettingsStore(defaults: displayDefaults))
         let stations = PairedStationStore(item: InMemorySecretItem())
         for station in paired {
@@ -267,6 +269,10 @@ struct ConnectionFlowShotTests {
         let cores = try boardCores(station)
         let setup = try setup(factory: station.transportFactory, paired: cores)
         try await shoot("11-your-cores", setup)
+
+        // The last Core used, KG4VCF/field, leads and has the highlighted Connect.
+        let usedField = try self.setup(factory: station.transportFactory, paired: cores, lastUsed: cores[2])
+        try await shoot("11b-your-cores-the-last-used-first", usedField)
 
         // KG4VCF/shack removes this phone mid-session.
         let flow = setup.flow

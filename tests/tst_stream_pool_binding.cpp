@@ -148,9 +148,13 @@ double settledPeakFromATone(RxChannel* rx, int rateHz,
 
 namespace {
 
+const QString kSavedRateMac = QStringLiteral("AA:BB:CC:DD:EE:53");
+
 QString savedRateKey(int sliceId)
 {
-    return QStringLiteral("Slice%1/Band20m/SampleRate").arg(sliceId);
+    return QStringLiteral("hardware/%1/slices/%2/SampleRate")
+        .arg(AppSettings::normalizedRadioMac(kSavedRateMac))
+        .arg(sliceId);
 }
 
 // The codec is declared first so it outlives the model that points at it.
@@ -381,6 +385,9 @@ private:
 
     static void restartOnP2(RestartedP2& r, int savedRateHz)
     {
+        RadioInfo info;
+        info.macAddress = kSavedRateMac;
+        r.model.setLastRadioInfoForTest(info);
         r.model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
         r.model.receiverManager()->setP2Codec(&r.codec);
         r.engine = r.model.wdspEngine();
@@ -1058,6 +1065,9 @@ private slots:
     void rejected_restored_rate_keeps_effective_rate_and_geometry()
     {
         RadioModel model;
+        // A real board: 192 kHz has to be on the ladder for the plan to be what
+        // refuses it. With no board known the ladder is 48 kHz alone.
+        model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
         WdspEngine* engine = model.wdspEngine();
         engine->m_initialized = true;   // friend access (NEREUS_BUILD_TESTS)
 
@@ -1621,9 +1631,9 @@ private slots:
         QCOMPARE(model.sliceById(b)->sampleRateHz(), 768000);
     }
 
-    // A slice evicted by a narrowing lands on a different stream at that
-    // stream's own rate, so its mirror must follow the migration rather than
-    // keep reporting the rate of the window it just left.
+    // A slice evicted by a narrowing lands on a different stream and keeps the
+    // rate it was running (JJ's ruling 2026-11-05), and its mirror reports what
+    // that stream runs.
     void an_evicted_slice_reports_its_new_streams_rate()
     {
         RadioModel model;
@@ -1637,14 +1647,14 @@ private slots:
         model.sliceById(b)->setFrequency(14400000.0);
         QCOMPARE(model.sliceById(b)->sampleRateHz(), 768000);
 
-        // Narrowing to +-96 kHz evicts B onto its own DDC, which was never
-        // widened and still carries the pool default.
+        // Narrowing to +-96 kHz evicts B onto a DDC of its own, at B's rate.
         model.requestSliceSampleRate(a, 192000);
 
         QVERIFY(model.sliceById(b)->streamIndex()
                 != model.sliceById(a)->streamIndex());
         QCOMPARE(model.sliceById(a)->sampleRateHz(), 192000);
-        QCOMPARE(model.sliceById(b)->sampleRateHz(), 192000);
+        QCOMPARE(model.sliceById(b)->sampleRateHz(), 768000);
+        QCOMPARE(model.streamSampleRateHzForTest(model.sliceById(b)->streamIndex()), 768000);
     }
 
     void a_rate_request_for_an_unknown_slice_is_ignored()
@@ -2367,12 +2377,12 @@ private slots:
     // ── R-R3-49: a Protocol 2 slice's saved rate survives a restart ─────
     //
     // A window's rate change on Protocol 2 is per DDC and is recorded only
-    // as the slice's per-band SampleRate. connectToRadio opens every stream
+    // as the slice's SampleRate. connectToRadio opens every stream
     // at the radio-wide rate and binds the slices there; it then reads each
     // slice's saved rate (savedSliceSampleRates, before the bind) and puts
     // it back (applySavedSliceSampleRates). This stands up the same state a
     // restart leaves: a P2 codec, WDSP channels, a slice bound at 192 kHz
-    // with 768 kHz saved for its band.
+    // with 768 kHz saved for it.
     void a_p2_slice_comes_back_at_its_saved_rate()
     {
         RestartedP2 r;
@@ -2402,7 +2412,7 @@ private slots:
         QCOMPARE(assignment->rate[static_cast<size_t>(slice->ddcIndex())], 768000);
     }
 
-    void a_band_with_no_saved_rate_stays_at_the_connect_rate()
+    void a_slice_with_no_saved_rate_stays_at_the_connect_rate()
     {
         RestartedP2 r;
         restartOnP2(r, 0);
@@ -2433,7 +2443,7 @@ private slots:
     }
 
     // Protocol 1 has one rate for the whole radio, from the radio-wide key;
-    // a slice's per-band rate does not move it at connect.
+    // a slice's saved rate does not move it at connect.
     void protocol_1_keeps_the_radio_wide_rate()
     {
         RestartedP2 r;
@@ -2446,10 +2456,10 @@ private slots:
         QCOMPARE(r.model.streamSampleRateHzForTest(slice->streamIndex()), 192000);
     }
 
-    // A rate change is saved for the slice's band, so there is something to
+    // A rate change is saved for the slice, so there is something to
     // come back to: before this nothing saved it unless some other slice
     // setting changed too.
-    void a_rate_change_saves_the_slices_band_rate()
+    void a_rate_change_saves_the_slices_rate()
     {
         RestartedP2 r;
         restartOnP2(r, 0);
@@ -2458,7 +2468,7 @@ private slots:
         QVERIFY(r.model.waitForReceiveLaneForTest());
         QCOMPARE(r.model.sliceById(r.id)->sampleRateHz(), 768000);
         r.model.flushPendingSettingsSave();
-        QCOMPARE(r.model.sliceById(r.id)->savedSampleRateHz(Band::Band20m), 768000);
+        QCOMPARE(r.model.sliceById(r.id)->savedSampleRateHz(), 768000);
     }
 
     // ── 2026-10-25: the stream switch and the re-rate in one step ───────

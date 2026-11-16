@@ -9,6 +9,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05 - NEREUS_GUI_EXPORT: this class's signals are used from outside
+//                 its DLL. Without the export their addresses were MinGW's
+//                 auto-import thunks, which moc's code does not recognize,
+//                 so a QSignalSpy or connect on them failed on Windows.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - PR 677 review fix wave (I6): markColourPicked(). J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Fix wave R1: options with no bundled artwork stay visible,
@@ -71,6 +76,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include <QWidget>
+#include "gui/NereusGuiExport.h"
 #include <QString>
 
 class QFormLayout;
@@ -104,7 +110,7 @@ class MeterItem;
 // On every interactive change the editor emits propertyChanged().
 // The dialog wires that to an "apply-and-redraw" slot so edits
 // propagate live to the target container's MeterWidget.
-class BaseItemEditor : public QWidget {
+class NEREUS_GUI_EXPORT BaseItemEditor : public QWidget {
     Q_OBJECT
 
 public:

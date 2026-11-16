@@ -194,6 +194,8 @@ class TestRadeApplet;
 // Phase 3F Sub-Epic I closeout, defect H1: the per-stream drain-geometry
 // test primes the engine so createRxChannel can seed real RX channels.
 class TestStreamPoolBinding;
+// The saved-rate test primes it the same way, so a Protocol 1 change can happen.
+class TestSampleRateSticks;
 // Phase 3F: the channel-id map test primes the engine so it can watch
 // which ids openRxChannelPool actually opens.
 class TestWdspChannelIdMap;
@@ -1146,6 +1148,7 @@ private:
     // per-stream drain-geometry test, which seeds one real RX channel per
     // slice so it can watch setRxChannelRate follow a stream's rate change.
     friend class ::TestStreamPoolBinding;
+    friend class ::TestSampleRateSticks;
     // Phase 3F: same friendship for the channel-id map test, which drives
     // RadioModel::openRxChannelPool and asserts on the ids it opened.
     friend class ::TestWdspChannelIdMap;

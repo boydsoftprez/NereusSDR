@@ -23,6 +23,8 @@
 //                 AI-assisted transformation via Anthropic Claude Code.
 //   2026-10-26 - bandGridBandFromFrequency, and SWL seeds (see the .cpp).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05 - bandMiddleHz, for the band stack.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -60,6 +62,8 @@
 
 #pragma once
 
+#include <optional>
+
 #include "../core/WdspTypes.h"
 #include "Band.h"
 
@@ -89,6 +93,10 @@ BandSeed seedFor(Band b);
 /// lit band use it, so a slice on an SWL band clicks and saves as that
 /// band, not as GEN.
 Band bandGridBandFromFrequency(double hz);
+
+/// The middle of `band`: its range for a ham or SWL band, and its seed for
+/// WWV and GEN, which have no range. Nullopt for XVTR.
+std::optional<double> bandMiddleHz(Band band);
 
 } // namespace BandDefaults
 } // namespace NereusSDR

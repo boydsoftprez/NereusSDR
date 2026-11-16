@@ -22,9 +22,11 @@ struct SetupChoiceRow: View {
                     Text(title)
                         .font(.body.weight(.semibold))
                         .foregroundStyle(.primary)
-                    Text(detail)
-                        .font(.footnote)
-                        .foregroundStyle(WorkspacePalette.textSecondary)
+                    if !detail.isEmpty {
+                        Text(detail)
+                            .font(.footnote)
+                            .foregroundStyle(WorkspacePalette.textSecondary)
+                    }
                 }
                 Spacer(minLength: 0)
                 SetupCheckMark(chosen: chosen)

@@ -1,4 +1,4 @@
-// NereusSDR for iOS: the Pan 1 sheet: the band grid, a slice or a notch added here, and the extended view
+// NereusSDR for iOS: the Pan 1 sheet: the band grid, its band stack, a slice or a notch added here, and the extended view
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 
 import NereusBand
@@ -20,6 +20,13 @@ struct PanSheet: View {
     var stack: PanStackModel?
     /// This pan's slices, for Close this pan's note.
     var slices: BandSlicesModel?
+    /// This pan's band stack, under the grid on every device.
+    @ObservedObject var bandStack: BandStackModel
+    /// Closes the sheet and opens Setup's Band Stack page.
+    var openBandStackSetup: () -> Void = {}
+
+    /// The sheet's inner width, which the block's row sizes follow.
+    @State private var contentWidth: CGFloat = 382
 
     var body: some View {
         DropSheet(title: pan.title, accessibilityIdentifier: "panSheet") {
@@ -36,10 +43,16 @@ struct PanSheet: View {
             }
         } content: {
             SheetCaption("Band:")
-            BandSelectGrid(model: model)
+            BandSelectGrid(model: model, stack: bandStack)
             if model.sliceLetter != nil {
-                SheetNote("A band opens where slice \(letter) last was on it: its frequency, mode and filter.")
+                if bandStack.availability == .ready {
+                    SheetNote("A band opens at slice \(letter)'s place in its stack. Tap the lit band for the next entry.")
+                } else {
+                    SheetNote("A band opens where slice \(letter) last was on it: its frequency, mode and filter.")
+                }
             }
+            BandStackBlock(model: bandStack, width: contentWidth)
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { contentWidth = $0 }
             SheetGrid(columns: 2) {
                 PanelButton(label: "Add a slice here", lit: false, style: .blue, disabled: !model.canAddSlice) {
                     model.addSlice()
@@ -65,6 +78,21 @@ struct PanSheet: View {
                 SheetNote(note)
                     .accessibilityIdentifier("panSheetNote")
             }
+            Button(action: openBandStackSetup) {
+                Text("Band stack settings in Setup \u{203A}")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(ChromeColours.accentText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 4)
+                    .padding(.bottom, 2)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("bandStackSetupLink")
+        }
+        // Out here: the sheet's own redraw when it starts to scroll is no closing.
+        .onDisappear {
+            bandStack.endViewing()
         }
     }
 

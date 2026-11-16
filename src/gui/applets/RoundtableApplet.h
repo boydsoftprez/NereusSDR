@@ -17,6 +17,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04: setSliceSource. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
@@ -75,6 +77,11 @@ public:
     /// A here does: a panadapter tag or a fold's row (design 11.2).
     void tuneToRoom(const QString& roomId);
 
+    /// Which slice this applet follows, Tunes and reads for, asked again on every
+    /// syncFromModel. Unset, the radio's active slice. Null means none: the panel
+    /// follows nothing and Tune is greyed.
+    void setSliceSource(std::function<SliceModel*()> source);
+
     /// What opens the Archive's sign-in link (a seam for tests).
     void setUrlOpener(std::function<void(const QUrl&)> opener) { m_urlOpener = std::move(opener); }
 
@@ -97,6 +104,8 @@ private:
     QWidget* m_poppedNote = nullptr;
     QPointer<RoundtableWindow> m_window;
     QPointer<SliceModel> m_slice;
+    std::function<SliceModel*()> m_sliceSource;
+    int m_boundSliceId = -2;  // the slice last bound; -1 for none, -2 before the first bind
     QMetaObject::Connection m_sliceFrequency;
     QMetaObject::Connection m_sliceMode;
     QMetaObject::Connection m_sliceMeter;

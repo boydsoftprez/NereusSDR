@@ -1202,18 +1202,14 @@ void ConnectionPanel::onConnectClicked()
 
     // Phase 3I Task 17 — persist as auto-reconnect target.
     // Compute the same macKey saveRadio uses (MAC if present, else "manual-ip-port").
-    // saveRadio updates the autoConnect flag to true for this entry, then
-    // setLastConnected records which entry to reconnect to on next launch.
+    // saveRadioOnConnect keeps this entry's saved pin and Auto-connect choices
+    // (a first connect turns Auto-connect on), then setLastConnected records
+    // which entry to reconnect to on next launch.
     const QString macKey = info.macAddress.isEmpty()
         ? QStringLiteral("manual-%1-%2").arg(info.address.toString()).arg(info.port)
         : info.macAddress;
     AppSettings& s = AppSettings::instance();
-    // Preserve existing pinToMac flag if the radio is already saved; default false.
-    bool pinToMac = false;
-    if (auto existing = s.savedRadio(macKey)) {
-        pinToMac = existing->pinToMac;
-    }
-    s.saveRadio(info, pinToMac, /*autoConnect=*/true);
+    s.saveRadioOnConnect(info);
     s.setLastConnected(macKey);
     s.save();
 

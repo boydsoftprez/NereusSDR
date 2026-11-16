@@ -107,6 +107,10 @@
 //   2026-10-15: namesOf drops a check for an empty name sliceHolderWords
 //               never returns. J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Anthropic Claude Code.
+//   2026-11-05: Band stack plan Task 5: a recall on a shared receiver
+//               (handleBandStackRecall; checkPanMove reads its target from
+//               planRecall, again at proceed). J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/StationServer.h"
@@ -142,6 +146,7 @@
 #include "models/Band.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
+#include "models/bandstack/BandStackController.h"
 
 namespace NereusSDR {
 
@@ -596,6 +601,43 @@ void StationServer::answerHere(SessionTransport* transport, const SessionMessage
 
 // ── Commands: the pin, a C-Tune move, adding a slice or a pan ────────────
 
+namespace {
+
+// Band stack plan Task 5: where a recall would go now. Nullopt for arguments
+// the dispatcher refuses or a plan with no target. Never carried on the
+// message: the stack may change while a question is up (design 5.6).
+struct RecallTarget {
+    int sliceId = -1;
+    double frequencyHz = 0.0;
+};
+
+std::optional<RecallTarget> recallTargetOf(const RadioModel& model, const SessionMessage& message)
+{
+    const BandStackController* const controller = model.bandStackController();
+    if (controller == nullptr) {
+        return std::nullopt;
+    }
+    const std::optional<BandStackRecallRequest> request =
+        SessionCommandDispatcher::parseBandStackRecall(message);
+    if (!request) {
+        return std::nullopt;
+    }
+    const BandStackRecallPlan plan = controller->planRecall(*request);
+    if (!plan.valid) {
+        return std::nullopt;
+    }
+    return RecallTarget{request->sliceId, static_cast<double>(plan.frequencyHz)};
+}
+
+} // namespace
+
+bool StationServer::isBandStackRecall(const SessionMessage& message)
+{
+    return message.kind == SessionMessageKind::CommandInvoke
+        && (message.commandVerb == "bandStack.press" || message.commandVerb == "bandStack.step"
+            || message.commandVerb == "bandStack.goTo");
+}
+
 bool StationServer::handleReceiverCommand(SessionTransport* transport, const SessionMessage& message)
 {
     if (m_radioModel.isNull() || m_radioModel->role() != RadioModel::Role::Local
@@ -652,6 +694,9 @@ bool StationServer::handleReceiverCommand(SessionTransport* transport, const Ses
     if (verb == "addSlice" || verb == "addSliceOnPan") {
         return handleAddWithTake(transport, message, requester);
     }
+    if (isBandStackRecall(message)) {
+        return handleBandStackRecall(transport, message, requester);
+    }
     return false;
 }
 
@@ -659,10 +704,20 @@ StationServer::PanMoveCheck StationServer::checkPanMove(const QByteArray& reques
                                                         const SessionMessage& original) const
 {
     PanMoveCheck check;
-    const bool write = original.kind == SessionMessageKind::PropertyWrite;
+    // Band stack plan Task 5: a recall is a write whose frequency is where the
+    // stack says now.
+    const bool recall = isBandStackRecall(original);
+    const bool write = original.kind == SessionMessageKind::PropertyWrite || recall;
     int sliceId = -1;
     double centreHz = 0.0;
-    if (write) {
+    if (recall) {
+        const std::optional<RecallTarget> target = recallTargetOf(*m_radioModel, original);
+        if (!target) {
+            return check;
+        }
+        sliceId = target->sliceId;
+        centreHz = target->frequencyHz;
+    } else if (write) {
         bool ok = false;
         sliceId = original.objectKey.startsWith("slice:") ? original.objectKey.mid(6).toInt(&ok) : -1;
         if (!ok || !readDouble(original.updates, "frequency", &centreHz)) {
@@ -909,6 +964,73 @@ bool StationServer::handleAddWithTake(SessionTransport* transport, const Session
     }
     if (live.activeStreamCount() >= live.streamCount()
         && planner.anotherDeviceHoldsAReceiver(requester)) {
+        askTake(transport, message, request);
+    }
+    return true;
+}
+
+// ── A band stack recall on a shared receiver (design 5.6) ────────────────
+
+bool StationServer::handleBandStackRecall(SessionTransport* transport, const SessionMessage& message,
+                                          const QByteArray& requester)
+{
+    // Whatever this cannot read or may not do, the dispatcher answers.
+    const std::optional<RecallTarget> target = recallTargetOf(*m_radioModel, message);
+    if (!target) {
+        return false;
+    }
+    const SliceModel* slice = m_radioModel->sliceById(target->sliceId);
+    if (slice == nullptr
+        || !SliceAccessPolicy::mayChange(*m_radioModel->sliceOwnership(), requester,
+                                         target->sliceId)) {
+        return false;
+    }
+    const PanMoveCheck check = checkPanMove(requester, message);
+    if (check.kind == PanMoveCheck::Kind::OnAir) {
+        answerHere(transport, SessionMessages::commandResult(
+            message.commandVerb, message.commandId, false, check.onAir.text, {},
+            {{0, "refusalCode", MirrorWireKind::Utf8, QString::fromUtf8(check.onAir.code)},
+             {0, "refusalFix", MirrorWireKind::Utf8, QString::fromUtf8(check.onAir.fix)}}));
+        return true;
+    }
+    if (check.kind == PanMoveCheck::Kind::Ask) {
+        if (!peerHasSessionHolderVersion(transport)) {
+            answerHere(transport, SessionMessages::commandResult(
+                message.commandVerb, message.commandId, false,
+                olderWindowAskReason(namesOf(check.named)), {}));
+            return true;
+        }
+        const QJsonObject change{
+            {QStringLiteral("label"), receiverLabel(check.stream)},
+            {QStringLiteral("from"), ReceiverPlanner::bandWords(slice->band())},
+            {QStringLiteral("to"), ReceiverPlanner::bandWords(bandFromFrequency(check.centreHz))},
+        };
+        askPanMove(transport, message, check, change);
+        return true;
+    }
+    if (check.kind == PanMoveCheck::Kind::Apply) {
+        // Nobody else would be disturbed: the receiver follows the anchor, and
+        // the dispatcher runs the press.
+        applyPanMove(check, requester);
+        return false;
+    }
+
+    // Today's retune, on the allocator's copy performRecall asks too. Refused
+    // when every receiver is in use: the refusal names who holds them and, for
+    // a device with the feature, the chooser follows (section 6.4).
+    const QString refusal = m_radioModel->retuneRefusalFor(slice, target->frequencyHz);
+    if (refusal.isEmpty()) {
+        return false;
+    }
+    answerHere(transport, SessionMessages::commandResult(
+        message.commandVerb, message.commandId, false, withHolderNames(refusal, requester), {}));
+    if (peerHasSessionHolderVersion(transport)
+        && receiverPlanner().anotherDeviceHoldsAReceiver(requester)) {
+        ReceiverPlanner::TakeRequest request;
+        request.need = ReceiverPlanner::Need::Retune;
+        request.requester = requester;
+        request.centreHz = target->frequencyHz;
+        request.moving = {target->sliceId};
         askTake(transport, message, request);
     }
     return true;
@@ -1784,6 +1906,18 @@ SessionMessage StationServer::answerConfirm(const SessionMessage& invoke, int id
         return proceedTakeBack(transport, *question, choice, invoke);
     }
     if (question->kind == QLatin1String("takeReceiver")) {
+        if (isBandStackRecall(question->original)) {
+            // Band stack plan Task 5 (design 5.6): the take is for where the
+            // stack says now.
+            const std::optional<RecallTarget> target =
+                recallTargetOf(*m_radioModel, question->original);
+            if (!target) {
+                return refuse(QString::fromLatin1(kChangedReason));
+            }
+            ConfirmStep::Question recalled = *question;
+            recalled.centreHz = target->frequencyHz;
+            return proceedTakeReceiver(transport, recalled, choice, invoke);
+        }
         return proceedTakeReceiver(transport, *question, choice, invoke);
     }
     if (question->kind == QLatin1String("takeSlice")) {
@@ -1843,6 +1977,17 @@ SessionMessage StationServer::proceedPanMove(SessionTransport* transport,
             {{0, "refusalCode", MirrorWireKind::Utf8, QString::fromUtf8(check.onAir.code)},
              {0, "refusalFix", MirrorWireKind::Utf8, QString::fromUtf8(check.onAir.fix)}});
     }
+    // Band stack plan Task 5 (design 5.6): a recall whose new target moves no
+    // window is an ordinary retune now, and the operator did confirm the press.
+    if (check.kind == PanMoveCheck::Kind::None && isBandStackRecall(question.original)) {
+        const std::optional<RecallTarget> target = recallTargetOf(*m_radioModel, question.original);
+        if (target
+            && m_radioModel->retuneRefusalFor(m_radioModel->sliceById(target->sliceId),
+                                              target->frequencyHz)
+                   .isEmpty()) {
+            return applyHeld(transport, question, -1, invoke);
+        }
+    }
     if (check.kind == PanMoveCheck::Kind::None || check.stream != question.stream) {
         return SessionMessages::commandResult(invoke.commandVerb, invoke.commandId, false,
                                               QString::fromLatin1(kChangedReason), {});
@@ -1873,7 +2018,8 @@ SessionMessage StationServer::proceedPanMove(SessionTransport* transport,
             // apply nothing.
             SessionPrompt prompt;
             prompt.affected = questionPlanner(transport).affectedJson(check.named);
-            if (question.original.kind == SessionMessageKind::PropertyWrite) {
+            if (question.original.kind == SessionMessageKind::PropertyWrite
+                || isBandStackRecall(question.original)) {
                 const SliceModel* slice = m_radioModel->sliceById(check.exemptSliceId);
                 if (slice != nullptr) {
                     prompt.change = QJsonObject{

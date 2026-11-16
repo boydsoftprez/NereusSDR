@@ -88,10 +88,10 @@ private slots:
             "the restored rate must reach the DDC, not only the menu");
     }
 
-    void band_restore_rejects_narrowing_after_frequency_placement()
+    void a_band_change_leaves_the_rate_alone()
     {
-        // Exercise the real settings/restore/helper ordering with a full pool.
-        // The 20m window hosts two slices 200 kHz apart, so 192 kHz cannot fit.
+        // Exercise the real settings/restore ordering with a full pool. The
+        // 20m window hosts two slices 200 kHz apart.
 #ifdef Q_OS_WIN
         // Windows tests get no NEREUS_TEST_HOME (its known folders ignore a
         // changed home), so check Qt's test-mode location instead.
@@ -134,30 +134,21 @@ private slots:
         settings.setValue(prefix + QStringLiteral("SampleRate"), 192000);
         QVERIFY(slice->hasSettingsFor(Band::Band20m));
 
-        QList<int> restoredStreams;
-        connect(slice, &SliceModel::sampleRateHzChanged, &model, [&](int rate) {
-            if (rate == 192000) {
-                restoredStreams.append(slice->streamIndex());
-            }
-        });
+        // JJ's ruling, 2026-11-05: the rate stays what was set, on every band.
+        // A value an older build saved for this band does not move anything.
         QSignalSpy rejected(&model, &RadioModel::sliceRetuneRejected);
         model.onBandButtonClicked(Band::Band20m);
         QVERIFY(model.waitForReceiveLaneForTest());
 
-        QCOMPARE(rejected.count(), 1);
-        QCOMPARE(rejected.first().at(0).toInt(), a);
-        QCOMPARE(restoredStreams, QList<int>{0});
+        QCOMPARE(rejected.count(), 0);
         QCOMPARE(slice->frequency(), 14200000.0);
         QCOMPARE(slice->streamIndex(), 0);
         QCOMPARE(slice->sampleRateHz(), 768000);
-        QCOMPARE(model.sliceById(b)->frequency(), 14400000.0);
-        QCOMPARE(model.sliceById(b)->streamIndex(), 0);
         QCOMPARE(model.sliceById(b)->sampleRateHz(), 768000);
-        QCOMPARE(model.sliceById(c)->frequency(), 7100000.0);
-        QCOMPARE(model.sliceById(c)->streamIndex(), 1);
-        QCOMPARE(model.sliceById(c)->sampleRateHz(), 192000);
+        // Slice c left slice a's shared receiver on its way to 40m and kept its rate.
+        QCOMPARE(model.sliceById(c)->sampleRateHz(), 768000);
         QCOMPARE(model.streamSampleRateHzForTest(0), 768000);
-        QCOMPARE(model.streamSampleRateHzForTest(1), 192000);
+        QCOMPARE(model.streamSampleRateHzForTest(1), 768000);
         QCOMPARE(model.activeStreamCount(), 2);
     }
 

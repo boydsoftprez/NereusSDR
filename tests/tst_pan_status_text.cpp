@@ -301,7 +301,10 @@ private slots:
                  QLatin1String("slice stream binding changed"));
         QCOMPARE(QLatin1String(kRetireReasonSourceRetune),
                  QLatin1String("The receiver was retuned away from this view."));
-        for (const char* reason : {kRetireReasonSliceRemoved, kRetireReasonStreamBindingChanged,
+        QCOMPARE(QLatin1String(kRetireReasonViewOffReceiver),
+                 QLatin1String("This view is off the receiver, and no wideband spectrum can fill it."));
+        for (const char* reason : {kRetireReasonSliceRemoved, kRetireReasonViewOffReceiver,
+                                   kRetireReasonStreamBindingChanged,
                                    kRetireReasonSourceRetune}) {
             QVERIFY(OperatorReasonText::knownReasons().contains(QLatin1String(reason)));
         }

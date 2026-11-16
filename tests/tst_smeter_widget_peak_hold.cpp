@@ -40,6 +40,10 @@
 
 using NereusSDR::SMeterWidget;
 
+// QCOMPARE binds to a reference, which an exported class's static constexpr
+// member can't take across the Windows DLL boundary (CONTRIBUTING.md).
+namespace { constexpr int kDefaultUpdateIntervalMs = SMeterWidget::kDefaultUpdateIntervalMs; }
+
 class SMeterWidgetPeakHoldTest : public QObject {
     Q_OBJECT
 private slots:
@@ -153,8 +157,8 @@ void SMeterWidgetPeakHoldTest::ratiosMoveTheNeedleThatShareEachUpdate()
 void SMeterWidgetPeakHoldTest::updateIntervalIsClamped()
 {
     SMeterWidget w(SMeterWidget::SettingsStore::Instance);
-    QCOMPARE(w.updateIntervalMs(), SMeterWidget::kDefaultUpdateIntervalMs);
-    QCOMPARE(SMeterWidget::kDefaultUpdateIntervalMs, 33);
+    QCOMPARE(w.updateIntervalMs(), kDefaultUpdateIntervalMs);
+    QCOMPARE(kDefaultUpdateIntervalMs, 33);
     w.setUpdateIntervalMs(5);
     QCOMPARE(w.updateIntervalMs(), NereusSDR::kMinUpdateIntervalMs);
     w.setUpdateIntervalMs(99999);

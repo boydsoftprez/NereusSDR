@@ -9,6 +9,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05 - NEREUS_GUI_EXPORT: this class's signals are used from outside
+//                 its DLL. Without the export their addresses were MinGW's
+//                 auto-import thunks, which moc's code does not recognize,
+//                 so a QSignalSpy or connect on them failed on Windows.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Fix wave round 2 (I7): legacyLayout, the old look's hit
 //                 geometry. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
@@ -86,6 +91,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "MeterItem.h"
+#include "gui/NereusGuiExport.h"
 #include "core/WdspTypes.h"
 #include <QColor>
 #include <QFont>
@@ -109,7 +115,7 @@ class TransmitModel;
 
 // From Thetis clsFilterItem (MeterManager.cs:16852+)
 // Mini passband spectrum/waterfall display with filter edge markers.
-class FilterDisplayItem : public MeterItem {
+class NEREUS_GUI_EXPORT FilterDisplayItem : public MeterItem {
     Q_OBJECT
 
 public:

@@ -246,6 +246,8 @@ SpectrumDefaultsPage::SpectrumDefaultsPage(RadioModel* model, QWidget* parent)
 // and the SpectrumWidget display timer so both stay in sync.  Persisted
 // so the value survives restart — MainWindow reads
 // DisplaySpectrumFps at startup and applies to both via the same path.
+// In a window on a Core this page sets the Core's one shared rate; the window's
+// own paint rate is its Display pill's (MainWindow::applyDisplayPillFps).
 void SpectrumDefaultsPage::pushFps(int fps)
 {
     // Display pill plan Task 20 (R-DSP-33): the window's handler reaches
@@ -261,11 +263,13 @@ void SpectrumDefaultsPage::pushFps(int fps)
         } else {
             model()->fftEngine()->setOutputFps(fps);
         }
-        if (auto* sw = model()->spectrumWidget()) {
-            sw->setDisplayFps(fps);
-        }
         AppSettings::instance().setValue(
             QLatin1String(ControlRanges::kDisplaySpectrumFpsKey), QString::number(fps));
+        if (auto* sw = model()->spectrumWidget()) {
+            // On a Core a window that has its own rate keeps drawing at it.
+            sw->setDisplayFps(model()->ownsLocalDsp()
+                                  ? fps : readDisplayPaintFps(AppSettings::instance()));
+        }
     }
     // Defensive: explicitly mirror to the spin readout.  makeSliderRow
     // wires a bidirectional slider<->spin connect that should already do

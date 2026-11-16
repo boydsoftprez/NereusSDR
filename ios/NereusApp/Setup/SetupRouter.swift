@@ -19,8 +19,15 @@ final class SetupRouter: ObservableObject {
             if !Self.inDisplay(path), displayScope != .all {
                 displayScope = .all
             }
+            pendingRestore = nil
+            keep?(path)
         }
     }
+    /// Told each change of the path, for it to be kept on this phone.
+    var keep: (@MainActor ([SetupTree.Route]) -> Void)?
+    /// The place kept from last time, until the Core's pages say whether it
+    /// exists here, or the operator goes somewhere first.
+    @Published private(set) var pendingRestore: [SetupTree.Route]?
     /// The number pad a Setup number row has open, at the foot of the tab.
     let pads = ValuePadHost()
     /// The pans Display's pages edit: All pans from the Setup list, or the
@@ -38,6 +45,49 @@ final class SetupRouter: ObservableObject {
             case .cfcBands: return false
             }
         }
+    }
+
+    /// A session reached ready: `saved` is shown once ``applyRestore(tree:known:)`` finds it.
+    func restore(_ saved: [SetupTree.Route]) {
+        pendingRestore = saved.isEmpty ? nil : saved
+    }
+
+    /// Shows the kept place once its pages exist. `known` says the tree is the
+    /// Core's own: only then does a page missing from it mean the page is
+    /// gone, and the operator lands on the last of the place that remains.
+    func applyRestore(tree: [SetupTree.Category], known: Bool) {
+        guard let saved = pendingRestore else { return }
+        let found = Self.remaining(saved, tree: tree)
+        guard known || found.count == saved.count else { return }
+        path = found
+    }
+
+    /// `saved` up to the first page `tree` does not offer.
+    static func remaining(_ saved: [SetupTree.Route], tree: [SetupTree.Category]) -> [SetupTree.Route] {
+        var found: [SetupTree.Route] = []
+        for route in saved {
+            let exists: Bool
+            switch route {
+            case .category(let id):
+                exists = tree.contains { $0.id == id }
+            case .page(let page):
+                exists = tree.contains { category in
+                    category.opensPage == page
+                        || category.pages.contains { $0.page == page && $0.unavailableReason == nil }
+                }
+            case .described(let category, let page):
+                let destination = SetupTree.Destination.described(category: category, page: page)
+                exists = tree.contains { entries in
+                    entries.pages.contains { $0.destination == destination && $0.unavailableReason == nil }
+                }
+            case .cfcBands:
+                // Opened from the described page before it.
+                if case .described? = found.last { exists = true } else { exists = false }
+            }
+            guard exists else { break }
+            found.append(route)
+        }
+        return found
     }
 
     /// Shows `page` through its category, from the top of the tree.

@@ -14,6 +14,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05 - NEREUS_GUI_EXPORT: this class's signals are used from outside
+//                 its DLL. Without the export their addresses were MinGW's
+//                 auto-import thunks, which moc's code does not recognize,
+//                 so a QSignalSpy or connect on them failed on Windows.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-27: Add approved remote CW hold/activity integration for
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-18 — Ported/adapted in C++20/Qt6 for NereusSDR by
@@ -35,6 +40,7 @@
 
 #pragma once
 #include "AppletWidget.h"
+#include "gui/NereusGuiExport.h"
 
 #include <QString>
 #include <QVector>
@@ -66,7 +72,7 @@ class RemoteTransmitClient;
 //                             right-click edits TransmitModel::cwxMemoryN
 //   5. Repeat toggle+interval — "Rpt" + QSlider (1..60 s) + inset
 //   6. Keyboard-to-CW toggle — "KB→CW": typed characters go as typed
-class CwxApplet : public AppletWidget {
+class NEREUS_GUI_EXPORT CwxApplet : public AppletWidget {
     Q_OBJECT
 public:
     explicit CwxApplet(RadioModel* model, QWidget* parent = nullptr);

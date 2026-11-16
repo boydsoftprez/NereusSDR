@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original native grips, reserved chrome and ownership regressions.
 // Modification history (NereusSDR):
+//   2026-11-06 - Destroying a focused container in the workspace look, by
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 — Skip the GPU frame cases where QRhi is unavailable by
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-04 — Verify overlay anchoring with final pane dimensions by
@@ -11,6 +13,8 @@
 //   2026-10-02 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include <QtTest>
 #include <QTemporaryDir>
+#include <QLineEdit>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QPushButton>
 #include <QSplitter>
@@ -22,6 +26,7 @@
 #include <QTimer>
 #include <QScreen>
 #include <QMouseEvent>
+#include <memory>
 #include "core/AppSettings.h"
 #include "gui/containers/ContainerArrangeController.h"
 #include "gui/containers/ContainerContentHost.h"
@@ -34,6 +39,7 @@
 #include "gui/meters/MeterWidget.h"
 #include "gui/meters/MeterItem.h"
 #include "gui/meters/MeterPoller.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "NativeWindowFrames.h"
 using namespace NereusSDR;
 class TstContainerChrome : public QObject
@@ -75,6 +81,40 @@ class TstContainerChrome : public QObject
         QVERIFY(pixels.save(dir + "/" + name + ".png"));
     }
   private slots:
+    // In the workspace look a container follows focusChanged. Destroying one
+    // clears the focus after its layout has gone, whether the focus is on the
+    // container or on something inside it.
+    void destroyingAFocusedContainerIsSafe_data()
+    {
+        QTest::addColumn<bool>("childHolds");
+        QTest::newRow("the container holds the focus") << false;
+        QTest::newRow("a child holds the focus") << true;
+    }
+
+    void destroyingAFocusedContainerIsSafe()
+    {
+        QFETCH(bool, childHolds);
+        const bool wasEnabled = WorkspacePreview::enabled();
+        WorkspacePreview::setEnabledForTest(true);
+        const auto restore = qScopeGuard([wasEnabled] { WorkspacePreview::setEnabledForTest(wasEnabled); });
+        QWidget window;
+        window.resize(400, 300);
+        auto* column = new QVBoxLayout(&window);
+        auto container = std::make_unique<ContainerWidget>(&window);
+        column->addWidget(container.get());
+        container->setHeaderMode(HeaderMode::Shown);
+        auto* child = new QLineEdit;
+        container->setContent(child);
+        window.show();
+        window.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&window));
+        QWidget* holder = childHolds ? static_cast<QWidget*>(child) : container.get();
+        holder->setFocus();
+        QCOMPARE(QApplication::focusWidget(), holder);
+        container.reset();
+        QCOMPARE(QApplication::focusWidget(), static_cast<QWidget*>(nullptr));
+    }
+
     void reservedHeaderFocusAndHiddenRecovery()
     {
         ContainerWidget c;

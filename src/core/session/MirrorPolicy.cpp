@@ -6,6 +6,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Band stack plan Task 4: the read-only bandStack object (BandStackFacade).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-27: Add approved remote CW hold/activity integration for
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-22 - RX meter stamps: SliceModel meterReadingNs Outbound, gated
@@ -1110,6 +1112,10 @@ const MirrorPolicy::Entry kEntries[] = {
     // read-only; the paProfile verbs change them.
     { "PaProfilesFacade", "json", MirrorDirection::Outbound },
     { "PaProfilesFacade", "revision", MirrorDirection::Outbound },
+    // Band stack plan Task 4 (bandStackVersion 1): the Core's band stack,
+    // read-only; the bandStack.* verbs change it.
+    { "BandStackFacade", "json", MirrorDirection::Outbound },
+    { "BandStackFacade", "revision", MirrorDirection::Outbound },
 
     // R-IOS-25 / R-R3-49 (parity Task 19, recordStreamVersion 1): the Core's
     // spot sources, read-only. They change only through spots.connect,

@@ -17,6 +17,9 @@
 // Modification history (NereusSDR):
 //   2026-10-26: CW transmit, the host key line (R-CW-12, R-CW-15,
 //               R-CW-16). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-05: Hot keys plan Task 5 (R-HK-13): the soft dot and dash, a
+//               second pair of bits. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -36,6 +39,11 @@ public:
     void setDot(bool down);
     void setDash(bool down);
     void setCwxPtt(bool on);
+    // The hot keys' dot and dash (CwSoftPaddle). The serial reader and the soft
+    // paddle never clear each other: dot(), dash() and p1Bits() report serial
+    // OR soft.
+    void setSoftDot(bool down);
+    void setSoftDash(bool down);
 
     bool cwx() const;
     bool dot() const;
@@ -48,7 +56,7 @@ public:
 
     // Called on the writer's thread after any change. Must not block.
     // Set once, before any writer starts; a setter that changes nothing
-    // does not call it.
+    // the readers can see does not call it.
     void setOnChange(std::function<void()> fn);
 
 private:
@@ -61,6 +69,17 @@ private:
     // mi0bot networkproto1.c:1252 [v2.10.3.13-beta2] (& 0b00001111).
     static constexpr quint8 kP1Mask    = 0x07;
     static constexpr quint8 kHl2Mask   = 0x0F;
+    // NereusSDR-original, above the masks: the soft pair is each serial bit
+    // shifted up, and reaches the readers only through keyBits().
+    static constexpr int kSoftShift    = 4;
+    static constexpr quint8 kSoftDashBit = kDashBit << kSoftShift;
+    static constexpr quint8 kSoftDotBit  = kDotBit << kSoftShift;
+
+    // What the readers see of the stored bits.
+    static constexpr quint8 keyBits(quint8 stored)
+    {
+        return static_cast<quint8>((stored | (stored >> kSoftShift)) & kHl2Mask);
+    }
 
     void setBit(quint8 bit, bool on);
 

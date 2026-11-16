@@ -371,6 +371,10 @@ void TestGuiConnectionController::localRadioSuccessDismissesOnlyItsRequestedConn
     controller.selector()->connectRequested(QStringLiteral("radio:") + radio.macAddress);
     QTRY_VERIFY(controller.sessions()->window()->radioModel()->connectionState() == ConnectionState::Connected);
     QTRY_VERIFY(!controller.selector()->isVisible());
+    // Connecting by hand keeps the radio's saved Auto-connect choice.
+    const auto savedAfterConnect = AppSettings::instance().savedRadio(radio.macAddress);
+    QVERIFY(savedAfterConnect.has_value());
+    QCOMPARE(savedAfterConnect->autoConnect, false);
     controller.showConnections();
     controller.sessions()->window()->radioModel()->infoChanged();
     QCoreApplication::processEvents();

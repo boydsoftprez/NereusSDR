@@ -167,6 +167,9 @@ struct ModMonitorThresholdRow: View {
     var font: CGFloat = 13
     var small: CGFloat = 11
     var control: CGFloat = 44
+    /// The unit beside the number, and its name for a screen reader.
+    var unit = "%"
+    var unitName = "percent"
     let change: (Int) -> Void
 
     @State private var typed = ""
@@ -181,7 +184,7 @@ struct ModMonitorThresholdRow: View {
                 Text(title)
                     .font(.system(size: font))
                     .foregroundStyle(ChromeColours.text)
-                Text("\(range.lowerBound) to \(range.upperBound)%")
+                Text("\(range.lowerBound) to \(range.upperBound)" + (unit == "%" ? unit : " " + unit))
                     .font(.system(size: small))
                     .foregroundStyle(ChromeColours.textDim)
             }
@@ -189,7 +192,8 @@ struct ModMonitorThresholdRow: View {
             HStack(spacing: 4) {
                 step("\u{2212}", by: -1, disabled: value <= range.lowerBound, name: "Lower")
                 TextField("", text: $typed)
-                    .keyboardType(.numberPad)
+                    // The number pad has no minus sign for a range below zero.
+                    .keyboardType(range.lowerBound < 0 ? .numbersAndPunctuation : .numberPad)
                     .multilineTextAlignment(.trailing)
                     .font(.system(size: font + 2, weight: .semibold).monospacedDigit())
                     .foregroundStyle(ChromeColours.textBright)
@@ -198,7 +202,7 @@ struct ModMonitorThresholdRow: View {
                     .frame(width: control * 1.05, height: control * 0.9)
                     .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
                     .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
-                    .accessibilityLabel(title + ", percent")
+                    .accessibilityLabel(title + ", " + unitName)
                     .accessibilityIdentifier(identifier)
                     .onChange(of: typing) { _, now in
                         if !now {
@@ -206,9 +210,11 @@ struct ModMonitorThresholdRow: View {
                         }
                     }
                     .onSubmit(commit)
-                Text("%")
+                Text(unit)
                     .font(.system(size: font))
                     .foregroundStyle(ChromeColours.textDim)
+                    .lineLimit(1)
+                    .fixedSize()
                 step("+", by: 1, disabled: value >= range.upperBound, name: "Raise")
             }
         }

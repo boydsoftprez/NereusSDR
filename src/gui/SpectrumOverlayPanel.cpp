@@ -137,6 +137,13 @@
 //                zoom strip when that is placed. The flag covered the open
 //                Display pill and took its clicks. J.J. Boyd (KG4VCF),
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - A press in the band stack popup is not a click outside the BAND
+//                flyout. Band stack plan Task 10. J.J. Boyd (KG4VCF),
+//                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - The BAND flyout stays open after a press, and a band button's
+//                right-click asks for its stack (bandContextRequested). Band
+//                stack plan Task 8. J.J. Boyd (KG4VCF), AI-assisted
+//                implementation via Anthropic Claude Code.
 //   2026-10-11 - An open flyout owns the mouse over its whole rectangle
 //                (claimMouseForFlyout), and the outside press that closes
 //                it on the same pan is taken with its moves, release and
@@ -637,6 +644,12 @@ bool SpectrumOverlayPanel::eventFilter(QObject* obj, QEvent* event)
     // an outside click.
     const bool pillOwnsClick = m_activeFlyout == m_displayFlyout
         && (QApplication::activeModalWidget() != nullptr || isInDisplayPill(obj, true));
+    // Band stack plan Task 10: the band stack popup a flyout button opened, or
+    // a row menu from it, sits over the flyout, so a press in it is not an
+    // outside click. A press outside the popup closes the popup and Qt replays
+    // it with no popup up, which is when it counts here.
+    const bool bandPopupUp = m_activeFlyout == m_bandFlyout
+        && QApplication::activePopupWidget() != nullptr;
     if (event->type() == QEvent::MouseButtonPress) {
         auto* me = static_cast<QMouseEvent*>(event);
         // The same press is seen several times: at its window, at the
@@ -648,7 +661,7 @@ bool SpectrumOverlayPanel::eventFilter(QObject* obj, QEvent* event)
             m_swallowPanMouse = false;
             m_swallowPanContextMenu = false;
         }
-        if (m_activeFlyout && !pillOwnsClick) {
+        if (m_activeFlyout && !pillOwnsClick && !bandPopupUp) {
             QPoint gp = me->globalPosition().toPoint();
             bool inFlyout = m_activeFlyout->rect().contains(
                                 m_activeFlyout->mapFromGlobal(gp));
@@ -842,6 +855,20 @@ void SpectrumOverlayPanel::updateLayout()
 
 // ── toggle ────────────────────────────────────────────────────────────────────
 
+void SpectrumOverlayPanel::setPanId(const QString& panId)
+{
+    m_panId = panId;
+    if (m_panId.isEmpty()) { return; }
+    const bool expanded =
+        AppSettings::instance()
+            .value(QStringLiteral("Pan_%1_OverlayCollapsed").arg(m_panId), QStringLiteral("False"))
+            .toString() != QStringLiteral("True");
+    if (expanded != m_expanded) {
+        m_expanded = expanded;
+        updateLayout();
+    }
+}
+
 void SpectrumOverlayPanel::toggle()
 {
     m_expanded = !m_expanded;
@@ -849,6 +876,10 @@ void SpectrumOverlayPanel::toggle()
         hideFlyout();
     }
     updateLayout();
+    if (!m_panId.isEmpty()) {
+        AppSettings::instance().setValue(QStringLiteral("Pan_%1_OverlayCollapsed").arg(m_panId),
+                                         m_expanded ? QStringLiteral("False") : QStringLiteral("True"));
+    }
     emit collapsed(!m_expanded);
 }
 
@@ -890,9 +921,15 @@ void SpectrumOverlayPanel::buildBandFlyout()
         double  freqHz   = kBandGrid[i].freqHz;
         QString mode     = QString::fromLatin1(kBandGrid[i].mode);
 
+        // The flyout stays open across presses and closes on a click elsewhere
+        // (eventFilter), so a second press can step through the band's stack.
         connect(btn, &QPushButton::clicked, this, [this, bandName, freqHz, mode]() {
-            hideFlyout();
             emit bandSelected(bandName, freqHz, mode);
+        });
+        btn->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(btn, &QWidget::customContextMenuRequested, this,
+                [this, btn, bandName](const QPoint& pos) {
+            emit bandContextRequested(bandName, btn->mapToGlobal(pos));
         });
         grid->addWidget(btn, row, col);
     }

@@ -28,6 +28,9 @@
 //              owner closes it (or the operator clicks it), for a notice
 //              whose condition lasts. J.J. Boyd (KG4VCF), AI-assisted via
 //              Anthropic Claude Code.
+//   2026-11-06 setAction: a toast may carry one button, for the band stack's
+//              Undo. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//              Code.
 // =================================================================
 //
 // no-port-check: NereusSDR-original
@@ -37,6 +40,10 @@
 #include <QString>
 #include <QTimer>
 #include <QWidget>
+
+#include <functional>
+
+class QPushButton;
 
 namespace NereusSDR {
 
@@ -83,6 +90,10 @@ public:
     /// True while no countdown runs (shown with kUntilClosed).
     bool staysUntilClosed() const { return !m_dismissTimer.isActive(); }
 
+    /// Adds a button beside the message, or changes the one already there.
+    /// Pressing it runs `action` and closes the toast.
+    void setAction(const QString& label, std::function<void()> action);
+
 protected:
     void mousePressEvent(QMouseEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
@@ -90,6 +101,8 @@ protected:
 private:
     QString m_message;
     QTimer  m_dismissTimer;
+    QPushButton* m_actionButton{nullptr};
+    std::function<void()> m_action;
 };
 
 } // namespace NereusSDR

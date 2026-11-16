@@ -173,6 +173,29 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(lastByte(fake.highPriorityPackets(), 5), 1, kPacketWaitMs);
     }
 
+    // R-HK-13: a remote window's dot and dash are masked as CWX is, on the
+    // key byte and with the prompt the key low needs.
+    void remoteHoldMasksSoftDotAndDash()
+    {
+        P2FakeRadio fake;
+        QVERIFY(fake.start());
+        P2RadioConnection connection;
+        configureConnection(connection, fake);
+        QVERIFY(establish(connection, fake));
+        connection.setCwWireState(keyerOn());
+        connection.cwKeyLine()->setSoftDot(true);
+        flushKeyChanges(connection);
+        QTRY_COMPARE_WITH_TIMEOUT(lastByte(fake.highPriorityPackets(), 5), 2, kPacketWaitMs);
+        connection.cwKeyLine()->setSoftDash(true);
+        flushKeyChanges(connection);
+        QTRY_COMPARE_WITH_TIMEOUT(lastByte(fake.highPriorityPackets(), 5), 6, kPacketWaitMs);
+        connection.remoteCwSafetyState()->begin(11);
+        QVERIFY(connection.setRemoteCwHold(11, TxChannel::RfHold::Link, true));
+        QTRY_COMPARE_WITH_TIMEOUT(lastByte(fake.highPriorityPackets(), 5), 0, kPacketWaitMs);
+        QVERIFY(connection.setRemoteCwHold(11, TxChannel::RfHold::Link, false));
+        QTRY_COMPARE_WITH_TIMEOUT(lastByte(fake.highPriorityPackets(), 5), 6, kPacketWaitMs);
+    }
+
     void setCwWireStateSendsCmdTxOnce()
     {
         P2FakeRadio fake;

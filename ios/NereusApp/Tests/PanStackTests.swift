@@ -61,16 +61,19 @@ struct PanStackTests {
 
     /// A model connected to a fake Core (five slices, two receivers) with
     /// the ANAN-G2 catalogue, as an iPad.
-    private func connected(media: Bool = false, budget: Bool = false) async throws -> Connected {
+    private func connected(media: Bool = false, budget: Bool = false, allowsMorePans: Bool = true,
+                           kept: PhoneSettings? = nil, slicePans: [Int: String] = [:]) async throws -> Connected {
         // The extended view's fake answers subscribes and opens media, as PanSheetTests' withMedia;
         // with the budget wire it answers each with an allocation-result under the Core's ID rules.
-        let station = try FakeStation(additions: media ? (budget ? [.wideband, .displayBudget] : .wideband) : [])
+        let station = try FakeStation(additions: media ? (budget ? [.wideband, .displayBudget] : .wideband) : [],
+                                      startingPans: slicePans)
         let suite = "PanStackTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         let store = BandDisplaySettingsStore(defaults: defaults)
-        let model = media ? AppModel(mediaPeerFactory: station.mediaPeerFactory, displaySettings: store)
-            : AppModel(displaySettings: store)
-        model.main.panStack.allowsMorePans = true
+        let settings = kept ?? PhoneSettings(defaults: defaults)
+        let model = media ? AppModel(phoneSettings: settings, mediaPeerFactory: station.mediaPeerFactory, displaySettings: store)
+            : AppModel(phoneSettings: settings, displaySettings: store)
+        model.main.panStack.allowsMorePans = allowsMorePans
         await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
                             transportFactory: station.transportFactory)
         #expect(await station.waitUntilLive())
@@ -79,7 +82,8 @@ struct PanStackTests {
             .init(ordinal: 0, name: "json", value: .utf8(station.catalogue(json))),
             .init(ordinal: 1, name: "revision", value: .i64(2)),
         ])))
-        #expect(await settle { model.main.catalogFeed.catalog != nil && model.main.pan.sliceLetter == "A" })
+        // A slice started on another pan leaves Pan 1 with none to name.
+        #expect(await settle { model.main.catalogFeed.catalog != nil && (!slicePans.isEmpty || model.main.pan.sliceLetter == "A") })
         await quiet()
         return Connected(model: model, station: station, store: store)
     }
@@ -379,6 +383,61 @@ struct PanStackTests {
         await quiet()
         #expect(panKeyWrites(rig.station).count == writes)
         #expect(stack.addPanState() == (false, "The ANAN-G2 can show one pan."))
+        await rig.model.disconnect()
+    }
+
+    // MARK: Coming back
+
+    private func freshSettings() throws -> PhoneSettings {
+        PhoneSettings(defaults: try #require(UserDefaults(suiteName: "PanStackTests-\(UUID().uuidString)")))
+    }
+
+    @Test("once the snapshot is whole an iPad opens the pans this device's slices sit on, and writes nothing")
+    func opensThePansItsSlicesSitOn() async throws {
+        let rig = try await connected(slicePans: [0: "pan-1"])
+        #expect(await settle { rig.stack.open == [.first, PanIdentity(number: 2)] })
+        #expect(panKeyWrites(rig.station).isEmpty)
+        #expect(rig.stack.status == nil)
+        #expect(rig.model.main.slices.panKey == PanIdentity.first.corePanKey)
+        await rig.model.disconnect()
+    }
+
+    @Test("a pan the operator left open with nothing on it comes back from the saved list")
+    func savedEmptyPanComesBack() async throws {
+        let kept = try freshSettings()
+        kept.openPans = [2]
+        let rig = try await connected(kept: kept)
+        #expect(await settle { rig.stack.open == [.first, PanIdentity(number: 2)] })
+        await rig.model.disconnect()
+    }
+
+    @Test("opening and closing a pan is what the saved list holds, and the limit never opens more or forgets one")
+    func savedListFollowsTheOperator() async throws {
+        let kept = try freshSettings()
+        let rig = try await connected(kept: kept)
+        rig.stack.addPan()
+        #expect(await settle { rig.stack.status != nil && rig.stack.open.count == 2 })
+        #expect(kept.openPans == [2])
+        rig.stack.closePan(PanIdentity(number: 2))
+        #expect(kept.openPans == [])
+        await rig.model.disconnect()
+
+        kept.openPans = [2, 3, 4]
+        let limited = try await connected(kept: kept)
+        // The fake's radio has two receivers.
+        #expect(await settle { limited.stack.open.count == limited.stack.limit })
+        #expect(limited.stack.open == [.first, PanIdentity(number: 2)])
+        #expect(kept.openPans == [2, 3, 4])
+        await limited.model.disconnect()
+    }
+
+    @Test("an iPhone stays on one pan whatever its slices sit on or the list says")
+    func iPhoneStaysOnOnePan() async throws {
+        let kept = try freshSettings()
+        kept.openPans = [2]
+        let rig = try await connected(allowsMorePans: false, kept: kept, slicePans: [0: "pan-1"])
+        await quiet()
+        #expect(rig.stack.open == [.first])
         await rig.model.disconnect()
     }
 

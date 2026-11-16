@@ -31,6 +31,8 @@
 //   2026-09-27 - Parity Task 23 control UI by J.J. Boyd (KG4VCF);
 //                AI-assisted implementation via OpenAI Codex. The applet
 //                names both TCI servers and saves Enable through TciSwitch.
+//   2026-11-07 - The status dot is restyled only when its color changes.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #ifdef HAVE_WEBSOCKETS
@@ -498,9 +500,14 @@ void TciApplet::updateStatusWidgets()
     if (m_statusDot) {
         const char* color = !running ? kDotOff
                           : (count > 0 ? kDotClients : kDotRunning);
-        m_statusDot->setStyleSheet(QStringLiteral(
+        const QString sheet = QStringLiteral(
             "QLabel { background: %1; border-radius: 5px; }"
-        ).arg(QLatin1String(color)));
+        ).arg(QLatin1String(color));
+        // Restyle only on a change: this runs every 200 ms, and each
+        // setStyleSheet makes the column recompute its layout.
+        if (m_statusDot->styleSheet() != sheet) {
+            m_statusDot->setStyleSheet(sheet);
+        }
     }
 
     if (m_portLabel) {

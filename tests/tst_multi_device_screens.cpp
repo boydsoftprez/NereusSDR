@@ -50,6 +50,12 @@
 //               of emoji text. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
 // =================================================================
+//   2026-11-05: A hosting window's fill keeps a receiver's RIT and XIT; a
+//               new one starts off. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude.
+//   2026-11-06: A hosting window's fill asks for no rate the saved-rate gate
+//               stops, on a connected model. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude.
 
 #include "MultiDeviceHarness.h"
 
@@ -57,6 +63,7 @@
 #include <QDir>
 #include <QImage>
 #include <QListWidget>
+#include <QScopeGuard>
 #include <QPainter>
 #include <QPushButton>
 #include <QSlider>
@@ -78,6 +85,8 @@
 #include "core/session/StationClient.h"
 #include "core/session/TransmitStateFacade.h"
 #include "core/settings/SettingsProxy.h"
+#include "core/P1RadioConnection.h"
+#include "core/RadioConnection.h"
 #include "gui/HostingSliceActions.h"
 #include "gui/MainWindow.h"
 #include "gui/PanadapterApplet.h"
@@ -208,6 +217,45 @@ void setTx(TransmitState& tx, const char* name, const QVariant& value)
 }
 
 } // namespace
+
+// Records where transmit goes. File scope: moc needs external linkage.
+class TxFrequencyRecorder final : public RadioConnection {
+    Q_OBJECT
+public:
+    QList<quint64> txFrequencies;
+    int sampleRateRequests{0};
+
+    explicit TxFrequencyRecorder(QObject* parent = nullptr) : RadioConnection(parent)
+    {
+        setState(ConnectionState::Connected);
+    }
+
+    void init() override {}
+    void connectToRadio(const NereusSDR::RadioInfo&) override {}
+    void disconnect() override {}
+    void setReceiverFrequency(int, quint64) override {}
+    void setTxFrequency(quint64 hz) override { txFrequencies.append(hz); }
+    void setActiveReceiverCount(int) override {}
+    void setSampleRate(int) override { ++sampleRateRequests; }
+    void setAttenuator(int) override {}
+    void setPreamp(bool) override {}
+    void setTxDrive(int) override {}
+    void setMox(bool) override {}
+    void setAntennaRouting(AntennaRouting) override {}
+    void setAlexRxBpf(AlexRxBpf) override {}
+    void setWatchdogEnabled(bool enabled) override { m_watchdogEnabled = enabled; }
+    void sendTxIq(const float*, int) override {}
+    void setTrxRelay(bool) override {}
+    void setMicBoost(bool) override {}
+    void setLineIn(bool) override {}
+    void setMicTipRing(bool) override {}
+    void setMicBias(bool) override {}
+    void setLineInGain(int) override {}
+    void setUserDigOut(quint8) override {}
+    void setPuresignalRun(bool) override {}
+    void setMicPTTDisabled(bool) override {}
+    void setMicXlr(bool) override {}
+};
 
 class TstMultiDeviceScreens : public QObject {
     Q_OBJECT
@@ -729,6 +777,286 @@ private slots:
         }
         QVERIFY(onNewPan);
         delete dialog;
+    }
+
+    // JJ's ruling 2026-11-05: a new receiver starts with RIT and XIT off, a
+    // restored one keeps its own. A hosting window's fill at connect restores
+    // the saved layout's receivers; its fill after a layout change, and its
+    // +RX, make new ones. What decides it is whether the operator asked.
+    void aHostingWindowsFill_data()
+    {
+        QTest::addColumn<bool>("operatorRequested");
+        QTest::newRow("at connect, not asked for") << false;
+        QTest::newRow("after a layout change, asked for") << true;
+    }
+
+    void aHostingWindowsFill()
+    {
+        QFETCH(bool, operatorRequested);
+        Core core;
+        core.model->configureStreamPool(4, 5, 192000);
+        const QByteArray& station = SliceOwnership::stationDevice();
+        core.server->deviceSessions()->registerHostingDevice(station, QStringLiteral("Mac"),
+                                                              QStringLiteral("Mac"));
+        core.server->setStationDeviceWords(QStringLiteral("Mac"), QStringLiteral("Mac"));
+        SliceOwnership* ownership = core.model->sliceOwnership();
+        ownership->adoptUnowned(station);
+        hostingFillSeedsSavedOffsets();
+        const int sliceCount = core.model->slices().size();
+
+        HostingSliceActions host(core.server.get(), core.model.get());
+        MainWindow::populatePanSlices(core.model.get(), {QStringLiteral("pan-host-2")},
+                                      operatorRequested, false, &host);
+        QTRY_COMPARE(core.model->slices().size(), sliceCount + 1);
+        SliceModel* added = core.model->slices().last();
+        const QString saved = QStringLiteral("Slice%1/XitHz").arg(added->sliceIndex());
+        if (operatorRequested) {
+            QVERIFY(!added->ritEnabled());
+            QCOMPARE(added->ritHz(), 0);
+            QVERIFY(!added->xitEnabled());
+            QCOMPARE(added->xitHz(), 0);
+            QVERIFY(!AppSettings::instance().contains(saved));
+        } else {
+            QVERIFY(added->ritEnabled());
+            QCOMPARE(added->ritHz(), 250);
+            QVERIFY(added->xitEnabled());
+            QCOMPARE(added->xitHz(), 700);
+            QCOMPARE(AppSettings::instance().value(saved).toInt(), 700);
+        }
+        AppSettings::instance().clear();
+    }
+
+    // JJ's ruling 2026-11-05: with Run Core on, a restored receiver comes back
+    // on its own frequency and mode, with its filter and sample rate too. A
+    // saved on 14.200 USB, B on 7.074 DIGU with XIT +700, transmit on B.
+    void aHostingWindowsRestoredReceiverComesBackOnItsOwnFrequency()
+    {
+        saveReceiverB();
+        if (QTest::currentTestFailed()) { return; }
+        Core core;
+        core.model->configureStreamPool(4, 5, 192000);
+        becomeHostingStation(core);
+        // The rate is saved per radio; saveReceiverB's model knows no radio.
+        AppSettings::instance().setValue(
+            QStringLiteral("hardware/%1/slices/1/SampleRate")
+                .arg(AppSettings::normalizedRadioMac(core.model->currentRadioMac())),
+            kReceiverBRate);
+        SliceModel* a = core.model->sliceById(0);
+        a->setFrequency(14'200'000.0);
+        a->setDspMode(DSPMode::USB);
+        TxFrequencyRecorder recorder;
+        core.model->injectConnectionForTest(&recorder);
+        const auto detach = qScopeGuard([&] { core.model->injectConnectionForTest(nullptr); });
+
+        HostingSliceActions host(core.server.get(), core.model.get());
+        MainWindow::populatePanSlices(core.model.get(), {QStringLiteral("pan-host-2")},
+                                      false, false, &host);
+        QTRY_COMPARE(core.model->slices().size(), 2);
+        SliceModel* b = core.model->sliceById(1);
+        QVERIFY(b);
+        QCOMPARE(b->frequency(), kReceiverBHz);
+        QCOMPARE(b->dspMode(), DSPMode::DIGU);
+        QVERIFY(b->xitEnabled());
+        QCOMPARE(b->xitHz(), 700);
+        QCOMPARE(b->filterLow(), kReceiverBFilterLow);
+        QCOMPARE(b->filterHigh(), kReceiverBFilterHigh);
+        // The rate is on the DDC, not only on the menu.
+        QVERIFY(b->streamIndex() >= 0);
+        QCOMPARE(b->sampleRateHz(), kReceiverBRate);
+        QCOMPARE(core.model->streamSampleRateHzForTest(b->streamIndex()),
+                 kReceiverBRate);
+        // A is left alone.
+        QCOMPARE(a->frequency(), 14'200'000.0);
+        QCOMPARE(a->dspMode(), DSPMode::USB);
+
+        // Where transmit goes, with transmit bound to B.
+        recorder.txFrequencies.clear();
+        QVERIFY(core.model->txSliceArbiter()->requestHandoff(1));
+        QCOMPARE(core.model->txBoundSlice(), b);
+        QVERIFY(!recorder.txFrequencies.isEmpty());
+        QCOMPARE(recorder.txFrequencies.last(), quint64(7'074'700));
+        AppSettings::instance().clear();
+    }
+
+    // The PR shepherd's asks: on the hosted path, a saved rate that the gate in
+    // applyRestoredSampleRate stops asks for nothing, and the slice shows the
+    // rate its receiver runs. Connected, unlike the tests above.
+    void aHostingWindowsFillAsksForNoRateTheGateStops_data()
+    {
+        QTest::addColumn<int>("protocol");
+        QTest::addColumn<int>("savedRate");
+        QTest::newRow("protocol 2, a rate off the ladder") << 2 << 123456;
+        QTest::newRow("protocol 1, a rate on the ladder") << 1 << 96000;
+        QTest::newRow("protocol 1, a rate off the ladder") << 1 << 123456;
+    }
+
+    void aHostingWindowsFillAsksForNoRateTheGateStops()
+    {
+        QFETCH(int, protocol);
+        QFETCH(int, savedRate);
+        saveReceiverB();
+        if (QTest::currentTestFailed()) { return; }
+        Core core;
+        core.model->configureStreamPool(4, 5, 192000);
+        becomeHostingStation(core);
+        RadioInfo info;
+        info.macAddress = QStringLiteral("AA:BB:CC:DD:EE:42");
+        info.protocol = protocol == 2 ? ProtocolVersion::Protocol2 : ProtocolVersion::Protocol1;
+        core.model->setLastRadioInfoForTest(info);
+        core.model->setHpsdrModelForTest(protocol == 2 ? HPSDRModel::ANAN_G2 : HPSDRModel::HERMES);
+        // The rate is radio-wide only on a real Protocol 1 connection.
+        TxFrequencyRecorder recorder;
+        P1RadioConnection protocol1;
+        core.model->injectConnectionForTest(protocol == 2
+                                                ? static_cast<RadioConnection*>(&recorder)
+                                                : &protocol1);
+        const auto detach = qScopeGuard([&] { core.model->injectConnectionForTest(nullptr); });
+        core.model->setConnectionStateForTest(ConnectionState::Connected);
+        QVERIFY(core.model->isConnected());
+        QCOMPARE(core.model->sampleRateIsRadioWide(), protocol == 1);
+        AppSettings::instance().setValue(
+            QStringLiteral("hardware/%1/slices/1/SampleRate")
+                .arg(AppSettings::normalizedRadioMac(info.macAddress)),
+            savedRate);
+        const int before = recorder.sampleRateRequests;
+
+        HostingSliceActions host(core.server.get(), core.model.get());
+        MainWindow::populatePanSlices(core.model.get(), {QStringLiteral("pan-host-2")},
+                                      false, false, &host);
+        QTRY_COMPARE(core.model->slices().size(), 2);
+        QVERIFY(core.model->waitForReceiveLaneForTest());
+        SliceModel* b = core.model->sliceById(1);
+        QVERIFY(b);
+        QVERIFY(b->streamIndex() >= 0);
+        QCOMPARE(recorder.sampleRateRequests, before);
+        const int effective = core.model->streamSampleRateHzForTest(b->streamIndex());
+        QCOMPARE(effective, 192000);
+        QCOMPARE(b->sampleRateHz(), effective);
+        AppSettings::instance().clear();
+    }
+
+    void aHostingWindowsFillWithNothingSavedOpensOnTheActiveSlice()
+    {
+        AppSettings::instance().clear();
+        Core core;
+        core.model->configureStreamPool(4, 5, 192000);
+        becomeHostingStation(core);
+        SliceModel* a = core.model->sliceById(0);
+        a->setFrequency(14'200'000.0);
+        a->setDspMode(DSPMode::USB);
+        HostingSliceActions host(core.server.get(), core.model.get());
+        MainWindow::populatePanSlices(core.model.get(), {QStringLiteral("pan-host-2")},
+                                      false, false, &host);
+        QTRY_COMPARE(core.model->slices().size(), 2);
+        SliceModel* b = core.model->sliceById(1);
+        QVERIFY(b);
+        QCOMPARE(b->frequency(), 14'200'000.0);
+        QCOMPARE(b->dspMode(), DSPMode::USB);
+        QVERIFY(!b->xitEnabled());
+        AppSettings::instance().clear();
+    }
+
+    void aHostingWindowsPlusRxIsSeededFromTheActiveSliceWithOffsetsOff()
+    {
+        saveReceiverB();
+        if (QTest::currentTestFailed()) { return; }
+        Core core;
+        core.model->configureStreamPool(4, 5, 192000);
+        becomeHostingStation(core);
+        SliceModel* a = core.model->sliceById(0);
+        a->setFrequency(14'200'000.0);
+        a->setDspMode(DSPMode::USB);
+        HostingSliceActions host(core.server.get(), core.model.get());
+        MainWindow::populatePanSlices(core.model.get(), {QStringLiteral("pan-host-2")},
+                                      true, false, &host);
+        QTRY_COMPARE(core.model->slices().size(), 2);
+        SliceModel* b = core.model->sliceById(1);
+        QVERIFY(b);
+        QCOMPARE(b->frequency(), 14'200'000.0);
+        QCOMPARE(b->dspMode(), DSPMode::USB);
+        QVERIFY(!b->ritEnabled());
+        QVERIFY(!b->xitEnabled());
+        QCOMPARE(b->xitHz(), 0);
+        AppSettings::instance().clear();
+    }
+
+    void aHostingWindowsFillWritesNothingOverAHeldLetter()
+    {
+        saveReceiverB();
+        if (QTest::currentTestFailed()) { return; }
+        Core core;
+        core.model->configureStreamPool(4, 5, 192000);
+        becomeHostingStation(core);
+        const auto letter = [] {
+            QVariantMap values;
+            auto& settings = AppSettings::instance();
+            for (const QString& key : settings.allKeys()) {
+                if (key.startsWith(QStringLiteral("Slice1/"))) {
+                    values.insert(key, settings.value(key));
+                }
+            }
+            return values;
+        };
+        const QVariantMap before = letter();
+        QVERIFY(!before.isEmpty());
+        core.model->setReceiveLayoutHoldForTest(/*isProtected=*/true, /*pendingAdmission=*/false);
+        HostingSliceActions host(core.server.get(), core.model.get());
+        MainWindow::populatePanSlices(core.model.get(), {QStringLiteral("pan-host-2")},
+                                      false, false, &host);
+        QTRY_COMPARE(core.model->slices().size(), 2);
+        core.model->flushPendingSettingsSave();
+        // Key by key: QCOMPARE cuts off two long maps before the difference.
+        const QVariantMap after = letter();
+        QStringList changed;
+        for (const QString& key : before.keys()) {
+            if (after.value(key) != before.value(key)) {
+                changed.append(key + QLatin1Char('=') + before.value(key).toString()
+                               + QStringLiteral(" now ") + after.value(key).toString());
+            }
+        }
+        for (const QString& key : after.keys()) {
+            if (!before.contains(key)) {
+                changed.append(key + QStringLiteral(" added"));
+            }
+        }
+        QVERIFY2(changed.isEmpty(), qPrintable(changed.join(QStringLiteral("; "))));
+        AppSettings::instance().clear();
+    }
+
+    // The fill's argument is the station device's alone. A device that sends
+    // it over the link still gets a new receiver.
+    void aRemoteDeviceCannotAskForTheRestoredFill()
+    {
+        Core core;
+        core.model->configureStreamPool(4, 5, 192000);
+        Device b(QStringLiteral("iPad"), QStringLiteral("tablet"), QStringLiteral("iPad"));
+        core.pair(b);
+        LoopbackTransport* appB = core.signIn(
+            b, {{"deviceAuth", 1}, {"sessionHolder", 1}, {"sliceAccess", 1}});
+        QVERIFY(admitted(appB));
+        hostingFillSeedsSavedOffsets();
+        for (int letter = 0; letter < 5; ++letter) {
+            AppSettings::instance().setValue(
+                QStringLiteral("Slice%1/Band20m/Frequency").arg(letter), kReceiverBHz);
+        }
+        const int sliceCount = core.model->slices().size();
+
+        appB->sendText(SessionMessages::encode(SessionMessages::commandInvoke(
+            "addSliceOnPan", 7301,
+            {MirrorUpdate{0, "panId", MirrorWireKind::Utf8,
+                          QVariant(QStringLiteral("pan-device-2"))},
+             MirrorUpdate{0, "restoredFill", MirrorWireKind::Bool, QVariant(true)}})));
+        QTRY_COMPARE(core.model->slices().size(), sliceCount + 1);
+        SliceModel* added = core.model->slices().last();
+        QVERIFY(!added->ritEnabled());
+        QVERIFY(!added->xitEnabled());
+        QCOMPARE(added->xitHz(), 0);
+        // Nor does it get the letter's frequency: LastBand and a saved
+        // frequency were there to be taken.
+        QVERIFY(added->frequency() != kReceiverBHz);
+        QVERIFY(!AppSettings::instance().contains(
+            QStringLiteral("Slice%1/XitHz").arg(added->sliceIndex())));
+        AppSettings::instance().clear();
     }
 
     // Slice control plan Task 11: a hosting window filling its empty pans
@@ -1574,6 +1902,56 @@ private slots:
             }
         }
         saveShot(&connected, QStringLiteral("connected-list"), false);
+    }
+
+private:
+    static constexpr double kReceiverBHz = 7'074'000.0;
+    static constexpr int kReceiverBFilterLow = 200;
+    static constexpr int kReceiverBFilterHigh = 2800;
+    static constexpr int kReceiverBRate = 96000;
+
+    // Saves receiver B through the model's own save, so this holds wherever
+    // the keys live.
+    static void saveReceiverB()
+    {
+        AppSettings::instance().clear();
+        RadioModel seed;
+        seed.configureStreamPool(4, 5, 192000);
+        QVERIFY(seed.addSlice() == 0);
+        SliceModel* b = seed.sliceById(seed.addSlice());
+        QVERIFY(b);
+        QCOMPARE(b->sliceIndex(), 1);
+        b->setFrequency(kReceiverBHz);
+        b->setDspMode(DSPMode::DIGU);
+        b->setFilter(kReceiverBFilterLow, kReceiverBFilterHigh);
+        b->setXitHz(700);
+        b->setXitEnabled(true);
+        b->setSampleRateHz(kReceiverBRate);
+        b->saveToSettings(Band::Band40m);
+    }
+
+    static void becomeHostingStation(Core& core)
+    {
+        const QByteArray& station = SliceOwnership::stationDevice();
+        core.server->deviceSessions()->registerHostingDevice(station, QStringLiteral("Mac"),
+                                                              QStringLiteral("Mac"));
+        core.server->setStationDeviceWords(QStringLiteral("Mac"), QStringLiteral("Mac"));
+        core.model->sliceOwnership()->adoptUnowned(station);
+    }
+
+    static void hostingFillSeedsSavedOffsets()
+    {
+        for (int letter = 0; letter < 5; ++letter) {
+            const QString prefix = QStringLiteral("Slice%1/").arg(letter);
+            AppSettings::instance().setValue(prefix + QStringLiteral("LastBand"),
+                                             QStringLiteral("20m"));
+            AppSettings::instance().setValue(prefix + QStringLiteral("RitEnabled"),
+                                             QStringLiteral("True"));
+            AppSettings::instance().setValue(prefix + QStringLiteral("RitHz"), 250);
+            AppSettings::instance().setValue(prefix + QStringLiteral("XitEnabled"),
+                                             QStringLiteral("True"));
+            AppSettings::instance().setValue(prefix + QStringLiteral("XitHz"), 700);
+        }
     }
 };
 

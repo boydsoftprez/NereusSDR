@@ -4,6 +4,10 @@
 // AppSettings file.  The primed-board seam deliberately replaces only radio
 // discovery/connection; it still uses the real board capability table and
 // stream allocator.  RADE worker acceptance belongs in its worker tests.
+//
+// Modification history (NereusSDR):
+//   2026-11-05: A new receiver leaves a held saved layout's RIT and XIT alone.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
 
 #include <QtTest/QtTest>
 
@@ -731,6 +735,112 @@ private slots:
         QCOMPARE(rawLayoutFromDisk(kMacA), rock);
     }
 
+    // A kept layout holds back the layout record, not what the receivers
+    // that did start are told to do. Before this the whole run's slice edits
+    // were dropped.
+    void aKeptLayoutStillSavesLiveReceiversAndLeavesRefusedOnes()
+    {
+        const QList<ReceiveSliceState> oversizedForHermesII{
+            {0, QStringLiteral("pan-0"), 14'293'200.0, DSPMode::USB},
+            {1, QStringLiteral("pan-1"), 7'200'000.0, DSPMode::LSB},
+            {2, QStringLiteral("pan-2"), 10'100'000.0, DSPMode::AM},
+        };
+        QVERIFY(saveLayout(kMacA, oversizedForHermesII));
+        AppSettings::instance().setValue(QStringLiteral("Slice1/AfGain"), 40);
+        AppSettings::instance().setValue(QStringLiteral("Slice2/AfGain"), 17);
+        AppSettings::instance().setValue(QStringLiteral("Slice2/Band30m/DspMode"),
+                                         SliceModel::modeName(DSPMode::AM));
+        QVERIFY(AppSettings::instance().save());
+        const QString original = rawLayoutFromDisk(kMacA);
+        {
+            DaemonApp app;
+            app.primeBoardForTest(HPSDRHW::HermesII, kMacA);
+            QVERIFY(app.start(configWithCount(1)));
+            RadioModel* radio = model(app);
+            QCOMPARE(radio->receiveLayoutRestoreState(), QStringLiteral("degraded"));
+            QVERIFY(radio->sliceById(1));
+            QVERIFY(!radio->sliceById(2));
+
+            // Slice B is not the active slice: the edit is saved under its
+            // own letter.
+            radio->sliceById(1)->setAfGain(33);
+            radio->sliceById(1)->setFrequency(7'150'000.0);
+            radio->flushPendingSettingsSave();
+            auto& s = AppSettings::instance();
+            QCOMPARE(s.value(QStringLiteral("Slice1/AfGain")).toString(), QStringLiteral("33"));
+            QCOMPARE(s.value(QStringLiteral("Slice1/Band40m/Frequency")).toDouble(), 7'150'000.0);
+            // The record itself stays as it was.
+            QCOMPARE(s.hardwareValue(AppSettings::normalizedRadioMac(kMacA),
+                                     QLatin1String(kLayoutKey)).toString(), original);
+            app.stop();
+        }
+        QCOMPARE(rawLayoutFromDisk(kMacA), original);
+        reloadSingletonFromDisk();
+        auto& s = AppSettings::instance();
+        QCOMPARE(s.value(QStringLiteral("Slice1/AfGain")).toString(), QStringLiteral("33"));
+        // Receiver C was refused: its keys wait for it.
+        QCOMPARE(s.value(QStringLiteral("Slice2/AfGain")).toString(), QStringLiteral("17"));
+        QCOMPARE(s.value(QStringLiteral("Slice2/Band30m/DspMode")).toString(),
+                 SliceModel::modeName(DSPMode::AM));
+        QVERIFY(!s.contains(QStringLiteral("Slice2/LastBand")));
+    }
+
+    // A record that cannot be read may name any letter, so a letter with saved
+    // keys waits for it. The receivers this run starts save their own, a +RX
+    // that takes a saved letter does not write over it by any path, and a
+    // letter with nothing saved saves normally.
+    void anUnreadableLayoutKeepsEveryLetterWithSavedKeys()
+    {
+        const QString invalid = QStringLiteral("{not valid json");
+        auto& s = AppSettings::instance();
+        s.setHardwareValue(AppSettings::normalizedRadioMac(kMacA), QLatin1String(kLayoutKey), invalid);
+        s.setValue(QStringLiteral("Slice0/LastBand"), bandKeyName(Band::Band20m));
+        s.setValue(QStringLiteral("Slice1/LastBand"), bandKeyName(Band::Band40m));
+        s.setValue(QStringLiteral("Slice1/AfGain"), 40);
+        s.setValue(QStringLiteral("Slice1/Band40m/Frequency"), 7'123'000.0);
+        s.setValue(QStringLiteral("Slice1/Band40m/DspMode"), static_cast<int>(DSPMode::LSB));
+        QVERIFY(s.save());
+        {
+            DaemonApp app;
+            app.primeBoardForTest(HPSDRHW::OrionMKII, kMacA);
+            QVERIFY(app.start(configWithCount(1)));
+            RadioModel* radio = model(app);
+            QCOMPARE(radio->receiveLayoutRestoreState(), QStringLiteral("invalid"));
+
+            // The receiver that is running saves its own keys.
+            radio->sliceById(0)->setAfGain(33);
+            radio->flushPendingSettingsSave();
+            QCOMPARE(s.value(QStringLiteral("Slice0/AfGain")).toString(), QStringLiteral("33"));
+
+            const int b = radio->addSlice();
+            QCOMPARE(b, 1);
+            radio->sliceById(b)->setAfGain(21);
+            radio->sliceById(b)->setFrequency(7'150'000.0);
+            radio->flushPendingSettingsSave();
+            QCOMPARE(s.value(QStringLiteral("Slice1/AfGain")).toString(), QStringLiteral("40"));
+            QCOMPARE(s.value(QStringLiteral("Slice1/Band40m/Frequency")).toDouble(), 7'123'000.0);
+
+            // A band button is a save too.
+            radio->setActiveSlice(b);
+            radio->onBandButtonClicked(Band::Band20m);
+            radio->flushPendingSettingsSave();
+            QCOMPARE(s.value(QStringLiteral("Slice1/LastBand")).toString(),
+                     bandKeyName(Band::Band40m));
+            QCOMPARE(s.value(QStringLiteral("Slice1/Band40m/Frequency")).toDouble(), 7'123'000.0);
+            QVERIFY(!s.contains(QStringLiteral("Slice1/Band20m/Frequency")));
+
+            const int c = radio->addSlice();
+            QCOMPARE(c, 2);
+            radio->sliceById(c)->setAfGain(11);
+            radio->flushPendingSettingsSave();
+            QCOMPARE(s.value(QStringLiteral("Slice2/AfGain")).toString(), QStringLiteral("11"));
+            app.stop();
+        }
+        QCOMPARE(rawLayoutFromDisk(kMacA), invalid);
+        reloadSingletonFromDisk();
+        QCOMPARE(s.value(QStringLiteral("Slice1/AfGain")).toString(), QStringLiteral("40"));
+    }
+
     void allUnsupportedIdsUseExplicitFallbackWithoutErasingSavedState()
     {
         QVERIFY(saveLayout(kMacA, {{4, "pan-3", 7200000, DSPMode::LSB}}));
@@ -793,6 +903,49 @@ private slots:
                  QStringLiteral("Your receivers were not saved. It places a receiver "
                                 "on a panadapter this program does not recognize."));
         app.stop();
+    }
+
+    // JJ's ruling 2026-11-05: a new receiver starts with RIT and XIT off and
+    // removes the letter's saved values, but never while a saved layout is
+    // held. The refusal text sends the operator to +RX while it is held, and
+    // the held letter must still have its offsets when the layout comes back.
+    void newReceiverAndTheSavedLayoutHold_data()
+    {
+        QTest::addColumn<bool>("protectedLayout");
+        QTest::addColumn<bool>("pendingAdmission");
+        QTest::addColumn<bool>("savedValuesStay");
+        QTest::newRow("managed Core, nothing held") << false << false << false;
+        QTest::newRow("layout protected") << true << false << true;
+        QTest::newRow("pending admission") << false << true << true;
+    }
+
+    void newReceiverAndTheSavedLayoutHold()
+    {
+        QFETCH(bool, protectedLayout);
+        QFETCH(bool, pendingAdmission);
+        QFETCH(bool, savedValuesStay);
+        auto& settings = AppSettings::instance();
+        settings.setValue(QStringLiteral("Slice0/LastBand"), QStringLiteral("20m"));
+        settings.setValue(QStringLiteral("Slice0/RitEnabled"), QStringLiteral("True"));
+        settings.setValue(QStringLiteral("Slice0/RitHz"), 250);
+        settings.setValue(QStringLiteral("Slice0/XitEnabled"), QStringLiteral("True"));
+        settings.setValue(QStringLiteral("Slice0/XitHz"), 700);
+
+        RadioModel radio;
+        radio.setReceiveLayoutHoldForTest(protectedLayout, pendingAdmission);
+        radio.addSliceOnPan(QStringLiteral("pan-0"), /*restoreSavedState=*/false,
+                            /*newReceiver=*/true);
+        SliceModel* added = radio.sliceById(0);
+        QVERIFY(added);
+        // The new receiver is off whichever way the store goes.
+        QVERIFY(!added->ritEnabled());
+        QCOMPARE(added->ritHz(), 0);
+        QVERIFY(!added->xitEnabled());
+        QCOMPARE(added->xitHz(), 0);
+        QCOMPARE(settings.contains(QStringLiteral("Slice0/RitEnabled")), savedValuesStay);
+        QCOMPARE(settings.contains(QStringLiteral("Slice0/RitHz")), savedValuesStay);
+        QCOMPARE(settings.contains(QStringLiteral("Slice0/XitEnabled")), savedValuesStay);
+        QCOMPARE(settings.contains(QStringLiteral("Slice0/XitHz")), savedValuesStay);
     }
 };
 

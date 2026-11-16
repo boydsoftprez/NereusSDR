@@ -3,6 +3,7 @@
 #include <QAbstractButton>
 #include <QSlider>
 #include <QComboBox>
+#include <QPushButton>
 
 using namespace NereusSDR;
 
@@ -45,6 +46,21 @@ private slots:
 
         QVERIFY2(failures.isEmpty(),
                   qPrintable(failures.join(QStringLiteral("\n"))));
+    }
+
+    // The side buttons live on the pan, so the walk above never meets them.
+    void everySideButtonHasATooltip()
+    {
+        QWidget pan;
+        pan.resize(800, 400);
+        auto* flag = new VfoWidget(&pan);
+        flag->setSliceIndex(1);
+        flag->updatePosition(400, 20);
+        QVERIFY(flag->moreButtonForTest() != nullptr);
+        QVERIFY(!flag->moreButtonForTest()->toolTip().isEmpty());
+        for (QAbstractButton* button : pan.findChildren<QAbstractButton*>(QString(), Qt::FindDirectChildrenOnly)) {
+            QVERIFY2(!button->toolTip().isEmpty(), qPrintable(button->text()));
+        }
     }
 };
 

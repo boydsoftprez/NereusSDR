@@ -49,6 +49,8 @@
 //               data, and at the drain ceiling while its backlog still
 //               moves (UdpHop between the two ends). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-11-05: a message read after a stall reports the stall. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -1176,6 +1178,30 @@ private slots:
         const SessionLinkDiagnostics link = core->linkDiagnostics();
         QCOMPARE(link.buffer, SessionLinkDiagnostics::Buffer::DataChannel);
         QVERIFY(!link.noDelay.has_value());
+    }
+
+    // What a session keepalive's age rests on: a message that came during a
+    // stall of this thread reports the stall. Real time: the message reaches
+    // the library's thread well within the margin taken off the stall.
+    void aMessageReadAfterAStallReportsTheStall()
+    {
+        OpenPair pair;
+        QVERIFY(pair.open());
+        DataChannelTransport* const core = pair.answerer.get();
+        std::optional<qint64> seen;
+        connect(core, &SessionTransport::textReceived, this,
+                [&](const QByteArray&) { seen = core->deliveringMessageWaitUs(); });
+        constexpr int kStallMs = 1000;
+        constexpr int kMarginMs = 500;
+        QElapsedTimer sinceSent;
+        sinceSent.start();
+        pair.offerer->sendText(QByteArrayLiteral("{\"type\":\"hello\"}"));
+        std::this_thread::sleep_for(std::chrono::milliseconds(kStallMs));
+        QTRY_VERIFY(seen.has_value());
+        qInfo("stalled %d ms: the message reports a wait of %lld us", kStallMs,
+              static_cast<long long>(*seen));
+        QVERIFY2(*seen >= qint64(kStallMs - kMarginMs) * 1000, qPrintable(QString::number(*seen)));
+        QVERIFY2(*seen <= sinceSent.nsecsElapsed() / 1000, qPrintable(QString::number(*seen)));
     }
 
     // R-R3-49: on a busy computer the connection failed with "DTLS alert:

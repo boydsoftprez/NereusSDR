@@ -181,6 +181,10 @@ are empty on macOS and Linux, so these mistakes only show up on Windows.
   taken in the other binary is not the address moc compares, so `QSignalSpy`
   reports "Null signal is not valid" and `connect()` reports "signal not
   found". An alias (`using Foo = Bar;`) needs the macro on the real class.
+  The macro goes by the binary the class is built into, not its folder:
+  `src/core/mmio/` is in the GUI DLL. The wrong one means dllimport and does
+  not compile. `scripts/verify-dll-signal-exports.py` checks both in pre-commit
+  and CI, reading each file's binary from `CMakeLists.txt`.
 - Do not bind a `static constexpr` data member of an exported class to a
   reference from another binary. `QCOMPARE` and `QTest::newRow` do that.
   MinGW then imports the member by address, the DLL never exports one, and

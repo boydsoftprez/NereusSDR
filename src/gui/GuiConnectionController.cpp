@@ -290,6 +290,12 @@ void GuiConnectionController::attachWindow(MainWindow* window)
         if (generation != m_sessions.generation() || m_shuttingDown) { return; }
         m_radios.insert(radio.macAddress, radio);
         m_seenAt.insert(radio.macAddress, QDateTime::currentMSecsSinceEpoch());
+        // Auto-connect to a saved address skips discovery, so the saved entry
+        // has to hold the radio's receiver count from the last time it was seen.
+        if (AppSettings::instance().refreshRadioReportedReceivers(radio.macAddress,
+                                                                  radio.reportedReceivers)) {
+            AppSettings::instance().saveInBackground();
+        }
         refresh();
     };
     m_windowConnections.append(connect(m_discovery, &RadioDiscovery::radioDiscovered, this, found));
@@ -945,7 +951,7 @@ void GuiConnectionController::connectTarget(const QString& key)
         AppSettings& settings = AppSettings::instance();
         const HPSDRModel modelOverride = settings.modelOverride(mac);
         if (modelOverride != HPSDRModel::FIRST) { radio.modelOverride = modelOverride; }
-        settings.saveRadio(radio, saved ? saved->pinToMac : false, true);
+        settings.saveRadioOnConnect(radio);
         settings.setLastConnected(radio.macAddress);
         if (!settings.save()) { m_selector->setNotice(tr("The local radio preference could not be saved.")); }
         if (radio.inUse) { m_selector->setNotice(tr("This radio reports in use; attempting the explicitly selected connection.")); }

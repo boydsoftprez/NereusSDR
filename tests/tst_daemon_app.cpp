@@ -299,6 +299,31 @@ private slots:
         QCOMPARE(settings.value(key).toString(), QStringLiteral("Built-in Output"));
     }
 
+    // Editing radio_mac does nothing once a radio has been chosen: the saved
+    // choice wins, and the log says so. The rule stays. Before any other
+    // start() here: the first one loads the log rules that silence this
+    // category, and the line is logged ahead of that.
+    void savedRadioChoiceWinsOverRadioMacAndSaysSo()
+    {
+        AppSettings& settings = AppSettings::instance();
+        const QString choiceKey = QStringLiteral("StationRadioChoice");
+        const auto forget = qScopeGuard([&settings, choiceKey] {
+            settings.remove(choiceKey);
+            settings.save();
+        });
+        settings.setValue(choiceKey, QStringLiteral("aa:bb:cc:dd:49:10"));
+        DaemonConfig cfg = testCoreConfig();
+        cfg.radioMac = QStringLiteral("aa:bb:cc:dd:49:11");
+        QTest::ignoreMessage(QtInfoMsg, QRegularExpression(QStringLiteral(
+            "using the saved radio AA:BB:CC:DD:49:10 \\(the config file's "
+            "aa:bb:cc:dd:49:11 is only a starting value\\)")));
+        DaemonApp app;
+        app.primeBoardForTest(HPSDRHW::HermesLite);
+        QVERIFY(app.start(cfg));
+        QCOMPARE(app.m_selectedRadioMac, QStringLiteral("AA:BB:CC:DD:49:10"));
+        app.stop();
+    }
+
     void noConfigAudioDeviceLeavesTheSpeakerUnset()
     {
         const QString key = QStringLiteral("audio/Speakers/DeviceName");
@@ -373,6 +398,25 @@ private slots:
     // iPhone app plan Task 34: remote_transmit deny installs the persistent
     // receive-only policy before station startup, as every Core did before;
     // allow (the default) leaves transmit to the station transmit gate.
+    // A stop with no radio model has no model teardown to save on its way,
+    // and a value written before the timed save ran is still only in memory.
+    void aStopWithNoRadioModelSavesWhatIsPending()
+    {
+        auto& s = AppSettings::instance();
+        s.setValue(QStringLiteral("DaemonStopProbe"), QStringLiteral("before"));
+        QVERIFY(s.save());
+        s.setValue(QStringLiteral("DaemonStopProbe"), QStringLiteral("after"));
+
+        DaemonApp app;
+        QVERIFY(app.m_radioModel == nullptr);
+        app.stop();
+
+        AppSettings onDisk(s.filePath());
+        onDisk.load();
+        QCOMPARE(onDisk.value(QStringLiteral("DaemonStopProbe")).toString(),
+                 QStringLiteral("after"));
+    }
+
     void installsReceiveOnlyPolicyBeforeStationStartup()
     {
         DaemonConfig cfg = testCoreConfig();

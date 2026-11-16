@@ -1181,63 +1181,6 @@ void CatTciServerPage::refreshTciStatusDisplay()
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// CatMidiControlPage
-// ---------------------------------------------------------------------------
-
-CatMidiControlPage::CatMidiControlPage(QWidget* parent)
-    : SetupPage(QStringLiteral("MIDI Control"), parent)
-{
-    buildUI();
-}
-
-void CatMidiControlPage::buildUI()
-{
-    setStyleSheet(QString::fromLatin1(Style::kPageStyle));
-
-    auto* group = new QGroupBox(QStringLiteral("MIDI"), this);
-    group->setStyleSheet(QString::fromLatin1(Style::kGroupBoxStyle));
-
-    auto* grid = new QGridLayout(group);
-    grid->setSpacing(6);
-
-    // Enable toggle
-    m_enableCheck = new QCheckBox(QStringLiteral("Enable MIDI Control"), group);
-    m_enableCheck->setStyleSheet(QString::fromLatin1(Style::kCheckBoxStyle));
-    m_enableCheck->setDisabled(true);
-    m_enableCheck->setToolTip(QStringLiteral("Turn on MIDI control"));
-    grid->addWidget(m_enableCheck, 0, 0, 1, 2);
-
-    // Device combo
-    auto* devLabel = new QLabel(QStringLiteral("Device:"), group);
-    devLabel->setStyleSheet(QString::fromLatin1(Style::kSecondaryLabelStyle));
-    grid->addWidget(devLabel, 1, 0);
-
-    m_deviceCombo = new QComboBox(group);
-    m_deviceCombo->setStyleSheet(QString::fromLatin1(Style::kComboStyle));
-    m_deviceCombo->addItem(QStringLiteral("(no MIDI devices found)"));
-    m_deviceCombo->setDisabled(true);
-    m_deviceCombo->setToolTip(QStringLiteral("The MIDI device to use"));
-    grid->addWidget(m_deviceCombo, 1, 1);
-
-    // Mapping table placeholder label
-    m_mappingLabel = new QLabel(
-        QStringLiteral("The MIDI mapping table is not available in this version"), group);
-    m_mappingLabel->setStyleSheet(QString::fromLatin1(Style::kSecondaryLabelStyle));
-    m_mappingLabel->setAlignment(Qt::AlignCenter);
-    m_mappingLabel->setMinimumHeight(80);
-    grid->addWidget(m_mappingLabel, 2, 0, 1, 2);
-
-    // Learn button
-    m_learnButton = new QPushButton(QStringLiteral("Learn..."), group);
-    m_learnButton->setStyleSheet(QString::fromLatin1(Style::kButtonStyle));
-    m_learnButton->setDisabled(true);
-    m_learnButton->setToolTip(QStringLiteral("Learn a control: move it on the MIDI device to assign it"));
-    grid->addWidget(m_learnButton, 3, 0, 1, 2);
-
-    addContent(group);
-}
-
-// ---------------------------------------------------------------------------
 // PeripheralsPage
 // Phase 3P-II Task 17: Setup > Network > Peripherals.
 // Two device rows (TGXL, PGXL) with six columns each:

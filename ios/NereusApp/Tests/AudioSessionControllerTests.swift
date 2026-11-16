@@ -681,6 +681,105 @@ struct AudioSessionControllerTests {
         #expect(audio.route == .external(name: "Headphones"))
     }
 
+    // MARK: The choice kept on this phone
+
+    private func app(_ settings: PhoneSettings, _ session: FakeAudioSession) -> (AppModel, AudioSessionController) {
+        let audio = make(session)
+        return (AppModel(phoneSettings: settings, audio: audio), audio)
+    }
+
+    private func freshSettings() throws -> PhoneSettings {
+        PhoneSettings(defaults: try #require(UserDefaults(suiteName: "AudioSessionControllerTests-\(UUID().uuidString)")))
+    }
+
+    @Test("the route chosen comes back at the next launch, and plays there")
+    func chosenRouteComesBack() async throws {
+        let settings = try freshSettings()
+        let (first, audio) = app(settings, FakeAudioSession())
+        audio.select(.earpiece)
+        #expect(settings.audioRoute == "earpiece")
+        _ = first
+
+        let session = FakeAudioSession()
+        let (second, again) = app(settings, session)
+        #expect(again.chosen == .earpiece)
+        again.start()
+        await again.settle()
+        await again.settle()
+        #expect(session.categories.last?.options == [])
+        _ = second
+    }
+
+    @Test("a kept device that is not connected leaves the route to iOS, keeps the choice and is chosen when it appears")
+    func keptDeviceWaits() async throws {
+        let settings = try freshSettings()
+        settings.audioRoute = AudioRoute.external(name: "AirPods").storedForm
+        let session = FakeAudioSession()
+        let (model, audio) = app(settings, session)
+        #expect(audio.chosen == nil)
+        audio.start()
+        await audio.settle()
+        await audio.settle()
+        #expect(audio.chosen == nil)
+        #expect(audio.route == .speaker)
+        #expect(settings.audioRoute == "external:AirPods")
+
+        // Another device playing is not the choice.
+        session.device = .wired("Headphones")
+        postRouteChange(.newDeviceAvailable)
+        await audio.settle()
+        await audio.settle()
+        #expect(audio.chosen == nil)
+        #expect(settings.audioRoute == "external:AirPods")
+
+        session.device = .wired("AirPods")
+        postRouteChange(.newDeviceAvailable)
+        await audio.settle()
+        await audio.settle()
+        #expect(audio.chosen == .external(name: "AirPods"))
+
+        // It goes and comes back: the same again.
+        session.device = nil
+        postRouteChange(.oldDeviceUnavailable)
+        await audio.settle()
+        await audio.settle()
+        #expect(audio.chosen == nil)
+        #expect(settings.audioRoute == "external:AirPods")
+        session.device = .wired("AirPods")
+        postRouteChange(.newDeviceAvailable)
+        await audio.settle()
+        await audio.settle()
+        #expect(audio.chosen == .external(name: "AirPods"))
+        _ = model
+    }
+
+    @Test("resuming on the speaker after headphones went is not a new kept choice")
+    func resumeKeepsTheChoice() async throws {
+        let settings = try freshSettings()
+        settings.audioRoute = "external:AirPods"
+        let session = FakeAudioSession()
+        session.device = .wired("AirPods")
+        let (model, audio) = app(settings, session)
+        audio.start()
+        await audio.settle()
+        await audio.settle()
+        session.device = nil
+        postRouteChange(.oldDeviceUnavailable)
+        await audio.settle()
+        audio.resumeOnSpeaker()
+        await audio.settle()
+        #expect(settings.audioRoute == "external:AirPods")
+        _ = model
+    }
+
+    @Test("a kept route reads back in the same form, and one this build does not know reads as none")
+    func storedForm() {
+        for route in [AudioRoute.speaker, .earpiece, .external(name: "Jo's AirPods: left")] {
+            #expect(AudioRoute(storedForm: route.storedForm) == route)
+        }
+        #expect(AudioRoute(storedForm: "carplay") == nil)
+    }
+
     @Test("the corrective override for each choice and output")
     func correctiveOverridePolicy() {
         let speaker = [AudioOutputPort(kind: .speaker, name: "Speaker")]

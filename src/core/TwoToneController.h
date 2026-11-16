@@ -312,6 +312,15 @@ public:
     // press. Unlike isActivationInFlight() it is false through the MOX
     // release settle, when a voice press may arrive.
     bool isKeyingMox() const noexcept { return m_keyingMox; }
+    // The FIXED source's PWR from before the two-tone power, while a running
+    // or starting test still owes its restore. RadioModel's band setter reads
+    // it: MOX is down during the stop's settle, so a band change can run
+    // while PWR still holds the two-tone power.
+    bool holdsFixedPower() const noexcept { return m_savedPwrValid && (m_active || m_activationInFlight); }
+    int savedFixedPower() const noexcept { return m_savedPwr; }
+    // The transmit band moved before the restore: it puts back this band's
+    // power, and drives it, since PWR may already be at that value.
+    void transmitBandMoved(int newBandPower) noexcept;
     // Task 35: whose two-tone this is (valid while active or starting).
     const KeyerIdentity& keyer() const noexcept { return m_keyer; }
 
@@ -459,6 +468,8 @@ private:
     // m_active==true AND we entered with DrivePowerSource::Fixed.
     bool m_savedPwrValid{false};
     int  m_savedPwr{0};
+    // transmitBandMoved ran since the snapshot.
+    bool m_savedPwrBandMoved{false};
 
     // ── Timers ──────────────────────────────────────────────────────────────
     QTimer m_moxReleaseSettleTimer;

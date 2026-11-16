@@ -12,6 +12,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05 - NEREUS_GUI_EXPORT: this class's signals are used from outside
+//                 its DLL. Without the export their addresses were MinGW's
+//                 auto-import thunks, which moc's code does not recognize,
+//                 so a QSignalSpy or connect on them failed on Windows.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -140,6 +145,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "MeterItem.h"
+#include "gui/NereusGuiExport.h"
 #include "core/LedConditionExpression.h"
 #include <QColor>
 #include <QJsonObject>
@@ -198,7 +204,7 @@ constexpr int kLedBlinkSpeedMs = 100;
 // Show true / show false apply to both looks. NereusSDR's green / amber /
 // red thresholds stay in both (the true colour is amber or red above those
 // thresholds).
-class LEDItem : public MeterItem {
+class NEREUS_GUI_EXPORT LEDItem : public MeterItem {
     Q_OBJECT
 
 public:

@@ -304,7 +304,7 @@ bool ReceiverPlanner::panMoveFitsAfterClosing(int stream, double centreHz,
         staysActive = staysActive || !removed.contains(id);
     }
     const int rateHz = staysActive ? live.streamSampleRateHz(stream)
-                                   : m_model.newStreamSampleRateHz();
+                                   : m_model.streamClaimRateHzFor(moving);
     if (rateHz <= 0) {
         return false;
     }

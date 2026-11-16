@@ -176,6 +176,21 @@ final class PanSheetModel: ObservableObject {
                                      CommandArgument(name: "band", value: .int(Int64(id)))])
     }
 
+    /// A band button where this Core keeps a stack: the Core steps on the lit
+    /// band, and on another goes where that band's return mode says. Anywhere
+    /// else the band opens as ``selectBand(_:)`` opens it. True when the stack
+    /// took the press, so a menu showing the stack stays open on it.
+    func pressBand(_ id: Int, stack: BandStackModel?) -> Bool {
+        guard let stack, stack.availability == .ready else {
+            selectBand(id)
+            return false
+        }
+        if canSelectBand, let label = catalogFeed.catalog?.bands?.first(where: { $0.id == id })?.label {
+            stack.press(bandKey: BandStackModel.bandKey(label: label), .next)
+        }
+        return true
+    }
+
     /// Add a slice here: a slice on this pan.
     func addSlice() {
         guard canAddSlice else {

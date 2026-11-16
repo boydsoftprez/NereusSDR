@@ -406,10 +406,13 @@ warren@wpratt.com
 //                 section; setRfHold(on) waits for a block already in it,
 //                 as closeRfGate does. NereusSDR-original. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 // =================================================================
 
 #include "TxChannel.h"  // brings in WdspTypes.h (DSPMode)
 #include "core/AmModulationAnalyzer.h"
+#include "core/SsbModulationAnalyzer.h"
 #include "AppSettings.h"
 #include "DspControlThread.h"
 #include "LogCategories.h"
@@ -3958,6 +3961,9 @@ void TxChannel::driveOneTxBlockFromInterleaved(const double* interleavedIn)
     if (auto* tap = m_amModTap.load(std::memory_order_acquire)) {
         tap->pushIq(m_outInterleavedFloat.data(), outN);
     }
+    if (auto* tap = m_ssbModTap.load(std::memory_order_acquire)) {
+        tap->pushIq(m_outInterleavedFloat.data(), outN);
+    }
 
     // Siphon signal — MON path (3M-1b D.5).
     //
@@ -5169,6 +5175,11 @@ void TxChannel::setTxCpdrGainDb(double dB)
 void TxChannel::setAmModulationTap(AmModulationAnalyzer* tap)
 {
     m_amModTap.store(tap, std::memory_order_release);
+}
+
+void TxChannel::setSsbModulationTap(SsbModulationAnalyzer* tap)
+{
+    m_ssbModTap.store(tap, std::memory_order_release);
 }
 
 void TxChannel::setTxAmCarrierLevel(int percent)

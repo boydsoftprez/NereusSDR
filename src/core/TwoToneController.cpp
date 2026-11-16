@@ -163,6 +163,11 @@ void TwoToneController::setMoxController(MoxController* mox)
                     m_moxReleaseSettleTimer.stop(); m_tuneReleaseSettleTimer.stop();
                     m_freq2DelayTimer.stop(); m_deactivationSettleTimer.stop(); m_rejectSettleTimer.stop();
                     m_activationInFlight = false;
+                    // A start cut short never reaches a stop, so its hold on
+                    // the band-power write ends here.
+                    if (!m_active && m_tx) {
+                        m_tx->setBandPowerSaveHeld(TransmitModel::BandPowerSaveHolder::TwoTone, false);
+                    }
                 }
             });
         connect(m_moxController, &MoxController::moxRejected,
@@ -431,6 +436,10 @@ void TwoToneController::stopNow()
         onRejectSettleElapsed();
     }
     if (!m_active && !m_activationInFlight) {
+        // Nothing is left to restore, so no hold outlives the session.
+        if (m_tx) {
+            m_tx->setBandPowerSaveHeld(TransmitModel::BandPowerSaveHolder::TwoTone, false);
+        }
         return;
     }
 
@@ -692,6 +701,9 @@ void TwoToneController::continueActivation()
     // drive to compute; new_pwr is then the source's own value, which is
     // what the FIXED branch below needs.
     m_savedPwrValid = false;
+    m_savedPwrBandMoved = false;
+    // A restore a superseded cycle left undone has none coming now.
+    m_tx->setBandPowerSaveHeld(TransmitModel::BandPowerSaveHolder::TwoTone, false);
     const bool fixedSource =
         m_tx->twoToneDrivePowerSource() == DrivePowerSource::Fixed;
     if (fixedSource) {
@@ -720,6 +732,9 @@ void TwoToneController::continueActivation()
         // The PWR setter runs ptbPWR_Scroll (console.cs:18437 [v2.10.3.15]),
         // RadioModel's powerChanged: txMode 0 here, so it drives new_pwr
         // past the band's PWR limit and saves it in power_by_band.
+        // NereusSDR's own (Thetis has no timed save): new_pwr is kept in
+        // power_by_band, but stays off disk until the restore.
+        m_tx->setBandPowerSaveHeld(TransmitModel::BandPowerSaveHolder::TwoTone, true);
         m_tx->setPowerSliderLimitEnabled(false);
         if (!lifetime || !cycleCurrent(serial)) { return; }
         m_tx->setPower(newPwr);
@@ -1071,7 +1086,37 @@ void TwoToneController::restoreSavedPower()
     if (!lifetime || !cycleCurrent(serial)) { return; }
     m_tx->setPower(m_savedPwr);
     if (!lifetime || !cycleCurrent(serial)) { return; }
+    // Ours differs on purpose from setup.cs:11196-11201 [v2.10.3.15]: after a
+    // band change in the stop's settle (console.cs:17533-17537 [v2.10.3.15]),
+    // PWR is already this band's, so the setPower above may not scroll, and the
+    // drive was last computed for the two-tone with the limit off. txMode 0 now,
+    // as setTwoToneActive(false) ran first, so this drives PWR within the limit.
+    if (m_savedPwrBandMoved && m_paProfileManager) {
+        if (const PaProfile* profile = m_paProfileManager->activeProfile()) {
+            Band band = m_slice
+                ? bandFromFrequency(m_slice->frequency())
+                : Band::Band20m;
+            if (m_txBand) {
+                band = m_txBand();
+            }
+            (void)m_tx->setPowerUsingTargetDbm(
+                *profile, band,
+                /*bSetPower=*/true,
+                /*bFromTune=*/false,
+                /*bTwoTone=*/false,
+                m_tx->hpsdrModel());
+            if (!lifetime || !cycleCurrent(serial)) { return; }
+        }
+    }
     m_savedPwrValid = false;
+    m_savedPwrBandMoved = false;
+    m_tx->setBandPowerSaveHeld(TransmitModel::BandPowerSaveHolder::TwoTone, false);
+}
+
+void TwoToneController::transmitBandMoved(int newBandPower) noexcept
+{
+    m_savedPwr = newBandPower;
+    m_savedPwrBandMoved = true;
 }
 
 // ---------------------------------------------------------------------------

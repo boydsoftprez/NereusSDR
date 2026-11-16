@@ -15,8 +15,7 @@
 //
 //   * the window sets the step of the Core's second slice (the Core's
 //     active slice is the first); the Core saves it as
-//     Slice1/Band<band>/StepHz, and the first slice's key keeps its own
-//     step;
+//     Slice1/StepHz, and the first slice's key keeps its own step;
 //   * a Core started again on the same settings, with its radio, brings
 //     the step back on that slice, and a window that connects to it shows
 //     the step.
@@ -102,9 +101,9 @@ constexpr int    kWindowStepHz = 1000;
 constexpr double kSliceAFreqHz = 14200000.0;
 constexpr double kSliceBFreqHz = 7100000.0;
 
-QString stepKey(int sliceIndex, Band band)
+QString stepKey(int sliceIndex)
 {
-    return QStringLiteral("Slice%1/Band%2/StepHz").arg(sliceIndex).arg(bandKeyName(band));
+    return QStringLiteral("Slice%1/StepHz").arg(sliceIndex);
 }
 
 // A Core with its radio: the connection is there before the slices are
@@ -194,8 +193,8 @@ private slots:
             b->setStepHz(kCoreStepHz);
             sliceBBand = b->band();
             core.model.flushPendingSettingsSave();
-            const QString keyA = stepKey(0, a->band());
-            const QString keyB = stepKey(1, sliceBBand);
+            const QString keyA = stepKey(0);
+            const QString keyB = stepKey(1);
             auto& s = AppSettings::instance();
             QVERIFY(s.value(keyB).toInt() != kWindowStepHz);
 

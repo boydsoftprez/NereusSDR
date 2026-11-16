@@ -57,6 +57,10 @@
 //               on a hosting desktop), and with no desktop key where the
 //               flag is. J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Anthropic Claude Code.
+//   2026-11-05: band stack plan Task 6: the station peer gets the band stack, and a
+//               host press asks when it would move a peer's slice (design V15).
+//               J.J. Boyd (KG4VCF), with AI-assisted implementation via Anthropic
+//               Claude Code.
 //   2026-09-30: core-slice take-over (JJ, 2026-09-30): with nobody at the
 //               desktop a device at sliceAccessVersion 3 takes the Core's
 //               own slice at once, not on the air; with someone there the
@@ -66,10 +70,15 @@
 
 #include "MultiDeviceHarness.h"
 
+#include "core/session/BandStackFacade.h"
 #include "core/session/SliceAccessPolicy.h"
 #include "gui/HostingSliceActions.h"
+#include "gui/multidevice/MultiDeviceController.h"
+#include "models/bandstack/BandStackController.h"
 
+#include <QDialog>
 #include <QSignalSpy>
+#include <QWidget>
 
 namespace {
 
@@ -91,6 +100,8 @@ const QHash<QByteArray, int> kSharesTx{
     {"deviceAuth", 1}, {"sessionHolder", 1}, {"sliceAccess", 1}, {"remoteTx", 1}};
 
 const QString kHostName = QStringLiteral("Mac");
+// Band stack plan Task 6: a peer whose window has the stack.
+const QHash<QByteArray, int> kStack{{"deviceAuth", 1}, {"sessionHolder", 1}, {"bandStack", 1}};
 
 // The desktop begins hosting, as StationHost does: the station device is a
 // connected device named `kHostName`, and adopts every slice nobody owns.
@@ -103,6 +114,26 @@ void startHosting(Core& core)
     if (!ownership->adoptUnowned(station).isEmpty()) {
         core.model->setActiveSliceByIdFor(station, ownership->activeFor(station));
     }
+}
+
+// Band stack plan Task 6: a desktop that hosts, with a running stack. Its slice 0
+// is on 7.074 MHz on a receiver 192 kHz wide, with a second receiver free.
+void startHostingWithStack(Core& core)
+{
+    RadioInfo info;
+    info.macAddress = QStringLiteral("AA:BB:CC:DD:EE:01");
+    info.name = QStringLiteral("Bench HL2");
+    info.boardType = HPSDRHW::HermesLite;
+    core.model->announceRadioForTest(info);
+    core.model->setConnectionStateForTest(ConnectionState::Connected);
+    core.model->configureStreamPool(2, 5, 192000);
+    core.model->sliceById(0)->setFrequency(7074000.0);
+    startHosting(core);
+}
+
+QJsonObject stackDocument(const Core& core)
+{
+    return QJsonDocument::fromJson(core.model->bandStackFacade()->json().toUtf8()).object();
 }
 
 QList<int> ownedBy(const Core& core, const QByteArray& device)
@@ -429,6 +460,208 @@ private slots:
         // Answered before select() returns: the window reads it at once.
         QCOMPARE(refused.count(), 1);
         QVERIFY(OperatorWording::isPlain(refused.first().at(0).toString()));
+    }
+
+    // Band stack plan Task 6: the station peer has the feature, so its verbs pass
+    // the gate that refuses a window which did not declare it.
+    void theStationPeerGetsTheBandStack()
+    {
+        Core core;
+        startHostingWithStack(core);
+        const QString before = core.model->bandStackFacade()->json();
+        SessionMessage answer;
+        bool answered = false;
+        core.server->invokeAsStationDevice(
+            SessionMessages::commandInvoke(
+                "bandStack.options", 9,
+                {MirrorUpdate{0, "dwellSeconds", MirrorWireKind::Int64, QVariant(qlonglong(30))}}),
+            [&](const SessionMessage& result) {
+                answer = result;
+                answered = true;
+            },
+            {});
+        QVERIFY(answered);
+        QVERIFY2(answer.accepted, qPrintable(answer.reason));
+        QVERIFY(core.model->bandStackFacade()->json() != before);
+    }
+
+    void aHostPressWithNoPeerAsksNothing()
+    {
+        Core core;
+        startHostingWithStack(core);
+        HostingSliceActions host(core.server.get(), core.model.get());
+        auto* access = qobject_cast<LocalBandStackAccess*>(core.model->bandStack());
+        QVERIFY(access != nullptr);
+        host.bindBandStack(access);
+        QSignalSpy question(&host, &HostingSliceActions::question);
+        QSignalSpy pending(&host, &HostingSliceActions::pending);
+        QSignalSpy finished(&host, &HostingSliceActions::finished);
+        QSignalSpy refused(access, &BandStackAccess::refused);
+        QSignalSpy reported(access, &BandStackAccess::reported);
+
+        BandStackView view;
+        view.centerHz = 7100000;
+        view.spanHz = 96000;
+        access->press(0, Band::Band20m, BandStackDirection::Next, view);
+        QCOMPARE(finished.count(), 1);
+        QCOMPARE(finished.first().at(0).toByteArray(), QByteArrayLiteral("bandStack.press"));
+        QCOMPARE(finished.first().at(1).toInt(), 0);
+        QVERIFY2(finished.first().at(2).toBool(), qPrintable(finished.first().at(3).toString()));
+        QCOMPARE(question.count(), 0);
+        QCOMPARE(pending.count(), 0);
+        QCOMPARE(refused.count(), 0);
+        QCOMPARE(reported.count(), 1);
+        QVERIFY(reported.first().at(0).toString().startsWith(QStringLiteral("20m: ")));
+        QVERIFY(core.model->sliceById(0)->frequency() > 14000000.0);
+    }
+
+    void aHostRefusalReachesTheAccessAlone()
+    {
+        Core core;
+        startHostingWithStack(core);
+        HostingSliceActions host(core.server.get(), core.model.get());
+        auto* access = qobject_cast<LocalBandStackAccess*>(core.model->bandStack());
+        host.bindBandStack(access);
+        QSignalSpy hostRefused(&host, &HostingSliceActions::refused);
+        QSignalSpy refused(access, &BandStackAccess::refused);
+        QSignalSpy finished(&host, &HostingSliceActions::finished);
+        access->remove(QStringLiteral("no-such-entry"));
+        QCOMPARE(refused.count(), 1);
+        QCOMPARE(refused.first().at(0).toString(),
+                 QStringLiteral("That band stack entry no longer exists."));
+        QCOMPARE(hostRefused.count(), 0);
+        QCOMPARE(finished.count(), 1);
+
+        // A slice another device holds is refused in the Core's words.
+        Device phone(QStringLiteral("iPad"), QStringLiteral("tablet"));
+        core.pair(phone);
+        LoopbackTransport* app = core.signIn(phone, kStack);
+        QVERIFY(admitted(app));
+        const QList<int> own = ownedBy(core, phone.key.fingerprint());
+        QCOMPARE(own.size(), 1);
+        const double frequency = core.model->sliceById(own.first())->frequency();
+        access->press(own.first(), Band::Band20m, BandStackDirection::Next, {});
+        QCOMPARE(refused.count(), 2);
+        QCOMPARE(hostRefused.count(), 0);
+        QCOMPARE(core.model->sliceById(own.first())->frequency(), frequency);
+
+        // Unbound when the actions go: calls reach the controller directly.
+        {
+            HostingSliceActions passing(core.server.get(), core.model.get());
+            passing.bindBandStack(access);
+        }
+        access->options(std::nullopt, std::nullopt, 10);
+        QCOMPARE(stackDocument(core).value(QStringLiteral("options")).toObject()
+                     .value(QStringLiteral("dwellSeconds")).toInt(), 10);
+    }
+
+    // Design V15: the hosting desktop's press asks, like any device's.
+    void aHostPressThatWouldMoveAPeersSliceAsks()
+    {
+        Core core;
+        startHostingWithStack(core);
+        Device phone(QStringLiteral("iPad"), QStringLiteral("tablet"));
+        core.pair(phone);
+        LoopbackTransport* app = core.signIn(phone, kStack);
+        QVERIFY(admitted(app));
+        const QList<int> own = ownedBy(core, phone.key.fingerprint());
+        QCOMPARE(own.size(), 1);
+        const int peerSlice = own.first();
+        core.model->sliceById(peerSlice)->setFrequency(7150000.0);
+        const int receiver = core.model->sliceById(0)->streamIndex();
+        QCOMPARE(core.model->sliceById(peerSlice)->streamIndex(), receiver);
+
+        HostingSliceActions host(core.server.get(), core.model.get());
+        auto* access = qobject_cast<LocalBandStackAccess*>(core.model->bandStack());
+        host.bindBandStack(access);
+        QSignalSpy question(&host, &HostingSliceActions::question);
+        QSignalSpy pending(&host, &HostingSliceActions::pending);
+        QSignalSpy finished(&host, &HostingSliceActions::finished);
+        QSignalSpy refused(access, &BandStackAccess::refused);
+        QSignalSpy reported(access, &BandStackAccess::reported);
+
+        // Held: asked, not refused, and nothing changes.
+        const QString before = core.model->bandStackFacade()->json();
+        access->press(0, Band::Band20m, BandStackDirection::Next, {});
+        QTRY_COMPARE(question.count(), 1);
+        const SessionMessage asked = question.first().at(0).value<SessionMessage>();
+        QCOMPARE(asked.prompt.kind, QStringLiteral("panMove"));
+        QCOMPARE(pending.count(), 1);
+        QCOMPARE(pending.first().at(1).toBool(), true);
+        QCOMPARE(refused.count(), 0);
+        QCOMPARE(finished.count(), 0);
+        QCOMPARE(core.model->sliceById(0)->frequency(), 7074000.0);
+        QCOMPARE(core.model->bandStackFacade()->json(), before);
+
+        // The dialog a window shows for it.
+        QWidget parent;
+        std::function<qint64()> choice;
+        // Owned by `parent`.
+        const QDialog* dialog = MultiDeviceController::questionDialog(asked.prompt, &parent, &choice);
+        QVERIFY(dialog != nullptr);
+
+        // Cancel changes nothing. The answer is to the cancel: a held command
+        // gets no second answer.
+        host.cancel(asked.prompt.id);
+        QTRY_COMPARE(finished.count(), 1);
+        QCOMPARE(finished.last().at(0).toByteArray(), QByteArrayLiteral("confirm.cancel"));
+        QVERIFY(finished.last().at(2).toBool());
+        QCOMPARE(core.model->sliceById(0)->frequency(), 7074000.0);
+        QCOMPARE(core.model->bandStackFacade()->json(), before);
+        QCOMPARE(reported.count(), 0);
+
+        // Asked again, then proceed: the press runs.
+        access->press(0, Band::Band20m, BandStackDirection::Next, {});
+        QTRY_COMPARE(question.count(), 2);
+        const qint64 id = question.last().at(0).value<SessionMessage>().prompt.id;
+        host.proceed(id, -1);
+        QTRY_VERIFY(core.model->sliceById(0)->frequency() > 14000000.0);
+        QTRY_COMPARE(reported.count(), 1);
+        QVERIFY(reported.first().at(0).toString().startsWith(QStringLiteral("20m: ")));
+    }
+
+    // Design V15: its other tuning is not changed by this work.
+    void aHostsOtherTuningStillDoesNotAsk()
+    {
+        Core core;
+        startHostingWithStack(core);
+        Device phone(QStringLiteral("iPad"), QStringLiteral("tablet"));
+        core.pair(phone);
+        LoopbackTransport* app = core.signIn(phone, kStack);
+        QVERIFY(admitted(app));
+        const QList<int> own = ownedBy(core, phone.key.fingerprint());
+        QCOMPARE(own.size(), 1);
+        core.model->sliceById(own.first())->setFrequency(7150000.0);
+
+        HostingSliceActions host(core.server.get(), core.model.get());
+        host.bindBandStack(qobject_cast<LocalBandStackAccess*>(core.model->bandStack()));
+        QSignalSpy question(&host, &HostingSliceActions::question);
+        core.model->sliceById(0)->setFrequency(14074000.0);
+        QTest::qWait(20);
+        QCOMPARE(question.count(), 0);
+    }
+
+    // A phone's recall is the phone's to report, not this window's.
+    void aPeersRecallIsNotReportedOnTheDesktop()
+    {
+        Core core;
+        startHostingWithStack(core);
+        Device phone(QStringLiteral("iPad"), QStringLiteral("tablet"));
+        core.pair(phone);
+        LoopbackTransport* app = core.signIn(phone, kStack);
+        QVERIFY(admitted(app));
+        const QList<int> own = ownedBy(core, phone.key.fingerprint());
+        QCOMPARE(own.size(), 1);
+        QSignalSpy reported(core.model->bandStack(), &BandStackAccess::reported);
+        QSignalSpy report(core.model->bandStackController(), &BandStackController::reportRecall);
+        const QJsonObject result = core.invoke(
+            app, "bandStack.press",
+            {MirrorUpdate{0, "sliceId", MirrorWireKind::Int64, QVariant(qlonglong(own.first()))},
+             MirrorUpdate{0, "band", MirrorWireKind::Utf8, QVariant(QStringLiteral("40m"))},
+             MirrorUpdate{0, "direction", MirrorWireKind::Utf8, QVariant(QStringLiteral("next"))}});
+        QVERIFY2(accepted(result), qPrintable(reasonOf(result)));
+        QCOMPARE(report.count(), 1);
+        QCOMPARE(reported.count(), 0);
     }
 
     // Slice control plan Task 17: the hosting desktop's own refusal of a

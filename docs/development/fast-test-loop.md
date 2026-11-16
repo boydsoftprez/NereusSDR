@@ -176,6 +176,41 @@ To add a test to the group, register it with
 up with the wall clock, not for one that merely waits with a generous
 timeout.
 
+## The test rule
+
+J.J. Boyd's rule, 2026-11-06.
+
+- **While working:** run only the tests for the code you changed. After a
+  failure, re-run only what failed.
+- **Before main:** the full set runs once, on GitHub, when a pull request is
+  marked ready. Land ready pull requests as a group where you can, so they
+  share one run. After a failure, re-run only the failed jobs.
+- **Phone tap-through tests (the UI tests):** only when the phone app changed,
+  and only in that run.
+- **Before a release:** one full run on main, started by hand from the Actions
+  tab, for both CI and iOS. Nothing else tests the merged result: two pull
+  requests that each pass can break main together, and release builds configure
+  with tests off.
+- **Kept:** license checks and transmit tests.
+- **Dropped:** stress runs, break-on-purpose runs, repeats of passing tests,
+  repeat review rounds (one review, one fix round), and testing combined builds
+  (build it and check it starts).
+- **A test that fails only sometimes** gets one look and a note, and becomes a
+  job only if it keeps blocking work.
+
+What CI runs for this:
+
+| Event | What runs |
+| --- | --- |
+| Push to a draft pull request | Compliance, rendezvous and Roundtable only |
+| Marking a draft ready, or a push once it's ready | Everything, with the required checks |
+| Push to main | No tests; builds that keep the hosted compiler caches warm |
+| By hand, from the Actions tab | Everything; on main this also refreshes the saved test times |
+
+A draft that reads green has passed only the quick jobs. Its required `Build`
+checks don't report until it's marked ready, so nothing can merge without the
+full run. A draft also has no build artifacts.
+
 ## Test windows
 
 Tests run without windows by default. Every test registered through
@@ -331,6 +366,37 @@ planned back into it at exit. The first such test in a fresh build
 directory pays the planning; the rest take a few seconds. Delete the file
 to measure a cold run. A new test that starts WDSP another way should use
 one of those names, or add its own to the rule.
+
+**A test's TLS key comes from one file.** A `StationServer` makes a TLS
+certificate on first start, and its 3072-bit RSA key took about a second, and
+over 8 s on a busy machine. Each test now takes that key from
+`build/tests/test-tls-key.pem` (`tests/TestSharedTlsKey.cpp`, linked by
+`nereus_add_test()`): the first test to need it makes it, and each certificate
+still has its own serial and fingerprint. A test about the key itself
+registers with `OWN_TLS_KEYS`.
+
+**Disk syncs are the other shared cost.** `AppSettings::save()` and the
+security stores write through `QSaveFile`, which syncs the disk. A `RadioModel`
+test saves often: `tst_cat_coverage` syncs about twice per row. With a 50 ms
+sync delay added on a Mac it went from 13 s to 104 s, which is how a busy disk
+timed out 49 tests on the Linux self-hosted runners while tests that do not
+save kept their usual time (run 41764912150). Those runners keep test homes
+and scratch in memory for this reason (`scripts/ci/box-linux.sh`).
+
+**Those two are why the waits stay short.** `NEREUS_TRY_*` wait 15 s by default
+(`kNereusTryDefaultMs` in `tests/SessionWait.h`), up from 5 s. The shared key
+and the memory disk remove most of the slowness that passed 5 s, and a longer
+default has a cost: a wait only pays its limit when it fails, and with about
+940 call sites, four failing functions at 30 s used up ctest's 120 s limit
+where they had taken 24 s. `tests/MultiDeviceHarness.h` keeps 30 s only for the
+sign-in and `invoke()` waits that run measured passing their old limit, and
+its waits print a warning naming the step when they run out, so a test killed
+at the limit still says what stalled.
+
+**A stated time limit is not a wait.** The handover requirement of 15 s
+(`tst_station_handover_roundtrip`) fails only in the realtime entry
+`tst_station_handover_roundtrip_limit`, on an idle machine. The other entry
+runs everywhere and reports the time, with a warning when it is over.
 
 ## Where the settings file lives
 

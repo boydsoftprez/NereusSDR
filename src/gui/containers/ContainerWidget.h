@@ -61,6 +61,9 @@
 //   2026-09-28 - vfoFilterContextRequested: the VFO display's filter
 //                 right-click, apart from a filter button's. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-06 - vfoBandStackRequested: the VFO display's band stack request,
+//                 apart from a band button's (band stack plan Task 10). J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Workspace preview: the compact group header (Always in
 //                 the layout, Reveal as a zero-space overlay, Hidden),
 //                 Arrange presentation and inside resize handles. J.J.
@@ -480,6 +483,9 @@ signals:
     void filterContextRequested(int filterIndex);
     /// The VFO display's filter right-click (it names no filter button).
     void vfoFilterContextRequested();
+    // The VFO display's band stack request: the band is the slice's own, so it
+    // stays apart from a band button's, whose band number 0 is 160m.
+    void vfoBandStackRequested();
     void antennaSelected(int index);
     void tuneStepSelected(int stepIndex);
     void otherButtonClicked(int buttonId);

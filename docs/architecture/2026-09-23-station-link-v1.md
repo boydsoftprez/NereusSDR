@@ -913,6 +913,10 @@ Core's CWX sender with `cw.send`, `cw.memory`, `cw.stop` and `cw.key`
 verbs; any other peer sees exactly the wire it was built for, and a cw.*
 verb from it is refused "Update this app to send CW through this Core."
 The station does not declare it. The desktop's remote window declares it.
+At 3 the client also sends `cw.paddle` (section 18.10). A peer that declared
+less is still sent the Core's version, and nothing it uses changes; a
+`cw.paddle` start from it is refused "Update this app to send dot and dash
+through this Core."
 
 **`cwSettings` 1** (R-CW-03, R-CW-48, `transmitSettingsVersion` 16): the
 client reads and changes the CW settings on `transmit` (section 7.1). A
@@ -949,6 +953,13 @@ Core's PA Gain profiles. A peer that declares it at minor 11 is sent
 the Core takes its `paProfile.*` verbs; a peer that does not sees none of
 them. The desktop's remote window does not declare it: its PA Gain page
 reads and writes the profile settings through the settings proxy.
+
+**`bandStack` 1** (design 2026-11-05-band-stack-design.md): the client shows
+and changes the Core's band stack. A peer that declares it at minor 11 is
+sent `bandStackVersion` (section 6.3) and the read-only `bandStack` object,
+and the Core takes its `bandStack.*` verbs; a peer that does not sees none
+of them and keeps `slice.selectBand`. The desktop's remote window declares
+it, and the hosting desktop's own session has it.
 
 **`txInhibitReason` 1** (HL2 I/O board fault): the client shows why the
 Core holds transmit off. A peer that declares it at minor 11 is sent
@@ -1261,7 +1272,7 @@ table.
 | `txWatchPathVersion` | not advertised by this fixture |
 | `txStateVersion` | 2 |
 | `txReadingsVersion` | 4 |
-| `remoteCwVersion` | 2 |
+| `remoteCwVersion` | 3 |
 | `mediaTunnelVersion` | 1 |
 | `mediaRelayRoutingVersion` | 1 |
 | `settingsHygieneVersion` | 2 |
@@ -1303,6 +1314,8 @@ table.
 | `displayCodecVersion` | 2 |
 | `stationRoundtableVersion` | 2 |
 | `nnrLoadWarningVersion` | 1 |
+| `bandStackVersion` | 1 |
+| `txSsbModMonitorVersion` | 1 |
 
 <!-- /surface -->
 
@@ -1615,6 +1628,15 @@ When a feature is off, its version is 0:
   Core's capability, receive-only, transmit-permission and value-range
   checks still apply, with the reasons it gives the desktop's own PA
   profile writes. None keys the radio.
+- `bandStackVersion` (design 2026-11-05-band-stack-design.md): optional,
+  sent only at agreed minor 11 to a peer whose hello declared `bandStack` 1,
+  on a Core that runs its own radio, after `nnrLoadWarningVersion` (or after
+  the last entry before it when that is absent) and immediately before
+  `coreBuildInfo`. At 1 the Core sends `bandStack` (read-only, section 7.1)
+  and takes the `bandStack.*` verbs (section 9). The session protocol minor
+  did not change. A peer that gets no entry uses `slice.selectBand`; a client
+  on a Core that sends no entry shows band stack controls greyed, saying the
+  Core needs updating.
 - `radeStatusVersion` (RADE on the phone's VFO flag): optional, sent only
   at agreed minor 11 to a peer whose hello declared `radeStatus` 1, while
   the Core has a radio model, after `paProfileVersion` (or after the
@@ -2236,6 +2258,17 @@ When a feature is off, its version is 0:
   blank; with no Core connected it says "Connect to the Core to see the
   modulation monitor.".
 
+- `txSsbModMonitorVersion`: sent at 1 after every other entry and before
+  `coreBuildInfo`, only in the minor-11 block, whenever `recordStreamVersion`
+  is at least 1 (the Core runs its own SSB modulation analyzers); omitted
+  otherwise. At 1 the Core sends the SSB Mod Monitor's readings on the
+  `txSsbModulation` and `txSsbModulationFeedback` record streams (section
+  7.7) and takes `txSsbModMonitor.reset` (section 9.1). A window subscribes
+  to one of the two streams only while its SSB Mod Monitor is shown; the
+  panel starts off, so a default window sends nothing. With 0 or no entry a
+  window shows the panel disabled with "This Core does not send the SSB
+  modulation monitor. Updating the Core may help.".
+
 - `mediaTunnelVersion` (Task 29 step 2b): 1 when media is on, after every
   previously emitted minor-11 entry (including conditional transmit
   readings). This unpublished field was ordered here at trunk integration
@@ -2334,7 +2367,9 @@ When a feature is off, its version is 0:
   own radio model: the Core takes `cw.send`, `cw.memory`, `cw.stop` and
   `cw.key` (section 18.10). A window that is sent no entry shows its CWX
   applet's Send, Stop, Key, memories and KB to CW disabled with "Sending
-  CW from a remote window needs a newer Core.", never hidden.
+  CW from a remote window needs a newer Core.", never hidden. 3: the Core
+  also takes `cw.paddle`; below 3 a window's dot and dash actions are
+  unavailable with "Dot and dash need a newer Core."
 
 `txPermitted` (iPhone app plan Task 34) is true only for a session the
 station transmit gate permits (section 18.1): false until
@@ -2527,7 +2562,8 @@ declared `txEqCurve` (section 6.1); `remoteTxVersion` and the three
 `radioModels`; `coreAddressesVersion` only for a device signed in with its
 own key that declared `coreAddresses`; `adcAttenuatorVersion` only for
 a peer that declared `adcAttenuators`; `paProfileVersion` only for a
-peer that declared `paProfiles` (section 6.1); `radeStatusVersion` only
+peer that declared `paProfiles` (section 6.1); `bandStackVersion` only for
+a peer that declared `bandStack` (section 6.1); `radeStatusVersion` only
 for a peer that declared `radeStatus`; `txInhibitReasonVersion` only for a
 peer that declared `txInhibitReason` (section 6.1); `paTransmitBandVersion` only for a
 peer that declared `paTransmitBand`; `radeReasonVersion` only for a peer
@@ -2751,7 +2787,9 @@ older window sees only the values it was built for.
 | 117 | `displayCodecVersion` | `i64` |
 | 118 | `stationRoundtableVersion` | `i64` |
 | 119 | `nnrLoadWarningVersion` | `i64` |
-| 120 | `coreBuildInfo` | `utf8` |
+| 120 | `bandStackVersion` | `i64` |
+| 121 | `txSsbModMonitorVersion` | `i64` |
+| 122 | `coreBuildInfo` | `utf8` |
 
 <!-- /surface -->
 
@@ -2914,6 +2952,13 @@ resume below 250 ms remains independent of warning presentation.
 | 17 | `drainCurrentA` | `f64` | outbound |  |
 | 18 | `efficiencyText` | `utf8` | outbound |  |
 | 19 | `bandFollow` | `enum` | outbound | 0, 1, 2, 3 |
+
+**BandStackFacade** (2 properties)
+
+| Ordinal | Property | Wire kind | Direction | Enum values |
+| --- | --- | --- | --- | --- |
+| 0 | `json` | `utf8` | outbound |  |
+| 1 | `revision` | `i64` | outbound |  |
 
 **ConnectedDevicesFacade** (3 properties)
 
@@ -3719,6 +3764,7 @@ destroyed during the session.
 | `vax` | `StationVax` |
 | `catalog` | `StationCatalog` |
 | `paProfiles` | `PaProfilesFacade` |
+| `bandStack` | `BandStackFacade` |
 | `setup` | `SetupDescription` |
 | `spotSources` | `SpotSourceHost` |
 | `pan:<i>` | `PanadapterModel` |
@@ -3730,6 +3776,22 @@ destroyed during the session.
 
 Notes on the keys:
 
+- **`bandStack`** (`BandStackFacade`, `bandStackVersion` 1). The Core's band
+  stack, read-only (a write is refused; the `bandStack.*` verbs change it),
+  sent only to a peer at agreed minor 11 that declared `bandStack` 1. `json`
+  is the document: `schema`, `region`, `options` (`dupeProtection`,
+  `expiryMinutes` 0, 5, 15, 30 or 60, `dwellSeconds` 0, 10, 30 or 60),
+  `bands` (by band key: `order`, `returnMode` `current`, `lastUsed` or
+  `specific`, `specificId`), `entries` (`id`, `band`, `frequencyHz`, `mode`,
+  `filterLowHz`, `filterHighHz`, `centerHz`, `spanHz` with 0 meaning no saved
+  zoom, `locked`, `seeded`, `name`, `lastUsedMs`), `places` (by slice letter,
+  then band key, the entry id that slice is on), and two fields published but
+  not saved: `lastExpiry` (`batchId`, `count`) and `lastRecall` (`seq`,
+  `sliceId`, `applyView`, `centerHz`, `spanHz`). A pan's view belongs to each
+  device, so only the device controlling `sliceId` applies `lastRecall` to its
+  own view when `seq` moves. `json` is empty until the Core knows a radio.
+  `revision` moves by one each time `json` changes and at no other time.
+  A window keeps no copy when the session ends.
 - **`roundtable`** (`RoundtableState`, `stationRoundtableVersion` 1). The
   Core's Roundtable connection, read-only (a write is refused; the
   `roundtable.*` verbs change it), sent only to a peer at agreed minor 11
@@ -5830,6 +5892,10 @@ subscribe, page, group, label, kind, default}` and, by `kind`, either
   a device reads and writes with `settings.write` (section 8); `device` for
   each device's own value, which it keeps per pan and sends in its spectrum
   subscription.
+  `DisplaySpectrumFps` is the Core's one shared rate: a device's Display pill
+  keeps that device's own rate on the device (a desktop's `DisplayPaintFps`),
+  and once it has one the device subscribes at it. No Core runs its engines
+  from this key; an engine runs at the highest `fps` its endpoints ask.
 - `subscribe`: the spectrum subscription field the value reaches (remote
   media control v1): `fftSize` (by the rule below), `windowType`, `fps`,
   `trace.detector`, `trace.averageMode`, `waterfall.detector`,
@@ -5952,6 +6018,8 @@ the Core keeps:
 | `vaxLevels` | 1 | With `vaxVersion` 1: the VAX meters of the computer the Core runs on, one record, `id` `"0"`: `ch1Level` to `ch4Level` and `txLevel` (numbers, 0 to 1, each rounded to a thousandth, as the applet's meters read them: `AudioEngine::vaxRxLevel` and `vaxTxLevel`) and `atMs` (number, the Core's clock in milliseconds when it read them). The Core reads the meters 5 times a second, only while at least one peer subscribes (a device with its VAX tool open), and sends a record only when a meter moved |
 | `txAmModulation` | 1 | With `txModMonitorVersion` 1: the AM Mod Monitor's readings of the transmit I/Q the Core sends its radio (its TX tap, `AmModulationAnalyzer`), one record, `id` `0`, present only while the radio is keyed in AM, SAM or DSB (the transmit slice's mode) and a peer subscribes: `atMs` (number, the Core's clock in ms since the epoch when it read them), `posPeakPct` and `negPeakPct` (numbers, the positive and negative peak modulation in percent since the Core's previous record: the largest of the reads it merged), `posHoldPct` and `negHoldPct` (numbers, the peaks held 1.5 s, then falling as the Core's analyzer lets them fall), `carrierLevel` (number, the carrier in linear envelope units, 0 to 1 at the radio's full scale), `carrierDbfs` (number, that in dB, -120 with no carrier), `carrierPresent`, `carrierLow` and `carrierHigh` (booleans: a carrier is measured, below 0.05, above 0.98), `scopeRateHz` (number, the rate of the scope's points) and `scopePctTenths` (string: the envelope trace, oldest first, each point's percent modulation in tenths as a little-endian int16, in base64; at most 512 points, a longer trace reduced by keeping the largest-magnitude point of each group). Asymmetry is `posHoldPct` minus `negHoldPct` |
 | `txAmModulationFeedback` | 1 | With `txModMonitorVersion` 1: the same record for the PureSignal feedback receiver (the PA's output as the radio samples it), on the receiver `ModMon/FbStream` names (section 8.1); present under the same rule, and measured only while PureSignal's feedback runs on the Core's radio |
+| `txSsbModulation` | 1 | With `txSsbModMonitorVersion` 1: the SSB Mod Monitor's readings of the transmit I/Q the Core sends its radio, one record, `id` `0`, present only while the radio is keyed in USB or LSB (the transmit slice's mode; DIGU and DIGL are not) and a peer subscribes: `atMs` (number, the Core's clock in ms since the epoch), `peakPct`, `avgPct` and `peakHoldPct` (numbers, the envelope in percent of full scale, 0 to 3276.7: the largest window peak of the reads since the last record, the slow average, and the peak held 1.5 s then falling 100 percent per second), `peakDbfs`, `avgDbfs` and `peakHoldDbfs` (numbers, the same in dB, -120 to 71), `crestDb` (number, -200 to 200, peak over RMS of the envelope over the last 300 ms of signal, leaving out blocks below the presence minimum or more than 30 dB under that window's peak; absent while that window holds no signal), `signalPresent` (boolean), `scopeRateHz` (whole number, 0 to 1536000) and `scopePctTenths` (string: the envelope trace, oldest first, each point's percent in tenths as a non-negative little-endian int16, in base64; at most 512 points, a longer trace keeping the largest point of each group). A window refuses a record with a field missing, mistyped or out of range |
+| `txSsbModulationFeedback` | 1 | With `txSsbModMonitorVersion` 1: the same record for the samples PureSignal's feedback path delivers (the PA's output as the radio samples it); present under the same rule, and only while PureSignal runs on the Core's radio. A window with PureSignal off shows its PA FB source disabled with the reason |
 | `roundtableRooms` | 500 | With `stationRoundtableVersion` 1: one Roundtable room in the band list, `id` the room id: `record` (string, `room`) and the room's summary as Roundtable's band list carries it ([Roundtable version 1](2026-10-23-roundtable-v1.md)) |
 | `roundtableRoom:<id>` | 400 | With `stationRoundtableVersion` 1: one room in view, a record per part, its kind in `record` (a turn has a `kind` of its own): `member:<ref>` a member (`seq` its place in joining order), `reading:<ref>` that member's latest reading (`ref` the member), `turn:<id>` a turn (`end` null while it is open), `name:<turn id>:<name>` a name heard in a turn (`turn`, `name`, `count`), `message:<id>` a message (the last 50) |
 
@@ -6150,6 +6218,8 @@ computer, never sent). `classifySettingsKey` (`SettingsScope.cpp`) decides:
 | 3. whole key | `RemoteMoxTimeOutSeconds` | station |
 | 3. whole key | `RxOnly` | station |
 | 3. whole key | `ModMon/FbStream` | station |
+| 3. whole key | `DisplayDecimation` | operatorLocal |
+| 3. whole key | `DisplayPaintFps` | operatorLocal |
 | 3. whole key | `ExtendedTxAllowed` | operatorLocal |
 
 <!-- /surface -->
@@ -6467,6 +6537,19 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `paProfile.setGain` | `band` i64, `value` f64 | `paProfileVersion` | 1 | 11 |
 | `paProfile.setAdjust` | `band` i64, `step` i64, `value` f64 | `paProfileVersion` | 1 | 11 |
 | `paProfile.setMaxPower` | `band` i64, `value` f64 | `paProfileVersion` | 1 | 11 |
+| `bandStack.press` | `sliceId` i64, `band` utf8, `direction` utf8, `viewCenterHz` i64 (optional), `viewSpanHz` i64 (optional) | `bandStackVersion` | 1 | 11 |
+| `bandStack.step` | `sliceId` i64, `direction` utf8, `viewCenterHz` i64 (optional), `viewSpanHz` i64 (optional) | `bandStackVersion` | 1 | 11 |
+| `bandStack.goTo` | `sliceId` i64, `entryId` utf8, `viewCenterHz` i64 (optional), `viewSpanHz` i64 (optional) | `bandStackVersion` | 1 | 11 |
+| `bandStack.add` | `sliceId` i64, `viewCenterHz` i64 (optional), `viewSpanHz` i64 (optional) | `bandStackVersion` | 1 | 11 |
+| `bandStack.saveHere` | `sliceId` i64, `entryId` utf8, `viewCenterHz` i64 (optional), `viewSpanHz` i64 (optional) | `bandStackVersion` | 1 | 11 |
+| `bandStack.edit` | `entryId` utf8, `name` utf8 (optional), `locked` bool (optional) | `bandStackVersion` | 1 | 11 |
+| `bandStack.delete` | `entryId` utf8 | `bandStackVersion` | 1 | 11 |
+| `bandStack.reorder` | `band` utf8, `ids` utf8 | `bandStackVersion` | 1 | 11 |
+| `bandStack.setReturn` | `band` utf8, `mode` utf8, `entryId` utf8 (optional) | `bandStackVersion` | 1 | 11 |
+| `bandStack.clear` | `band` utf8 (optional) | `bandStackVersion` | 1 | 11 |
+| `bandStack.reseed` | none | `bandStackVersion` | 1 | 11 |
+| `bandStack.options` | `dupeProtection` bool (optional), `expiryMinutes` i64 (optional), `dwellSeconds` i64 (optional) | `bandStackVersion` | 1 | 11 |
+| `bandStack.restoreExpired` | `batchId` utf8 | `bandStackVersion` | 1 | 11 |
 | `paProfile.setUseMax` | `band` i64, `on` bool | `paProfileVersion` | 1 | 11 |
 | `configureRfKit` | `host` utf8, `port` i64 | `remoteRfKitControlVersion` | 2 | 11 |
 | `disconnectRfKit` | none | `remoteRfKitControlVersion` | 2 | 11 |
@@ -6539,6 +6622,7 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `cw.memory` | `number` i64 | `remoteCwVersion` | 1 | 11 |
 | `cw.stop` | none | `remoteCwVersion` | 1 | 11 |
 | `cw.key` | `down` bool | `remoteCwVersion` | 1 | 11 |
+| `cw.paddle` | `dot` bool, `dash` bool | `remoteCwVersion` | 3 | 11 |
 | `setAlexTxAntenna` | `band` i64, `antenna` i64 | `radioHardwareVersion` | 6 | 11 |
 | `setAlexTxAntennaForRadio` | `mac` utf8, `band` i64, `antenna` i64 | `radioAntennaRowsVersion` | 1 | 11 |
 | `requestIoBoardI2c` | `bus` i64, `address` i64, `register` i64, `write` bool, `value` i64 | `radioHardwareVersion` | 7 | 11 |
@@ -6555,6 +6639,7 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `spots.sendCommand` | `source` utf8, `text` utf8 | `recordStreamVersion` | 1 | 11 |
 | `spots.clearAll` | none | `recordStreamVersion` | 1 | 11 |
 | `txModMonitor.reset` | `source` i64 | `txModMonitorVersion` | 1 | 11 |
+| `txSsbModMonitor.reset` | `source` i64 | `txSsbModMonitorVersion` | 1 | 11 |
 | `station.selectRadio` | `mac` utf8 | `stationRadiosVersion` | 1 | 11 |
 | `station.rescanRadios` | none | `stationRadiosVersion` | 1 | 11 |
 | `station.setRadioModel` | `mac` utf8, `model` i64 | `stationRadiosVersion` | 1 | 11 |
@@ -6855,6 +6940,33 @@ These command groups need a sentence beyond the table:
   bundle." and "The Core could not read this request.". A window shows a
   refusal in its Support dialog; a bundle it could not get is written
   with the reason in `core/unavailable.txt`.
+- **The band stack** (`bandStackVersion` 1). `band` in every verb is a band
+  key as the `bandStack` document names it, so `bandStack.press` takes GEN and
+  the shortwave bands, which `slice.selectBand` does not. `viewCenterHz` and
+  `viewSpanHz` are the sender's own view; where they are missing an entry keeps
+  its stored values. `bandStack.press` goes to the band's next or previous spot
+  or wherever its return mode says, `bandStack.step` moves along the slice's own
+  band, and `bandStack.goTo` goes to one entry. Each of those three retunes the
+  slice, saves the spot it left, and moves `lastRecall` and the slice's place.
+  `bandStack.add` adds the slice's current spot and `bandStack.saveHere` writes
+  it over an entry; neither retunes. `bandStack.edit` changes `name` or `locked`
+  (one is needed), `bandStack.delete` removes an entry, `bandStack.reorder` takes
+  `ids`, a JSON array as text holding exactly that band's entries,
+  `bandStack.setReturn` takes `mode` `current`, `lastUsed` or `specific` (with
+  `entryId`), `bandStack.clear` removes unlocked entries from `band` or from
+  every band, `bandStack.reseed` applies the Core's current region and moves no
+  slice, `bandStack.options` takes any of its three values, and
+  `bandStack.restoreExpired` brings back `lastExpiry`'s `batchId` for 5 seconds
+  after it. A verb naming `sliceId` meets the slice checks: another device's
+  slice gets the usual refusal, a listener gets "You are only listening to Slice
+  %1. Take control of it to change its band.", and a recall of the frozen
+  transmit slice gets the on-air words. Other refusals: "Update this app to use
+  band stacks on this Core." without the feature, "Connect to a radio to use
+  band stacks." while the Core has no radio, "The request for the band stack was
+  not understood." for a missing or wrong argument, "That band stack entry no
+  longer exists." for an entry another device removed, and the desktop's words
+  for a locked or transmitting slice. A refusal changes nothing. None keys the
+  radio. `slice.selectBand` is unchanged.
 - **The AM Mod Monitor's reset** (R-IOS-13, R-R3-49, `txModMonitorVersion`
   1). `txModMonitor.reset` (`source` i64: 0 the transmit I/Q, 1 the PA
   feedback) starts the Core's analyzer for that source afresh (its carrier
@@ -8383,7 +8495,7 @@ same on every machine.
 | `foreign-write-refused` | This device holds slice 0 and another device slice 1: a `property.write` to `slice:1` and to `marker:1`, and `removeSlice` and `setActiveSliceById` naming slice 1, are refused "That slice belongs to Other device 1. It can be changed only there.", with no value sent back and nothing changed; its own slice it may make active |
 | `held-for-device` | Another device, alone on the Core, leaves with `session.leave`: nobody else is on its slice, so the slice closes and is saved for it (the Core has no slice). This device, let in meanwhile, gets a slice of its own; the other device signs in again and its saved slice is restored under the lowest free letter, which this device sees as a marker with `ownerAway` false |
 | `verbs-tx-set-tx-slice` | On a Core with `remote_transmit` allow (stationSetup `remoteTransmit`), a device that declares `remoteTx` is sent `txPermitted` false in its first `capabilities` and true in the `capabilities` sent again after `snapshot.complete`, each with `remoteTxVersion` 1 and the `txRefusal` entries (`notReady` first, empty once permitted); `tx.setTxSlice` with an argument it does not take is refused "The Core could not read this request."; with `sliceId` while nobody holds transmit it is refused "Take transmit on this device first." with the values `refusalCode` `notHolder` and `refusalFix` `takeTransmit`. Runs on the station alone |
-| `verbs-cw` | `remoteCwVersion` 1 (the client declares `remoteTx` 1 and `remoteCw` 1, section 18.10): `remoteCwVersion` right after `txReadingsVersion` in both `capabilities`; `cw.send`, `cw.memory` and `cw.key` each with a misnamed argument refused "The Core could not read this request.", and with their own arguments while nobody holds transmit refused "Take transmit on this device first." with `refusalCode` `notHolder` and `refusalFix` `takeTransmit`; `cw.key {down: false}` and `cw.stop` taken. Nothing keys. |
+| `verbs-cw` | `remoteCwVersion` 1 (the client declares `remoteTx` 1 and `remoteCw` 1, section 18.10): `remoteCwVersion` right after `txReadingsVersion` in both `capabilities`; `cw.send`, `cw.memory` and `cw.key` each with a misnamed argument refused "The Core could not read this request.", and with their own arguments while nobody holds transmit refused "Take transmit on this device first." with `refusalCode` `notHolder` and `refusalFix` `takeTransmit`; `cw.key {down: false}` and `cw.stop` taken. A `remoteCw` 2 client's `cw.paddle` with a misnamed argument is refused the same way, a start is refused "Update this app to send dot and dash through this Core.", and both up is taken. Nothing keys. |
 | `unheld-key` | On a Core with `remote_transmit` allow whose radio can key (stationSetup `transmitReady`) and whose device's media carries a microphone line (stationSetup `microphoneLine`), one device that declares `remoteTx`: each keying verb with an argument it does not take is refused "The Core could not read this request."; a program's `tx.key {trigger:"tci"}` on unheld transmit is refused `programNeedsTransmit` and nobody takes transmit; a person's `tx.key {trigger:"screen"}` takes it and keys (epoch 1; `transmitting` true, the device's entry transmitting); `tx.unkey {epoch:1}` unkeys; the same program's key then keys (epoch 2) and `tx.unkey {epoch:2}` unkeys; `tx.tune {on:true}` tunes (epoch 3, `transmit`'s `tune` true) and `{on:false}` ends it; `tx.twoTone {on:true}` on a radio with no transmit channel is refused "The two-tone test could not start on the Core." Each key and unkey also moves `txState` (section 18.8): `keyed`, who keyed and how (`keyedTrigger` `screen`, `tci`, `tune`), `keyedSinceMs` on the runner's virtual clock and 180 s left for the phone. Runs on the station and the app |
 | `key-without-microphone` | On the same Core as `unheld-key` but with no microphone line for the device (stationSetup `microphoneLine` absent): a person's `tx.key {trigger:"screen"}` is refused `micNotReady`, "This device's microphone is not connected to the Core. Wait a moment and try again.", and nothing keys; a program's key on unheld transmit is still refused `programNeedsTransmit` first. Runs on the station and the app |
 | `tx-keepalive` | On the same Core as `unheld-key`: `tx.keepalive` with an argument it does not take is refused "The Core could not read this request."; a keepalive while nothing of the device's is watched is accepted and changes nothing; the device keys (epoch 1) and sends keepalives 50 ms after the key and then 300 ms apart (sequences 2 to 4, epoch 1), each accepted, and the key stays on; then none: about 400 ms after the last one the watchdog holds the key's RF (`rfHeld` true, `rfHeldReason` `link`, still keyed), and 3000 ms after it stops transmitting (`transmitting` false, the device's entry no longer transmitting). `txState` follows the key (180 s left, then 179, 178 and 177 a second apart), and the watchdog's stop is its stop: `stopReason` `linkLost`, `stopSerial` 1, "The link to Conformance device went quiet, so the Core stopped transmitting.", with the hold ended in the same delta (`rfHeld` false, `rfHoldSerial` 1, `rfLastHoldMs` 2600). Runs on the station and the app |
@@ -9047,6 +9159,19 @@ else (another device's keepalives included) moved the check in between.
 A check no more than 5 ms late is the timer's ordinary slack and judges
 at once.
 
+**Correction, 2026-11-06: who reports a receipt.** The `tx` channel is no
+longer the only one. On a key with no `tx` copy read yet, a session's
+`tx.keepalive` on a data channel over a direct or TURN pair is judged at its
+receipt the same way, at the watchdog and at the cut guard. On such a key
+every keepalive read more than 400 ms old leaves the hold on, so a lag that
+lasts stops the key at the hold's 2600 ms bound as a lost link. Once any `tx`
+copy has been read on the key, session copies count as heard when read for
+the rest of it, even if the channel then dies. These have no receipt that
+shows a stall and count as heard when read: `tx.keepalive` on a WebSocket; on
+a data channel over the web relay, a stall that began before the relay leg's
+read, because the leg reads on the main thread; every watch's keepalives; and
+one a session move held on its new connection.
+
 **VOX a device armed.** A device whose media carries no microphone line
 cannot arm it: its `transmit.voxEnabled` write is refused "This device's
 microphone is not connected to the Core. Wait a moment and try again."
@@ -9379,9 +9504,10 @@ transmit unheld "Take transmit on this device first.". A carrier action
 
 ### 18.10 CW (`cw.*`)
 
-R-CW-48, R-CW-49 (`remoteCwVersion` 2, negotiated down to 1 for a
+R-CW-48, R-CW-49, R-HK-13 (`remoteCwVersion` 3, negotiated down to 1 for a
 peer that declared `remoteCw` 1). Remote on-air starts (`cw.send`,
-`cw.memory`, and `cw.key {down:true}`) require version 2. Version 1
+`cw.memory`, and `cw.key {down:true}`) require version 2, and a `cw.paddle`
+start requires version 3 and a peer that declared `remoteCw` 3. Version 1
 continues to support owner-scoped Stop/key-up; its preceding capability
 and property ordinals remain unchanged. The Core's CWX sender sends CW for the device that holds
 transmit, through the Core's own keying gate: the radio's CW key while the
@@ -9392,18 +9518,43 @@ sender runs for the holder is the holder's key, as VOX is (section 18.6).
   `cwxMemory<number>`. `cw.key {down}` (`bool`): the hand key, down
   while held; the Core lets go 3 s after the last `down` with no `up`.
   `cw.stop {}`: ends what the sender runs for this device and clears it.
-- `cw.send`, `cw.memory` and `cw.key {down: true}` need the session's own
+- `cw.paddle {dot, dash}` (both `bool`, the state of both keys on each
+  change): dot and dash on the radio's own keyer, which does the timing and
+  break-in, as for serial paddles. The Core writes no CWX bit and no PTT. The
+  Core keeps the last pair each device reported, for as long as its session
+  lasts, whatever has ended the keys since. A key rises when it is down in
+  this message and was up in that pair, and only a key that rises goes down
+  and renews the deadline: the Core lets go 3 s after the last rise, so
+  sending the same state again, or a message that only lets go of one key, is
+  not a press. A key past its deadline or ended by `cw.stop` stays up until it
+  has been reported up and rises again, and a refused press counts as reported
+  the same way. This is per key: the other key rising still goes down. A session
+  taken over forgets its pair. With no key rising and no paddle
+  down, the message is a release and keys nothing. A change while the paddle
+  is down keeps its activity epoch; the first press is a replacement, ending
+  what the sender ran. Under a link hold both keys read up on the wire and
+  the activity behaves as a held `cw.key`: the deadline keeps running, and
+  recovery puts down what is still held inside it. A refused change lets go
+  of the keys.
+- `cw.send`, `cw.memory`, `cw.key {down: true}`, and `cw.paddle` with a key
+  rising or with its paddle still down need the session's own
   gate (section 18.1) and transmit held by this device: from another
   device while one holds it they are refused "<holder> has the
   transmitter." (`otherDeviceHolds`, `takeTransmit`), with transmit unheld
   "Take transmit on this device first." (`notHolder`, `takeTransmit`).
   The sender's own refusals are `notReady` (section 18.3), and the CW
   keyer's are its own (for example the break-in sentences).
-- `cw.stop` and `cw.key {down: false}` are always taken: they end only
+- `cw.stop`, `cw.key {down: false}` and `cw.paddle` with both up, or with no
+  key rising and no paddle down, are always taken: they end only
   what the sender runs for this device, never another device's CW or the
-  station's own.
+  station's own. A window's release ends only the activity its key started:
+  text or a memory that took over from the key plays on, and the window's
+  keepalives with it.
+- A window forgets the keys it reported when its session retires or the
+  activity ends, and tells the Core both are up if the session is still
+  there.
 - A refusal carries `refusalCode` and `refusalFix` in its `values`, as
-  section 18.3 says. A version-2 accepted start/append returns `cwEpoch`
+  section 18.3 says. An accepted start/append (version 2 or later) returns `cwEpoch`
   (`i64`, 1 through UINT32_MAX) and `cwActive` (`bool`). An append keeps
   its activity epoch; a replacement uses a fresh one. Stop/refusal invents
   no new activity epoch.

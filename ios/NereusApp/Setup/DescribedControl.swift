@@ -650,7 +650,13 @@ struct DescribedControl: View {
             textEdit = nil
         }
         let rowEdit = control.kind == .text ? nil : owner.begin()
+        // Spec V1: this device's own region edit, marked before it goes out,
+        // since the Core's new region can arrive before its answer. A choice
+        // of the region already set changes nothing, so it marks nothing.
+        let regionPrompt = control.id == BandStackRegionPrompt.controlId ? specialized.bandStackRegion : nil
+        let regionEdit = dispatcher.state(of: control, in: category).value == value ? nil : regionPrompt?.noteEdit()
         let receive: @MainActor (SetupEditOutcome) -> Void = { outcome in
+            if let regionEdit { regionPrompt?.editEnded(regionEdit, outcome: outcome) }
             if let textEdit { textEntry.receive(outcome, edit: textEdit, owner: owner) }
             else if let rowEdit { owner.receive(outcome, edit: rowEdit) }
         }

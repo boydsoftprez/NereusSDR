@@ -8,6 +8,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05 - The AUTO right-click test delivers a real press and
+//                 context-menu event, and the window opens Setup before any
+//                 connection. Corrections for review findings. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-04 - Right-click on AUTO, on the RX panel and on an RX AGC
+//                 copy, asks for the AGC/ALC setup page and does not
+//                 toggle AUTO. Brian Sutton (W4KZO), AI-assisted via xAI
+//                 Grok.
 //   2026-10-26 - aBlankBandButtonIsDisabledWithAReason. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-23 - Brian Sutton, AI-assisted via xAI Grok.
@@ -30,12 +38,20 @@
 //                 per slice, the Nereus grid's same buttons and the saved
 //                 visibility bits. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-11-05 - aCopiedPassbandCentreDragKeepsTheWidth checks its spy is
+//                 valid, which it was not on Windows while the widget was
+//                 not exported from the GUI DLL. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-11-05 - aBandGridJumpsBetweenGroups spies by member pointer now that
+//                 BandButtonItem is exported. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QContextMenuEvent>
 #include <QLabel>
 #include <QGroupBox>
 #include <QJsonArray>
@@ -53,6 +69,9 @@
 #include "core/HpsdrModel.h"
 #include "core/P2RadioConnection.h"
 #include "core/StepAttenuatorFacade.h"
+#include "fakes/MainWindowTestSettings.h"
+#include "gui/MainWindow.h"
+#include "gui/SetupDialog.h"
 #include "gui/applets/RxApplet.h"
 #include "gui/containers/ContentPropertyEditor.h"
 #include "gui/applets/RxControlSections.h"
@@ -62,6 +81,7 @@
 #include "gui/widgets/FilterPassbandWidget.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/styles/WorkspacePreview.h"
+#include "gui/setup/DspSetupPages.h"
 #include "gui/meters/BandButtonItem.h"
 #include "gui/meters/BandGroups.h"
 #include "gui/meters/NereusBandButtonItem.h"
@@ -190,6 +210,31 @@ QPushButton* appletSql(RxApplet& applet)
         if (button->text() == QStringLiteral("SQL")) { return button; }
     }
     return nullptr;
+}
+
+QPushButton* appletAuto(RxApplet& applet)
+{
+    for (QPushButton* button : applet.findChildren<QPushButton*>()) {
+        if (button->text() == QStringLiteral("AUTO")) { return button; }
+    }
+    return nullptr;
+}
+
+// A right-click as a platform delivers it: the press, the context-menu event
+// and the release. Sent directly because QTest warns about a press that the
+// widget ignores, and a button is meant to ignore this one.
+void rightClick(QWidget* widget)
+{
+    const QPointF local = QRectF(widget->rect()).center();
+    const QPointF global = widget->mapToGlobal(local);
+    QMouseEvent press(QEvent::MouseButtonPress, local, global, Qt::RightButton,
+                      Qt::RightButton, Qt::NoModifier);
+    QApplication::sendEvent(widget, &press);
+    QContextMenuEvent menu(QContextMenuEvent::Mouse, local.toPoint(), global.toPoint());
+    QApplication::sendEvent(widget, &menu);
+    QMouseEvent release(QEvent::MouseButtonRelease, local, global, Qt::RightButton,
+                        Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(widget, &release);
 }
 
 // Every label text and tooltip the property editor shows.
@@ -537,6 +582,115 @@ private slots:
         QCOMPARE(toggled.at(0).at(0).toBool(), true);
     }
 
+    // Right-click on AUTO asks for Setup → DSP → AGC/ALC once and does not
+    // toggle AUTO; a left click still toggles it and does not ask for Setup.
+    // The panel is the RX object; the copy is the RX AGC object.
+    void rightClickAutoAsksForTheAgcSetupPage()
+    {
+        RadioModel radio;
+        SliceModel slice(0);
+        RxApplet applet(nullptr, &radio);
+        applet.setSlice(&slice);
+        QPushButton* panelAuto = appletAuto(applet);
+        QVERIFY(panelAuto);
+        QVERIFY(panelAuto->toolTip().contains(QStringLiteral("AGC/ALC")));
+
+        ContainerContentRegistry registry;
+        registerRxSectionContent(registry, &applet);
+        QWidget host;
+        auto* copy = qobject_cast<RxAgcSection*>(
+            registry.createWidget(registry.makeEntry(QStringLiteral("rx.agc")), &host));
+        QVERIFY(copy);
+        QPushButton* copyAuto = copy->autoButton();
+        QVERIFY(copyAuto);
+        QVERIFY(copyAuto->toolTip().contains(QStringLiteral("AGC/ALC")));
+
+        QSignalSpy setup(&applet, &RxApplet::openSetupRequested);
+        QSignalSpy toggled(&applet, &RxApplet::autoAgcToggled);
+
+        rightClick(copyAuto);
+        QCOMPARE(setup.count(), 1);
+        QCOMPARE(toggled.count(), 0);
+        QVERIFY(!slice.autoAgcEnabled());
+        QVERIFY(!copyAuto->isChecked());
+
+        QTest::mouseClick(copyAuto, Qt::LeftButton);
+        QCOMPARE(setup.count(), 1);
+        QCOMPARE(toggled.count(), 1);
+        QCOMPARE(toggled.at(0).at(0).toBool(), true);
+        QVERIFY(slice.autoAgcEnabled());
+        QVERIFY(copyAuto->isChecked());
+
+        rightClick(panelAuto);
+        QCOMPARE(setup.count(), 2);
+        QCOMPARE(toggled.count(), 1);
+        QVERIFY(slice.autoAgcEnabled());
+
+        QTest::mouseClick(panelAuto, Qt::LeftButton);
+        QCOMPARE(setup.count(), 2);
+        QCOMPARE(toggled.count(), 2);
+        QCOMPARE(toggled.at(1).at(0).toBool(), false);
+        QVERIFY(!slice.autoAgcEnabled());
+    }
+
+    // The window answers that right-click with Setup on the AGC/ALC page
+    // before any radio has connected, as the tooltip promises, and with one
+    // dialog per click once the window's slice wiring has run, and again
+    // when that slice is made a second time.
+    void rightClickOpensSetupBeforeAnyConnection()
+    {
+        Test::markAudioFirstRunDone();
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        RadioModel* model = window.radioModel();
+        QVERIFY(model);
+        QVERIFY(model->slices().isEmpty());
+        auto* applet = window.findChild<RxApplet*>();
+        QVERIFY(applet);
+        QPushButton* panelAuto = appletAuto(*applet);
+        QVERIFY(panelAuto);
+        // Without this policy the event reaches the window's own context menu,
+        // which runs modally and would hang here rather than fail.
+        QCOMPARE(panelAuto->contextMenuPolicy(), Qt::CustomContextMenu);
+
+        QPointer<SetupDialog> dialog;
+        int created = 0;
+        connect(&window, &MainWindow::setupDialogCreated, &window,
+                [&dialog, &created](SetupDialog* made) {
+            dialog = made;
+            ++created;
+        });
+        const auto clickExpectingOneMoreDialog = [&]() {
+            const int before = created;
+            QVERIFY(panelAuto->isEnabled());
+            rightClick(panelAuto);
+            QCOMPARE(created, before + 1);
+            QVERIFY(dialog);
+            QVERIFY(dialog->isVisible());
+            const auto* page = dialog->findChild<AgcAlcSetupPage*>();
+            QVERIFY(page);
+            QVERIFY(page->isVisible());
+            dialog->close();
+        };
+
+        clickExpectingOneMoreDialog();
+        if (QTest::currentTestFailed()) { return; }
+
+        model->setBoardForTest(HPSDRHW::Saturn);
+        model->configureStreamPool(5, 5, 192000);
+        model->setConnectionStateForTest(ConnectionState::Connected);
+        const int firstId = model->addSlice(QStringLiteral("pan-0"));
+        const int otherId = model->addSlice(QStringLiteral("pan-0"));
+        QCOMPARE(firstId, model->windowSliceId());
+        QCOMPARE(applet->slice(), model->sliceById(firstId));
+        clickExpectingOneMoreDialog();
+        if (QTest::currentTestFailed()) { return; }
+
+        model->removeSlice(firstId);
+        QVERIFY(model->sliceById(otherId));
+        QCOMPARE(model->addSlice(QStringLiteral("pan-0")), firstId);
+        clickExpectingOneMoreDialog();
+    }
+
     // Shift-click on a copied preset sets the RX filter and matches the TX
     // passband, as the applet's own preset does.
     void shiftClickOnACopiedPreset()
@@ -679,6 +833,10 @@ private slots:
         QCOMPARE(passband->filterLo(), 8000);
         QCOMPARE(passband->filterHi(), 9900);
         QSignalSpy shifted(passband, &FilterPassbandWidget::passbandShifted);
+        // Not valid on Windows while FilterPassbandWidget was not exported
+        // from the GUI DLL: the signal's address here was MinGW's import
+        // thunk.
+        QVERIFY(shifted.isValid());
 
         const auto mouse = [passband](QEvent::Type type, int x, Qt::MouseButton button,
                                       Qt::MouseButtons buttons) {
@@ -1169,11 +1327,10 @@ private slots:
     {
         BandButtonItem grid;
         grid.setSliceBand(0, Band::Band20m);
-        // bandClicked is on BandButtonItem, which the GUI DLL does not
-        // export on Windows; the string form finds it through the object.
-        QSignalSpy bands(&grid, SIGNAL(bandClicked(int)));
-        QSignalSpy stacks(&grid, SIGNAL(bandStackRequested(int)));
+        QSignalSpy bands(&grid, &BandButtonItem::bandClicked);
+        QSignalSpy stacks(&grid, &BandButtonItem::bandStackRequested);
         QVERIFY(bands.isValid());
+        QVERIFY(stacks.isValid());
 
         grid.buttonClicked(14, Qt::LeftButton);  // SWL
         QCOMPARE(grid.shownGroup(), BandGroup::Gen);
@@ -1195,14 +1352,17 @@ private slots:
         grid.buttonClicked(14, Qt::RightButton);  // a jump takes either button
         QCOMPARE(grid.shownGroup(), BandGroup::Hf);
 
-        // WWV sets the band for either button; it has no band stack.
+        // WWV's right-click asks for its stack, as any band's does.
         grid.buttonClicked(13, Qt::RightButton);
+        QCOMPARE(bands.count(), 1);
+        QCOMPARE(stacks.count(), 1);
+        QCOMPARE(stacks.last().at(0).toInt(), static_cast<int>(Band::WWV));
+        grid.buttonClicked(13, Qt::LeftButton);
         QCOMPARE(bands.count(), 2);
         QCOMPARE(bands.last().at(0).toInt(), static_cast<int>(Band::WWV));
-        QCOMPARE(stacks.count(), 0);
         // A band's right-click asks for its stack.
         grid.buttonClicked(3, Qt::RightButton);
-        QCOMPARE(stacks.count(), 1);
+        QCOMPARE(stacks.count(), 2);
         QCOMPARE(stacks.last().at(0).toInt(), static_cast<int>(Band::Band40m));
         // The blank does nothing.
         grid.buttonClicked(11, Qt::LeftButton);

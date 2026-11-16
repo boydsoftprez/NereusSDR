@@ -104,12 +104,12 @@ sessions, Data use, PTT buttons, Devices, Logs and About pages are covered in
 | --- | --- |
 | **File** | Settings, profile editor routes, configuration Import/Export routes, Quit. |
 | **Radio** | Connect last target, Disconnect, Manage Radios, state-dependent radio management and Protocol Info. |
-| **View** | Pan Layout, add slice, float pan, display duplex, Band Plan and performance presentation. |
-| **Band** | Choose available HF/GEN/WWV band targets. |
+| **View** | Pan Layout, add slice, float pan, display duplex, Band Plan, performance presentation, **Keyboard Shortcuts...** and **Use Shortcuts**. |
+| **Band** | Choose available HF/GEN/WWV band targets, and open **Band Stacking...**. |
 | **Mode** | Set active slice's demodulation. FM availability here is receive support, not FM transmit. |
 | **DSP** | Quick NR/NB/ANF/SNB/APF/AGC/TNF actions for the selected receiver or stated master function. |
 | **Containers** | Applet visibility, container creation/editing, default-layout reset, Arrange Workspace, Align to 8 px Grid, Manage Workspace Profiles… and the Hidden list. |
-| **Tools** | VAX/TCI when built, CAT Control..., TX Equalizer..., Spot Hub, FreeDV Reporter, RADE-related operating surfaces, PureSignal, Diversity, Network Diagnostics and Support Bundle as offered. |
+| **Tools** | VAX/TCI when built, CAT Control..., CWX..., MIDI Mapping..., TX Equalizer..., Spot Hub, FreeDV Reporter, RADE-related operating surfaces, PureSignal, Diversity, Network Diagnostics and Support Bundle as offered. |
 | **Help** | What's New, About and platform-specific diagnostics. Integrated Getting Started/Help/Data Modes pages remain unbuilt. |
 
 The **Containers** menu's **Applets** section and the panel **☰** menu show
@@ -151,13 +151,14 @@ confirmation and an accepted readback are different states.
 | **Ctrl+Shift+S** | Open **Spot Hub...** |
 | **Ctrl+Shift+R** | Open **FreeDV Reporter...** |
 | **Ctrl+Shift+D** | Open **Diversity...** |
+| **Ctrl+X** | Show the **CWX** applet (**Tools > CWX...**). |
 | **Ctrl+Shift+X** | Clear all spots. |
 | **Ctrl+Shift+N** | Toggle TNF master processing. |
 | **Ctrl+Shift+A** | Arrange Workspace (on and off). |
 | **Ctrl+1** to **Ctrl+9** | Switch to the first to ninth workspace profile. |
 | **Ctrl+Q** | Quit NereusSDR |
 
-These actions are present in the desktop menus of the source build covered by this draft. The current build has no shortcut-remapping page. macOS may display the platform's Command modifier in place of Ctrl; use the shortcut shown in the menu.
+These actions are present in the desktop menus of the source build covered by this draft. These menu shortcuts can't be changed. The keys that tune, change band and mode, and key the radio are hot keys, listed with their defaults in [Keys, knobs and controllers](10-customize.md#keys-knobs-and-controllers) and changed under **File > Settings... > Keys and controllers > Keyboard**. macOS may display the platform's Command modifier in place of Ctrl; use the shortcut shown in the menu.
 
 ## Gesture reference
 
@@ -190,12 +191,11 @@ The operator-facing exclusions below explain common missing controls.
 
 | Missing/unimplemented surface | Supported alternative or boundary |
 | --- | --- |
-| MIDI and its status/tool pages. | Use CAT or supported TCI where suitable; each is its own interface. |
-| CWX, Phone/CW keyer page, CW keyer settings. | CW receive mode/filter/APF controls remain separately usable. Do not infer a working software keyer from CW modes. |
+| Voice message keys (listed on the Keyboard page, grayed). | CW message keys and live transmit keys. |
 | Voice recorder/playback, DVK, macro buttons, Memory Manager and memory spots. | Use ordinary live receive/transmit and the implemented spot sources. |
 | FM TX/repeater/offset/reverse, CTCSS encode/tone squelch and FM Phone/CW page. | FM receive/squelch remain; do not plan repeater transmission with these shells. |
-| Transverters, VHF band/OC pages and band stacking. | Current implemented band selection and HF hardware controls. |
-| Minimal Mode, UI Scale/Theme page, desktop Navigation editor, skins and keyboard remapping. | Actual fixed menu shortcuts, supported layout/colors and phone Navigation. |
+| Transverters and VHF band/OC pages. | Current implemented band selection and HF hardware controls. |
+| Minimal Mode, UI Scale/Theme page, desktop Navigation editor and skins. | Supported layout/colors and phone Navigation. |
 | Receive DSP Equalizer. | TX Equalizer is a separate implemented feature. |
 | SAM advanced options and APF bandwidth/gain fields. | SAM demodulation and APF enable/frequency have their own implemented paths. |
 | Container Var1/Var2, RX2/Sub RX/Pan Swap, macros, Voice, Click Box. | Slices and ordinary filter presets; only wired designer items should be used. |

@@ -25,6 +25,8 @@
 // receive-only pre-check lifted, against no hardware. No audio device.
 //
 // Modification history (NereusSDR):
+//   2026-11-06 : The fall rechecks wideband demand for a slice taken while keyed.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-09-27 : Created for remote-window parity Task 31 by J.J. Boyd
 //                 (KG4VCF). AI-assisted implementation via Anthropic
 //                 Claude Code.
@@ -50,11 +52,14 @@
 #include "core/MoxController.h"
 #include "core/StepAttenuatorController.h"
 #include "core/TxAnalyzer.h"
+#include "core/P2RadioConnection.h"
+#include "core/SliceOwnership.h"
 #include "core/TxDisplayFeed.h"
 #include "core/WdspTypes.h"
 #include "core/session/StationClient.h"
 #include "core/session/StationServer.h"
 #include "core/session/media/IMediaTransport.h"
+#include "core/session/media/SpectrumEndpoint.h"
 #include "core/settings/SettingsProxy.h"
 #include "core/settings/SettingsScope.h"
 #include "fakes/LoopbackTransport.h"
@@ -330,6 +335,50 @@ struct RemoteWindow {
 
 } // namespace
 
+// A window on a Protocol 2 Core with a wide view (768 kHz) on its other slice,
+// which shares the transmit slice's pan on the Core, wideband running.
+struct WideBesideTransmit {
+    RemoteWindow window{/*withAnalyzer=*/true};
+    P2RadioConnection p2;
+    QByteArray device;
+
+    ~WideBesideTransmit() { window.station.injectConnectionForTest(nullptr); }
+
+    bool start()
+    {
+        p2.setBoardForTest(HPSDRHW::Saturn);
+        window.station.injectConnectionForTest(&p2);
+        RadioInfo info;
+        info.protocol = ProtocolVersion::Protocol2;
+        window.station.setLastRadioInfoForTest(info);
+        window.station.wireWidebandConnectionForTest();
+        window.station.sliceById(window.otherSliceId)->setPanKey(QStringLiteral("two"));
+        if (!window.connect()) { return false; }
+        device = window.server->mediaSessionDevice(window.server->mediaSessionEpoch());
+        if (device.isEmpty()) { return false; }
+        window.station.sliceOwnership()->setOwner(window.txSliceId, device);
+        window.station.sliceOwnership()->setOwner(window.otherSliceId, device);
+        SpectrumWidget* other = window.pan(QStringLiteral("one"));
+        if (!other || !QTest::qWaitFor([&] {
+                window.feed();
+                return other->remoteWidebandAvailable();
+            }, 5000)) { return false; }
+        other->setDisplayWindowPreservingHistory(other->centerFrequency(), 768000.0);
+        window.gui->planNowForTest();
+        return QTest::qWaitFor([&] { return p2.wbEnableMask() == 1; }, 5000);
+    }
+
+    void key(bool on)
+    {
+        window.key(on);
+        if (QTest::currentTestFailed()) { return; }
+        MoxController* const mox = window.station.moxController();
+        const MoxState wanted = on ? MoxState::Tx : MoxState::Rx;
+        QTRY_VERIFY(mox->state() == wanted);
+        QTest::qWait(50);
+    }
+};
+
 class TstDisplayDuplex : public QObject {
     Q_OBJECT
 
@@ -552,6 +601,93 @@ private slots:
         QVERIFY(!window.radio.transmitDisplayDuplex());
         window.radio.setTransmitHolder({});
         QVERIFY(window.radio.transmitDisplayDuplex());
+    }
+
+    // This device keyed, its other endpoint sharing the transmit pan and holding
+    // wideband, and a phone takes that slice while keyed. Keyed endpoints are not
+    // rechecked, so the fall has to do it: the filter must not stay bypassed.
+    void theFallDropsWidebandDemandForASliceTakenWhileKeyed()
+    {
+        WideBesideTransmit rig;
+        QVERIFY(rig.start());
+        rig.key(true);
+        if (QTest::currentTestFailed()) { return; }
+        rig.window.station.sliceOwnership()->setOwner(rig.window.otherSliceId,
+                                                      QByteArrayLiteral("phone-device"));
+        QCoreApplication::processEvents();
+        QCOMPARE(rig.p2.wbEnableMask(), quint8(1));
+
+        rig.key(false);
+        if (QTest::currentTestFailed()) { return; }
+
+        QTRY_COMPARE_WITH_TIMEOUT(rig.p2.wbEnableMask(), quint8(0), 5000);
+    }
+
+    // The same fall with control kept: wideband neither stops nor restarts.
+    void theFallLeavesAControllersWidebandDemandAlone()
+    {
+        WideBesideTransmit rig;
+        QVERIFY(rig.start());
+        int filterChanges = 0;
+        connect(&rig.window.station.alexController(), &AlexController::bpfStateChanged,
+                &rig.window.station, [&filterChanges](int, const AlexController::AlexAdcState&) {
+            ++filterChanges;
+        });
+        rig.key(true);
+        if (QTest::currentTestFailed()) { return; }
+        rig.key(false);
+        if (QTest::currentTestFailed()) { return; }
+        for (int i = 0; i < 10; ++i) {
+            QCOMPARE(rig.p2.wbEnableMask(), quint8(1));
+            QTest::qWait(20);
+        }
+        QCOMPARE(filterChanges, 0);
+    }
+
+    // Taken while keyed with the view off the receiver, and this device goes on
+    // listening: the fall finds nothing to draw and says why.
+    void theFallRetiresAViewOffTheReceiverOnASliceTakenWhileKeyed()
+    {
+        WideBesideTransmit rig;
+        QVERIFY(rig.start());
+        SliceOwnership* const ownership = rig.window.station.sliceOwnership();
+        QVERIFY(ownership->join(rig.device, rig.window.otherSliceId));
+        SpectrumWidget* const other = rig.window.pan(QStringLiteral("one"));
+        QSignalSpy controls(rig.window.client.get(), &StationClient::mediaControlReceived);
+        const double offCentreHz = other->centerFrequency() + 700000.0;
+        other->setDisplayWindowPreservingHistory(offCentreHz, 768000.0);
+        rig.window.gui->planNowForTest();
+        // The Core has the view before the key.
+        QTRY_VERIFY_WITH_TIMEOUT(([&] {
+            rig.window.feed();
+            for (const auto& call : controls) {
+                const QJsonObject control = call.at(0).toJsonObject();
+                if (control.value(QStringLiteral("op")) == QLatin1String("context")
+                    && qFuzzyCompare(control.value(QStringLiteral("centreHz")).toDouble(),
+                                     offCentreHz)) { return true; }
+            }
+            return false;
+        })(), 5000);
+        rig.key(true);
+        if (QTest::currentTestFailed()) { return; }
+        ownership->setOwner(rig.window.otherSliceId, QByteArrayLiteral("phone-device"));
+        QVERIFY(ownership->isListening(rig.device, rig.window.otherSliceId));
+
+        rig.key(false);
+        if (QTest::currentTestFailed()) { return; }
+
+        const auto retired = [&controls] {
+            int count = 0;
+            for (const auto& call : controls) {
+                const QJsonObject control = call.at(0).toJsonObject();
+                if (control.value(QStringLiteral("op")) == QLatin1String("rejected")
+                    && control.value(QStringLiteral("reason")).toString()
+                        == QLatin1String(kRetireReasonViewOffReceiver)) { ++count; }
+            }
+            return count;
+        };
+        QTRY_COMPARE_WITH_TIMEOUT(retired(), 1, 5000);
+        QCOMPARE(rig.p2.wbEnableMask(), quint8(0));
     }
 
     // The window's DUP reaches the Core's RadioModel as its device's

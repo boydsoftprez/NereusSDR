@@ -13,6 +13,15 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-11-06 - copyReceiverSettingsFrom, copyFilterMemoryFrom,
+//              setDspModeForNewReceiver and loadAudioRoutingFromSettings: a
+//              new receiver is a copy of the slice the operator is on, not of
+//              what its letter held. NereusSDR-original. J.J. Boyd (KG4VCF),
+//              AI-assisted via Anthropic Claude.
+// 2026-11-05 - A newly added receiver starts with RIT and XIT off, on a
+//              letter used before too; a restored receiver keeps its own.
+//              NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//              Anthropic Claude.
 // 2026-10-29 - Allow receiver preferences to restore without replacing a
 //              new slice's frequency, mode, filter or DDC sample rate.
 //              NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
@@ -127,6 +136,18 @@
 //   2026-09-27 - R-R3-49: savedSampleRateHz, the rate saved for a band,
 //                read at connect. NereusSDR-original. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-11-05 - One sample rate per receiver on every band, so a band
+//                change leaves the rate alone (JJ's ruling). A new slice with
+//                a receiver of its own opens at the rate of the slice it was
+//                seeded from; a device's slice made again and a slice leaving
+//                a shared receiver keep theirs; a radio-wide change saves on
+//                each slice. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
+//   2026-11-05 - One tune step per slice on every band, saved at
+//                Slice<N>/StepHz (JJ's ruling); a band change leaves it alone.
+//                Settings from before this supply the step of the band the
+//                slice was last on. NereusSDR-original. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-09-28 - Slice control and shared listening plan Task 5: a remote
 //                window's read-only listener mark (isReadOnlyListener), set
 //                by SliceAccessMirror; a setter that would send a change
@@ -137,6 +158,8 @@
 //                 tune_step_list (TuneStep pairs) and ChangeTuneStepUp/Down
 //                 by J.J. Boyd (KG4VCF), with AI-assisted transformation via
 //                 Anthropic Claude Code.
+//   2026-11-05 - savedBandSpot, for the band stack.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -549,9 +572,9 @@ private:
     // to the stream. Writing the property directly moves the display only, and
     // the next bind or rate change overwrites it.
     //
-    // Default = SampleRateCatalog::kDefaultSampleRate (192 kHz). Persisted
-    // per-band per-slice; on reload the persisted value is a display seed that
-    // the first bind replaces with the stream's actual rate.
+    // Default = SampleRateCatalog::kDefaultSampleRate (192 kHz). Persisted once
+    // per slice, for every band (savedSampleRateHz); RadioModel puts the saved
+    // rate on the slice's stream at connect and when the slice is restored.
     Q_PROPERTY(int sampleRateHz READ sampleRateHz WRITE setSampleRateHz NOTIFY sampleRateHzChanged)
     // Phase 3F: diversity mode flag. Slice-A-only, gated on BoardCapabilities.hasDiversityReceiver.
     // When true, DDC migration to DDC0+DDC1 sync pair handled by codec on next applyDdcAssignment.
@@ -834,6 +857,10 @@ public:
     // Sets mode AND applies the default filter for that mode.
     // Emits dspModeChanged + filterChanged.
     void setDspMode(DSPMode mode);
+    // setDspMode for a slice being made as a copy: neither reads nor writes
+    // the letter's per-mode filter memory. The filter is the mode's default
+    // until copyReceiverSettingsFrom sets the seed's.
+    void setDspModeForNewReceiver(DSPMode mode);
 
     // ---- Bandpass filter ----
 
@@ -1357,6 +1384,17 @@ public:
     /// Copy the noise-reduction setup (which reducer is on, and that
     /// family's knobs, including NNR suppression) from `source`.
     void copyNoiseReductionFrom(const SliceModel& source);
+    /// A new receiver's copy of `source` (JJ's ruling, 2026-11-05): filter,
+    /// AGC with Auto AGC and its offset, noise blanker, noise reduction,
+    /// squelch, tune step and AF gain. Frequency and mode are the caller's,
+    /// set first so the filter is taken for the right mode. Lock, mute, RIT
+    /// and XIT are not copied. Writes nothing to the store.
+    void copyReceiverSettingsFrom(const SliceModel& source);
+    /// Makes this slice's per-mode filter memory on `band` what `source` has
+    /// there, so the first mode change gives the filter it would on `source`.
+    /// A mode `source` has no memory of loses this slice's too, and gets the
+    /// mode's default as it would on `source`. Other bands are left alone.
+    void copyFilterMemoryFrom(const SliceModel& source, NereusSDR::Band band);
 
 
     // NR1
@@ -1610,24 +1648,54 @@ public:
     // band click should seed defaults or restore last-used state.
     bool hasSettingsFor(Band band) const;
 
-    // R-R3-49: the sample rate saved for `band` (the per-band SampleRate
-    // key saveToSettings writes), or 0 when none is saved or the saved
-    // value is not a positive integer. Reads settings only; changes
-    // nothing. RadioModel reads it at connect, before a bind makes the
-    // slice adopt its stream's rate.
-    int savedSampleRateHz(Band band) const;
+    // What this slice's per-band memory holds for `band`, as a band restore
+    // would read it: nullopt when the frequency or mode was never saved. The
+    // filter is 0 to 0 when none is saved for that mode.
+    struct SavedBandSpot {
+        double  frequencyHz{0.0};
+        DSPMode mode{DSPMode::USB};
+        int     filterLow{0};
+        int     filterHigh{0};
+    };
+    std::optional<SavedBandSpot> savedBandSpot(Band band) const;
+
+    // R-R3-49: the sample rate saved for this receiver, on every band, or 0
+    // when none is saved or the saved value is not a positive integer. Settings
+    // from before it had one rate supply the rate of the band it was last on.
+    // Reads settings only; changes nothing. RadioModel reads it before a bind
+    // makes the slice adopt its stream's rate.
+    int savedSampleRateHz() const;
+
+    // A band change's restore: everything restoreFromSettings brings back,
+    // except the tune step. One step per slice on every band (JJ's ruling,
+    // 2026-11-05), so a band change leaves the step the slice is on, even when
+    // a newer step has not reached the settings yet.
+    void restoreFromSettingsForBandChange(NereusSDR::Band band);
 
     // Immutable per-band values, in save order; excludes session/NNR state.
     // RadioModel retains these until its existing coalesced save runs.
     QList<QPair<QString, QVariant>> captureBandSettings(Band band) const;
     void saveToSettings(NereusSDR::Band band);
-    // Fresh creation passes false after its creator/station VFO seed:
+    // Fresh creation that is not a new receiver passes false after its
+    // creator/station VFO seed (a new receiver does not come here at all):
     // frequency, DSP mode, filter and sample rate stay with that seed and
     // its effective DDC. Receiver
     // preferences, including Locked, still restore; the lock cannot veto
     // the seed because it is restored afterwards. Existing callers retain
-    // full tuning restoration, including layout hydration.
+    // full tuning restoration, including layout hydration. RIT and XIT
+    // restore only with full tuning: fresh creation decides them itself
+    // (RadioModel::addSliceImpl).
     void restoreFromSettings(NereusSDR::Band band, bool restoreTuning = true);
+
+    // The RIT and XIT half of a full restore, for fresh creation that is not
+    // a new receiver: the window's starting slice at connect, and any other
+    // caller that did not say the slice is new.
+    void restoreRitXitFromSettings();
+
+    // Removes this letter's saved RIT and XIT, so a new receiver on a used
+    // letter leaves what a never-used letter has. Without this a receiver
+    // that saves nothing of its own gets the old offsets back at next start.
+    void forgetSavedRitXit();
 
     // Seed a manifest-validated receive descriptor while its Local RadioModel
     // is completely offline.  This is intentionally narrower than the normal
@@ -1655,6 +1723,8 @@ public:
     // Called on startup when no specific band context is needed. Does NOT
     // restore per-band DSP state — use restoreFromSettings(band) for that.
     void loadFromSettings();
+    // The VAX channel and output route half of loadFromSettings.
+    void loadAudioRoutingFromSettings();
 
     // ── Phase 3O VAX routing ──────────────────────────────────────────────────
     // VAX routing (Phase 3O) — 0=Off, 1..4=VAX channel.
@@ -1961,6 +2031,8 @@ private:
     // From Thetis console.cs:7516 [v2.10.3.15]:
     //   private bool m_bLimitFiltersToSidebands = false;    //MW0LGE_21k9
     bool    m_limitFiltersToSidebands{false};
+    // True only inside setDspModeForNewReceiver.
+    bool    m_skipFilterMemory{false};
     int     m_filterLow{100};            // USB default from Thetis F5
     int     m_filterHigh{3000};
     AGCMode m_agcMode{AGCMode::Med};
@@ -2044,6 +2116,9 @@ private:
         }
         return holdForListener();
     }
+    QString sampleRateSettingsKey() const;
+    // Reads Slice<N>/StepHz, or an older per-band step when that is absent.
+    void restoreStepFromSettings(NereusSDR::Band band);
     QString m_settingsRadioMac;
     QString m_nnrLastError;
     QString m_nnrLoadWarning;
@@ -2210,6 +2285,8 @@ private:
     // (RadioModel::activateRestoredRadeReceiveOwner) runs later, so
     // applyRadeModeChange creates no decoder while this is set.
     bool m_radeStartDeferredToAdmission{false};
+    // Set by restoreFromSettingsForBandChange: restoreFromSettings skips the step.
+    bool m_keepStepOnRestore{false};
 };
 
 } // namespace NereusSDR

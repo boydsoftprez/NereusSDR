@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-11-06 - A factory widget can report its own free canvas hint and
+//                 minimum, and a type can name a new entry's rect size
+//                 (setNewEntryCanvasSize). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-11-01 - Original PureSignal-style bar proposal by Brian Sutton
 //                 (PR #731). Adapted as an existing bar face option on
 //                 2026-11-03 by J.J. Boyd (KG4VCF), with OpenAI Codex.
@@ -97,6 +101,10 @@
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
+//   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 #include "ContainerContentRegistry.h"
 #include "ContentFade.h"
 #include "gui/instruments/LongpathContent.h"
@@ -255,12 +263,50 @@ ContainerContentRegistry::~ContainerContentRegistry()
     }
     delete m_parking;
 }
+// The Main Panel's first-launch order: the S-Meter first, the Mod Monitor
+// second at the time it is placed, the SSB Mod Monitor directly under it,
+// every other applet after the ones already there. The first launch and
+// Reset Default Layout both place through this, so a reset draws what a
+// first launch draws.
+void ContainerContentRegistry::placeFirstLaunchApplet(QVector<ContentEntry>& contents,
+                                                      const ContentEntry& entry)
+{
+    if (entry.typeId == QLatin1String("applet:s_meter")) {
+        contents.prepend(entry);
+    } else if (entry.typeId == QLatin1String("applet:mod_monitor")) {
+        contents.insert(qMin(1, contents.size()), entry);
+    } else if (entry.typeId == QLatin1String("applet:ssb_mod_monitor")) {
+        for (int i = 0; i < contents.size(); ++i) {
+            if (contents[i].typeId == QLatin1String("applet:mod_monitor")) {
+                contents.insert(i + 1, entry);
+                return;
+            }
+        }
+        contents.append(entry);
+    } else {
+        contents.append(entry);
+    }
+}
+
+// CW transmit (R-CW-44): the CWX applet is placed hidden until asked for
+// (Tools > CWX, the status-bar CWX label, CAT ZZKO), as its registration
+// says. The SSB Mod Monitor starts off and is one click away in the panels
+// list. Every other applet keeps its first-launch state.
+ContentEntry ContainerContentRegistry::firstLaunchEntry(ContentEntry entry)
+{
+    if (entry.typeId == QLatin1String("applet:cwx")
+        || entry.typeId == QLatin1String("applet:ssb_mod_monitor")) {
+        entry.visible = false;
+    }
+    return entry;
+}
+
 QString ContainerContentRegistry::appletTypeForVisibilityId(const QString& id)
 {
     static const QHash<QString, QString> aliases = {
         {"Rx","rx"},{"Display","Display"},{"Tx","TX"},{"PhoneCw","PHCW"},
         {"Rade","RADE"},{"Vax","vax"},{"PureSignal","pure_signal"},
-        {"ModMon","mod_monitor"},{"Tci","tci"},{"ClientChain","tci_clients"},
+        {"ModMon","mod_monitor"},{"SsbModMon","ssb_mod_monitor"},{"Tci","tci"},{"ClientChain","tci_clients"},
         {"Cat","cat"},{"Cwx","cwx"},{"Amp","amp"},{"Tuner","tuner"},{"Rotor","rotor"},{"Roundtable","roundtable"},{"RfKit","RfKit"},
         {"SMeter","s_meter"}};
     return aliases.contains(id) ? QStringLiteral("applet:") + aliases.value(id) : QString();
@@ -446,6 +492,7 @@ QVector<ContentDescriptor> ContainerContentRegistry::descriptors() const {
     add(QStringLiteral("applet:vax"), QStringLiteral("VAX"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:pure_signal"), QStringLiteral("PureSignal"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:mod_monitor"), QStringLiteral("AM Mod Monitor"), ContentGroup::Panels, true);
+    add(QStringLiteral("applet:ssb_mod_monitor"), QStringLiteral("SSB Mod Monitor"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:cat"), QStringLiteral("CAT"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:cwx"), QStringLiteral("CWX"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:tci"), QStringLiteral("TCI Server"), ContentGroup::Panels, true);
@@ -637,7 +684,7 @@ void ContainerContentRegistry::registerWidgetFactory(const QString& typeId, cons
         stored.group = ContentGroup::ReadyMadeMeters;
     }
     if (!m_widgetFactories.contains(typeId)) { m_widgetFactoryOrder.append(typeId); }
-    m_widgetFactories.insert(typeId, {stored, std::move(factory), properties});
+    m_widgetFactories.insert(typeId, {stored, std::move(factory), properties, {}});
     ++m_generation;
     emit runtimeChanged();
 }
@@ -653,6 +700,16 @@ QVector<ContentProperty> ContainerContentRegistry::declaredProperties(const QStr
 {
     const auto it = m_widgetFactories.constFind(typeId);
     return it == m_widgetFactories.constEnd() ? QVector<ContentProperty>{} : it->properties;
+}
+void ContainerContentRegistry::setNewEntryCanvasSize(const QString& typeId, std::function<QSize(const ContentEntry&)> size)
+{
+    const auto it = m_widgetFactories.find(typeId);
+    if (it != m_widgetFactories.end()) { it->newEntryCanvasSize = std::move(size); }
+}
+QSize ContainerContentRegistry::newEntryCanvasSize(const ContentEntry& entry) const
+{
+    const auto it = m_widgetFactories.constFind(entry.typeId);
+    return it != m_widgetFactories.constEnd() && it->newEntryCanvasSize ? it->newEntryCanvasSize(entry) : QSize();
 }
 QWidget* ContainerContentRegistry::createWidget(const ContentEntry& entry, QWidget* parent,
                                                 ContentRenderMode mode) const
@@ -680,8 +737,13 @@ QWidget* ContainerContentRegistry::createPreview(const ContentEntry& entry, QWid
         effective.context = context;
         if (QWidget* view = createWidget(effective, parent, ContentRenderMode::Preview)) {
             view->setAttribute(Qt::WA_TransparentForMouseEvents);
-            view->setProperty("freeCanvasMinimum", QSizeF(view->minimumSizeHint()));
-            view->setProperty("freeCanvasHint", view->sizeHint());
+            // As in the live host: a widget may have set these already.
+            if (!view->property("freeCanvasMinimum").isValid()) {
+                view->setProperty("freeCanvasMinimum", QSizeF(view->minimumSizeHint()));
+            }
+            if (!view->property("freeCanvasHint").isValid()) {
+                view->setProperty("freeCanvasHint", view->sizeHint());
+            }
             return view;
         }
     }

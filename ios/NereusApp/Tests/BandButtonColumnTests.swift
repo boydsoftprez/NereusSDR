@@ -36,6 +36,27 @@ struct BandButtonColumnTests {
         #expect(beside.minX == sidewaysColumn.maxX + BandColumnLayout.clearance)
     }
 
+    @Test("the BAND menu is two panels at two columns and on the phone sideways, one on the iPad, and the PTT stays right of it")
+    func bandMenuKeepsThePttClear() {
+        #expect(BandColumnLayout.width(of: .band) == BandColumnLayout.bandMenuWidth)
+        #expect(BandColumnLayout.width(of: .band, panels: 1) == BandColumnLayout.bandMenuWidth)
+        #expect(BandColumnLayout.width(of: .band, panels: 2) == 2 * BandColumnLayout.bandMenuWidth + 1)
+        #expect(BandColumnLayout.width(of: .display, panels: 2) == BandColumnLayout.pillWidth)
+        #expect(BandColumnLayout.bandMenuPanels(columns: 2, leadingInset: 0) == 2)
+        #expect(BandColumnLayout.bandMenuPanels(columns: 1, leadingInset: 62) == 2)
+        #expect(BandColumnLayout.bandMenuPanels(columns: 1, leadingInset: 0) == 1)
+        // The phone sideways, a 874 by 229 band: two columns, the menu beside them.
+        let home = CGRect(x: 76, y: 150, width: 76, height: 76)
+        let width = BandColumnLayout.columnWidth(columns: 2)
+        let column = CGRect(x: 66, y: 4, width: width, height: 130)
+        let menu = CGRect(x: column.maxX + BandColumnLayout.menuGap, y: 4,
+                          width: BandColumnLayout.width(of: .band, panels: 2), height: 221)
+        let moved = BandColumnLayout.pttFrame(home: home, avoid: [column, menu], maxX: 812)
+        #expect(moved.minX == menu.maxX + BandColumnLayout.clearance)
+        #expect(!moved.intersects(menu))
+        #expect(moved.maxX <= 812)
+    }
+
     @Test("DC14: on a band too short for the column, two columns of four side by side, all in view")
     func twoColumnsOfFour() {
         // The column: eight 30 point buttons, 2 point gaps and padding.

@@ -5,6 +5,10 @@
 # strategy rationale and docs/attribution/LGPL-COMPLIANCE.md for
 # static-link compliance notice.
 #
+# Local change, 2026-11-05: the source filter below matches paths inside the
+# upstream tree, not the whole path. J.J. Boyd (KG4VCF), AI-assisted via
+# Anthropic Claude Code.
+#
 # FFTW3 linkage: libspecbleach depends on FFTW3 single-precision (fftw3f).
 # NereusSDR resolves FFTW3 at the top level and exposes it via the
 # FFTW3_LIBRARIES + FFTW3_INCLUDE_DIRS variables (same as wdsp_static).
@@ -44,7 +48,17 @@ file(GLOB_RECURSE SPECBLEACH_SOURCES CONFIGURE_DEPENDS
     "${libspecbleach_upstream_SOURCE_DIR}/src/*.c")
 
 # Exclude any standalone test or example programs that have their own main().
-list(FILTER SPECBLEACH_SOURCES EXCLUDE REGEX "/(test|example|demo)")
+# Matched on the path inside the upstream tree: on the whole path, a build under
+# any folder whose name starts with "test" lost every source.
+set(_specbleach_all_sources ${SPECBLEACH_SOURCES})
+set(SPECBLEACH_SOURCES "")
+foreach(_specbleach_source IN LISTS _specbleach_all_sources)
+    file(RELATIVE_PATH _specbleach_relative
+        "${libspecbleach_upstream_SOURCE_DIR}" "${_specbleach_source}")
+    if(NOT _specbleach_relative MATCHES "/(test|example|demo)")
+        list(APPEND SPECBLEACH_SOURCES "${_specbleach_source}")
+    endif()
+endforeach()
 
 if(NOT SPECBLEACH_SOURCES)
     message(FATAL_ERROR

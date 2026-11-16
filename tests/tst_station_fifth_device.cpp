@@ -3,6 +3,7 @@
 #include <QtTest>
 
 #include "MultiDeviceHarness.h"
+#include "SessionWait.h"
 
 using namespace NereusSDR;
 using namespace NereusSDR::Test;
@@ -249,7 +250,11 @@ private slots:
         const auto connection = QObject::connect(core.server->deviceSessions(),
             &DeviceSessionRegistry::changed, core.server.get(), [&]() {
                 if (sixth || core.sessions().entry(targetId)) return;
-                sixth = core.signIn(devices[5]);
+                // Not signIn(): it would wait here for an answer that cannot
+                // come until this slot returns, and the sign-in's 30 s deadline
+                // ran out during that wait in Linux CI at the same 30 s bound.
+                sixth = core.beginSignIn(devices[5]);
+                NereusSDR::Test::drainQueuedDeliveries();
                 QVERIFY(ofType(sixth->received(), QStringLiteral("auth.result")).isEmpty());
                 QVERIFY(!admitted(sixth));
             }, Qt::DirectConnection);
@@ -258,6 +263,7 @@ private slots:
             target, static_cast<quint32>(held.value(QStringLiteral("revision")).toInteger()))));
         QTRY_VERIFY(admitted(fifth));
         QVERIFY(sixth);
+        QTRY_VERIFY(sixth->receivedKinds().contains(QByteArrayLiteral("session.held")));
         verifyHeld(sixth);
         QCOMPARE(core.sessions().placesTaken(), 4);
     }

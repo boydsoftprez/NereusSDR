@@ -18,6 +18,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05 - NEREUS_GUI_EXPORT: without it a test outside the GUI DLL
+//                 took the address of passbandShifted through MinGW's
+//                 auto-import thunk, so QMetaMethod::fromSignal did not
+//                 match it and a QSignalSpy on it was not valid on Windows.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22 - passbandShifted: the centre drag (shift and width) is
 //                 its own signal, so the slice moves it as Thetis's filter
 //                 shift and width sliders do. J.J. Boyd (KG4VCF), with
@@ -32,12 +37,14 @@
 
 #include <QWidget>
 
+#include "gui/NereusGuiExport.h"
+
 namespace NereusSDR {
 
 // Static trapezoid shape with numeric lo/hi/bandwidth labels.
 // Horizontal drag shifts the passband, vertical drag adjusts width.
 // From AetherSDR FilterPassbandWidget (SmartSDR RX panel filter widget).
-class FilterPassbandWidget : public QWidget {
+class NEREUS_GUI_EXPORT FilterPassbandWidget : public QWidget {
     Q_OBJECT
 
 public:

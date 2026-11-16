@@ -13,36 +13,27 @@
 # of the tests. They run on
 # changes to the app, to the conformance fixtures the app's tests read, to
 # the station's media transport, pairing and console and the helpers, and
-# to this workflow. On a pull request the app job runs only when the PR
-# changes the app, the conformance fixtures or this workflow: a change to
-# the Core's media, pairing or console code runs the package and interop
-# jobs, which check the app's code against the Core's, and the app job
-# then runs on main after the merge. The provenance check over ios/ runs
-# in ci.yml's compliance job, beside the other attribution checks.
+# to this workflow. The provenance check over ios/ runs in ci.yml's
+# compliance job, beside the other attribution checks.
+#
+# The jobs run once, right before a pull request goes to main, as in ci.yml:
+# not on a draft, then on marking it ready and on each push once it's ready.
+# A push to main runs nothing here: this workflow keeps no compiler cache,
+# and ci.yml saves the dependency downloads the interop job restores. The
+# app's UI tests (part 2 of the app job) run only when the pull request
+# changes the app, the conformance fixtures or this workflow; a change to
+# only the Core's media, pairing or console code runs the package and
+# interop jobs and part 1. Run this by hand from the Actions tab for the
+# full run on main before a release. J.J. Boyd's rule, 2026-11-06
+# (docs/development/fast-test-loop.md).
 name: iOS
 
 on:
-  # Pushes run only on main: a pull request's branch already runs here
-  # through pull_request, so a push trigger there ran every commit twice
-  # and held two of the account's few macOS runners.
-  push:
-    branches: [main]
-    paths:
-      - 'ios/**'
-      - 'tests/data/link/**'
-      - 'tests/tools/nereus_media_offerer.cpp'
-      - 'src/core/session/media/**'
-      - 'cmake/NereusRemoteMedia.cmake'
-      - 'tests/tools/nereus_pairing_peer.cpp'
-      - 'src/core/security/**'
-      - 'src/core/session/StationServer.cpp'
-      - 'src/core/session/SessionMessages.cpp'
-      - 'src/core/daemon/StationControlCommands.cpp'
-      - 'src/server_main.cpp'
-      - 'cmake/NereusPairing.cmake'
-      - 'resources/pairing-words-v1.txt'
-      - '.github/workflows/ios.yml'
+  workflow_dispatch:
   pull_request:
+    # ready_for_review is what starts the jobs when a draft is marked ready.
+    # Naming any types replaces the default three, so they are listed.
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'ios/**'
       - 'tests/data/link/**'
@@ -68,13 +59,15 @@ concurrency:
 
 jobs:
   scope:
-    # Decides whether this pull request runs the app job, which holds two
-    # macOS runners for over half an hour. Pushes to main always run it. Fails
-    # closed: if the diff can't be read, the app job runs.
+    # Decides the app job's parts. Part 2, the UI tests, holds a macOS runner
+    # for over half an hour, so it runs only when the pull request changes
+    # the app, the conformance fixtures or this workflow. A run by hand runs
+    # both. Fails closed: if the diff can't be read, both run.
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     name: Which iOS jobs run
     outputs:
-      app: ${{ steps.scope.outputs.app }}
+      parts: ${{ steps.scope.outputs.parts }}
     steps:
       - uses: actions/checkout@v4
         if: github.event_name == 'pull_request'
@@ -87,22 +80,23 @@ jobs:
         id: scope
         shell: bash
         run: |
-          app=true
+          parts='[1,2]'
           if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
             if files=$(git diff --name-only HEAD^1 HEAD); then
               # A here-string, not a pipe: under pipefail, grep -q quitting
               # early kills printf on a long list and would read as no match.
               if ! grep -qE '^(ios/|tests/data/link/|\.github/workflows/ios\.yml$)' <<<"$files"; then
-                app=false
+                parts='[1]'
               fi
             else
-              echo "Could not read the pull request's diff; running the app job." >&2
+              echo "Could not read the pull request's diff; running every part." >&2
             fi
           fi
-          echo "App job: $app"
-          echo "app=$app" >> "$GITHUB_OUTPUT"
+          echo "App job parts: $parts"
+          echo "parts=$parts" >> "$GITHUB_OUTPUT"
 
   package:
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: macos-26
     name: NereusKit package tests
     steps:
@@ -117,6 +111,7 @@ jobs:
         run: ios/scripts/swift-test.sh
 
   interop:
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: macos-26
     name: Media and pairing interop with the Core
     env:
@@ -181,7 +176,6 @@ jobs:
 
   app:
     needs: scope
-    if: needs.scope.outputs.app == 'true'
     # Xcode 27 is on its own hosted image; macos-26 carries Xcode 26.
     # https://github.com/actions/runner-images/issues/14404
     runs-on: xcode-27
@@ -207,7 +201,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        part: [1, 2]
+        part: ${{ fromJSON(needs.scope.outputs.parts) }}
     steps:
       - uses: actions/checkout@v4
 

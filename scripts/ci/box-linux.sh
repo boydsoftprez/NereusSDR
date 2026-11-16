@@ -72,10 +72,33 @@ case "${1:-}" in
         export QT_QPA_PLATFORM=xcb
         export QTEST_FUNCTION_TIMEOUT=240000
         export NEREUS_HAMLIB_RIGCTL=/usr/bin/rigctl
+        # Each test's home (settings, stores) and QTemporaryDir scratch go in
+        # /tmp, which is memory here (box-run.sh). A test saves settings with
+        # a disk sync: tst_cat_coverage about 2 per row, tst_confirm_step 11
+        # per function. Run 41764912150 ran 6 to 15 times slower on those
+        # tests while tests that do not save kept their usual time.
+        if [ ! -L build/tests/test-home ]; then
+            cp -a build/tests/test-home /tmp/nereus-test-home
+            rm -rf build/tests/test-home
+            ln -s /tmp/nereus-test-home build/tests/test-home
+        fi
+        # Xvfb puts its socket here, and the memory /tmp hides anything the
+        # image left there. The job runs as the runner's user, so Xvfb warns
+        # that it is not owned by root, which does it no harm.
+        mkdir -p -m 1777 /tmp/.X11-unix
+        # The most /tmp held, sampled every 5 s, to check against its 6 GB cap.
+        ( while sleep 5; do df -k --output=used /tmp | tail -1; done ) > /tmp/nereus-tmp-use.txt &
+        sampler=$!
+        warn_over_limit="$PWD/scripts/ci/warn-handover-over-limit.sh"
         cd build
         status=0
         xvfb-run -a ctest -LE realtime -j8 --output-on-failure --no-tests=error || status=1
+        "$warn_over_limit" || true
         cp Testing/Temporary/CTestCostData.txt "$cost_data" 2>/dev/null || true
+        kill "$sampler" 2>/dev/null || true
+        peak_kb="$(sort -n /tmp/nereus-tmp-use.txt | tail -1)"
+        echo "Peak use of /tmp during the tests: $(( ${peak_kb:-0} / 1024 )) MB"
+        df -h /tmp | tail -1
         exit "$status"
         ;;
 

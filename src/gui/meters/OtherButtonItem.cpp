@@ -62,6 +62,8 @@
 //   2026-10-26 - An in-place reorder clears the entry's overrides with the
 //                 new record, so a rebuild keeps the new order. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-06 - STACK+ and STACK- are offered (band stack plan Task 8).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // --- From MeterManager.cs ---
@@ -265,6 +267,7 @@ constexpr OtherButtonItem::ButtonId kReceiveButtons[] = {
     OtherButtonItem::ButtonId::Rit0, OtherButtonItem::ButtonId::Xit,
     OtherButtonItem::ButtonId::Xit0, OtherButtonItem::ButtonId::LockA,
     OtherButtonItem::ButtonId::TuneStepUp, OtherButtonItem::ButtonId::TuneStepDown,
+    OtherButtonItem::ButtonId::StackUp, OtherButtonItem::ButtonId::StackDown,
     OtherButtonItem::ButtonId::MuteAll, OtherButtonItem::ButtonId::SqlVsql,
     OtherButtonItem::ButtonId::AfP5, OtherButtonItem::ButtonId::AfM5,
     OtherButtonItem::ButtonId::BalP5, OtherButtonItem::ButtonId::BalM5,

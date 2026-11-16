@@ -15,6 +15,8 @@
 //   2026-09-28 - 2 m as its own band (Band2m, 144 to 148 MHz, "2m"),
 //                 R-IOS-26 / R-R3-49. J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-11-05 - hamBandRangeHz, for the band stack.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -233,6 +235,16 @@ Band bandFromFrequency(double hz)
         }
     }
     return Band::GEN;
+}
+
+std::optional<std::pair<double, double>> hamBandRangeHz(Band band)
+{
+    for (const auto& range : kHamBandRanges) {
+        if (range.band == band) {
+            return std::make_pair(range.lowHz, range.highHz);
+        }
+    }
+    return std::nullopt;
 }
 
 Band bandFromUiIndex(int idx)

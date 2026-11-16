@@ -578,6 +578,40 @@ private slots:
         harness.reset();
     }
 
+    // A stale or hand-made request for 1536 kHz on a Hermes Lite 2. Taken, it
+    // moved the whole radio off its ladder: the wire saturates at 384 kHz while
+    // WDSP and the display run at 1536.
+    void requestSliceSampleRateRefusesARateTheRadioDoesNotHave()
+    {
+        std::unique_ptr<ConnectableRadioModel> harness = ConnectableRadioModel::create();
+        QVERIFY(harness != nullptr);
+        RadioModel& model = harness->model();
+        QVERIFY(model.sliceById(0) != nullptr);
+        QVERIFY2(!model.allowedStreamSampleRates().isEmpty(),
+                 "test setup: the radio must be connected, so its ladder is known");
+        QVERIFY2(!model.allowedStreamSampleRates().contains(1536000),
+                 "test setup: 1536 kHz must be off this radio's ladder");
+        const int before = model.sliceById(0)->sampleRateHz();
+        const int wireBefore = model.connectionSampleRateHz();
+
+        DispatchHarness dispatch(&model);
+        dispatch.invoke("requestSliceSampleRate", 12,
+                        { intArg("sliceId", 0), intArg("rateHz", 1536000) });
+
+        // Refused here, as setRadioSampleRate refuses it, before the deferred
+        // change is queued.
+        QCOMPARE(dispatch.results.size(), 1);
+        const SessionMessage result = dispatch.results.first();
+        QVERIFY(!result.accepted);
+        QCOMPARE(result.reason, QStringLiteral("This radio cannot run at that sample rate."));
+        QVERIFY(result.affectedKeys.isEmpty());
+
+        QCoreApplication::processEvents();
+        QVERIFY(model.waitForReceiveLaneForTest());
+        QCOMPARE(model.sliceById(0)->sampleRateHz(), before);
+        QCOMPARE(model.connectionSampleRateHz(), wireBefore);
+    }
+
     void commandsRejectMissingArgumentsAndUnrecognisedVerbs()
     {
         RadioModel model;

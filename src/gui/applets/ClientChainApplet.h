@@ -23,6 +23,13 @@
 //                1 Hz refresh with auto-refresh checkbox at top.
 //                TciServer accessors clients() + activeTxAudioClient()
 //                added in same commit (Phase 22).
+//   2026-11-07 - The Core's client rows are rebuilt only when what they
+//                show changes, so the box no longer resizes every second.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-07 - This computer's client rows too: while the same apps are
+//                connected in the same order, a refresh updates their
+//                text in place.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -31,8 +38,13 @@
 
 #include "AppletWidget.h"
 
+#include "models/StationTciModel.h"
+
+#include <QList>
 #include <QPointer>
 #include <memory>
+#include <optional>
+#include <utility>
 
 class QCheckBox;
 class QLabel;
@@ -87,8 +99,9 @@ private slots:
     void onDisconnectClicked();  // sender()->property("ws") = the row's QWebSocket*
 
 private:
-    // Tear down current client rows and reconstruct from m_server->clients()
-    // snapshot.  Full rebuild per tick is acceptable for 1-3 clients.
+    // Rebuild this computer's client rows from m_server->clients(), or,
+    // when the same apps are there in the same order with the same badges,
+    // only update their text in place.
     void rebuildRows();
     void rebuildCoreRows();
 
@@ -98,6 +111,26 @@ private:
     // Build one row widget for the given socket + session pair.
     QWidget* buildClientRow(QWebSocket* socket,
                             const std::shared_ptr<TciClientSession>& session);
+
+    // The parts of a local client row that are separate widgets.
+    struct LocalRowShape {
+        QWebSocket* socket{nullptr};
+        bool tx{false};
+        QList<int> iq;
+        QList<int> audio;
+        bool rxSensors{false};
+        bool txSensors{false};
+        bool hasCommandAge{false};
+        bool hasDrops{false};
+        bool operator==(const LocalRowShape& other) const = default;
+    };
+    LocalRowShape shapeOf(QWebSocket* socket,
+                          const std::shared_ptr<TciClientSession>& session) const;
+
+    // Set the changing text (peer, name, connected time, last command, its
+    // age, drops) in a row built by buildClientRow().
+    void updateClientRowText(QWidget* row,
+                             const std::shared_ptr<TciClientSession>& session) const;
 
     // Format elapsed milliseconds as "Xh Ym Zs" or "Ym Zs" or "Zs".
     QString formatDuration(qint64 elapsedMs) const;
@@ -109,6 +142,22 @@ private:
     QPointer<RadioModel> m_stationModel;
     QWidget* m_corePanel{nullptr};
     QVBoxLayout* m_coreRows{nullptr};
+
+    // The widgets the Core's rows are made of now: the section, the
+    // server's state, the on-air state and each app's id and transmit
+    // state, in order. rebuildCoreRows() keeps the rows while this stays the
+    // same and only updates each app's text (its last command changes all
+    // the time), so a refresh no longer deletes and re-adds every row (the
+    // box went short for one event-loop pass and the column below it jumped).
+    struct CoreRowsShown {
+        bool panelShown{false};
+        bool serverAvailable{false};
+        bool onAir{false};
+        QList<std::pair<QString, bool>> clients;   // id, transmitting
+        bool operator==(const CoreRowsShown& other) const = default;
+    };
+    std::optional<CoreRowsShown> m_coreRowsShown;
+    QList<QPointer<QLabel>> m_coreClientLabels;   // one per app, in order
     QTimer*      m_refreshTimer{nullptr};
 
     // Top bar
@@ -117,6 +166,10 @@ private:
 
     // Scrollable rows area — rebuilt on every refresh tick.
     QVBoxLayout* m_rowsLayout{nullptr};
+
+    // This computer's client rows as last built, in order, and their shapes.
+    QList<LocalRowShape> m_localRowShapes;
+    QList<QPointer<QWidget>> m_localRows;
 
     // Shown when server is stopped or there are no connected clients.
     QWidget*     m_emptyStatePanel{nullptr};

@@ -28,6 +28,7 @@
 // =================================================================
 
 #include "MultiDeviceHarness.h"
+#include "CapabilityOrder.h"
 
 #include <QScopeGuard>
 #include <QSignalSpy>
@@ -268,13 +269,11 @@ private slots:
 
         const QJsonArray caps = firstOfType(appA->received(), QStringLiteral("capabilities"))
                                     .value(QStringLiteral("properties")).toArray();
-        QVERIFY(caps.size() >= 3);
-        QCOMPARE(caps.at(caps.size() - 3).toObject().value(QStringLiteral("name")).toString(),
-                 QStringLiteral("radioSpeakerVersion"));
-        QCOMPARE(caps.at(caps.size() - 2).toObject().value(QStringLiteral("name")).toString(),
-                 QStringLiteral("coreSpeakerVersion"));
-        QCOMPARE(caps.last().toObject().value(QStringLiteral("name")).toString(),
-                 QStringLiteral("coreBuildInfo"));
+        const QStringList names = capabilityEntryNames(caps);
+        QCOMPARE(capabilityEntriesAfter(names, QStringLiteral("coreSpeakerVersion")),
+                 kCapabilitiesAfterPeerGatedWithBuildInfo);
+        QCOMPARE(names.indexOf(QStringLiteral("radioSpeakerVersion")) + 1,
+                 names.indexOf(QStringLiteral("coreSpeakerVersion")));
 
         // The peer that did not declare it: what it was sent before.
         QVERIFY(!beforeCaps.isEmpty());

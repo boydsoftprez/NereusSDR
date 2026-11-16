@@ -8,7 +8,7 @@
 // their audio plays, on the map its spectrum is presented by.
 //
 //   1. rxMeterStampsVersion 1 reaches only a peer that declared
-//      rxMeterStamps 1, last before coreBuildInfo, and reads back.
+//      rxMeterStamps 1, last of the peer-gated entries, and reads back.
 //   2. meterReadingNs is Outbound and gated on rxMeterStamps 1, and only a
 //      declaring peer is sent it.
 //   3. The Core's pump writes readings from one lane refresh, stamped with
@@ -26,14 +26,23 @@
 // Modification history (NereusSDR):
 //   2026-10-22 - Written for NereusSDR by J.J. Boyd (KG4VCF), with
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - The pump's snapshot comes from MeterPumpSnapshot.h, bounded
+//                by time, not attempts; meterReadings() is compared with
+//                getMeter() slot by slot. J.J. Boyd (KG4VCF), with AI-assisted
+//                implementation via Anthropic Claude Code.
 // =================================================================
 
+#include "MeterPumpSnapshot.h"
 #include "MultiDeviceHarness.h"
+#include "CapabilityOrder.h"
 
+#include <QScopeGuard>
+#include <QSemaphore>
 #include <QSignalSpy>
 
 #include <cmath>
 
+#include "core/DspControlThread.h"
 #include "core/RxChannel.h"
 #include "core/WdspEngine.h"
 #include "core/meters/SliceMeterPump.h"
@@ -122,11 +131,13 @@ private slots:
         QVERIFY(!capability(appB->received(), QStringLiteral("rxMeterStampsVersion")).has_value());
         const QJsonArray caps = firstOfType(appA->received(), QStringLiteral("capabilities"))
                                     .value(QStringLiteral("properties")).toArray();
-        QVERIFY(caps.size() >= 2);
-        QCOMPARE(caps.at(caps.size() - 2).toObject().value(QStringLiteral("name")).toString(),
-                 QStringLiteral("rxMeterStampsVersion"));
-        QCOMPARE(caps.last().toObject().value(QStringLiteral("name")).toString(),
-                 QStringLiteral("coreBuildInfo"));
+        QCOMPARE(capabilityEntriesAfter(capabilityEntryNames(caps), QStringLiteral("rxMeterStampsVersion")),
+                 kCapabilitiesAfterPeerGatedWithBuildInfo);
+        const QJsonArray plainCaps = firstOfType(appB->received(), QStringLiteral("capabilities"))
+                                         .value(QStringLiteral("properties")).toArray();
+        QVERIFY(!plainCaps.isEmpty());
+        QCOMPARE(capabilityBytesWithout(caps, {QStringLiteral("rxMeterStampsVersion"), QStringLiteral("coreBuildInfo")}),
+                 capabilityBytesWithout(plainCaps));
 
         StationCapabilities sent;
         sent.rxMeterStampsVersion = 1;
@@ -197,6 +208,56 @@ private slots:
         QVERIFY(!sawProperty(appB, QStringLiteral("meterReadingNs")));
     }
 
+    // meterReadings() and getMeter() are two ways to read one cache, and every
+    // pump comparison takes both of its sides from meterReadings(), so this is
+    // what ties a MeterReadings slot to its meter. A slot read as another
+    // meter's fails here. With the lane held no refresh can land between reads.
+    void meterReadingsHoldEachTypeGetMeterHolds()
+    {
+        std::unique_ptr<NereusSDR::Test::ConnectableRadioModel> harness =
+            NereusSDR::Test::ConnectableRadioModel::create(
+                10000, RadioModel::Role::Local, [](RadioModel& m) {
+                    if (SliceMeterPump* p = m.sliceMeterPump()) {
+                        p->stop();
+                    }
+                });
+        QVERIFY(harness != nullptr);
+        RadioModel& model = harness->model();
+        RxChannel* ch = model.wdspEngine()->rxChannel(model.sliceById(0)->sliceIndex());
+        QVERIFY(ch != nullptr);
+        // A slot read as its neighbor's could not show while the two held one
+        // value, so wait for readings that differ. AGC gain differs from the
+        // ADC average and the AGC peak from a running channel's first blocks
+        // and stays so once the stream has settled; other neighbors end up
+        // equal on the fake's steady stream.
+        const auto separated = [ch]() {
+            const RxChannel::MeterReadings r = ch->meterReadings();
+            return r.value(RxMeterType::AdcAvg) != r.value(RxMeterType::AgcGain)
+                && r.value(RxMeterType::AgcGain) != r.value(RxMeterType::AgcPeak);
+        };
+        QVERIFY2(QTest::qWaitFor(separated, NereusSDR::Test::kNereusTryDefaultMs),
+                 "the readings never separated");
+
+        QSemaphore entered;
+        QSemaphore release;
+        // The barrier's job holds these semaphores: they outlive it even when
+        // a comparison below returns early.
+        const auto releaseLane = qScopeGuard([&release, &model]() {
+            release.release();
+            (void)model.waitForReceiveLaneForTest();
+        });
+        model.receiveLane()->postBarrier([&entered, &release]() {
+            entered.release();
+            release.acquire();
+        });
+        QVERIFY(entered.tryAcquire(1, 30000));
+        const RxChannel::MeterReadings readings = ch->meterReadings();
+        for (int index = 0; index < RxChannel::MeterReadings::kCount; ++index) {
+            const auto type = static_cast<RxMeterType>(index);
+            QCOMPARE(readings.value(type), ch->getMeter(type));
+        }
+    }
+
     // The pump's readings come from one lane refresh, stamped with the time
     // the lane read it; the stamp moves with each refresh.
     void pumpStampsReadingsWithTheirLaneRead()
@@ -221,21 +282,9 @@ private slots:
         pump->poll();
         QTRY_VERIFY(ch->meterReadingReady());
         QTRY_VERIFY(ch->meterReadings().readNs > before);
-        // The pump's poll asks the lane for its next refresh, and so does
-        // this test's read, so the lane may refresh between them. Poll and
-        // read until it did not: the test then holds the snapshot the pump
-        // wrote.
+        // The test holds the snapshot the pump wrote (MeterPumpSnapshot.h).
         RxChannel::MeterReadings readings;
-        bool samePoll = false;
-        for (int attempt = 0; attempt < 50 && !samePoll; ++attempt) {
-            pump->poll();
-            readings = ch->meterReadings();
-            samePoll = readings.readNs == slice->meterReadingNs();
-            if (!samePoll) {
-                QTest::qWait(5);
-            }
-        }
-        QVERIFY(samePoll);
+        QVERIFY(NereusSDR::Test::pollUntilPumpWroteSnapshot(*pump, *ch, *slice, readings));
         const qint64 after = RxChannel::meterClockNs();
         const qint64 first = slice->meterReadingNs();
         QVERIFY2(first > before && first <= after,

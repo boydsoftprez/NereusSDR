@@ -30,6 +30,10 @@
 //                 ANAN-100D / ANAN-200D rows cover both protocols, by
 //                 J.J. Boyd (KG4VCF), with AI-assisted transformation via
 //                 Anthropic Claude Code.
+//   2026-11-06 - ddcIndexLimit: on the gateware 2-ADC boards the reported
+//                 count also limits which DDCs exist, and the stream pool
+//                 follows it. NereusSDR's own policy. J.J. Boyd (KG4VCF),
+//                 with AI-assisted transformation via Anthropic Claude Code.
 //   2026-09-29 - effectiveReceiverCount: the radio's reported receiver
 //                 count caps the row's maxReceivers on Protocol 2, the one
 //                 count the stream pool, Max RX and the live receiver count
@@ -1506,10 +1510,39 @@ int userDdcCountFor(const BoardCapabilities& caps, ProtocolVersion protocol,
     // (Radio-Authoritative Settings Policy), on Protocol 2 only.
     // The cap is the one effective receiver count every reader shares.
     if (protocol == ProtocolVersion::Protocol2 && reportedReceivers > 0) {
-        return std::min(fromRow,
-                        effectiveReceiverCount(caps, protocol, reportedReceivers));
+        const int capped = std::min(fromRow,
+                                    effectiveReceiverCount(caps, protocol, reportedReceivers));
+        // Where the report limits which DDCs exist, it counts the reserved
+        // pair too: DDC0 and DDC1 never carry a stream on these boards
+        // (P2CodecOrionMkII::applyDdcAssignment).
+        constexpr int kReservedDdcs = 2;
+        const int limit = ddcIndexLimit(caps, protocol, reportedReceivers);
+        return limit > 0 ? std::min(capped, limit - kReservedDdcs) : capped;
     }
     return fromRow;
+}
+
+int ddcIndexLimit(const BoardCapabilities& caps, ProtocolVersion protocol,
+                  int reportedReceivers) noexcept {
+    // The 1-ADC boards have their own codecs and put a stream on DDC0, and
+    // Protocol 1 sets its count from the frame's slot plan. See the declaration.
+    if (protocol != ProtocolVersion::Protocol2 || reportedReceivers <= 0
+        || caps.adcCount != 2) {
+        return 0;
+    }
+    // Saturn's number is a fixed value in p2app, not its DDC count:
+    //   From Saturn sw_projects/P2_app/p2app.c:427 [@4b0b76f]
+    //     4,                                            // 4DDC
+    //   From Saturn sw_projects/common/saturnregisters.h:22 [@4b0b76f]
+    //     #define VNUMDDC 10                                  // downconverters available
+    // Limiting indices by it would take a G2 from four pans to two.
+    if (caps.board == HPSDRHW::Saturn || caps.board == HPSDRHW::SaturnMKII) {
+        return 0;
+    }
+    // Connecting starts receiver 0 on DDC2 whatever the radio says
+    // (P2RadioConnection::primaryRxDdcForBoard), so the limit always leaves it.
+    constexpr int kFirstDdcBeyondPrimary = 3;
+    return std::max(reportedReceivers, kFirstDdcBeyondPrimary);
 }
 
 int effectiveReceiverCount(const BoardCapabilities& caps, ProtocolVersion protocol,

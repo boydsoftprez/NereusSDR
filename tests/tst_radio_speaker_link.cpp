@@ -7,7 +7,7 @@
 // R-SPK-16; V-SW-4): radio's radioSpeakerVolume, radioSpeakerMuted and
 // speakerAmplifierMode are Bidirectional and the two reports Outbound, all
 // five only to a peer that declared radioSpeaker 1, which alone is sent
-// radioSpeakerVersion 1 (last before coreBuildInfo). A remote window's
+// radioSpeakerVersion 1 (last of the peer-gated entries). A remote window's
 // change lands through the Core's own setter and is saved on the Core under
 // its radio's MAC; another device follows. A window of a Core without the
 // capability shows RADIO disabled with the update reason and sends nothing.
@@ -21,6 +21,7 @@
 // =================================================================
 
 #include "MultiDeviceHarness.h"
+#include "CapabilityOrder.h"
 
 #include <QScopeGuard>
 #include <QSignalSpy>
@@ -234,22 +235,19 @@ private slots:
 
         const QJsonArray caps = firstOfType(appA->received(), QStringLiteral("capabilities"))
                                     .value(QStringLiteral("properties")).toArray();
-        QVERIFY(caps.size() >= 3);
-        QCOMPARE(caps.at(caps.size() - 3).toObject().value(QStringLiteral("name")).toString(),
-                 QStringLiteral("radeReasonVersion"));
-        QCOMPARE(caps.at(caps.size() - 2).toObject().value(QStringLiteral("name")).toString(),
-                 QStringLiteral("radioSpeakerVersion"));
-        QCOMPARE(caps.last().toObject().value(QStringLiteral("name")).toString(),
-                 QStringLiteral("coreBuildInfo"));
+        const QStringList names = capabilityEntryNames(caps);
+        QCOMPARE(capabilityEntriesAfter(names, QStringLiteral("radioSpeakerVersion")),
+                 kCapabilitiesAfterPeerGatedWithBuildInfo);
+        QCOMPARE(names.indexOf(QStringLiteral("radeReasonVersion")) + 1,
+                 names.indexOf(QStringLiteral("radioSpeakerVersion")));
 
         // The other peer's list is the one it had before: the same entries,
         // in the same order, without the new one.
         const QJsonArray plainCaps = firstOfType(appB->received(), QStringLiteral("capabilities"))
                                          .value(QStringLiteral("properties")).toArray();
-        QCOMPARE(plainCaps.size(), caps.size() - 1);
-        QCOMPARE(plainCaps.at(plainCaps.size() - 2).toObject().value(QStringLiteral("name"))
-                     .toString(),
-                 QStringLiteral("radeReasonVersion"));
+        QVERIFY(!plainCaps.isEmpty());
+        QCOMPARE(capabilityBytesWithout(caps, {QStringLiteral("radioSpeakerVersion")}),
+                 capabilityBytesWithout(plainCaps));
 
         StationCapabilities sent;
         sent.radioSpeakerVersion = 1;

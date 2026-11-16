@@ -27,6 +27,9 @@ import UIKit
 /// 120 touches a second and lifts. The drag's writes must keep a round
 /// trip's pace, and the final value must reach the Core soon after the
 /// finger lifts. Simulator numbers, printed for the record.
+///
+/// A slow runner stretches the same drag with no change in the app, so the
+/// median's limit scales with ``RunnerSpeed``, read before each scene.
 @Suite("Tuning while the band draws", .serialized)
 @MainActor
 struct TuneUnderLoadTests {
@@ -100,14 +103,107 @@ struct TuneUnderLoadTests {
         let dragMs: Double
         let writes: Int
         let linesDrawn: Int
+        /// The runner's speed just before this scene.
+        let runner: RunnerSpeed
+    }
+
+    /// How fast the runner's main thread is just now, from a fixed piece of
+    /// work that touches nothing of the app. It runs before the scene's app
+    /// exists, so a slow app cannot make it read slow by drawing or by
+    /// keeping threads busy. It reads the clock on the wall, not the thread's
+    /// CPU time: a runner short of cores costs a drag in both.
+    ///
+    /// On the Mac the work's wall and CPU times agree, and a short sample
+    /// tracks samples 4 and 12 times as long at a steady ratio, so 16 samples
+    /// of about 10 ms say as much as a longer stretch of the main thread
+    /// would. The median keeps one noisy sample from moving the limit; p10
+    /// and p90 are printed to show how noisy the runner was.
+    @MainActor
+    struct RunnerSpeed {
+        /// A drag's median spacing on a runner at the reference speed or
+        /// better. The earlier builds' pace on JJ's phone: a median of
+        /// 114-123 ms.
+        static let baseLimitMs = 150.0
+        /// A settled simulator on a normal machine, taken as GitHub's hosted
+        /// Mac on its best day, the slowest place this test normally runs.
+        /// Measured in the Debug build tests run in, 2026-11-04, on an
+        /// 18-core Mac: a settled simulator reads 9.3-10.5 ms with an encode
+        /// of 0.75 ms per draw, about 13 ms of this work per ms of encode.
+        /// The fastest of 52 2D and 3D scenes in 26 CI runs (2026-10-28 to
+        /// 11-04) has an encode of 1.25 ms, so 16 ms. The slowest has 2.57 ms,
+        /// about 33 ms. One run's reading of this work on GitHub's hosted Mac
+        /// (PR 745, run 41937480842, 2026-11-05, four iPhone scenes): 17.69 to
+        /// 19.17 ms, so a factor of 1.11 to 1.20 and a limit of 165.8 to 179.7 ms,
+        /// with medians of 63 (nothing drawn), 104 (main held 15 ms a frame),
+        /// 102 (2D) and 95 ms (3D), all within.
+        static let referenceMs = 16.0
+        /// The most a slow runner can raise the limit: to 180 ms. In those
+        /// 26 CI runs the slowest median of any scene is 168 ms, so this still
+        /// clears it. A later run (PR 749, run 42148478672, 2026-11-05, before
+        /// this work was printed) read 179.4 ms with an encode of 2.87 ms, so
+        /// the margin on a run that slow is under 1 ms. The cap stays: a higher
+        /// one lets more of a real hold through, and a slow runner that lands
+        /// just over gets a rerun of that job. A hold on the main thread that runs alongside the fake
+        /// Core's 60 ms answer, which sleeps in its own task, does not add to
+        /// it: writes space at about the larger of the two. A hold between the
+        /// answer and the next write does add. Injected here, 2026-11-04, a
+        /// 150 ms hold per write gave medians of 154-168 ms alongside the
+        /// answer and 211-232 ms after it. So this cap always catches the
+        /// second, and the first only on a runner whose limit is under them.
+        static let maxFactor = 1.2
+        static let samples = 16
+        static let iterations = 200_000
+
+        let samplesMs: [Double]
+
+        var workMs: Double { percentile(samplesMs, 0.5) }
+        /// Never below 1, so a fast runner keeps the base limit exactly.
+        var factor: Double { min(Self.maxFactor, max(1, workMs / Self.referenceMs)) }
+        var medianLimitMs: Double { Self.baseLimitMs * factor }
+
+        /// For the result line and for a failing expectation.
+        var summary: String {
+            String(format: "runner work %.2f ms (p10 %.2f, p90 %.2f, reference %.1f), factor %.3f",
+                   workMs, percentile(samplesMs, 0.1), percentile(samplesMs, 0.9), Self.referenceMs, factor)
+        }
+
+        static func measure() -> RunnerSpeed {
+            let buffer = UnsafeMutableBufferPointer<UInt64>.allocate(capacity: 1 << 15)
+            defer { buffer.deallocate() }
+            buffer.initialize(repeating: 1)
+            var result: UInt64 = 0
+            let samplesMs = (0 ..< samples).map { _ -> Double in
+                let started = now()
+                result ^= work(buffer)
+                return (now() - started) * 1_000
+            }
+            // Using the result keeps the work from being optimized away.
+            #expect(result != 0)
+            return RunnerSpeed(samplesMs: samplesMs)
+        }
+
+        /// A xorshift walk over 256 KiB: CPU and cache, no allocation, no
+        /// locks, no system calls, the same steps on every run.
+        private static func work(_ buffer: UnsafeMutableBufferPointer<UInt64>) -> UInt64 {
+            var x: UInt64 = 0x9E37_79B9_7F4A_7C15
+            let mask = buffer.count - 1
+            for _ in 0 ..< iterations {
+                x ^= x << 13
+                x ^= x >> 7
+                x ^= x << 17
+                let index = Int(truncatingIfNeeded: x) & mask
+                buffer[index] = buffer[index] &+ x
+            }
+            return x &+ buffer[0]
+        }
     }
 
     static func check(_ run: Run) {
         let median = percentile(run.spacingsMs, 0.5)
         let worst = run.spacingsMs.max() ?? 0
-        // The earlier builds' pace on JJ's phone: a median of 114-123 ms.
+        let limit = run.runner.medianLimitMs
         #expect(run.writes >= 10, "\(run.label): only \(run.writes) writes in a \(dragSeconds) s drag")
-        #expect(median <= 150, "\(run.label): writes \(Int(median)) ms apart (median)")
+        #expect(median <= limit, "\(run.label): writes \(String(format: "%.1f", median)) ms apart (median), limit \(String(format: "%.1f", limit)) ms; \(run.runner.summary)")
         #expect(worst < 1_000, "\(run.label): a write waited \(Int(worst)) ms")
         #expect((run.liftToFinalMs ?? .infinity) <= 250,
                 "\(run.label): the final value reached the Core \(run.liftToFinalMs.map { "\(Int($0)) ms" } ?? "never") after the lift")
@@ -315,6 +411,7 @@ struct TuneUnderLoadTests {
     }
 
     static func measure(_ load: Load) async throws -> Run {
+        let runner = RunnerSpeed.measure()
         let suite = "TuneUnderLoadTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -473,12 +570,14 @@ struct TuneUnderLoadTests {
         let label = load.description
         let run = Run(label: label, spacingsMs: spacings, liftToFinalMs: final.map { ($0.at - lifted) * 1_000 },
                       busyMs: busyMs, answerToNextMs: answerToNext, dragMs: (lifted - began) * 1_000,
-                      writes: writes.count, linesDrawn: linesDrawn)
+                      writes: writes.count, linesDrawn: linesDrawn, runner: runner)
         let busyTotal = busyMs.reduce(0, +)
         print("""
             TuneUnderLoad \(label) (simulator): touches \(touches), writes \(run.writes), \
             spacing ms p10 \(Int(percentile(spacings, 0.1))) median \(Int(percentile(spacings, 0.5))) \
             p90 \(Int(percentile(spacings, 0.9))) max \(Int(spacings.max() ?? 0)); \
+            median \(String(format: "%.1f", percentile(spacings, 0.5))) against limit \(String(format: "%.1f", runner.medianLimitMs)) ms, \
+            \(percentile(spacings, 0.5) <= runner.medianLimitMs ? "within" : "over"); \(runner.summary); \
             lift to final \(run.liftToFinalMs.map { "\(Int($0)) ms" } ?? "never"); \
             answer to next write ms median \(Int(percentile(answerToNext, 0.5))) \
             p90 \(Int(percentile(answerToNext, 0.9))) max \(Int(answerToNext.max() ?? 0)); \

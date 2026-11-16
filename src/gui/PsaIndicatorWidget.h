@@ -12,6 +12,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05 - NEREUS_GUI_EXPORT: this class's signals are used from outside
+//                 its DLL. Without the export their addresses were MinGW's
+//                 auto-import thunks, which moc's code does not recognize,
+//                 so a QSignalSpy or connect on them failed on Windows.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-04 — User-approved single stacked PureSignal3 / Feedback banner,
 //                 by J.J. Boyd (KG4VCF), with OpenAI Codex assistance.
 //   2026-10-04 — Live Core status and passive numeric correction readouts,
@@ -125,6 +130,7 @@ mw0lge@grange-lane.co.uk
 #pragma once
 
 #include <QColor>
+#include "gui/NereusGuiExport.h"
 #include <QString>
 #include <QWidget>
 
@@ -136,7 +142,7 @@ namespace NereusSDR {
 class RadioModel;
 class PureSignal;
 
-class PsaIndicatorWidget : public QWidget {
+class NEREUS_GUI_EXPORT PsaIndicatorWidget : public QWidget {
     Q_OBJECT
 
 public:

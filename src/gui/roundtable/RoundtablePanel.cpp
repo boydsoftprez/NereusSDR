@@ -7,6 +7,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04: setHoldRead keeps an open inspector's read across a tune, and a
+//               refused read lets go of the one it replaced (overlay design D27).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-03: setTuneAllowed: the read bar's Tune greys while keyed and when
+//               already there (overlay design D22). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-03: One word for a double (overlay design D8). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-11-03: Present leading/trailing samples and verify current double identities explicitly.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-11-02: Preserve immediate turn/message changes while coalescing
@@ -807,6 +814,7 @@ RoundtablePanel::RoundtablePanel(RoundtableModel* model, QWidget* parent)
         QPushButton* tune = makeButton(m_readBar, QStringLiteral("Tune A here"), primaryStyle());
         tune->setObjectName(QStringLiteral("roundtableTuneHereBtn"));
         tune->setToolTip(QStringLiteral("Tune the slice to this room"));
+        m_readTune = tune;
         connect(tune, &QPushButton::clicked, this, [this]() {
             const QString id = roomId();
             if (!id.isEmpty()) {
@@ -1045,7 +1053,7 @@ RoundtablePanel::~RoundtablePanel() = default;
 void RoundtablePanel::followSlice(int sliceId)
 {
     m_sliceId = sliceId;
-    if (!m_readId.isEmpty()) {
+    if (!m_readId.isEmpty() && !m_holdRead) {
         m_readId.clear();
         if (m_model) {
             m_model->unreadRoom();
@@ -1069,6 +1077,16 @@ void RoundtablePanel::setSliceContext(qint64 hz, const QString& family)
     m_failedContext.clear();
     m_historyRequestedMs = -1;
     m_historyFresh = false;
+    if (m_holdRead && !m_readId.isEmpty()
+        && (m_sliceHz <= 0 || m_sliceFamily.isEmpty()
+            || m_readId != RoundtableModel::frequencyContextId(m_sliceHz, m_sliceFamily))) {
+        // The read stays. Only the slice's own stream follows it.
+        if (m_model && m_model->frequencyAvailable()) {
+            m_model->setActiveFrequencyContext(m_sliceHz, m_sliceFamily);
+        }
+        updateReadTune();
+        return;
+    }
     m_readId.clear();
     subscribeContext();
     rebuildImmediately();
@@ -1112,16 +1130,47 @@ void RoundtablePanel::readRoom(const QString& roomId)
         backToSlice();
         return;
     }
+    const bool wasReading = !m_readId.isEmpty();
     m_readId = roomId;
     if (RoundtableModel::isFrequencyContext(roomId)) {
         m_subscribing = true;
         const bool accepted = m_model->readAt(roomHz(roomId), roomFamily(roomId));
         m_subscribing = false;
-        if (!accepted) { m_readId.clear(); }
+        if (!accepted) {
+            m_readId.clear();
+            // The read this one would have replaced is still open: let it go too.
+            if (wasReading) {
+                m_model->unreadRoom();
+                subscribeContext();
+            }
+        }
     } else {
         m_model->readRoom(roomId);
     }
     rebuildImmediately();
+}
+
+void RoundtablePanel::setTuneAllowed(bool allowed)
+{
+    if (allowed == m_tuneAllowed) {
+        return;
+    }
+    m_tuneAllowed = allowed;
+    updateReadTune();
+}
+
+void RoundtablePanel::updateReadTune()
+{
+    if (m_readTune == nullptr) {
+        return;
+    }
+    const bool noSlice = m_sliceId < 0;
+    m_readTune->setText(noSlice ? QStringLiteral("Tune here")
+                                : QStringLiteral("Tune %1 here").arg(QChar(u'A' + std::clamp(m_sliceId, 0, 25))));
+    const QString id = roomId();
+    const bool alreadyThere = !m_sliceFamily.isEmpty() && m_sliceHz > 0
+        && roundtableTuneWritesNothing(roomHz(id), roomFamily(id), m_sliceHz, m_sliceFamily);
+    m_readTune->setEnabled(m_tuneAllowed && !noSlice && !alreadyThere);
 }
 
 void RoundtablePanel::backToSlice()
@@ -1436,6 +1485,7 @@ void RoundtablePanel::rebuild()
 
     m_fittedWidth = roomWidth();
     m_readBar->setVisible(isReading());
+    updateReadTune();
     m_readLabel->setText(QStringLiteral("Reading %1").arg(shortFrequency(roomHz(id))));
     fitReadBar();
 
@@ -1974,7 +2024,7 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
             const QJsonArray lastTalkers = last.value(QStringLiteral("talkers")).toArray();
             QString text;
             if (last.value(QStringLiteral("kind")).toString() == QLatin1String("doubled")) {
-                text = QStringLiteral("Last turn · Doubled · combined RF · %1 ago").arg(ageText(ago));
+                text = QStringLiteral("Last double · combined RF · %1 ago").arg(ageText(ago));
             } else if (roundtableTurnIsYours(room, last, false)) {
                 text = QStringLiteral("Last turn was yours, %1 ago").arg(ageText(ago));
             } else if (!lastTalkers.isEmpty()
@@ -1996,11 +2046,11 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
             ? (!identitiesComplete ? (talkers.isEmpty() ? QStringLiteral("DOUBLE · NAMES UNAVAILABLE")
                                                        : QStringLiteral("DOUBLE · NAMES UPDATING"))
                : talkers.size() > 2 ? QStringLiteral("DOUBLE · %1 KEYED").arg(talkers.size()) : QStringLiteral("DOUBLE"))
-            : QStringLiteral("TWO AT ONCE"));
+            : QStringLiteral("DOUBLE"));
         overlapLabel->setObjectName(QStringLiteral("roundtableDoubleIdentityStatus"));
         col->addWidget(overlapLabel);
         // Roundtable plan Task 15: each talker's part (TX, the name, the
-        // "+" after it), then DOUBLED; where they do not fit one line of
+        // "+" after it), then DOUBLE; where they do not fit one line of
         // the room, each talker takes a line of its own.
         QList<QList<QWidget*>> parts;
         for (qsizetype i = 0; i < talkers.size(); ++i) {
@@ -2014,7 +2064,7 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
             }
             parts.append(part);
         }
-        QLabel* tag = makeLabel(body, frequency ? QStringLiteral("DOUBLE") : QStringLiteral("DOUBLED"), txTextColor(), kSmallPx, true);
+        QLabel* tag = makeLabel(body, QStringLiteral("DOUBLE"), txTextColor(), kSmallPx, true);
         tag->setStyleSheet(tag->styleSheet() + QStringLiteral(" background: %1; border: 1px solid"
                                                               " %2; padding: 0 4px;")
                                                    .arg(role(Style::kRedBg, "danger-bg"), doubledColor()));

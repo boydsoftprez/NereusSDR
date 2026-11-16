@@ -6,6 +6,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Band stack plan Task 4: BandStackFacade mirrored (read-only).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-08-05  J.J. Boyd / KG4VCF  Remote daemon R2 Task 7: mirrored
 //                                    property schema. AI-assisted
 //                                    transformation via Anthropic Claude
@@ -171,6 +173,9 @@ const char* const kMirroredClasses[] = {
     // R-R3-49 / R-IOS-18 (paProfileVersion 1): the Core's PA Gain profiles,
     // read-only; the paProfile verbs change them.
     "NereusSDR::PaProfilesFacade",
+    // Band stack plan Task 4 (bandStackVersion 1): the Core's band stack,
+    // read-only; the bandStack.* verbs change it.
+    "NereusSDR::BandStackFacade",
     // Rotor control plan Task 4b (remoteRotorControlVersion 1): the Core's
     // antenna rotor, read-only; the rotor commands change it.
     "NereusSDR::RotorLink::RotorModel",

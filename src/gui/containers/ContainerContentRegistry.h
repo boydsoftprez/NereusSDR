@@ -1,6 +1,9 @@
 #pragma once
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-11-06 - A type can name a new entry's free canvas size
+//                 (setNewEntryCanvasSize). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-26 - Final review fix wave (I5): withNewItemIdentity gives a
 //                 copied LED or web image a guid of its own. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -30,6 +33,8 @@
 //                 type its content resolves to (a BarPreset entry is the bar
 //                 its flavor names). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 #include "ContainerDocument.h"
 #include <QObject>
 #include <QMetaType>
@@ -121,6 +126,10 @@ public:
     bool claimSingleton(const QString& typeId, const QString& entryId);
     quint64 generation() const { return m_generation; }
     static QString appletTypeForVisibilityId(const QString& id);
+    /// The Main Panel's first-launch order and first-launch shown or hidden
+    /// state, shared by the first launch and Reset Default Layout.
+    static void placeFirstLaunchApplet(QVector<ContentEntry>& contents, const ContentEntry& entry);
+    static ContentEntry firstLaunchEntry(ContentEntry entry);
     // The heading text for a group ("Ready-made meters", ...).
     static QString groupTitle(ContentGroup group);
     QVector<ContentDescriptor> descriptors() const;
@@ -159,6 +168,11 @@ public:
                                const QVector<ContentProperty>& properties = {});
     // The properties a widget type declared; empty for every other type.
     QVector<ContentProperty> declaredProperties(const QString& typeId) const;
+    // A widget type whose default free canvas size isn't the usual one. The
+    // settings dialog saves a rect when it adds an entry, and asks here for
+    // its size. An invalid size means the usual one, as for every other type.
+    void setNewEntryCanvasSize(const QString& typeId, std::function<QSize(const ContentEntry&)> size);
+    QSize newEntryCanvasSize(const ContentEntry& entry) const;
     void unregisterWidgetFactory(const QString& typeId);
     bool hasWidgetFactory(const QString& typeId) const;
     QWidget* createWidget(const ContentEntry& entry, QWidget* parent,
@@ -175,7 +189,7 @@ private:
     QHash<QString, QMetaObject::Connection> m_destroyConnections;
     QHash<QString, QString> m_placements;
     QHash<QString, QString> m_unavailable;
-    struct WidgetFactoryRecord { ContentDescriptor descriptor; WidgetFactory factory; QVector<ContentProperty> properties; };
+    struct WidgetFactoryRecord { ContentDescriptor descriptor; WidgetFactory factory; QVector<ContentProperty> properties; std::function<QSize(const ContentEntry&)> newEntryCanvasSize; };
     QHash<QString, WidgetFactoryRecord> m_widgetFactories;
     QStringList m_widgetFactoryOrder;
     QWidget* m_parking = nullptr;

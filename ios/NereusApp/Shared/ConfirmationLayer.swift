@@ -16,6 +16,11 @@ struct ConfirmationLayer: View {
     @ObservedObject var devices: SeveralDevicesClient
     let modeLabel: (Int) -> String
     var kindOf: (String) -> String = { _ in "" }
+    /// The phone's own question after a region edit, once the Core has none
+    /// open. Observed here, not only by the window's content: the window hides
+    /// when it closes, and with nothing else changed this body would not run
+    /// again, so the next question would redraw the last one's words.
+    @ObservedObject var bandStackRegion: BandStackRegionPrompt
     var take: TransmitTakeModel? = nil
 
     var body: some View {
@@ -40,6 +45,13 @@ struct ConfirmationLayer: View {
             } sheet: {
                 sheet(question)
                     .id(question.id)
+            }
+        } else if let asked = bandStackRegion.asked {
+            dimmed {
+                bandStackRegion.keep()
+            } sheet: {
+                BandStackRegionSheet(prompt: bandStackRegion, region: asked.region)
+                    .id("bandStackRegion-\(asked.id)")
             }
         }
     }

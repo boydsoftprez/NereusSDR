@@ -41,6 +41,10 @@ struct MainScreenShotTests {
         let audio = AudioSessionController(session: session, output: FakePlaybackOutput(), notificationCenter: center)
         let defaults = try #require(UserDefaults(suiteName: "MainScreenShotTests"))
         let model = AppModel(audio: audio, displaySettings: BandDisplaySettingsStore(defaults: defaults))
+        // A kept route takes the sound off the headphones, so unplugging them
+        // pauses nothing. Neither value is this test's to inherit.
+        #expect(!model.audioMuted, "this model started muted: an earlier test's mute was kept")
+        #expect(audio.chosen == nil, "this model started with a kept audio route, not the headphones")
         let station = try FakeStation()
         await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
                             transportFactory: station.transportFactory, clock: HeartbeatSoonLinkClock())

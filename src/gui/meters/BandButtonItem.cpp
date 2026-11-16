@@ -29,6 +29,9 @@
 //                 jump buttons, clicks by band number, visibility bits kept
 //                 by meaning with a layout marker. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-11-06 - WWV's right-click asks for its band stack (band stack plan
+//                 Task 10). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -376,7 +379,13 @@ void BandButtonItem::onButtonClicked(int index, Qt::MouseButton btn)
         // [original inline comments from MeterManager.cs:13183-13185]
         // From Thetis MeterManager.cs:13183-13186 [v2.10.3.15]: WWV sets the
         // band for either mouse button; it has no band stack.
-        emit bandClicked(static_cast<int>(slot.band));
+        // NereusSDR differs: the Core keeps a stack for WWV as for any band
+        // (design section 7), so its right-click opens the popup.
+        if (btn == Qt::RightButton) {
+            emit bandStackRequested(static_cast<int>(slot.band));
+        } else {
+            emit bandClicked(static_cast<int>(slot.band));
+        }
         return;
     }
     // From Thetis MeterManager.cs:13210-13218 [v2.10.3.15]: a right-click

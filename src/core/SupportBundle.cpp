@@ -196,7 +196,7 @@ bool isSafeSetting(const QString& key, const QString& value)
     static const QSet<QString> numericKeys{
         QStringLiteral("SampleRate"), QStringLiteral("audio/DspRate"),
         QStringLiteral("audio/DspBlockSize"), QStringLiteral("DisplayFftSize"),
-        QStringLiteral("DisplaySpectrumFps")};
+        QStringLiteral("DisplaySpectrumFps"), QStringLiteral("DisplayPaintFps")};
     if (numericKeys.contains(key)) {
         bool ok = false;
         value.toDouble(&ok);

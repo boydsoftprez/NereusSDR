@@ -239,6 +239,10 @@ struct NereusSDRApp: App {
             model.longSession.sceneChanged(inForeground: phase != .background)
             // A held PTT lets go when the scene loses focus or leaves the screen.
             model.main.transmit.sceneChanged(active: phase == .active)
+            // A link that died while away tries at once rather than on its timer.
+            if phase == .active {
+                flow.sceneBecameActive()
+            }
         }
     }
 

@@ -7,6 +7,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04: A tune leaves a read the open inspector holds. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-11-04: setSliceSource: a window gives the applet its own slice, so the
+//               panel's label, stream and Tune agree. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-11-03: Tune is refused and its button greyed while keyed (overlay design
+//               D22). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
@@ -96,6 +103,10 @@ RoundtableApplet::RoundtableApplet(RadioModel* model, RoundtableModel* roundtabl
     build();
     if (m_model != nullptr) {
         connect(m_model, &RadioModel::activeSliceChanged, this, [this](int) { bindActiveSlice(); });
+        // Keying greys Tune at once (overlay design D22).
+        connect(m_model, &RadioModel::transmittingChanged, this,
+                [this](bool transmitting) { m_panel->setTuneAllowed(!transmitting); });
+        m_panel->setTuneAllowed(!m_model->isTransmitting());
     }
     bindActiveSlice();
 }
@@ -165,16 +176,27 @@ void RoundtableApplet::syncFromModel()
     bindActiveSlice();
 }
 
+void RoundtableApplet::setSliceSource(std::function<SliceModel*()> source)
+{
+    m_sliceSource = std::move(source);
+    bindActiveSlice();
+}
+
 void RoundtableApplet::bindActiveSlice()
 {
-    SliceModel* slice = m_model != nullptr ? m_model->activeSlice() : nullptr;
-    if (slice == m_slice && slice != nullptr) {
+    // The window's own slice when it says which (a window hosting the Core has
+    // one of its own, whichever slice its other devices have active).
+    SliceModel* slice = m_sliceSource ? m_sliceSource() : (m_model != nullptr ? m_model->activeSlice() : nullptr);
+    // Already bound, a slice or none: following again would end an open view.
+    const int sliceId = slice != nullptr ? slice->sliceIndex() : -1;
+    if (slice == m_slice && sliceId == m_boundSliceId) {
         return;
     }
     disconnect(m_sliceFrequency);
     disconnect(m_sliceMode);
     disconnect(m_sliceMeter);
     m_slice = slice;
+    m_boundSliceId = sliceId;
     if (slice == nullptr) {
         m_panel->followSlice(-1);
         m_panel->setSliceFrequency(0);
@@ -187,10 +209,13 @@ void RoundtableApplet::bindActiveSlice()
             m_panel->setOwnReading(m_slice->signalStrengthDbm(), RoundtableModel::nowMs());
         }
     });
-    // Tuning the slice anywhere goes back to following it (design 11.1).
+    // Tuning the slice anywhere goes back to following it (design 11.1), unless an
+    // open inspector is showing that read: a band click leaves it (overlay design D27).
     m_sliceFrequency = connect(slice, &SliceModel::frequencyChanged, this, [this](double hz) {
         m_panel->setSliceContext(std::llround(hz), m_slice ? familyOf(m_slice->dspMode()) : QString());
-        m_panel->backToSlice();
+        if (!m_panel->holdsRead()) {
+            m_panel->backToSlice();
+        }
     });
     m_sliceMode = connect(slice, &SliceModel::dspModeChanged, this, [this](DSPMode mode) {
         if (m_slice) {
@@ -205,6 +230,9 @@ void RoundtableApplet::tuneHere(qint64 hz, const QString& family)
 {
     SliceModel* slice = m_slice;
     if (slice == nullptr || hz <= 0) {
+        return;
+    }
+    if (m_model != nullptr && m_model->isTransmitting()) {
         return;
     }
     // A slice already in the room's family keeps its mode (CWL stays CWL,

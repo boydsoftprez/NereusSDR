@@ -14,4 +14,26 @@ enum AudioRoute: Hashable, Sendable, Identifiable {
     var id: Self {
         self
     }
+
+    /// How the choice is kept on this phone.
+    var storedForm: String {
+        switch self {
+        case .speaker: return "speaker"
+        case .earpiece: return "earpiece"
+        case .external(let name): return Self.externalPrefix + name
+        }
+    }
+
+    /// The choice from its kept form; nil for one this build does not know.
+    init?(storedForm: String) {
+        switch storedForm {
+        case "speaker": self = .speaker
+        case "earpiece": self = .earpiece
+        default:
+            guard storedForm.hasPrefix(Self.externalPrefix) else { return nil }
+            self = .external(name: String(storedForm.dropFirst(Self.externalPrefix.count)))
+        }
+    }
+
+    private static let externalPrefix = "external:"
 }

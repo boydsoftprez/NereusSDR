@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-06 - ddcIndexLimit: the reported count limits which DDCs a
+//                 gateware 2-ADC board has. J.J. Boyd (KG4VCF), with
+//                 AI-assisted transformation via Anthropic Claude Code.
 //   2026-11-02 - Issue #734: declare active-protocol PureSignal peak selection.
 //                 J.J. Boyd (KG4VCF), with OpenAI Codex assistance.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -689,9 +692,33 @@ namespace BoardCapsTable {
     // gateware's receiver count is a compile-time constant that changes
     // between firmware releases (ANAN-G2 reports 4 against the row's five
     // user streams). 0 means no report and keeps the row's count. Protocol 1
-    // is unchanged: its frame slot plan sets the count.
+    // is unchanged: its frame slot plan sets the count. Where ddcIndexLimit
+    // applies, the reserved DDC0 and DDC1 come off the report as well (an
+    // Anvelina Pro 3 reporting 5 has three streams, DDC2 to DDC4).
     int userDdcCountFor(const BoardCapabilities& caps, ProtocolVersion protocol,
                         int reportedReceivers) noexcept;
+
+    // The first DDC index the radio does not have, or 0 for no limit. No
+    // stream goes on a DDC at or above it, and the stream count above follows.
+    //
+    // NereusSDR's own policy, not a Thetis port. Thetis keeps the report for
+    // its radio list and sizes DDCs from the model, which suits it because it
+    // never enables DDC4 to DDC6 on this family; NereusSDR does enable them,
+    // so it has to know they exist.
+    //
+    // Applies on Protocol 2 to the 2-ADC boards whose gateware sends its
+    // receiver count, the boards with DDC0 to NR-1 and no others:
+    //   From n1gp Anvelina_PROIII Ethernet/sdr_send.v:133 [@8e86a61]
+    //     wire [7:0] number_Rx = NR[7:0]; //eu2av
+    //   sent in the discovery reply at sdr_send.v:172 [@8e86a61].
+    // Bench, 2026-11-06 (KG4VCF's Anvelina Pro 3, gateware 22.15, reporting
+    // 5): DDC2 to DDC4 deliver, DDC5 and DDC6 send nothing.
+    //
+    // The Saturn boards and every board with a different shape (1 ADC) get 0;
+    // see the definition. So does a report of 0. A report of 1 or 2 gives 3:
+    // receiver 0 on DDC2 is where connecting starts, on any radio.
+    int ddcIndexLimit(const BoardCapabilities& caps, ProtocolVersion protocol,
+                      int reportedReceivers) noexcept;
 
     // The radio's effective receiver count: the one number every reader of
     // "how many receivers does this radio have" uses (Max RX on the radio

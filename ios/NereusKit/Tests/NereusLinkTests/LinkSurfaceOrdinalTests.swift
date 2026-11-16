@@ -11,6 +11,13 @@
 
 // 2026-10-31: Pin the additive NNR warning capability and read-only slice property.
 //   J.J. Boyd (KG4VCF), AI-assisted via Codex.
+// 2026-11-05: txSsbModMonitorVersion at 119, before the build info, so no entry the
+//   phone reads moved. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-06: Band stack: bandStackVersion at 119, before coreBuildInfo at 120.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-07: merge of the band stack and the SSB Mod Monitor: bandStackVersion at 119,
+//   txSsbModMonitorVersion at 120, coreBuildInfo at 121. J.J. Boyd (KG4VCF),
+//   AI-assisted via Anthropic Claude Code.
 
 import Foundation
 import LinkTestSupport
@@ -28,7 +35,7 @@ import Testing
 
     @Test func newestCapabilitiesSitWhereTheSurfacePinsThem() throws {
         let capabilities = try #require(try Self.surface()["capabilities"] as? [[String: Any]])
-        #expect(capabilities.count == 120)
+        #expect(capabilities.count == 122)
         #expect(capabilities[69]["value"] == nil, "The loopback capture cannot advertise a live TX watch value")
         // The merged b44d638 surface inserts diversityControlVersion after
         // diversityPatternVersion. Capture b20ad1186 also includes the existing
@@ -89,7 +96,14 @@ import Testing
             (117, "stationRoundtableVersion", "i64"),
             // The NNR warning capability precedes the final build info.
             (118, "nnrLoadWarningVersion", "i64"),
-            (119, "coreBuildInfo", "utf8"),
+            // The band stack (feature `bandStack` 1, which the phone
+            // declares) goes before the build info as well, which stays
+            // last.
+            (119, "bandStackVersion", "i64"),
+            // The SSB Mod Monitor goes before the build info too, which is
+            // read by name and moves to 121. Nothing else moved.
+            (120, "txSsbModMonitorVersion", "i64"),
+            (121, "coreBuildInfo", "utf8"),
         ]
         // Core trunk b26112687: sliceAccessVersion reads 3 (the Core's own
         // slice can be taken); nothing moved.
@@ -101,7 +115,9 @@ import Testing
         #expect((capabilities[116]["value"] as? NSNumber)?.intValue == 2)
         #expect((capabilities[117]["value"] as? NSNumber)?.intValue == 2)
         #expect((capabilities[118]["value"] as? NSNumber)?.intValue == 1)
-        #expect(Set(capabilities.compactMap { $0["name"] as? String }).count == 120)
+        #expect((capabilities[119]["value"] as? NSNumber)?.intValue == 1)
+        #expect((capabilities[120]["value"] as? NSNumber)?.intValue == 1)
+        #expect(Set(capabilities.compactMap { $0["name"] as? String }).count == 122)
         for entry in expected {
             try #require(capabilities.count > entry.index)
             #expect(capabilities[entry.index]["name"] as? String == entry.name, "\(entry.name)")

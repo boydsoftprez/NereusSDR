@@ -26,4 +26,13 @@ public struct BandCoverage: Equatable, Sendable {
         }
         return lowHz + (Double(index) + 0.5) / Double(samples) * spanHz
     }
+
+    /// The sample of `samples` that holds `hz`, the inverse of
+    /// ``hz(forSample:samples:)``; nil outside this coverage.
+    public func sample(forHz hz: Double, samples: Int) -> Int? {
+        guard samples > 0, spanHz > 0, hz >= lowHz, hz <= highHz else {
+            return nil
+        }
+        return min(samples - 1, Int((hz - lowHz) / spanHz * Double(samples)))
+    }
 }

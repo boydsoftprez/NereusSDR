@@ -8,6 +8,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-06 - Adding an entry on a free canvas takes the height its type
+//                 asks for, if it asks (newEntryCanvasSize). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-27 - PR 677 review fix round 2: a same-type paste keeps, on
 //                 every type, the fields Thetis's ShowSubMarker and
 //                 SubMarkerColour drive and the target's pick for them
@@ -1854,6 +1857,8 @@ void ContainerSettingsDialog::addNewItem(const QString& typeTag)
             double bottom=0;for(const auto& sibling:c.contents) {if(auto rect=sibling.freeCanvasRect()) {bottom=qMax(bottom,rect->bottom());}}
             QSize initial(qMax(320,m_preview?m_preview->width():320),160);
             if(typeTag.startsWith("control.")) {initial=singleContainerControlSize();}
+            // A type may ask for its own height (a Phone/CW copy, to hold either page).
+            else if(const QSize reported=m_manager->contentRegistry()->newEntryCanvasSize(entry); reported.isValid()) {initial=QSize(qMax(initial.width(),reported.width()),reported.height());}
             c.contents.last().setFreeCanvasRect(QRectF(QPointF(0,bottom+20),QSizeF(initial)));
         } else if(typeTag.startsWith("applet:")) {c.layout=ContentLayout::VerticalStack;} break; } }
         m_editSession->setDraft(draft); loadCurrentDraft(); m_itemList->setCurrentRow(m_itemList->count()-1); return;

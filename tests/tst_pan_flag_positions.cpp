@@ -72,6 +72,7 @@
 #include <QSet>
 
 #include "gui/StyleConstants.h"
+#include "gui/widgets/VfoLevelBar.h"
 #include "gui/widgets/VfoWidget.h"
 #include "models/SliceModel.h"
 
@@ -946,6 +947,131 @@ private slots:
         QVERIFY2(indexInParent(aClose) > indexInParent(flagB),
                  "flag A's own close button must front with flag A, not "
                  "sit behind flag B");
+    }
+
+    // Overlay design D39: the ⋯ button stands directly under the lock, the
+    // same size, on whichever side the flag's buttons are, and it is part of
+    // the flag's region, so tags keep clear of it.
+    void the_more_button_stands_under_the_lock_and_follows_the_flag()
+    {
+        SpectrumWidget w;
+        placePan(w);
+        VfoWidget* flag = w.addVfoWidget(1);
+        flag->setFrequency(kSliceAHz);
+        w.show();
+        w.updateVfoPositions();
+        QPushButton* lock = flag->lockButtonForTest();
+        QPushButton* more = flag->moreButtonForTest();
+        QVERIFY(lock && more);
+        QCOMPARE(more->parentWidget(), &w);
+        QVERIFY(more->isVisible());
+        QVERIFY(more->isEnabled());
+        QCOMPARE(more->size(), QSize(20, 20));
+        QCOMPARE(more->size(), lock->size());
+
+        const auto underTheLock = [&]() {
+            QCOMPARE(more->x(), lock->x());
+            QCOMPARE(more->y(), lock->y() + 22);
+            QVERIFY(flag->occupiedRegion().contains(more->geometry()));
+        };
+        const int vfoX = w.width() / 2;
+        flag->updatePosition(vfoX, 20, VfoWidget::FlagDir::ForceLeft);
+        underTheLock();
+        QCOMPARE(more->x(), flag->x() + flag->width() + 2);
+        flag->updatePosition(vfoX, 20, VfoWidget::FlagDir::ForceRight);
+        underTheLock();
+        QCOMPARE(more->x(), flag->x() - 22);
+
+        // The button goes with its flag, and comes to the front with it.
+        w.addVfoWidget(0);
+        w.updateVfoPositions();
+        flag->raiseAboveSiblings();
+        QVERIFY(indexInParent(more) > indexInParent(lock));
+        flag->hide();
+        QVERIFY(more->isHidden());
+        QVERIFY(!flag->occupiedRegion().contains(more->geometry()));
+    }
+
+    // Overlay design D41: a switch of the source tag alone repaints the bar: no
+    // other part of the flag paints, and the flag keeps its size and its readout.
+    void a_source_tag_switch_repaints_only_the_bar()
+    {
+        SpectrumWidget w;
+        placePan(w);
+        VfoWidget* flag = w.addVfoWidget(1);
+        flag->setFrequency(kSliceAHz);
+        flag->setSmeter(-65.0);
+        w.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&w));
+        w.updateVfoPositions();
+        QApplication::processEvents();
+        auto* bar = flag->findChild<VfoLevelBar*>();
+        QVERIFY(bar != nullptr);
+
+        class PaintCount : public QObject {
+        public:
+            int paints = 0;
+        protected:
+            bool eventFilter(QObject*, QEvent* event) override
+            {
+                if (event->type() == QEvent::Paint) { ++paints; }
+                return false;
+            }
+        };
+        PaintCount onBar;
+        PaintCount onOthers;
+        bar->installEventFilter(&onBar);
+        for (QWidget* child : flag->findChildren<QWidget*>()) {
+            if (child != bar) { child->installEventFilter(&onOthers); }
+        }
+        const QSize flagSize = flag->size();
+        const QPoint flagPos = flag->pos();
+        const QRect barGeometry = bar->geometry();
+        const QRect readout = bar->readoutRect();
+        const QString capturesTo = qEnvironmentVariable("NEREUS_FLAG_CAPTURE_DIR");
+        const auto capture = [&](const QString& stem) {
+            if (capturesTo.isEmpty()) { return; }
+            QDir().mkpath(capturesTo);
+            const QRect around = flag->geometry().adjusted(-26, -4, 26, 4).intersected(w.rect());
+            // On black: a pan with no frames yet paints no ground of its own.
+            QImage image(around.size(), QImage::Format_ARGB32_Premultiplied);
+            image.fill(Qt::black);
+            static_cast<QWidget&>(w).render(&image, QPoint(), QRegion(around));
+            image.save(QStringLiteral("%1/flag-%2.png").arg(capturesTo, stem));
+        };
+        capture(QStringLiteral("signal"));
+
+        const struct { const char* source; const char* stem; } rows[] = {
+            {"Max Bin", "max-bin"}, {"Sig Avg", "sig-avg"}, {"Signal Peak", "signal-peak"}, {"Signal", "signal-back"}};
+        for (const auto& row : rows) {
+            onBar.paints = 0;
+            onOthers.paints = 0;
+            flag->setSMeterSource(QString::fromLatin1(row.source), true);
+            QApplication::processEvents();
+            QCOMPARE(onOthers.paints, 0);
+            QCOMPARE(flag->size(), flagSize);
+            QCOMPARE(flag->pos(), flagPos);
+            QCOMPARE(bar->geometry(), barGeometry);
+            QCOMPARE(bar->readoutRect(), readout);
+            QCOMPARE(bar->readoutText(), QStringLiteral("-65 dBm"));
+            capture(QString::fromLatin1(row.stem));
+        }
+        // Max Bin and Sig Avg change what the bar draws; the bar was asked to paint.
+        onBar.paints = 0;
+        flag->setSMeterSource(QStringLiteral("Max Bin"), true);
+        QTRY_VERIFY(onBar.paints > 0);
+    }
+
+    // Slice A has no close button: the lock takes the top and ⋯ stays under it.
+    void the_more_button_stays_under_the_lock_on_slice_a()
+    {
+        SpectrumWidget w;
+        placePan(w);
+        VfoWidget* flag = w.addVfoWidget(0);
+        flag->setFrequency(kSliceAHz);
+        w.updateVfoPositions();
+        QCOMPARE(flag->lockButtonForTest()->y(), flag->y());
+        QCOMPARE(flag->moreButtonForTest()->y(), flag->y() + 22);
     }
 
     // A single-slice pan has no neighbour to be buried under or to bury.

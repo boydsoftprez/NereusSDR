@@ -104,6 +104,7 @@ public:
 #ifdef NEREUS_BUILD_TESTS
     void useControlledClockForTest(Clock::time_point start);
     void advanceClockForTest(std::chrono::milliseconds elapsed);
+    Clock::time_point lastHeardForTest();
 #endif
 
     static constexpr qint64 kHoldMs = RemoteTxWatchdog::kLinkHoldMs;

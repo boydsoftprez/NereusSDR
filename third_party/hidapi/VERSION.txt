@@ -1,0 +1,29 @@
+hidapi
+======
+
+Version: 0.15.0
+Repository: https://github.com/libusb/hidapi
+Tag: hidapi-0.15.0
+Commit: d6b2a974608dec3b76fb1e36c189f22b9cf3650c
+Archive: https://codeload.github.com/libusb/hidapi/tar.gz/refs/tags/hidapi-0.15.0
+Archive SHA-256: 5d84dec684c27b97b921d2f3b73218cb773cf4ea915caee317ac8fc73cef8136
+Vendored: 2026-11-06
+License: BSD-style, the choice in upstream's LICENSE.txt, see LICENSE-bsd.txt
+
+Files copied from the archive unchanged, with the SHA-256 of each:
+
+  LICENSE-bsd.txt                         30eb1bef29b46f8ba7ab8b416035dbd93cb034a45481dd97815b944284582cd2
+  hidapi/hidapi.h                         c9cef28c53a13a9403e54d5a8a099d51afff119ab04094df89356df0833a822e
+  linux/hid.c                             8fb32b42f4be2ffd4c893bac07f94cc78613116fe07277cc2d23138a1c3eb33f
+  mac/hid.c                               0770e9b42138f9a42e91c8ddb4ddbd0696ebaf6f6535c969b7b36b8caa90ae80
+  mac/hidapi_darwin.h                     48854f6f6b612a90291c3de83a5755c2ed8642da173151a41377090821c39187
+  windows/hid.c                           d7f2e2302d49550aba46decd90e4f0bd21a358c21fce9a9508e0ea02025c8877
+  windows/hidapi_cfgmgr32.h               24ff3ec9afe0427b8e6567112109ee8d448d8583e50c9450bfe9c03044f1c7a0
+  windows/hidapi_descriptor_reconstruct.c 51f87c1b937e53d4488cd07f698ec6a805307af6544b0dce8b8500e703063324
+  windows/hidapi_descriptor_reconstruct.h ab631642aa243117577f89508c1de9c254fa09b4b8f785d7b8213dc2d0451767
+  windows/hidapi_hidclass.h               f71f97ac3841884b54928623f931868735703cfe4b33cdaba77ad32ba189bf6f
+  windows/hidapi_hidpi.h                  19b6de0dc54a1e0ac9668b1fd3a28a604c2062f32c485d46ff40394e7b29e4fb
+  windows/hidapi_hidsdi.h                 d2bf3100b316b1991efc1343a2947b2601b658e9ea45a4e58e653f5e67aa52a7
+  windows/hidapi_winapi.h                 45de813b517c96ec6e335c7a9d9b5a5c90c8bc7a69f0aa188626faedbdf25efe
+
+No local changes.

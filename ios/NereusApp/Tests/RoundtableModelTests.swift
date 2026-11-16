@@ -13,8 +13,11 @@
 
 // 2026-10-31: Canonical producer records restore people rows, reads and reconnect support.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-11-03: A double through the real session, frozen links and peak hold (overlay design).
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import Foundation
+import Combine
 import NereusBand
 import NereusKitTesting
 import NereusLink
@@ -390,6 +393,38 @@ struct RoundtableModelTests {
         #expect(rt.recentNames(Self.usb).isEmpty)
     }
 
+    @Test("a viewed frequency's messages are that context's, and your own room's stay as they were")
+    func messagesForAContext() async throws {
+        let (model, station, rt, _) = try await connected(additions: [.roundtableFrequency])
+        try await MainScreenShotTests.fill(station)
+        #expect(await settle { !model.main.slices.entries.isEmpty })
+        func message(_ id: Int64, hz: Double?, family: String?) -> LinkMessage.RecordBatch.Record {
+            var record = FakeStation.roundtableMessage(id: id, t: 1_000 + id, callsign: "W1AW", text: "m\(id)")
+            if let hz { record.fields["hz"] = .number(hz) }
+            if let family { record.fields["family"] = .string(family) }
+            return record
+        }
+        var scene = FakeStation.RoundtableScene(rooms: [], roomRecords: [
+            "lsb-7236400": [message(1, hz: 7_236_400, family: "lsb"), message(2, hz: 7_240_000, family: "lsb"),
+                            message(3, hz: 7_236_400, family: "usb"), message(4, hz: nil, family: nil)],
+            "lsb-7225000": [message(5, hz: 7_225_000, family: "lsb"), message(6, hz: 7_229_500, family: "lsb")],
+        ], sliceRooms: [:])
+        scene.frequencyPresences = [0: "lsb-7236400"]
+        try await station.deliverRoundtable(scene)
+        rt.activeSliceId = 0
+        #expect(await settle { rt.room?.id == "lsb-7236400" && rt.receivedMessages.count == 4 })
+        #expect(rt.room?.messages.map(\.id) == [1, 2, 3, 4])
+        _ = await rt.read("lsb-7225000")
+        #expect(await settle { rt.receivedMessages.count == 6 })
+        // Within the 5 kHz its stream carries, in its family; never another frequency's.
+        #expect(rt.messages(for: "lsb-7225000").map(\.id) == [5, 6])
+        #expect(await settle { rt.room?.messages.map(\.id) == [5, 6] })
+        #expect(rt.messages(for: "lsb-7236400").map(\.id) == [1, 2])
+        #expect(rt.messages(for: "not-a-context").isEmpty)
+        await rt.backToSlice()
+        #expect(await settle { rt.room?.id == "lsb-7236400" && rt.room?.messages.count == 6 })
+    }
+
     @Test("frequency subscriptions follow exact slice Hz without an RF room, and preserve sender context and drafts")
     func frequencyContextWithoutRFMembership() async throws {
         let (model, station, rt, _) = try await connected(additions: [.roundtableFrequency])
@@ -451,6 +486,195 @@ struct RoundtableModelTests {
         record.fields["state"] = .string(state)
         if state != "shown" { record.fields["text"] = .null }
         return record
+    }
+
+    @Test("active frequency reports keep updating while another frequency's detail is open")
+    func activeFrequencyRemainsLiveWhileBrowsing() async throws {
+        let (model, station, rt, _) = try await historyConnected([Self.historyMessage(901)])
+        let active = "lsb-7236400"
+        let detail = "usb-14200000"
+        await station.deliverRoundtableRoom(active, upserts: [
+            FakeStation.roundtableMember(ref: "listener", callsign: "W1AW", seq: 0),
+            FakeStation.roundtableReading(ref: "listener", dbm: -83, t: 1000, turn: 11),
+            FakeStation.roundtableTurn(id: 11, start: 900, end: nil, talkers: ["K1ABC"]),
+        ])
+        await station.deliverRoundtableRoom(detail, upserts: [
+            FakeStation.roundtableMember(ref: "listener", callsign: "N4XYZ", seq: 0),
+            FakeStation.roundtableReading(ref: "listener", dbm: -101, t: 1000, turn: 22),
+            FakeStation.roundtableTurn(id: 22, start: 900, end: nil, talkers: ["N0CALL"]),
+        ])
+        #expect(await rt.read(detail) == nil)
+        try #require(await settle { rt.room?.id == detail && rt.room?.now.first?.id == 22 })
+        #expect(Set(station.roundtableFollowed.filter { $0.hasPrefix(RoundtableModel.frequencyStreamPrefix) })
+                == Set([active, detail].map { RoundtableModel.frequencyStreamPrefix + $0 }))
+        let originalReads = station.roundtableReads.filter { $0 == active }.count
+        var changes = 0
+        let observation = rt.objectWillChange.sink { changes += 1 }
+        defer { observation.cancel() }
+        await station.deliverRoundtableRoom(active, upserts: [
+            FakeStation.roundtableReading(ref: "listener", dbm: -67.5, t: 1100, turn: 11),
+        ])
+        try #require(await settle { rt.view(of: active)?.members.first?.reading?.dbm == -67.5 })
+        #expect(changes > 0)
+        #expect(rt.room?.id == detail && rt.room?.members.first?.reading?.dbm == -101)
+        #expect(rt.activeContext?.id == active)
+        await station.deliverRoundtableRoom(active, upserts: [
+            FakeStation.roundtableTurn(id: 12, start: 1200, end: nil, talkers: ["K9XYZ"]),
+            FakeStation.roundtableReading(ref: "listener", dbm: -65, t: 1200, turn: 12),
+            Self.historyMessage(901, state: "removed"),
+        ], removes: ["turn:11"])
+        try #require(await settle { rt.view(of: active)?.now.map(\.id) == [12]
+            && rt.receivedMessages.first { $0.id == 901 }?.state == "removed" })
+        #expect(rt.room?.now.map(\.id) == [22])
+        await rt.backToSlice()
+        try #require(await settle { !station.roundtableFollowed.contains(RoundtableModel.frequencyStreamPrefix + detail) })
+        #expect(station.roundtableFollowed.contains(RoundtableModel.frequencyStreamPrefix + active))
+        #expect(station.roundtableReads.filter { $0 == active }.count == originalReads)
+        #expect(rt.room?.members.first?.reading?.dbm == -65)
+        #expect(rt.receivedMessages.contains { $0.id == 901 })
+        try #require(await settle { station.roundtableFrequencyReaders == [active] })
+        #expect(station.messages.allSatisfy { if case .propertyWrite = $0 { return false }; return true })
+        await model.disconnect()
+    }
+
+    @Test("frequency wants deduplicate active detail and follow a selected slice change without retuning")
+    func frequencyWantsFollowSelectedSlice() async throws {
+        let (model, station, rt, _) = try await historyConnected([Self.historyMessage(901)])
+        let active = "lsb-7236400"
+        let detail = "usb-14200000"
+        let initialReads = station.roundtableReads.filter { $0 == active }.count
+        #expect(await rt.read(active) == nil)
+        await TransmitScreenTests.barrier(model, station)
+        #expect(station.roundtableReads.filter { $0 == active }.count == initialReads)
+        #expect(await rt.read(detail) == nil)
+        try #require(await settle { station.roundtableFollowed.contains(RoundtableModel.frequencyStreamPrefix + detail) })
+        rt.activeSliceId = 1
+        let next = try #require(rt.activeContext?.id)
+        #expect(next != active)
+        try #require(await settle { station.roundtableFollowed.contains(RoundtableModel.frequencyStreamPrefix + next)
+            && !station.roundtableFollowed.contains(RoundtableModel.frequencyStreamPrefix + active) })
+        #expect(rt.readingRoomId == detail)
+        #expect(station.roundtableFollowed.contains(RoundtableModel.frequencyStreamPrefix + detail))
+        #expect(station.messages.compactMap(AccessoryPagesTests.invoke).allSatisfy {
+            !$0.verb.lowercased().contains("tune")
+        })
+        #expect(station.messages.allSatisfy { if case .propertyWrite = $0 { return false }; return true })
+        await model.disconnect()
+    }
+
+    @Test("a late detail acknowledgement is released without replacing the active stream")
+    func supersededFrequencyAcknowledgement() async throws {
+        let replies = HeldCommandReplies()
+        let (model, station, rt, _) = try await historyConnected([Self.historyMessage(901)], replies: replies)
+        let active = "lsb-7236400"
+        let detail = "usb-14200000"
+        replies.hold("roundtable.readAt")
+        #expect(await rt.read(detail) == nil)
+        try #require(await settle { replies.count("roundtable.readAt") == 1 })
+        await rt.backToSlice()
+        await replies.release("roundtable.readAt")
+        try #require(await sent(station, "roundtable.unreadAt", matching: {
+            $0.contains(.init(name: "hz", value: .i64(14_200_000)))
+        }) != nil)
+        await TransmitScreenTests.barrier(model, station)
+        #expect(rt.readingRoomId == nil && rt.room?.id == active)
+        #expect(station.roundtableFollowed.contains(RoundtableModel.frequencyStreamPrefix + active))
+        #expect(!station.roundtableFollowed.contains(RoundtableModel.frequencyStreamPrefix + detail))
+        #expect(station.roundtableReads.filter { $0 == active }.count == 1)
+        await model.disconnect()
+    }
+
+    @Test("a refused detail read leaves active reports subscribed and does not retry on record updates")
+    func refusedFrequencyDetailKeepsActive() async throws {
+        let (model, station, rt, _) = try await historyConnected([Self.historyMessage(901)])
+        station.refuseNext("roundtable.readAt", reason: "Detail unavailable")
+        #expect(await rt.read("usb-14200000") == nil)
+        try #require(await settle { rt.note == "Detail unavailable" })
+        let reads = station.messages.compactMap(AccessoryPagesTests.invoke).filter { $0.verb == "roundtable.readAt" }.count
+        await station.deliverRoundtableRoom("lsb-7236400", upserts: [
+            FakeStation.roundtableMember(ref: "listener", callsign: "W1AW", seq: 0),
+            FakeStation.roundtableReading(ref: "listener", dbm: -63, t: 1200, turn: 11),
+        ])
+        try #require(await settle { rt.view(of: "lsb-7236400")?.members.first?.reading?.dbm == -63 })
+        #expect(station.messages.compactMap(AccessoryPagesTests.invoke).filter { $0.verb == "roundtable.readAt" }.count == reads)
+        #expect(station.roundtableFollowed.contains(RoundtableModel.frequencyStreamPrefix + "lsb-7236400"))
+        await model.disconnect()
+    }
+
+    @Test("a mismatched frequency stream acknowledgement cannot attach records to the wrong view")
+    func mismatchedFrequencyAcknowledgement() async throws {
+        let (model, station, rt, _) = try await historyConnected([Self.historyMessage(901)])
+        let active = "lsb-7236400"
+        let detail = "usb-14200000"
+        station.setRoundtableReadStream(RoundtableModel.frequencyStreamPrefix + active, for: detail)
+        #expect(await rt.read(detail) == nil)
+        try #require(await settle { rt.note == RoundtableModel.noAnswerReason })
+        try #require(await settle { station.roundtableFrequencyReaders == [active] })
+        #expect(!station.roundtableFollowed.contains(RoundtableModel.frequencyStreamPrefix + detail))
+        #expect(rt.room?.id == detail && rt.room?.members.isEmpty == true)
+        #expect(rt.view(of: active)?.messages.contains { $0.id == 901 } == true)
+        await model.disconnect()
+    }
+
+    @Test("fresh sessions reacquire active and detail contexts and discard the previous session's late acknowledgement")
+    func frequencyReadersReconnectWithDetail() async throws {
+        let replies = HeldCommandReplies()
+        let (model, old, rt, _) = try await historyConnected([Self.historyMessage(901)], replies: replies)
+        let active = "lsb-7236400"
+        let detail = "usb-14200000"
+        replies.hold("roundtable.readAt")
+        #expect(await rt.read(detail) == nil)
+        try #require(await settle { replies.count("roundtable.readAt") == 1 })
+        let generation = rt.connectionGeneration
+        await model.disconnect()
+        try #require(await settle { !rt.connected })
+        let next = try FakeStation(additions: [.roundtableFrequency])
+        await model.connect(to: next.endpoint, trust: next.trust, authenticator: next.authenticator,
+                            transportFactory: next.transportFactory)
+        #expect(await next.waitUntilLive())
+        try #require(await settle { model.connection == .connected })
+        try await MainScreenShotTests.fill(next)
+        var scene = FakeStation.RoundtableScene(rooms: [], roomRecords: [
+            active: [Self.historyMessage(901, state: "removed")],
+            detail: [FakeStation.roundtableMember(ref: "detail", callsign: "N4XYZ", seq: 0)],
+        ], sliceRooms: [:])
+        scene.frequencyPresences = [0: active]
+        try await next.deliverRoundtable(scene)
+        try #require(await settle { rt.connectionGeneration != generation
+            && next.roundtableFrequencyReaders == [active, detail]
+            && next.roundtableFollowed.contains(RoundtableModel.frequencyStreamPrefix + detail)
+            && rt.room?.members.first?.callsign == "N4XYZ" })
+        let reads = next.roundtableReads
+        await replies.release("roundtable.readAt")
+        await TransmitScreenTests.barrier(model, next)
+        #expect(next.roundtableReads == reads)
+        #expect(next.roundtableFrequencyReaders == [active, detail])
+        #expect(rt.readingRoomId == detail)
+        #expect(rt.receivedMessages.first { $0.id == 901 }?.state == "removed")
+        #expect(old.roundtableReads.contains(detail))
+        await model.disconnect()
+    }
+
+    @Test("stopping or removing frequency capability releases both readers while retaining received history")
+    func frequencyReadersReleaseOnStopAndDowngrade() async throws {
+        let (model, station, rt, _) = try await historyConnected([Self.historyMessage(901)])
+        let active = "lsb-7236400"
+        let detail = "usb-14200000"
+        #expect(await rt.read(detail) == nil)
+        try #require(await settle { station.roundtableFrequencyReaders == [active, detail] })
+        #expect(await rt.setRunning(false) == nil)
+        try #require(await settle { rt.linkState == .off && station.roundtableFrequencyReaders.isEmpty
+            && !station.roundtableFollowed.contains(RoundtableModel.frequencyStreamPrefix + active)
+            && !station.roundtableFollowed.contains(RoundtableModel.frequencyStreamPrefix + detail) })
+        #expect(rt.receivedMessages.map(\.id) == [901])
+        #expect(await rt.setRunning(true) == nil)
+        try #require(await settle { station.roundtableFrequencyReaders == [active, detail] })
+        await station.deliver(.recordBatch(.init(stream: FakeStation.roundtableRoomsStream, generation: 1,
+            reset: false, upserts: [], removes: ["frequency-capability"])))
+        try #require(await settle { !rt.frequencyAvailable && station.roundtableFrequencyReaders.isEmpty })
+        #expect(rt.readingRoomId == nil)
+        #expect(rt.receivedMessages.map(\.id) == [901])
+        await model.disconnect()
     }
 
     private func historyConnected(_ messages: [LinkMessage.RecordBatch.Record], replies: HeldCommandReplies? = nil) async throws
@@ -647,6 +871,44 @@ struct RoundtableModelTests {
         await model.disconnect()
     }
 
+    @Test("through the real session a non-active double reads as a double with both names, and the card freezes on a dropped link")
+    func nonActiveDoubleAndFrozenCard() async throws {
+        let (model, station, rt, _) = try await connected()
+        let source = "lsb-7236000"
+        var doubled = FakeStation.roundtableSummary(id: source, members: 2, state: "quiet", talkers: [])
+        doubled["stations"] = .array([
+            FakeStation.roundtableStation(ref: "a", callsign: "K4ABC", sourceRoom: source, hz: 7_236_400, keyed: true),
+            FakeStation.roundtableStation(ref: "b", callsign: "N3XYZ", sourceRoom: source, hz: 7_236_700, keyed: true),
+        ])
+        var neighbor = FakeStation.roundtableSummary(id: "lsb-7240000", members: 1, state: "quiet", talkers: [])
+        neighbor["stations"] = .array([
+            FakeStation.roundtableStation(ref: "c", callsign: "W1AW", sourceRoom: "lsb-7240000", hz: 7_239_000, keyed: true),
+        ])
+        try await station.deliverRoundtable(.init(rooms: [doubled, neighbor], link: .live, linkSince: 3_600_000))
+        var capabilities = model.mirror.capabilities.mapValues(\.wireValue)
+        capabilities["stationRoundtableVersion"] = .i64(2)
+        await station.deliver(.capabilities(.init(properties: capabilities.map { .init(name: $0.key, value: $0.value) })))
+        await station.deliverRoundtableFrequencyCapability(true)
+        #expect(await settle { rt.frequencyAvailable && rt.frequencyRows.count == 3 })
+        #expect(rt.frequencyRows.map(\.state) == ["doubled", "doubled", "talking"])
+        #expect(rt.frequencyRows[0].keyedNames == ["K4ABC", "N3XYZ"])
+        let tags = RoundtableTagLayout.tags(rt, sliceIds: [])
+        #expect(tags[0].glyph == .doubled && tags[0].label == "Double\nK4ABC\nN3XYZ")
+        #expect(tags[2].glyph == .talking && tags[2].label == "W1AW")
+        let live = rt.cardData(context: "lsb-7236400")
+        #expect(live.kind == .double && live.keyed == ["K4ABC", "N3XYZ"] && !live.frozen && live.note == nil)
+        #expect(live.people == ["K4ABC"] && live.rows.isEmpty)
+
+        await station.deliverRoundtableState { $0.link = .offline }
+        #expect(await settle { rt.linkState == .offline })
+        let offline = rt.cardData(context: "lsb-7236400")
+        #expect(offline.frozen && offline.note == "Offline since 01:00 UTC")
+        #expect(RoundtableTagLayout.display(rt) == .stale)
+        // A frequency nobody is listed on still has a card to read.
+        #expect(rt.cardData(context: "lsb-7300000").hz == 7_300_000)
+        await model.disconnect()
+    }
+
     @Test("canonical Core frequency record enables people rows and exact reads")
     func canonicalFrequencyCapability() async throws {
         let (model, station, rt, _) = try await connected(additions: [.roundtableFrequency])
@@ -733,6 +995,9 @@ struct RoundtableModelTests {
         #expect(RoundtableModel.family(ofMode: "CWL") == "cw")
         #expect(RoundtableModel.family(ofMode: "CWU") == "cw")
         #expect(RoundtableModel.family(ofMode: "unrecognised") == nil)
+        // A slice's mode reaches this as the catalog's label; the wire says FDVU.
+        for label in ["RADE-U", "RADE2-U", "FDVU"] { #expect(RoundtableModel.family(ofMode: label) == "fdvu") }
+        for label in ["RADE-L", "RADE2-L", "FDVL"] { #expect(RoundtableModel.family(ofMode: label) == "fdvl") }
         let (model, _, rt, _) = try await connected()
         #expect(rt.distanceUnits == "mi" && rt.showBearing)
         model.settings.apply(.settingsValue(.init(key: "Roundtable/DistanceUnits", origin: "other", properties: [.init(name: "Roundtable/DistanceUnits", value: .utf8("km"))])))

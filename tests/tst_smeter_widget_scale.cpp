@@ -24,6 +24,10 @@
 
 using NereusSDR::SMeterWidget;
 
+// QCOMPARE binds to a reference, which an exported class's static constexpr
+// member can't take across the Windows DLL boundary (CONTRIBUTING.md).
+namespace { constexpr int kTxModeCount = SMeterWidget::kTxModeCount; }
+
 class SMeterWidgetScaleTest : public QObject {
     Q_OBJECT
 private slots:
@@ -102,7 +106,7 @@ void SMeterWidgetScaleTest::appendedTxModesKeepTheOldValues()
     QCOMPARE(static_cast<int>(SMeterWidget::TxMode::AlcGroup), 5);
     QCOMPARE(static_cast<int>(SMeterWidget::TxMode::Volts), 6);
     QCOMPARE(static_cast<int>(SMeterWidget::TxMode::Amps), 7);
-    QCOMPARE(SMeterWidget::kTxModeCount, 8);
+    QCOMPARE(kTxModeCount, 8);
 }
 
 // Thetis ANANMM's ranges: ALC compression 0..30 dB, ALC group -30..25 dB,

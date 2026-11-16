@@ -1,6 +1,8 @@
 // Verify AppletVisibilityController state, persistence, and signal emission.
 // no-port-check: NereusSDR-original — no Thetis source.
 
+#include "gui/applets/SsbModMonitorApplet.h"
+
 #include <QtTest/QtTest>
 #include <QSignalSpy>
 #include "gui/applets/AppletVisibilityController.h"
@@ -107,6 +109,9 @@ private slots:
     void displayName_round_trip();
     void registered_applet_missing_from_workspace_is_added_visible();
     void workspace_applet_already_hidden_stays_hidden();
+    void ssb_panel_starts_off_under_the_am_panel_in_an_existing_profile();
+    void ssb_panel_saved_visible_stays_visible();
+    void ssb_panel_first_launch_entry_is_off_and_under_the_am_panel();
     void setVisible_on_missing_workspace_entry_adds_it();
     void ticking_applet_shows_its_hidden_container_data();
     void ticking_applet_shows_its_hidden_container();
@@ -255,6 +260,85 @@ void TstAppletVisibilityController::registered_applet_missing_from_workspace_is_
     registerStationApplets(again);
     QCOMPARE(restartCommits.count(), 0);
     QVERIFY(again.isVisible(QStringLiteral("Rotor")));
+}
+
+// The maintainer's call: the SSB Mod Monitor starts off and one click away,
+// also for a profile saved before it existed, and it sits under the AM panel.
+void TstAppletVisibilityController::ssb_panel_starts_off_under_the_am_panel_in_an_existing_profile()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    AppSettings settings(dir.filePath(QStringLiteral("settings.xml")));
+    WorkspaceDocument doc = workspaceWithoutRotor();
+    doc.containers[1].contents.insert(1, applet(QStringLiteral("applet:mod_monitor")));
+    saveWorkspace(settings, doc);
+    ContainerWorkspaceStore store(settings);
+    ContainerContentRegistry registry;
+    AppletVisibilityController c;
+    c.setWorkspaceAdapter(&store, &registry);
+    c.registerApplet(QStringLiteral("SsbModMon"), QStringLiteral("SSB Mod Monitor"),
+                     SsbModMonitorApplet::kShownByDefault);
+
+    QString container;
+    int index = -1;
+    const ContentEntry* ssb = findType(store.snapshot(), QStringLiteral("applet:ssb_mod_monitor"),
+                                       &container, &index);
+    QVERIFY(ssb != nullptr);
+    QVERIFY(!ssb->visible);
+    QCOMPARE(container, QStringLiteral("panel"));
+    QCOMPARE(index, 2);
+    QVERIFY(!c.isVisible(QStringLiteral("SsbModMon")));
+    QVERIFY(c.registeredIds().contains(QStringLiteral("SsbModMon")));
+
+    // One click turns it on, where it was placed.
+    c.setVisible(QStringLiteral("SsbModMon"), true);
+    QVERIFY(c.isVisible(QStringLiteral("SsbModMon")));
+    index = -1;
+    QVERIFY(findType(store.snapshot(), QStringLiteral("applet:ssb_mod_monitor"), nullptr, &index)->visible);
+    QCOMPARE(index, 2);
+}
+
+void TstAppletVisibilityController::ssb_panel_saved_visible_stays_visible()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    AppSettings settings(dir.filePath(QStringLiteral("settings.xml")));
+    WorkspaceDocument doc = workspaceWithoutRotor();
+    ContentEntry shown = applet(QStringLiteral("applet:ssb_mod_monitor"));
+    shown.visible = true;
+    doc.containers[1].contents.append(shown);
+    saveWorkspace(settings, doc);
+    ContainerWorkspaceStore store(settings);
+    ContainerContentRegistry registry;
+    AppletVisibilityController c;
+    c.setWorkspaceAdapter(&store, &registry);
+    c.registerApplet(QStringLiteral("SsbModMon"), QStringLiteral("SSB Mod Monitor"),
+                     SsbModMonitorApplet::kShownByDefault);
+    QVERIFY(c.isVisible(QStringLiteral("SsbModMon")));
+    QVERIFY(findType(store.snapshot(), QStringLiteral("applet:ssb_mod_monitor"))->visible);
+}
+
+void TstAppletVisibilityController::ssb_panel_first_launch_entry_is_off_and_under_the_am_panel()
+{
+    ContainerContentRegistry registry;
+    QVector<ContentEntry> contents;
+    // The order the registry's descriptors place them in, the S-Meter last.
+    for (const QString& type : {QStringLiteral("applet:rx"), QStringLiteral("applet:mod_monitor"),
+                                QStringLiteral("applet:ssb_mod_monitor"),
+                                QStringLiteral("applet:cat"), QStringLiteral("applet:s_meter")}) {
+        ContainerContentRegistry::placeFirstLaunchApplet(
+            contents, ContainerContentRegistry::firstLaunchEntry(registry.makeEntry(type)));
+    }
+    int am = -1;
+    int ssb = -1;
+    for (int i = 0; i < contents.size(); ++i) {
+        if (contents[i].typeId == QLatin1String("applet:mod_monitor")) { am = i; }
+        if (contents[i].typeId == QLatin1String("applet:ssb_mod_monitor")) { ssb = i; }
+    }
+    QVERIFY(am >= 0);
+    QCOMPARE(ssb, am + 1);
+    QVERIFY(contents[am].visible);
+    QVERIFY(!contents[ssb].visible);
 }
 
 void TstAppletVisibilityController::workspace_applet_already_hidden_stays_hidden()

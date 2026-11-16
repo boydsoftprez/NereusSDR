@@ -645,8 +645,8 @@ private slots:
         }
         // The 33 buttons NereusSDR has had (Power excepted), Task 60's 31
         // receive buttons, Task 61's 20 transmit setting buttons, Task 62's
-        // 12 display and window buttons and 31 macros.
-        QCOMPARE(offered, 33 + 31 + 20 + 12 + OtherButtonItem::kMacroCount);
+        // 12 display and window buttons, STACK+ and STACK-, and 31 macros.
+        QCOMPARE(offered, 33 + 31 + 20 + 12 + 2 + OtherButtonItem::kMacroCount);
 
         QStringList texts;
         for (const QLabel* label : editor.findChildren<QLabel*>()) {

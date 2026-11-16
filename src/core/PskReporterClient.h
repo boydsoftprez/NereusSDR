@@ -54,6 +54,11 @@
 // =========================================================================
 //
 // Modification history (NereusSDR):
+//   2026-11-05 - NEREUS_CORE_EXPORT: this class's signals are used from outside
+//                 its DLL. Without the export their addresses were MinGW's
+//                 auto-import thunks, which moc's code does not recognize,
+//                 so a QSignalSpy or connect on them failed on Windows.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-05-10  J.J. Boyd / KG4VCF  Phase 3J-2 Task B6. Initial port.
 //                                    Replaces freedv-gui's POSIX socket /
 //                                    detached std::thread with Qt6's
@@ -73,6 +78,7 @@
 #pragma once
 
 #include <QObject>
+#include "core/NereusCoreExport.h"
 #include <QString>
 #include <QHostAddress>
 #include <QVector>
@@ -100,7 +106,7 @@ namespace NereusSDR {
 //     locally-bound listener. The shape is in place so we can drive
 //     it from canned datagrams in tests and from any future relay
 //     protocol that delivers PSK Reporter records to NereusSDR.
-class PskReporterClient : public QObject {
+class NEREUS_CORE_EXPORT PskReporterClient : public QObject {
     Q_OBJECT
 
 public:

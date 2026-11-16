@@ -137,6 +137,12 @@
 //                 save, and their ranges in settingRangeRefusal() (R-CW-03).
 //                 NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Claude Code.
+//   2026-11-05 - Transmit edits made with no radio are kept in a held area
+//                 and move to the next radio at connect (JJ's ruling):
+//                 writeForRadio, moveHeldEditsToRadio, HeldEditPause. Mic
+//                 source uses the same path; old tx/preconnect keys are only
+//                 read. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 //   2026-10-27 - CW transmit final fix wave F2: setCwQskUnavailableReason,
 //                 and settingRangeRefusal() refuses QSK where it is not
 //                 offered with the reason. J.J. Boyd (KG4VCF), AI-assisted
@@ -856,6 +862,12 @@ void TransmitModel::setTunePowerForBand(Band band, int watts)
         return;
     }
     m_tunePowerByBand[static_cast<std::size_t>(idx)] = clamped;
+    // With a radio this array is saved whole by save(); with none there is
+    // no save, so the edit goes to the held area under load()'s own key.
+    if (m_persistMac.isEmpty()) {
+        writeForRadio(QStringLiteral("tunePowerByBand/%1").arg(static_cast<int>(band)),
+                      QString::number(clamped));
+    }
     emit tunePowerByBandChanged(band, clamped);
     emit tunePowerByBandJsonChanged(tunePowerByBandJson());  // R-R3-49 (parity Task 5)
     if (m_tuneTxBandKnown && band == m_tuneTxBand) {
@@ -1498,14 +1510,41 @@ void TransmitModel::setPowerForBand(Band band, int watts)
     }
     m_powerByBand[static_cast<std::size_t>(idx)] = clamped;
     // Auto-persist: hardware/<m_persistMac>/powerByBand/<bandKeyName>.
-    if (!m_persistMac.isEmpty()) {
-        AppSettings::instance().setValue(
-            QStringLiteral("hardware/%1/powerByBand/%2")
-                .arg(m_persistMac, bandKeyName(band)),
-            QString::number(clamped));
+    // Held while TUNE or two-tone holds a temporary power; see
+    // setBandPowerSaveHeld.
+    if (isBandPowerSaveHeld()) {
+        m_powerByBandSaveWaiting[static_cast<std::size_t>(idx)] = true;
+    } else {
+        writeForRadio(QStringLiteral("powerByBand/%1").arg(bandKeyName(band)),
+                      QString::number(clamped));
     }
     emit powerByBandChanged(band, clamped);
     emit powerByBandJsonChanged(powerByBandJson());  // R-R3-49 (parity Task 5)
+}
+
+void TransmitModel::setBandPowerSaveHeld(BandPowerSaveHolder holder, bool held)
+{
+    const auto bit = static_cast<unsigned>(holder);
+    if (held) {
+        m_bandPowerSaveHolders |= bit;
+        return;
+    }
+    m_bandPowerSaveHolders &= ~bit;
+    if (m_bandPowerSaveHolders != 0U) {
+        return;
+    }
+    // AppSettings skips unchanged text, so a band back at its stored value
+    // writes nothing.
+    for (int i = 0; i < kBandCount; ++i) {
+        const auto slot = static_cast<std::size_t>(i);
+        if (!m_powerByBandSaveWaiting[slot]) {
+            continue;
+        }
+        m_powerByBandSaveWaiting[slot] = false;
+        writeForRadio(
+            QStringLiteral("powerByBand/%1").arg(bandKeyName(bandFromPerBandStateSlot(i))),
+            QString::number(m_powerByBand[slot]));
+    }
 }
 
 // ── Per-band slider limits and FM TX offset (R-R3-49) ───────────────────────
@@ -1533,12 +1572,13 @@ void TransmitModel::setLimitPowerForBand(Band band, int watts)
         return;
     }
     const int clamped = std::clamp(watts, 0, 100);
+    const bool changed = m_limitPowerByBand[static_cast<std::size_t>(idx)] != clamped;
     m_limitPowerByBand[static_cast<std::size_t>(idx)] = clamped;
-    if (!m_persistMac.isEmpty()) {
-        AppSettings::instance().setValue(
-            QStringLiteral("hardware/%1/limitPowerByBand/%2")
-                .arg(m_persistMac, bandKeyName(band)),
-            QString::number(clamped));
+    // A band change saves this back unchanged; with no radio that is not an
+    // edit, and held it would replace what the next radio has saved.
+    if (changed || !m_persistMac.isEmpty()) {
+        writeForRadio(QStringLiteral("limitPowerByBand/%1").arg(bandKeyName(band)),
+                      QString::number(clamped));
     }
 }
 
@@ -1558,12 +1598,11 @@ void TransmitModel::setLimitTunePowerForBand(Band band, int watts)
         return;
     }
     const int clamped = std::clamp(watts, 0, 100);
+    const bool changed = m_limitTunePowerByBand[static_cast<std::size_t>(idx)] != clamped;
     m_limitTunePowerByBand[static_cast<std::size_t>(idx)] = clamped;
-    if (!m_persistMac.isEmpty()) {
-        AppSettings::instance().setValue(
-            QStringLiteral("hardware/%1/limitTunePowerByBand/%2")
-                .arg(m_persistMac, bandKeyName(band)),
-            QString::number(clamped));
+    if (changed || !m_persistMac.isEmpty()) {
+        writeForRadio(QStringLiteral("limitTunePowerByBand/%1").arg(bandKeyName(band)),
+                      QString::number(clamped));
     }
 }
 
@@ -1612,12 +1651,13 @@ void TransmitModel::setFmTxOffsetForBandMhz(Band band, double mhz)
     if (!fmTxOffsetInRange(mhz)) {
         return;
     }
+    const bool changed = m_fmTxOffsetByBandMhz[static_cast<std::size_t>(idx)] != mhz;
     m_fmTxOffsetByBandMhz[static_cast<std::size_t>(idx)] = mhz;
-    if (!m_persistMac.isEmpty()) {
-        AppSettings::instance().setValue(
-            QStringLiteral("hardware/%1/fmTxOffsetByBandMhz/%2")
-                .arg(m_persistMac, bandKeyName(band)),
-            QString::number(mhz, 'g', 17));
+    // applyTransmitBand saves the old band's offset on every band change,
+    // whoever moved the band. Unchanged with no radio, that is not an edit.
+    if (changed || !m_persistMac.isEmpty()) {
+        writeForRadio(QStringLiteral("fmTxOffsetByBandMhz/%1").arg(bandKeyName(band)),
+                      QString::number(mhz, 'g', 17));
     }
 }
 
@@ -2203,6 +2243,8 @@ void TransmitModel::load()
     if (m_mac.isEmpty()) {
         return;
     }
+    // load() runs before loadFromSettings at connect and reads tune power.
+    moveHeldEditsToRadio(m_mac);
     // Cite: console.cs:4904-4910 [v2.10.3.13] — Thetis pipe-delimited restore.
     // NereusSDR uses per-band scalar keys matching the AlexController pattern.
     //
@@ -2275,8 +2317,9 @@ void TransmitModel::save()
 //   - micMute     → always loads true   (safety: mic in use on startup)
 //
 // The auto-persist pattern mirrors CalibrationController::persist(key, value):
-//   each setter calls persistOne(key, value) after updating the member, and
-//   persistOne() no-ops when m_persistMac is empty (before loadFromSettings).
+//   each setter calls persistOne(key, value) after updating the member. With
+//   m_persistMac empty (before loadFromSettings) the write goes to the held
+//   area or nowhere; see writeForRadio.
 //
 // All boolean properties are stored as "True"/"False" per the AppSettings
 // convention (same as every other NereusSDR boolean persistence site).
@@ -2285,16 +2328,125 @@ void TransmitModel::save()
 
 void TransmitModel::persistOne(const QString& key, const QVariant& value) const
 {
+    writeForRadio(QStringLiteral("tx/%1").arg(key), value.toString());
+}
+
+QString TransmitModel::heldEditsPrefix()
+{
+    return QStringLiteral("tx/heldForNextRadio/");
+}
+
+void TransmitModel::writeForRadio(const QString& relativeKey, const QString& text) const
+{
+    if (!m_persistMac.isEmpty()) {
+        AppSettings::instance().setValue(
+            QStringLiteral("hardware/%1/%2").arg(m_persistMac, relativeKey), text);
+        return;
+    }
+    if (m_keepsEditsWithoutRadio && m_heldEditPauses == 0) {
+        AppSettings::instance().setValue(heldEditsPrefix() + relativeKey, text);
+    }
+}
+
+namespace {
+
+QString heldPowerForNextBandKey()
+{
+    return TransmitModel::heldEditsPrefix() + QStringLiteral("tx/PowerForNextBand");
+}
+
+QString heldTunePowerForNextBandKey()
+{
+    return TransmitModel::heldEditsPrefix() + QStringLiteral("tx/TunePowerForNextBand");
+}
+
+} // namespace
+
+bool TransmitModel::holdsWithNoBand() const
+{
+    return m_persistMac.isEmpty() && m_keepsEditsWithoutRadio && m_heldEditPauses == 0;
+}
+
+bool TransmitModel::holdPowerForNextBand(int power)
+{
+    if (!holdsWithNoBand()) {
+        return false;
+    }
+    AppSettings::instance().setValue(heldPowerForNextBandKey(),
+                                     QString::number(std::clamp(power, 0, 100)));
+    return true;
+}
+
+void TransmitModel::setTunePowerWithNoBand(Band shownBand, int watts)
+{
+    if (holdsWithNoBand()) {
+        auto& s = AppSettings::instance();
+        const int clamped = std::clamp(watts, 0, tunePowerMax());
+        // Writing back what is shown is no edit, unless it returns to it.
+        if (clamped != tunePowerForBand(shownBand) || s.contains(heldTunePowerForNextBandKey())) {
+            s.setValue(heldTunePowerForNextBandKey(), QString::number(clamped));
+        }
+    }
+    const HeldEditPause noBandOfItsOwn(*this);
+    setTunePowerForBand(shownBand, watts);
+}
+
+bool TransmitModel::hasPowerHeldForNextBand() const
+{
+    const auto& s = AppSettings::instance();
+    return s.contains(heldPowerForNextBandKey()) || s.contains(heldTunePowerForNextBandKey());
+}
+
+void TransmitModel::takePowerHeldForNextBand(Band band)
+{
     if (m_persistMac.isEmpty()) {
         return;
     }
-    AppSettings::instance().setValue(
-        QStringLiteral("hardware/%1/tx/%2").arg(m_persistMac, key),
-        value.toString());
+    auto& s = AppSettings::instance();
+    bool ok = false;
+    const int power = s.value(heldPowerForNextBandKey()).toInt(&ok);
+    if (ok) {
+        // As CAT and the container button do: HL2's slider stops below 100.
+        setPowerForBand(band, std::min(power, rfPowerSliderMaxFor(m_hpsdrModel)));
+        writeForRadio(QStringLiteral("powerByBand/%1").arg(bandKeyName(band)),
+                      QString::number(powerForBand(band)));
+    }
+    const int tunePower = s.value(heldTunePowerForNextBandKey()).toInt(&ok);
+    if (ok) {
+        setTunePowerForBand(band, tunePower);
+        writeForRadio(QStringLiteral("tunePowerByBand/%1").arg(static_cast<int>(band)),
+                      QString::number(tunePowerForBand(band)));
+    }
+    s.remove(heldPowerForNextBandKey());
+    s.remove(heldTunePowerForNextBandKey());
+}
+
+// Before anything is read: the ordinary load then takes the held value through
+// the same parsing, clamps and never-loaded rules as a saved one. A value with
+// no band stays: it has no key of the radio's to go to yet.
+void TransmitModel::moveHeldEditsToRadio(const QString& mac)
+{
+    auto& s = AppSettings::instance();
+    const QString prefix = heldEditsPrefix();
+    for (const QString& key : s.allKeys()) {
+        if (!key.startsWith(prefix) || key == heldPowerForNextBandKey()
+            || key == heldTunePowerForNextBandKey()) {
+            continue;
+        }
+        s.setValue(QStringLiteral("hardware/%1/%2").arg(mac, key.mid(prefix.size())),
+                   s.value(key));
+        s.remove(key);
+    }
 }
 
 void TransmitModel::loadFromSettings(const QString& mac)
 {
+    moveHeldEditsToRadio(mac);
+    // VOX switched on with no radio does not carry into the first connect: it
+    // never loads, and it could key the radio as soon as there is one.
+    if (m_persistMac.isEmpty()) {
+        setVoxEnabled(false);
+    }
     m_persistMac = mac;
     auto& s = AppSettings::instance();
     const QString pfx = QStringLiteral("hardware/%1/tx/").arg(mac);
@@ -2362,7 +2514,9 @@ void TransmitModel::loadFromSettings(const QString& mac)
     //
     // The model property remains the single source of truth at runtime;
     // PsForm + the PureSignal coordinator write through the model API,
-    // and per-profile recall flips it via the existing setter.
+    // and choosing a profile flips it via the existing setter.  Connecting
+    // does not recall a profile (RadioModel::scopeTxProfiles only loads the
+    // bank), so a profile saved with PureSignal on still starts off.
 
     // ── VOX properties (voxEnabled NOT loaded — safety: always false) ─────
     const int voxThresholdDb = s.value(pfx + QLatin1String("Dexp_Threshold"),
@@ -2461,10 +2615,10 @@ void TransmitModel::loadFromSettings(const QString& mac)
     // Lookup order (eager-borg-d64bed, 2026-05-06):
     //   1. Per-MAC key (hardware/<mac>/tx/Mic_Source) — explicit choice for
     //      this radio.  Always wins when present.
-    //   2. Pre-connect global key (tx/preconnect/Mic_Source) — set by
-    //      setMicSource() when the user picks a source before connecting
-    //      to any radio.  Acts as a fallback so the choice survives an
-    //      app restart and carries to the first connected radio.
+    //   2. Pre-connect global key (tx/preconnect/Mic_Source), written by
+    //      older versions, and never cleared, when the user picked a source
+    //      before connecting to any radio.  Read only, as a fallback; a
+    //      source picked with no radio now is held and arrives as step 1.
     //   3. Default "Pc" — first-run, never-clicked baseline.
     //
     // Step 1 uses an empty-string sentinel rather than "Pc" so an actually-
@@ -2690,6 +2844,21 @@ void TransmitModel::loadFromSettings(const QString& mac)
                           QStringLiteral("100")).toInt());
     setFilterHigh(s.value(pfx + QLatin1String("FilterHigh"),
                            QStringLiteral("2900")).toInt());
+    // The filter kept while in RADE (snapTransmitFilterForMode). NereusSDR-original.
+    {
+        const QString keptLow = pfx + QLatin1String("FilterLowBeforeRade");
+        const QString keptHigh = pfx + QLatin1String("FilterHighBeforeRade");
+        m_filterBeforeRade = std::nullopt;
+        if (s.contains(keptLow) && s.contains(keptHigh)) {
+            bool lowOk = false;
+            bool highOk = false;
+            const int low = s.value(keptLow).toInt(&lowOk);
+            const int high = s.value(keptHigh).toInt(&highOk);
+            if (lowOk && highOk && low <= high) {
+                m_filterBeforeRade = std::make_pair(low, high);
+            }
+        }
+    }
 
     // ── PA-cal hotfix scaffolding (#167 Phase 3A) ─────────────────────────
     //
@@ -2709,6 +2878,7 @@ void TransmitModel::loadFromSettings(const QString& mac)
             // clamp.  We clamp here ourselves to keep AppSettings tampering
             // safe.
             m_powerByBand[static_cast<std::size_t>(i)] = std::clamp(v, 0, 100);
+            m_powerByBandSaveWaiting[static_cast<std::size_t>(i)] = false;
         }
         // R-R3-49 (parity Task 5): as for tunePowerByBand in load().
         emit powerByBandJsonChanged(powerByBandJson());
@@ -3005,6 +3175,15 @@ void TransmitModel::persistToSettings(const QString& mac) const
     // ── TX filter bandwidth (Plan 4 D1) ───────────────────────────────────
     s.setValue(pfx + QLatin1String("FilterLow"),  QString::number(m_filterLow));
     s.setValue(pfx + QLatin1String("FilterHigh"), QString::number(m_filterHigh));
+    if (m_filterBeforeRade) {
+        s.setValue(pfx + QLatin1String("FilterLowBeforeRade"),
+                   QString::number(m_filterBeforeRade->first));
+        s.setValue(pfx + QLatin1String("FilterHighBeforeRade"),
+                   QString::number(m_filterBeforeRade->second));
+    } else {
+        s.remove(pfx + QLatin1String("FilterLowBeforeRade"));
+        s.remove(pfx + QLatin1String("FilterHighBeforeRade"));
+    }
 
     // ── PA-cal hotfix scaffolding (#167 Phase 3A) ─────────────────────────
     // Per-band normal-mode power array — separate top-level scope.
@@ -3013,6 +3192,11 @@ void TransmitModel::persistToSettings(const QString& mac) const
             QStringLiteral("hardware/%1/powerByBand/").arg(mac);
         for (int i = 0; i < kBandCount; ++i) {
             const Band band = bandFromPerBandStateSlot(i);
+            // A band with a held write may hold a temporary power; see
+            // setBandPowerSaveHeld.
+            if (m_powerByBandSaveWaiting[static_cast<std::size_t>(i)]) {
+                continue;
+            }
             s.setValue(powerPfx + bandKeyName(band),
                        QString::number(
                            m_powerByBand[static_cast<std::size_t>(i)]));
@@ -3648,20 +3832,13 @@ void TransmitModel::setMicSource(MicSource source)
     m_micSource = source;
 
     // Capture every non-Vax write as the "previous" source so toggling
-    // VAX off restores the user's most recent explicit choice. Updates
-    // both the per-MAC and preconnect persistence keys to mirror the
-    // Mic_Source two-key pattern.
+    // VAX off restores the user's most recent explicit choice.
     if (source != MicSource::Vax && source != m_previousNonVaxMicSource) {
         m_previousNonVaxMicSource = source;
         QString preVaxStr = (source == MicSource::Radio)
                                 ? QStringLiteral("Radio")
                                 : QStringLiteral("Pc");
-        if (m_persistMac.isEmpty()) {
-            AppSettings::instance().setValue(
-                QStringLiteral("tx/preconnect/Mic_Source_PreVax"), preVaxStr);
-        } else {
-            persistOne(QStringLiteral("Mic_Source_PreVax"), preVaxStr);
-        }
+        persistOne(QStringLiteral("Mic_Source_PreVax"), preVaxStr);
     }
 
     QString persistStr;
@@ -3671,21 +3848,7 @@ void TransmitModel::setMicSource(MicSource source)
         case MicSource::Pc:
         default:               persistStr = QStringLiteral("Pc");    break;
     }
-    if (m_persistMac.isEmpty()) {
-        // Pre-connect fallback (eager-borg-d64bed, 2026-05-06). When the
-        // user clicks the radio button in Setup -> Audio -> TX Input
-        // before connecting to a radio, persistOne early-returns (no MAC
-        // bound yet) so the choice would normally be lost on app restart.
-        // Write to a global "tx/preconnect/Mic_Source" key instead;
-        // loadFromSettings reads it as a fallback when the per-MAC key is
-        // absent so the choice carries forward to whatever radio they
-        // connect next. Per-MAC values always take precedence over the
-        // preconnect key once written.
-        AppSettings::instance().setValue(
-            QStringLiteral("tx/preconnect/Mic_Source"), persistStr);
-    } else {
-        persistOne(QStringLiteral("Mic_Source"), persistStr);  // L.2 auto-persist
-    }
+    persistOne(QStringLiteral("Mic_Source"), persistStr);  // L.2 auto-persist
     emit micSourceChanged(source);
 }
 
@@ -4555,6 +4718,23 @@ void TransmitModel::setFilterHigh(int hz)
     m_filterHigh = hz;
     persistOne(QStringLiteral("FilterHigh"), QString::number(m_filterHigh));
     emit filterChanged(m_filterLow, m_filterHigh);
+}
+
+void TransmitModel::setFilterBeforeRade(std::optional<std::pair<int, int>> filter)
+{
+    if (m_filterBeforeRade == filter) { return; }
+    m_filterBeforeRade = filter;
+    if (m_persistMac.isEmpty()) {
+        return;
+    }
+    if (filter) {
+        persistOne(QStringLiteral("FilterLowBeforeRade"), QString::number(filter->first));
+        persistOne(QStringLiteral("FilterHighBeforeRade"), QString::number(filter->second));
+    } else {
+        const QString pfx = QStringLiteral("hardware/%1/tx/").arg(m_persistMac);
+        AppSettings::instance().remove(pfx + QLatin1String("FilterLowBeforeRade"));
+        AppSettings::instance().remove(pfx + QLatin1String("FilterHighBeforeRade"));
+    }
 }
 
 QString TransmitModel::filterDisplayText(DSPMode mode) const

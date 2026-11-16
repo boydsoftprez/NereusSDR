@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original mixed-content projection, no radio actions.
 // Modification history (NereusSDR):
+//   2026-11-06 - A factory widget can report its own free canvas hint and
+//                 minimum. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-29 - A stack of only clock faces keeps its face height as the
 //                 preferred size and shrinks with the container, so making
 //                 the container shorter does not show a scrollbar.
@@ -94,6 +97,8 @@
 //               through ScopedChildWidget instead of on the stack, so a
 //               host that dies during the drag no longer frees it twice.
 //               With AI-assisted transformation via Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 #include "ContainerContentHost.h"
 #include "gui/ScopedChildWidget.h"
 #include "ContainerControlCatalog.h"
@@ -414,7 +419,8 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
                     else { delete row.widget.data(); }
                 }
                 view->setProperty("singletonTypeId",entry.typeId); view->setParent(m_body);
-                view->setMinimumHeight(entry.typeId=="applet:s_meter"?130:0); view->setMaximumHeight(QWIDGETSIZE_MAX);
+                view->setMinimumHeight(entry.typeId=="applet:s_meter"?130:
+                    entry.typeId=="applet:ssb_mod_monitor"?360:0); view->setMaximumHeight(QWIDGETSIZE_MAX);
                 view->setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Preferred);
                 m_layout->insertWidget(position,view); row.widget=view;
             }
@@ -504,6 +510,7 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
                 view->setMinimumHeight(0); view->setMaximumHeight(QWIDGETSIZE_MAX);
                 view->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
                 if (entry.typeId == "applet:s_meter") { view->setMinimumHeight(130); }
+                if (entry.typeId == "applet:ssb_mod_monitor") { view->setMinimumHeight(360); }
                 row.widget = view; m_layout->addWidget(view);
                 // Unavailable, it is grayed with its reason, not hidden.
                 row.presentationVisible = entry.visible;
@@ -659,8 +666,9 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
                     widget->setProperty(WorkspacePreview::kSkipProperty,true);
                     connectConfigNotifier(widget,entry.id);
                     attachFade(widget,effective,row.context);
-                    widget->setProperty("freeCanvasMinimum",QSizeF(widget->minimumSizeHint()));
-                    widget->setProperty("freeCanvasHint",widget->sizeHint());
+                    // A widget that knows better has already set these (a Phone/CW copy, whose hint covers only its current page).
+                    if(!widget->property("freeCanvasMinimum").isValid()) {widget->setProperty("freeCanvasMinimum",QSizeF(widget->minimumSizeHint()));}
+                    if(!widget->property("freeCanvasHint").isValid()) {widget->setProperty("freeCanvasHint",widget->sizeHint());}
                     widget->setMinimumSize(0,0);widget->setMaximumSize(QWIDGETSIZE_MAX,QWIDGETSIZE_MAX);
                     row.widget=widget;
                 }

@@ -111,6 +111,12 @@ PanClarityRegistry::PanClarityRegistry(RadioModel* model, QObject* parent)
     if (model) { connect(model, &RadioModel::clarityEnabledChanged, this, &PanClarityRegistry::setEnabled); }
 }
 PanClarityRegistry::~PanClarityRegistry() { retireAll(); }
+std::optional<PanClarityRegistry::SourceAssociation>
+PanClarityRegistry::sourceForPanForTest(const QString& id) const
+{
+    const auto entry = m_entries.value(id);
+    return entry ? entry->source : std::nullopt;
+}
 void PanClarityRegistry::setLocalKeyedQueryForTest(std::function<bool()> query)
 {
     m_localKeyedQueryForTest = std::move(query);

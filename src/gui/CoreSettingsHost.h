@@ -1,7 +1,10 @@
 #pragma once
 // no-port-check: NereusSDR-original Core Settings host and page authority.
 // 2026-10-02 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-11-05 NEREUS_GUI_EXPORT: signals used outside the DLL, not valid on Windows
+// without it. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "gui/CoreRenameController.h"
+#include "gui/NereusGuiExport.h"
 #include "gui/setup/CoreSettingsContext.h"
 #include <QMap>
 #include <QPointer>
@@ -10,7 +13,7 @@ class SetupDialog;
 class CoresSetupPage;
 /// One host per application. The canonical store outlives this host and pages.
 /// Sources supply the owning window only; inspection does not select or dial.
-class CoreSettingsHost final : public QObject {
+class NEREUS_GUI_EXPORT CoreSettingsHost final : public QObject {
     Q_OBJECT
 public:
     using ContextSource = std::function<CoreSettingsContext()>;

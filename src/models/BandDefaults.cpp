@@ -32,6 +32,8 @@
 //                 SWL band ranges from the US region's frequency data, for
 //                 the band grid's GEN group. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-11-05 - bandMiddleHz, for the band stack.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -141,6 +143,20 @@ Band bandGridBandFromFrequency(double hz)
         if (hz >= range.lowHz && hz <= range.highHz) { return range.band; }
     }
     return Band::GEN;
+}
+
+std::optional<double> bandMiddleHz(Band band)
+{
+    if (const auto ham = hamBandRangeHz(band)) {
+        return (ham->first + ham->second) / 2.0;
+    }
+    for (const SwlRange& range : kSwlRanges) {
+        if (range.band == band) {
+            return (range.lowHz + range.highHz) / 2.0;
+        }
+    }
+    const BandSeed seed = seedFor(band);
+    return seed.valid ? std::optional<double>(seed.frequencyHz) : std::nullopt;
 }
 
 BandSeed seedFor(Band b)

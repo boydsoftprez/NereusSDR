@@ -8,6 +8,8 @@
 // coordination; it contains neither GUI nor radio control policy.
 //
 // Modification history (NereusSDR):
+//   2026-11-06: viewHasNothingToDraw and the queued retire of such views.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-26: Remote transmit hold then cut: micNoAudio forwards the
 //               microphone line's no-audio signal with its device id.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -835,6 +837,9 @@ private:
     bool anySharedEndpointOn(const MediaSourceKey& key) const;
     void onWidebandSourceChanged(int adc);
     bool reconcileWidebandDemand(EndpointEntry& entry);
+    bool viewHasNothingToDraw(const EndpointEntry& entry) const;
+    void scheduleRetireOfUndrawableViews();
+    void retireUndrawableViews();
     std::optional<WidebandDisplayContext> widebandContext(const EndpointEntry& entry) const;
     void onSendTick();
     /// A turn of the display sender's timer: notes the time since the
@@ -1422,6 +1427,7 @@ private:
     std::map<quint32, RefusedDemand> m_refusedDemand;
     QTimer* m_refusedDemandTimer{nullptr};
     int m_refusedDemandHoldMs{kRefusedDisplayDemandHoldMs};
+    bool m_undrawableRetireQueued{false};
     /// Records `endpointId`'s refused request, held until kept, replaced
     /// or run out.
     void holdRefusedDemand(quint32 endpointId, std::optional<DisplayBudgetCharge> before);

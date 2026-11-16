@@ -41,7 +41,7 @@ def snapshot(service, conn, hz, family):
             track = target.tracks.get(row.station_id) if target is not None else None
             retained = getattr(track, "reporter_object", None)
             if retained is not None and not track.not_counted and retained["ref"] == row.ref:
-                member = dict(retained, you=row.station_id == conn.station_id)
+                member = dict(retained, you=row.station_id == conn.station_id, keyed=row.keyed)
             if (nearby(hz, family, member["hz"], room.family)
                     or member["reading"] is not None and member["reading"]["turn"] in selected_turns):
                 members.append(member)

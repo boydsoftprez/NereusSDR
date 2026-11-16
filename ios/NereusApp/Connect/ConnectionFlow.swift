@@ -51,6 +51,10 @@ final class ConnectionFlow: ObservableObject {
         case setUpCore
         /// Your Cores: the paired ones, and the ways to add one.
         case cores
+        /// Opening the app, connecting to the last Core again: the Core, how
+        /// far it has got and Cancel. A Core that can't be reached, or Cancel,
+        /// leads to Your Cores.
+        case connectingOnOpen
         /// Enter an address: the address, and its port below it (D69).
         case typeAddress
         /// A paired Core's addresses, from its row's "⋯" (``addressesFor``).
@@ -251,7 +255,15 @@ final class ConnectionFlow: ObservableObject {
     @Published var trouble: Trouble?
 
     /// The Core being connected to, and what it said while it waits.
-    @Published private(set) var connectingTo: Data?
+    @Published private(set) var connectingTo: Data? {
+        didSet {
+            // Opening the app, the connection stopped short of the band:
+            // Your Cores, with whatever says why.
+            if screen == .connectingOnOpen, connectingTo == nil, phase != .connected {
+                screen = .cores
+            }
+        }
+    }
     @Published private(set) var connectingNote: String?
 
     /// The paired Core the Addresses page is for, by its identity key.
@@ -484,7 +496,7 @@ final class ConnectionFlow: ObservableObject {
 
     let app: AppModel
     private let dependencies: Dependencies
-    private let phoneSettings: PhoneSettings
+    let phoneSettings: PhoneSettings
     private var identity: DeviceIdentity? {
         didSet {
             // The main screen tells this phone's hold of transmit, and which
@@ -638,7 +650,7 @@ final class ConnectionFlow: ObservableObject {
     }
 
     /// The screens that look for Cores on this network.
-    private static let browsingScreens: Set<Screen> = [.findCore, .cores, .typeAddress, .pairByCode]
+    private static let browsingScreens: Set<Screen> = [.findCore, .cores, .connectingOnOpen, .typeAddress, .pairByCode]
 
     private let inputs: AsyncStream<Input>.Continuation
     private var inputPump: Task<Void, Never>?
@@ -727,7 +739,8 @@ final class ConnectionFlow: ObservableObject {
     private var redialledFirstConnection = false
     private let failures = OpenFailures()
 
-    init(app: AppModel, dependencies: Dependencies) {
+    /// `reconnectOnOpen` is the app's own launch: only it may dial with no tap.
+    init(app: AppModel, dependencies: Dependencies, reconnectOnOpen: Bool = false) {
         self.app = app
         self.dependencies = dependencies
         phoneSettings = app.phoneSettings
@@ -741,7 +754,13 @@ final class ConnectionFlow: ObservableObject {
         app.main.transmit.thisDeviceId = identity?.id
         app.main.slices.thisDeviceId = identity?.id
         reloadCores()
-        screen = cores.isEmpty && notice == nil ? .welcome : .cores
+        let resuming = reconnectOnOpen ? coreToResumeOnOpen() : nil
+        if let resuming {
+            screen = .connectingOnOpen
+            connectingTo = resuming.id
+        } else {
+            screen = cores.isEmpty && notice == nil ? .welcome : .cores
+        }
 
         inputPump = Task { [weak self] in
             for await input in stream {
@@ -805,6 +824,9 @@ final class ConnectionFlow: ObservableObject {
             self?.inputs.yield(.network(path))
         }
         updateBrowsing()
+        // Not yet: the background modes mean iOS can start this process with
+        // nobody there. The first time the scene is active is what dials.
+        coreWaitingForScene = resuming
     }
 
     deinit {
@@ -813,7 +835,7 @@ final class ConnectionFlow: ObservableObject {
 
     /// The app's flow on this phone.
     static func live(app: AppModel, kind: DeviceKeyAuthenticator.Kind) -> ConnectionFlow {
-        ConnectionFlow(app: app, dependencies: .live(kind: kind))
+        ConnectionFlow(app: app, dependencies: .live(kind: kind), reconnectOnOpen: true)
     }
 
     // MARK: Moving between screens
@@ -858,9 +880,53 @@ final class ConnectionFlow: ObservableObject {
         case .pairByCode:
             pairingTask?.cancel()
             show(pairTarget?.back ?? addFrom)
-        case .welcome, .microphone, .band:
+        case .welcome, .connectingOnOpen, .microphone, .band:
             break
         }
+    }
+
+    // MARK: Opening the app
+
+    /// The Core this launch connects to, or nil to open on Your Cores:
+    /// Reconnect automatically is on, a session last reached ready on a Core
+    /// still listed, it needs no pairing, and this phone can read its key. A
+    /// failed Keychain read lists no Cores, so nothing dials.
+    private func coreToResumeOnOpen() -> CoreRow? {
+        guard phoneSettings.autoReconnect, notice == nil, identity != nil,
+              let last = phoneSettings.lastCore.flatMap(Base64URL.decode),
+              let row = cores.first(where: { $0.id == last }), !row.needsPairing else {
+            return nil
+        }
+        return row
+    }
+
+    /// The Core this launch will dial when the scene is first active.
+    private var coreWaitingForScene: CoreRow?
+
+    private func dialOnOpen(_ row: CoreRow) async {
+        // Cancel can come before this first turn on the main actor.
+        guard connectingTo == row.id else { return }
+        await dial(row.station, fresh: true)
+        // The dial stopped before it began, with the reason in the notice.
+        if screen == .connectingOnOpen, phase == .idle {
+            connectingTo = nil
+        }
+    }
+
+    /// The scene came to the front: a link waiting out its retry schedule
+    /// tries at once. Nothing is waiting after Disconnect or Cancel, and
+    /// offline a try could not succeed, so the hold stays.
+    func sceneBecameActive() {
+        if let row = coreWaitingForScene {
+            coreWaitingForScene = nil
+            Task { [weak self] in await self?.dialOnOpen(row) }
+            return
+        }
+        guard phase == .lost, online, !endingSession, !disconnecting,
+              case .waitingToRetry = app.connection else {
+            return
+        }
+        redialNow()
     }
 
     // MARK: Your Cores
@@ -1646,7 +1712,14 @@ final class ConnectionFlow: ObservableObject {
         guard phase == .lost || (phase == .connecting && reachedReady) else {
             return
         }
-        guard await endSession() else { return }
+        // Cancel is leaving on purpose, as Disconnect is: the next launch opens
+        // on Your Cores. Reconnect, and reaching ready, keep the Core again.
+        let kept = phoneSettings.lastCore
+        phoneSettings.lastCore = nil
+        guard await endSession() else {
+            if phoneSettings.lastCore == nil { phoneSettings.lastCore = kept }
+            return
+        }
         phase = .stopped
         connectingTo = nil
         linkLost = LinkLost(attempt: linkLost?.attempt ?? lostAttempts, retryAt: nil, stopped: true,
@@ -1669,6 +1742,7 @@ final class ConnectionFlow: ObservableObject {
     /// Leaves the band for Your Cores, ending the session.
     func leaveBand() async {
         guard await endSession() else { return }
+        phoneSettings.lastCore = nil
         showCoresAfterLeaving()
     }
 
@@ -1706,7 +1780,15 @@ final class ConnectionFlow: ObservableObject {
     /// retried, is cancelled. Nothing reconnects by itself afterwards; the
     /// operator connects again from Your Cores.
     func disconnect() async {
-        _ = await disconnectCurrent()
+        guard !transmitting, !disconnecting else { return }
+        // On purpose, so the next launch opens on Your Cores, and before the
+        // leave's wait: a force close during it must not reconnect. The sleep
+        // timer's leave below is not the operator's, and keeps the Core.
+        let kept = phoneSettings.lastCore
+        phoneSettings.lastCore = nil
+        if await !disconnectCurrent(), phoneSettings.lastCore == nil {
+            phoneSettings.lastCore = kept
+        }
     }
 
     /// Sleep may leave only the exact session whose idle expiry was admitted.
@@ -1886,6 +1968,12 @@ final class ConnectionFlow: ObservableObject {
         var needing = phoneSettings.coresNeedingPairing
         needing.remove(encoded)
         phoneSettings.coresNeedingPairing = needing
+        if phoneSettings.lastCore == encoded {
+            phoneSettings.lastCore = nil
+        }
+        if phoneSettings.lastUsedCore == encoded {
+            phoneSettings.lastUsedCore = nil
+        }
         if needing.isEmpty {
             phoneSettings.madeNewKey = false
             madeNewKey = false
@@ -2420,6 +2508,11 @@ final class ConnectionFlow: ObservableObject {
             screen = .band
         }
         attempt.end(dialIndex, as: .connected)
+        if let current {
+            phoneSettings.lastCore = Base64URL.encode(current.identityKey)
+            phoneSettings.lastUsedCore = Base64URL.encode(current.identityKey)
+            keepLastUsedFirst()
+        }
         rememberReached()
         rememberControlChannel()
         rememberProvenWinner()
@@ -2953,6 +3046,7 @@ final class ConnectionFlow: ObservableObject {
             trouble = versionTrouble(refusal, core: label)
         case .takenOver?:
             // Never redialled: the operator takes the Core back by hand.
+            phoneSettings.lastCore = nil
             if let end = lastSessionEnd, end.code == "takenOver", let byName = end.takenOverBy,
                let byId = end.takenOverById, let seconds = end.secondsAgo {
                 notice = .placeTaken(byName: byName, byId: byId,
@@ -3555,7 +3649,19 @@ final class ConnectionFlow: ObservableObject {
         cores = stations.map { station in
             CoreRow(station: station, needsPairing: baseNeedsPairing(station))
         }
+        keepLastUsedFirst()
         relist()
+    }
+
+    /// The last Core used leads Your Cores, and so has the highlighted
+    /// Connect; the rest stay in the order they were paired. A kept identity
+    /// that matches no row changes nothing.
+    private func keepLastUsedFirst() {
+        guard let lastUsed = phoneSettings.lastUsedCore.flatMap(Base64URL.decode),
+              let index = cores.firstIndex(where: { $0.id == lastUsed }), index != 0 else {
+            return
+        }
+        cores.insert(cores.remove(at: index), at: 0)
     }
 
     /// This phone must pair again: its key can't be read, or the Core removed

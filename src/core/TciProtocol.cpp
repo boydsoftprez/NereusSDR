@@ -283,6 +283,13 @@ TciProtocol::TciProtocol(QObject* radio, QObject* parent)
 // is a Phase 12 (spot stubs) concern.
 QString TciProtocol::handleCommand(const QString& command)
 {
+    // Holding a transmit value with no radio is for the operator's own edits in
+    // the app. A logger's write that comes before the radio does is dropped, or
+    // it would replace that radio's saved value at connect.
+    std::optional<TransmitModel::HeldEditPause> notAnEdit;
+    if (RadioModel* radio = cwRadio()) {
+        notAnEdit.emplace(radio->transmitModel());
+    }
     QString msg = command.trimmed();
     if (msg.endsWith(QLatin1Char(';'))) {
         msg.chop(1);

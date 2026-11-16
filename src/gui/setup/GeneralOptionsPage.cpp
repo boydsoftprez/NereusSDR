@@ -96,6 +96,9 @@
 //   2026-10-26 - CW transmit, the Region combo reports its write
 //                 (reportTransmitGateSettingChanged), so the CW keyer gate
 //                 follows it. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-06 - Band stack plan Task 12: the Region combo marks its edit, for
+//                 the band stack's region prompt. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -671,6 +674,7 @@ void GeneralOptionsPage::buildHardwareConfigGroup()
             refreshRegionAvailability();
             return;
         }
+        emit bandStackRegionEdited();
         AppSettings::instance().setValue(QStringLiteral("BandPlanRegion"), QString::number(index));
         // CW transmit (R-CW-06): the CW keyer gate follows the region.
         if (RadioModel* radio = model()) {
@@ -703,7 +707,8 @@ void GeneralOptionsPage::buildHardwareConfigGroup()
         // From Thetis setup.cs:19251-19260 [v2.10.3.15] (ChkExtended_CheckedChanged):
         //   console.Extended = chkExtended.Checked;
         // Its //MW0LGE_21d BandStackManager.RegionReset() has no NereusSDR
-        // counterpart: the band stack does not follow the region.
+        // counterpart: this setting leaves the band stack alone, and a region
+        // change asks before replacing entries (band stack design V1).
         AppSettings::instance().setValue(QString::fromLatin1(RadioModel::kExtendedTransmitKey),
                                           on ? QStringLiteral("True") : QStringLiteral("False"));
         if (RadioModel* radio = model()) {
@@ -715,6 +720,8 @@ void GeneralOptionsPage::buildHardwareConfigGroup()
 
     // --- Warning label ---
     // From Thetis setup.designer.cs:8045-8054 [v2.10.3.13]
+    // Stays hidden: nothing here resets the band stack without asking (band
+    // stack design 5.7, V1).
     m_lblWarningRegionExtended = new QLabel(
         tr("Changing this setting will reset your band stack entries"), group);
     m_lblWarningRegionExtended->setObjectName(QStringLiteral("lblWarningRegionExtended"));

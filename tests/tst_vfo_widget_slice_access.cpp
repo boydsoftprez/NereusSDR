@@ -25,12 +25,18 @@
 // =================================================================
 #include <QtTest/QtTest>
 #include <QAction>
+#include <QApplication>
+#include <QContextMenuEvent>
+#include <QMetaProperty>
+#include <QTimer>
+#include <functional>
 #include <QMenu>
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QSlider>
 #include <QWheelEvent>
 #include "core/AppSettings.h"
+#include "gui/widgets/VfoLevelBar.h"
 #include "gui/widgets/VfoWidget.h"
 #include "models/SliceModel.h"
 
@@ -63,6 +69,55 @@ QAction* findAction(QMenu& menu, const QString& text)
         }
     }
     return nullptr;
+}
+
+// A menu's rows, one line each, submenus in turn: text, enabled, checked, tip.
+QStringList rowsOf(const QMenu& menu, const QString& indent = QString())
+{
+    QStringList rows;
+    for (QAction* action : menu.actions()) {
+        if (action->isSeparator()) {
+            rows << indent + QStringLiteral("---");
+            continue;
+        }
+        rows << indent + QStringLiteral("%1|%2|%3|%4").arg(action->text())
+                             .arg(action->isEnabled()).arg(action->isChecked()).arg(action->toolTip());
+        if (action->menu() != nullptr) {
+            rows += rowsOf(*action->menu(), indent + QStringLiteral("  "));
+        }
+    }
+    return rows;
+}
+
+// Runs `open`, which puts up the flag's menu, and hands it to `use` while it is up.
+void whileTheMenuIsUp(VfoWidget& flag, const std::function<void()>& open, const std::function<void(QMenu&)>& use)
+{
+    bool seen = false;
+    QTimer::singleShot(0, &flag, [&]() {
+        for (QMenu* candidate : flag.findChildren<QMenu*>(QString(), Qt::FindDirectChildrenOnly)) {
+            if (candidate->isVisible()) {
+                seen = true;
+                use(*candidate);
+                candidate->close();
+                return;
+            }
+        }
+    });
+    open();
+    QVERIFY2(seen, "the flag put up no menu");
+}
+
+// Every property the slice has, as text.
+QStringList propertiesOf(const QObject& object)
+{
+    QStringList values;
+    const QMetaObject* meta = object.metaObject();
+    for (int i = meta->propertyOffset(); i < meta->propertyCount(); ++i) {
+        const QMetaProperty property = meta->property(i);
+        values << QStringLiteral("%1=%2").arg(QString::fromLatin1(property.name()),
+                                              property.read(&object).toString());
+    }
+    return values;
 }
 
 // The same three writes MainWindow wires from a flag to its slice.
@@ -230,7 +285,8 @@ private slots:
         // Everything else on a listened flag changes the shared slice, so
         // it is shown disabled with the reason.
         for (QAction* action : actions.mid(2)) {
-            if (action->isSeparator()) {
+            // The S-meter item changes only this window (overlay design D40).
+            if (action->isSeparator() || action->text().startsWith(QStringLiteral("S-meter"))) {
                 continue;
             }
             QVERIFY2(!action->isEnabled(), qPrintable(action->text()));
@@ -264,6 +320,158 @@ private slots:
         release->trigger();
         QCOMPARE(spy.count(), 1);
         QCOMPARE(spy.first().first().toInt(), 3);
+    }
+
+    // Overlay design D39: one builder, two ways in, item by item.
+    void the_more_button_opens_what_a_right_click_opens()
+    {
+        for (const bool listening : {false, true}) {
+            QWidget pan;
+            pan.resize(800, 400);
+            auto* flag = new VfoWidget(&pan);
+            flag->setSliceIndex(1);
+            if (listening) {
+                flag->setSliceAccess(listened());
+            }
+            flag->setSMeterSource(QStringLiteral("Sig Avg"), false);
+            pan.show();
+            QVERIFY(QTest::qWaitForWindowExposed(&pan));
+            flag->updatePosition(400, 20);
+            QPushButton* more = flag->moreButtonForTest();
+            QVERIFY(more != nullptr);
+            QVERIFY(more->isVisible());
+            // Not a held control: it opens on a listened flag too.
+            QVERIFY(!flag->heldControlsForTest().contains(more));
+            QVERIFY(more->isEnabled());
+            QCOMPARE(more->text(), QString(QChar(0x22ef)));
+
+            QStringList fromRightClick;
+            whileTheMenuIsUp(*flag, [&]() {
+                QContextMenuEvent event(QContextMenuEvent::Mouse, QPoint(2, 2), flag->mapToGlobal(QPoint(2, 2)));
+                QApplication::sendEvent(flag, &event);
+            }, [&](QMenu& menu) { fromRightClick = rowsOf(menu); });
+
+            QSignalSpy asked(flag, &VfoWidget::flagMenuAboutToOpen);
+            QStringList fromButton;
+            bool litWhileOpen = false;
+            whileTheMenuIsUp(*flag, [&]() {
+                QTest::mouseClick(more, Qt::LeftButton);
+            }, [&](QMenu& menu) {
+                fromButton = rowsOf(menu);
+                litWhileOpen = more->isDown();
+            });
+            QVERIFY(!fromRightClick.isEmpty());
+            QCOMPARE(fromButton, fromRightClick);
+            QCOMPARE(asked.count(), 1);
+            QVERIFY(litWhileOpen);
+            QVERIFY(!more->isDown());
+        }
+    }
+
+    // Overlay design D40: after Sample rate, the current source marked.
+    void the_s_meter_item_follows_sample_rate_and_marks_the_source()
+    {
+        VfoWidget flag;
+        flag.setSliceIndex(1);
+        flag.setSMeterSource(QStringLiteral("Signal Peak"), true);
+        QMenu menu;
+        flag.populateContextMenu(menu);
+        const QList<QAction*> actions = menu.actions();
+        int rate = -1;
+        for (int i = 0; i < actions.size(); ++i) {
+            if (actions.at(i)->text().startsWith(QStringLiteral("Sample rate"))) { rate = i; }
+        }
+        QVERIFY(rate >= 0 && rate + 1 < actions.size());
+        QAction* item = actions.at(rate + 1);
+        QCOMPARE(item->text(), QStringLiteral("S-meter: Signal Peak >"));
+        QVERIFY(item->menu() != nullptr);
+        QVERIFY(actions.at(rate + 2)->isSeparator());
+        QStringList names;
+        QStringList marked;
+        for (QAction* source : item->menu()->actions()) {
+            names << source->text();
+            if (source->isChecked()) { marked << source->text(); }
+            QVERIFY(source->isEnabled());
+        }
+        QCOMPARE(names, QStringList({QStringLiteral("Signal"), QStringLiteral("Sig Avg"),
+                                     QStringLiteral("Signal Peak"), QStringLiteral("Max Bin")}));
+        QCOMPARE(marked, QStringList{QStringLiteral("Signal Peak")});
+    }
+
+    // A listened flag keeps it, and the shared actions stay held.
+    void a_listened_flag_keeps_the_s_meter_item()
+    {
+        VfoWidget flag;
+        flag.setSliceIndex(2);
+        flag.setSliceAccess(listened());
+        QMenu menu;
+        flag.populateContextMenu(menu);
+        QAction* item = nullptr;
+        int held = 0;
+        for (QAction* action : menu.actions().mid(3)) {
+            if (action->isSeparator()) { continue; }
+            if (action->text().startsWith(QStringLiteral("S-meter"))) {
+                item = action;
+            } else {
+                QVERIFY2(!action->isEnabled(), qPrintable(action->text()));
+                ++held;
+            }
+        }
+        QVERIFY(held > 0);
+        QVERIFY(item != nullptr);
+        QVERIFY(item->isEnabled());
+        QAction* average = findAction(*item->menu(), QStringLiteral("Sig Avg"));
+        QVERIFY(average && average->isEnabled());
+        QSignalSpy asked(&flag, &VfoWidget::sMeterSourceRequested);
+        average->trigger();
+        QCOMPARE(asked.count(), 1);
+        QCOMPARE(asked.first().first().toString(), QStringLiteral("Sig Avg"));
+    }
+
+    // Max Bin greys with the reason when no pan shows the slice, and stays marked.
+    void max_bin_greys_with_the_reason()
+    {
+        VfoWidget flag;
+        flag.setSliceIndex(1);
+        flag.setSMeterSource(QStringLiteral("Max Bin"), false);
+        QMenu menu;
+        flag.populateContextMenu(menu);
+        QAction* item = nullptr;
+        for (QAction* action : menu.actions()) {
+            if (action->text().startsWith(QStringLiteral("S-meter"))) { item = action; }
+        }
+        QVERIFY(item != nullptr);
+        QCOMPARE(item->text(), QStringLiteral("S-meter: Max Bin >"));
+        QAction* maxBin = findAction(*item->menu(), QStringLiteral("Max Bin"));
+        QVERIFY(maxBin != nullptr);
+        QVERIFY(!maxBin->isEnabled());
+        QVERIFY(maxBin->isChecked());
+        QCOMPARE(maxBin->toolTip(), QStringLiteral("Max Bin reads this slice's panadapter. Open its display to see it."));
+        QVERIFY(findAction(*item->menu(), QStringLiteral("Signal"))->isEnabled());
+    }
+
+    // The tag follows the source; the words are the iPhone's.
+    void the_source_sets_the_bars_tag_and_no_slice_property()
+    {
+        SliceModel slice;
+        VfoWidget flag;
+        flag.setSliceIndex(1);
+        wireLikeMainWindow(flag, slice);
+        const QStringList before = propertiesOf(slice);
+        auto* bar = flag.findChild<VfoLevelBar*>();
+        QVERIFY(bar != nullptr);
+        const QRect readout = bar->readoutRect();
+        const QSize flagSize = flag.size();
+        const struct { const char* source; const char* tag; } rows[] = {
+            {"Max Bin", "MAX"}, {"Sig Avg", "AV"}, {"Signal Peak", ""}, {"Signal", ""}};
+        for (const auto& row : rows) {
+            flag.setSMeterSource(QString::fromLatin1(row.source), true);
+            QCOMPARE(flag.sMeterSource(), QString::fromLatin1(row.source));
+            QCOMPARE(bar->sourceTag(), QString::fromLatin1(row.tag));
+            QCOMPARE(bar->readoutRect(), readout);
+            QCOMPARE(flag.size(), flagSize);
+        }
+        QCOMPARE(propertiesOf(slice), before);
     }
 
     void unshared_menu_has_no_access_actions()

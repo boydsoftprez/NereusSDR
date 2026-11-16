@@ -4,6 +4,9 @@
 // Modification history (NereusSDR):
 // 2026-10-25: Roundtable plan Task 19, the iPad applet's UI tests.
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-04: One inspector: the panel on your own frequency with the column hidden, and the
+// same tag returning to your own in the column (overlay design D24, D38).
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import XCTest
 
@@ -128,6 +131,57 @@ final class RoundtableIPadUITests: XCTestCase {
         XCTAssertTrue(sheet.waitForNonExistence(timeout: 10))
     }
 
+    /// D24: with the column hidden, a server that reads frequencies shows your own in
+    /// the panel over the pan. The same line closes it, and Back stays up.
+    @MainActor
+    func testWithTheColumnHiddenTheLineOpensThePanel() throws {
+        let app = try launch(frequency: true)
+        let column = app.descendants(matching: .any)["appletColumn"]
+        _ = try applet(app)
+        app.buttons["appletColumnButton"].tap()
+        XCTAssertTrue(column.waitForNonExistence(timeout: 10))
+        let line = app.descendants(matching: .any)["roundtableLineA"]
+        line.tap()
+        let panel = app.descendants(matching: .any)["roundtableFrequencyPopover"]
+        XCTAssertTrue(panel.waitForExistence(timeout: 10), "the line did not open the panel")
+        XCTAssertFalse(app.descendants(matching: .any)["roundtableSheet"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["roundtableViewTuneReason"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.descendants(matching: .any)["roundtableBox"].exists, "your own keeps its box")
+        try save("roundtable-ipad-ui-panel-own")
+        let tag = app.descendants(matching: .any)["roundtableTag.lsb-7225000"]
+        XCTAssertTrue(tag.waitForExistence(timeout: 10))
+        tag.tap()
+        let back = app.descendants(matching: .any)["roundtableBackToSlice"]
+        XCTAssertTrue(back.waitForExistence(timeout: 10))
+        try save("roundtable-ipad-ui-panel-viewed")
+        back.tap()
+        XCTAssertTrue(back.waitForNonExistence(timeout: 10))
+        XCTAssertTrue(panel.exists, "Back closed the panel")
+        line.tap()
+        XCTAssertTrue(panel.waitForNonExistence(timeout: 10), "the same line did not close the panel")
+    }
+
+    /// D38: a tag views in the column, and the same tag returns to your own, in the applet.
+    @MainActor
+    func testATagViewsInTheColumnAndTheSameTagReturns() throws {
+        let app = try launch(frequency: true)
+        _ = try applet(app)
+        let flag = app.descendants(matching: .any)["flagA"]
+        let before = flag.label
+        let tag = app.descendants(matching: .any)["roundtableTag.lsb-7225000"]
+        XCTAssertTrue(tag.waitForExistence(timeout: 10))
+        tag.tap()
+        let back = app.descendants(matching: .any)["roundtableBackToSlice"]
+        XCTAssertTrue(back.waitForExistence(timeout: 10), "the tag did not view in the column")
+        XCTAssertFalse(app.descendants(matching: .any)["roundtableSheet"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["roundtableFrequencyPopover"].exists)
+        try save("roundtable-ipad-ui-column-viewed")
+        tag.tap()
+        XCTAssertTrue(back.waitForNonExistence(timeout: 10), "the same tag did not return to your own")
+        XCTAssertFalse(app.descendants(matching: .any)["roundtableSheet"].exists)
+        XCTAssertEqual(flag.label, before, "a tap moved the slice")
+    }
+
     /// Spec 11.4: the first-run question is a form sheet in the middle of
     /// the screen, from the applet and from the phone's sheet alike.
     @MainActor
@@ -247,13 +301,14 @@ final class RoundtableIPadUITests: XCTestCase {
     }
 
     @MainActor
-    private func launch(firstRun: Bool = false) throws -> XCUIApplication {
+    private func launch(firstRun: Bool = false, frequency: Bool = false) throws -> XCUIApplication {
         try XCTSkipIf(UIDevice.current.userInterfaceIdiom != .pad, "The applet column is the iPad's")
         XCUIDevice.shared.orientation = .landscapeLeft
         let app = XCUIApplication()
         // The band with slice A in a Roundtable room, with no Core (a debug build's launch arguments).
         app.launchArguments = ["-NereusShowBand", "-NereusFlagsOnBand", "-NereusRoundtableFixture"]
             + (firstRun ? ["-NereusRoundtableFirstRun"] : [])
+            + (frequency ? ["-NereusRoundtableFrequency"] : [])
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()

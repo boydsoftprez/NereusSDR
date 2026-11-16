@@ -12,6 +12,7 @@
 #include <chrono>
 #include <memory>
 
+#include "core/AppSettings.h"
 #include "core/ConnectionState.h"
 #include "core/RadioDiscovery.h"
 #include "fakes/RemoteWindowHarness.h"
@@ -49,6 +50,17 @@ private slots:
         discovery.holdOffScans(std::chrono::minutes{30});
     }
     void init() { QVERIFY(RemoteWindowHarness::clearIsolatedProfile()); }
+
+    // The saved polling delay applies when the window starts, not when
+    // Setup's Multimeter page first opens.
+    void theSavedPollingDelayAppliesAtStartup()
+    {
+        AppSettings::instance().setValue(QStringLiteral("MultimeterDelayMs"), 500);
+        auto window = std::make_unique<MainWindow>(RemoteStationOptions{}, nullptr,
+                                                   MainWindow::ConnectionStartup::Deferred);
+        QVERIFY(window->radioModel()->meterPoller());
+        QCOMPARE(window->radioModel()->meterPoller()->intervalMs(), 500);
+    }
 
     // A posed radio (no connection is made): the poller knows the board, so
     // losing the model changes what it publishes. Before the fix that change

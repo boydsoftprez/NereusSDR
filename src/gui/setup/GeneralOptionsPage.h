@@ -135,6 +135,11 @@ public:
     static QString timeOutNeedsNewerCoreText();
 
 signals:
+    // Band stack plan Task 12 (design V1): this window is changing the region.
+    // Emitted before the write, because a Core in this process follows the
+    // write at once. MainWindow asks when the document's region next changes.
+    void bandStackRegionEdited();
+
     // Phase 3M-4 Task 11: PureSignal Info Bar checkboxes.
     // Mirror Thetis groupBoxTS23 controls on tpOptions2 ("Info Bar (below
     // spectrum)") setup.designer.cs:10560-10632 [v2.10.3.13].  RadioModel /

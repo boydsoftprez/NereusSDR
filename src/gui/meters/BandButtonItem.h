@@ -9,6 +9,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05 - NEREUS_GUI_EXPORT: this class's signals are used from outside
+//                 its DLL. Without the export their addresses were MinGW's
+//                 auto-import thunks, which moc's code does not recognize,
+//                 so a QSignalSpy or connect on them failed on Windows.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Screenshot fix: kBlankButtonReason, what a click on a
 //                 blank band group button says. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -63,6 +68,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "BandGroups.h"
+#include "gui/NereusGuiExport.h"
 #include "ButtonBoxItem.h"
 
 #include <QHash>
@@ -95,7 +101,7 @@ inline constexpr char kBlankButtonReason[] = "This button has no band. It keeps 
 // layout marker (kLayoutMarker). One saved without it had only bits 0-14:
 // the added buttons are shown, and the record is saved again as it was
 // (no marker) until its visibility is set.
-class BandButtonItem : public ButtonBoxItem {
+class NEREUS_GUI_EXPORT BandButtonItem : public ButtonBoxItem {
     Q_OBJECT
 
 public:

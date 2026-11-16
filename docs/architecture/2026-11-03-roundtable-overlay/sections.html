@@ -1,0 +1,103 @@
+<header class="head" style="margin-bottom:0">
+  <div>
+    <p class="eyebrow">NereusSDR · desktop, iPhone, iPad and web</p>
+    <h1>Roundtable overlay</h1>
+    <p class="note">Interactive design proposal. Stations and readings are examples. No radio is connected and nothing is published. Desktop uses a real capture of the app with a live pan drawn over it; the phones and iPad use the iPhone board's own engine; the web page uses the real page's own stylesheet and markup with scripted stations.</p>
+  </div>
+</header>
+
+<div class="rcb-bar" id="rcb-bar">
+  <div class="rcb-row" id="rcb-states"><label>On the air</label></div>
+  <div class="rcb-row">
+    <label>Look</label>
+    <span id="rcb-looks"></span>
+    <span class="rcb-sep"></span>
+    <label style="min-width:auto">Signal</label>
+    <span id="rcb-formats"></span>
+    <span class="rcb-sep"></span>
+    <label style="min-width:auto">Listeners</label>
+    <span id="rcb-counts"></span>
+    <span class="rcb-sep"></span>
+    <label style="min-width:auto">Link</label>
+    <span id="rcb-links"></span>
+    <span class="rcb-sep"></span>
+    <label style="min-width:auto">Desktop pan</label>
+    <span id="rcb-pans"></span>
+  </div>
+  <div class="rcb-status" id="rcb-status"></div>
+</div>
+
+<section class="rcb-sect" id="desktop">
+  <h2>Desktop</h2>
+  <p>Click anything Roundtable: your card, any tag, a +N or the flag's Roundtable line. The same inspector opens in your card's spot. Click the same thing again, or press Escape, to close it. Click another tag to swap it in place. The band stays live and a click on it only tunes. Right-click for the short menu. On the flag: the new ⋯ under the lock, or right-click, and try S-meter: Max Bin.</p>
+  <div class="dk-fit" id="dk-fit"><div class="dk" id="dk"></div></div>
+</section>
+
+<section class="rcb-sect" id="iphone">
+  <h2>iPhone</h2>
+  <p>Tap the card, a tag or the flag's line: one sheet, the same on every frequency. Tap the same thing again to close it; tap another tag to swap it. Drag the band as usual. The flag's ⋯ is the iPhone's real menu, and the level bar's MAX or AV tag follows it.</p>
+  <div class="rcb-phones">
+    <div class="opt">
+      <h3>Beside the flag</h3>
+      <p>The usual case, at the real pan height: only a narrow strip is free.</p>
+      <div class="slot"><div class="phone" data-placement="fit" data-rt="band" data-rc-phone="narrow"></div></div>
+    </div>
+    <div class="opt">
+      <h3>Taller pan</h3>
+      <p>Pan dragged taller: the card fits under the flag at its full width.</p>
+      <div class="slot"><div class="phone" data-placement="fit" data-rt="band" data-rc-phone="wide"></div></div>
+    </div>
+    <div class="opt">
+      <h3>Reading the sheet</h3>
+      <p>The one sheet, open on your own frequency, as the card or the flag's line opens it.</p>
+      <div class="slot"><div class="phone" data-placement="fit" data-rt="band" data-rc-phone="sheet"></div></div>
+    </div>
+    <div class="opt opt--land">
+      <h3>Landscape</h3>
+      <p>A short, wide pan: fewer rows, with the rest one tap away.</p>
+      <div class="slot"><div class="phone phone--land" data-placement="fit" data-template="tpl-land" data-rt="band" data-rc-phone="land"></div></div>
+    </div>
+  </div>
+</section>
+
+<section class="rcb-sect" id="ipad">
+  <h2>iPad</h2>
+  <p>The pan works as on the iPhone, with the desktop's roomier card under the flag. The column is already beside the band, so tapping another frequency's tag opens it there, in the Roundtable applet, with no pop-up. Hide the column with the top right button and the same view opens over the pan. Widen adds the list of every frequency.</p>
+  <div class="rcb-pads">
+    <div class="opt">
+      <h3>Applet in the column</h3>
+      <p>Under the S-Meter, as today. Tap the Double tag on the band to view it without tuning, then Back to my slice.</p>
+      <div class="slot"><div class="tablet" data-placement="fit" data-template="tpl-ipad-col" data-rt="ipad-col" data-rc-phone="ipad"></div></div>
+    </div>
+    <div class="opt">
+      <h3>Widened</h3>
+      <p>Every frequency on the left, with doubles marked and named. Tap one to view it; your own stays highlighted.</p>
+      <div class="slot"><div class="tablet" data-placement="fit" data-template="tpl-ipad-col" data-rt="ipad-col" data-rc-phone="ipad-wide"></div></div>
+    </div>
+  </div>
+</section>
+
+<section class="rcb-sect" id="web">
+  <h2>Web page</h2>
+  <p>The public page already browses without touching a radio, so it needs no Tune button. The changes: a double is marked in the list and on the band map, each reading gets the same meter under its row with S and dBm on one line, and at phone width the room says who is on frequency, because the list is not beside it there. Everything here works, including bands, search, sort, quiet stations, distance, bearing and signal.</p>
+  <div class="web-fit" id="web-wide"></div>
+  <div class="web-narrow">
+    <div>
+      <h3>At phone width</h3>
+      <p>Tap a station for the room; <b>‹ All people</b> goes back.</p>
+      <div class="web-phone" id="web-phone"></div>
+    </div>
+  </div>
+</section>
+
+<section class="rcb-sect" id="double">
+  <h2>A double, start to finish</h2>
+  <p>The same card through one overlap. Readings taken during the double never carry over to the station left talking.</p>
+  <div class="rcf" id="rcf"></div>
+</section>
+
+<section class="rcb-sect" id="states" style="margin-bottom:60px">
+  <h2>Every state</h2>
+  <p>Live, in the look and signal format chosen above. Desktop width beside the phone's two widths.</p>
+  <div class="rcs" id="rcs"></div>
+</section>

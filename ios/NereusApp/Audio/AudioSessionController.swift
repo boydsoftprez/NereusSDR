@@ -125,6 +125,12 @@ final class AudioSessionController: ObservableObject {
     /// band through and the band's Sound panel both set it with
     /// ``select(_:)`` and both tick ``markedRoute``, so the two agree.
     @Published private(set) var chosen: AudioRoute?
+    /// Told each choice the operator makes, for it to be kept on this phone.
+    /// iOS moving the sound on its own is not a choice, and tells nothing.
+    var choiceMade: (@MainActor (AudioRoute) -> Void)?
+    /// The kept device this launch's choice waits for: ticked when it is the
+    /// one playing, however often it comes and goes, until another choice.
+    private var awaitedDevice: String?
     /// The connected device's name, once the session has played through it.
     private var connectedDevice: String?
     /// The outputs the session last reported.
@@ -335,11 +341,39 @@ final class AudioSessionController: ObservableObject {
     /// Moves the band to `route`. Takes effect at once while playing, and
     /// when playback starts or resumes otherwise.
     func select(_ route: AudioRoute) {
+        awaitedDevice = nil
+        choiceMade?(route)
         chosen = route
         guard state == .playing else {
             return
         }
         apply()
+    }
+
+    /// The choice kept from an earlier launch, applied when playback starts.
+    /// A device that is not connected leaves the route to iOS until it is;
+    /// an earpiece kept on a device without one is ignored.
+    func restoreChoice(_ route: AudioRoute) {
+        switch route {
+        case .speaker:
+            chosen = route
+        case .earpiece:
+            if isPhone {
+                chosen = route
+            }
+        case .external(let name):
+            awaitedDevice = name
+            noticeAwaitedDevice()
+        }
+    }
+
+    /// The kept device is the one playing: it is the choice again.
+    private func noticeAwaitedDevice() {
+        guard let awaitedDevice, let current = lastOutputs.first, current.kind == .external,
+              current.name == awaitedDevice, chosen != current.route else {
+            return
+        }
+        chosen = current.route
     }
 
     private func apply() {
@@ -398,6 +432,7 @@ final class AudioSessionController: ObservableObject {
             connectedDevice = current.name
         }
         route = current?.route
+        noticeAwaitedDevice()
         let headphones = current?.isHeadphones ?? false
         if headphones != onHeadphones {
             onHeadphones = headphones

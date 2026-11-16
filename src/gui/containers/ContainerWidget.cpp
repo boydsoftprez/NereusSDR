@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-06 - The destructor drops the focusChanged connection: ~QWidget
+//                 clears the focus after the layout has gone, and the chrome
+//                 update read that layout. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-26 - The default content background takes the workspace
 //                 panel through the item colour table (ItemColourLook.h).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -107,6 +111,9 @@
 //   2026-09-28 - The VFO display's filter right-click goes out as
 //                 vfoFilterContextRequested. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-11-06 - The VFO display's band stack request goes out as
+//                 vfoBandStackRequested (band stack plan Task 10). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-06 - Radio speaker plan Task 5 (R-SPK-19, D7): the pin-on-top
 //                 button shows the app's own pin / pinned icons (AppIcon) in
 //                 place of colour emoji text. J.J. Boyd (KG4VCF), with
@@ -353,6 +360,9 @@ ContainerWidget::~ContainerWidget()
 {
     if (m_structuredChrome) {
         qApp->removeEventFilter(this);
+        // ~QWidget clears the focus, which fires focusChanged after the layout
+        // has gone, and updateWorkspaceChrome reads the layout.
+        disconnect(qApp, &QApplication::focusChanged, this, nullptr);
     }
     qCDebug(lcContainer) << "Container destroyed:" << m_id;
 }
@@ -1961,7 +1971,7 @@ void ContainerWidget::wireInteractiveItem(MeterItem* item)
         // Task 36: the VFO display's tuning and its other requests name
         // their slice; MainWindow::onContainerItemAdded hears them.
         connect(vfo, &VfoDisplayItem::bandStackRequested,
-                this, [this,forward](int value) { forward([&] { emit bandStackRequested(value); }); });
+                this, [this,forward](int) { forward([&] { emit vfoBandStackRequested(); }); });
         connect(vfo, &VfoDisplayItem::filterContextRequested,
                 this, [this,forward](int) { forward([&] { emit vfoFilterContextRequested(); }); });
     }

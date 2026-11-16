@@ -56,9 +56,15 @@
 //                                    far end of another version would
 //                                    have sent. AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-11-05  J.J. Boyd / KG4VCF  setMeasuresReceipt() and
+//                                    arriveFromAnyThreadForTest(), an end
+//                                    that reports a message's wait as a
+//                                    data channel does. AI-assisted via
+//                                    Anthropic Claude Code.
 // =================================================================
 
 #include <functional>
+#include <optional>
 #include <utility>
 
 #include <QByteArray>
@@ -89,6 +95,7 @@ public:
     bool isOpen() const override;
     QString peerDescription() const override;
     QString peerAddress() const override { return m_peerAddress; }
+    std::optional<qint64> deliveringMessageWaitUs() const override { return m_deliveringWaitUs; }
     QByteArray peerCertificateSha256() const override { return m_peerCertificateSha256; }
 
     // ---- Test controls ----
@@ -135,6 +142,17 @@ public:
     {
         m_rewriteIncoming = std::move(rewrite);
     }
+    /// While true, this end reports what a data channel session on a direct
+    /// or TURN pair reports (over the web relay it would report about nothing):
+    /// while a message is delivered, how long it waited since its receipt.
+    /// Its receipt is when it was sent, so what a far end's
+    /// setHoldsOutgoing() held counts as having waited here, behind a stalled
+    /// thread, not on the link. Default false, as a WebSocket reports nothing.
+    void setMeasuresReceipt(bool measures) { m_measuresReceipt = measures; }
+    /// Safe from any thread: `wire` arrives at this end now and waits for
+    /// this end's thread, as a data channel library's thread hands over a
+    /// message while the owner's thread is stalled.
+    void arriveFromAnyThreadForTest(const QByteArray& wire);
     LoopbackTransport* peerForTest() const { return m_peer; }
 
     /// Every wire message this end has received, in arrival order.
@@ -153,7 +171,7 @@ signals:
     void outboundText(const QByteArray& wire);
 
 private:
-    void deliver(const QByteArray& wire);
+    void deliver(const QByteArray& wire, qint64 receivedNs);
     void receivePing();
     void sendOrHold(std::function<void()> delivery);
 
@@ -165,6 +183,8 @@ private:
     bool m_dropsOutgoing = false;
     bool m_carriesBinary = true;
     bool m_holdsOutgoing = false;
+    bool m_measuresReceipt = false;
+    std::optional<qint64> m_deliveringWaitUs;
     QList<std::function<void()>> m_heldOutgoing;
     std::function<QByteArray(const QByteArray&)> m_rewriteIncoming;
     int m_pingsSeen = 0;

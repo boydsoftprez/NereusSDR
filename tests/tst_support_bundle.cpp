@@ -400,6 +400,7 @@ private slots:
         writeText(inputs.settingsPath,
                   QStringLiteral("<NereusSDR>"
                                  "<audio__s__DspRate>48000</audio__s__DspRate>"
+                                 "<DisplayPaintFps>60</DisplayPaintFps>"
                                  "<audio__s__Speakers__s__DriverApi>MME</audio__s__Speakers__s__DriverApi>"
                                  "<audio__s__Speakers__s__DeviceName>Pat's Speakers</audio__s__Speakers__s__DeviceName>"
                                  "<audio__s__Speakers__s__BufferSamples>256</audio__s__Speakers__s__BufferSamples>"
@@ -412,6 +413,7 @@ private slots:
         const QByteArray settings =
             entriesOf(SupportBundle::buildCoreBundle(inputs)).value(QStringLiteral("settings.xml"));
         QVERIFY(settings.contains("<audio__s__DspRate>48000</audio__s__DspRate>"));
+        QVERIFY(settings.contains("<DisplayPaintFps>60</DisplayPaintFps>"));
         QVERIFY(settings.contains("<audio__s__Speakers__s__DriverApi>MME</audio__s__Speakers__s__DriverApi>"));
         QVERIFY(settings.contains("<audio__s__Speakers__s__BufferSamples>256</audio__s__Speakers__s__BufferSamples>"));
         QVERIFY(settings.contains("<audio__s__Speakers__s__ExclusiveMode>False</audio__s__Speakers__s__ExclusiveMode>"));

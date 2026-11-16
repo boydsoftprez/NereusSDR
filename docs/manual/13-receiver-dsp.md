@@ -6,14 +6,14 @@ For routine listening, start with the active slice's mode, filter and AGC contro
 
 ## Choose and tune receiver AGC
 
-Open the selected VFO's **DSP** tab or **Setup > DSP > AGC/ALC**. Confirm that you are editing **RX1 AGC** for the intended receiver. **Mode** offers Off, Long, Slow, Med, Fast and Custom. Begin with a preset mode; Custom exposes the individual response controls.
+Open the selected VFO's **DSP** tab or **Setup > DSP > AGC/ALC**. You can also right-click **AUTO** in the RX applet, or an **AGC-T** slider, to open that page. Confirm that you are editing **RX1 AGC** for the intended receiver. **Mode** offers Off, Long, Slow, Med, Fast and Custom. Begin with a preset mode; Custom exposes the individual response controls.
 
 - **Attack** sets how quickly gain responds when signal level rises.
 - **Decay** sets the gain recovery time after a strong signal. Longer values hold down gain longer after a peak.
 - **Hang** holds the gain state after a strong signal. **Hang Threshold** sets the level at which the hang behavior engages.
 - **Slope** controls gain difference for weak and strong signals.
 - **Max Gain** caps AGC gain even on weak signals. **Fixed Gain** is the receiver gain used when AGC is Off.
-- **Auto AGC RX1** adjusts AGC from the measured noise floor. **± Offset** shifts its target from that floor in dB.
+- **Auto AGC RX1** adjusts AGC from the measured noise floor. **± Offset** shifts its target from that floor in dB. It holds its last receive measurement and leaves the threshold alone while the station is on the air; see [Set receive volume and AGC deliberately](03-receive.md#set-receive-volume-and-agc-deliberately).
 
 To reduce pumping from a nearby strong signal, compare a slower mode or longer decay and lower the maximum gain. To make weak signals rise sooner after a peak, reduce decay or hang in Custom. Read the controls back and compare on the same audio. Do not use receiver AGC settings to correct an antenna, preamp or overload problem. The page also contains **TX Leveler** and **TX ALC** controls, which are transmit processing; the RX selector does not make them receiver settings. See [chapter 14](14-voice-profiles.md) for TX processing.
 

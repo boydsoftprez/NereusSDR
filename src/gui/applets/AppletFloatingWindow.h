@@ -11,6 +11,11 @@
 // reports saveGeometry() so the panel can persist it.
 //
 // Modification history (NereusSDR):
+//   2026-11-05 - NEREUS_GUI_EXPORT: this class's signals are used from outside
+//                 its DLL. Without the export their addresses were MinGW's
+//                 auto-import thunks, which moc's code does not recognize,
+//                 so a QSignalSpy or connect on them failed on Windows.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-09-09 — Created for the floating AM Mod Monitor (Lee,
 //                 AI-assisted via Anthropic Claude Code).
 //   2026-10-22 - Quitting is no longer refused while an applet floats:
@@ -24,13 +29,14 @@
 #pragma once
 
 #include <QPointer>
+#include "gui/NereusGuiExport.h"
 #include <QWidget>
 
 namespace NereusSDR {
 
 class AppletWidget;
 
-class AppletFloatingWindow : public QWidget {
+class NEREUS_GUI_EXPORT AppletFloatingWindow : public QWidget {
     Q_OBJECT
 public:
     AppletFloatingWindow(AppletWidget* applet, QWidget* parent = nullptr);

@@ -366,11 +366,13 @@ struct ModMonitorTests {
 
     /// The app connected to a fake Core (with the monitor, or one before it)
     /// with the board's TX panel and slice A, the transmit slice, in `mode`.
-    static func connected(mode: String, center: NotificationCenter, monitor: Bool = true) async throws -> Rig {
+    static func connected(mode: String, center: NotificationCenter, monitor: Bool = true,
+                          ssb: FakeStation.Additions = []) async throws -> Rig {
         let suite = "ModMonitorTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         UIApplication.shared.isIdleTimerDisabled = false
-        let station = try FakeStation(additions: monitor ? [.remoteTx, .wideband, .modMonitor] : [.remoteTx, .wideband])
+        let base: FakeStation.Additions = monitor ? [.remoteTx, .wideband, .modMonitor] : [.remoteTx, .wideband]
+        let station = try FakeStation(additions: base.union(ssb))
         let phone = PhoneSettings(defaults: defaults)
         let audio = AudioSessionController(session: FakeAudioSession(), output: FakePlaybackOutput(),
                                            notificationCenter: center)

@@ -1521,6 +1521,11 @@ Thetis only enables ADC0 on every board; NereusSDR offers two ADCs on boards tha
   under concurrent lane load. This deterministically reproduces delayed timer
   dispatch, not a measured guarantee about OS scheduling or physical RF release.
   Restrictive-network acceptance and live-radio verification remain open.
+- Note, 2026-11-05: an expired packet still renews nothing, but it no longer
+  stops the watch at arrival. The check already due makes the stop, after its
+  one late turn, so a release read behind the packet is no lost link. By the
+  maintainer's ruling, a release that ended a key restarts the silence of a
+  watch left only for armed VOX. See `RemoteTxWatchdog.h`.
 - Plan: remote transmit link-loss safety and restrictive-network liveness.
 
 ### G-74: Remote settings export and import omit the Core's settings

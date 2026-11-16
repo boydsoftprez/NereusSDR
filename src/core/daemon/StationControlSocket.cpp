@@ -107,7 +107,7 @@ StationControlReply requestAt(const QString& path, const QStringList& args, int 
         return {false, QStringLiteral("The Core at %1 did not answer that command.").arg(path)};
     }
     return {doc.object().value(QStringLiteral("ok")).toBool(false),
-            doc.object().value(QStringLiteral("text")).toString()};
+            doc.object().value(QStringLiteral("text")).toString(), true};
 }
 
 } // namespace

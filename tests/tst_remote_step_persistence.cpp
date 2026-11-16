@@ -475,7 +475,7 @@ private slots:
         QVERIFY(coreSlice && windowSlice);
         coreSlice->setStepHz(kCoreStepHz);
         QTRY_COMPARE(windowSlice->stepHz(), kCoreStepHz);
-        const QString key = QStringLiteral("Slice1/Band%1/StepHz").arg(bandKeyName(coreSlice->band()));
+        const QString key = QStringLiteral("Slice1/StepHz");
         // Nothing of the window's step is saved yet (the test Core has no
         // radio connection, so it saves no step for this slice at all here).
         QVERIFY(coreSavedValue(h, key).toInt() != kWindowStepHz);

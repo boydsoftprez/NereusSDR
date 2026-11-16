@@ -14,7 +14,7 @@ With **Radio Mic** selected, the page exposes the group for the detected radio f
 
 After selecting the route, use **Mic Gain** to bring speech into a useful range. The common supported-board range is −40 to +10 dB in 1 dB steps; the application uses the connected board's capability range, so follow the slider's actual endpoints. Speak at the distance and level used on air. A level consistently near the top of the **Level** gauge or in its red region indicates that input gain is too high; reduce gain or correct the upstream audio level. A very low reading calls for checking the selected device, connector, source level, and permission before adding gain. The gauge spans −40 to +10 dB, with yellow beginning at −10 dB and red at 0 dB. This readback is input level, not RF output or the TX ALC meter.
 
-The compact **Phone/CW** applet's Phone page exposes **Level**, **Compression**, the active profile selector, microphone source, mic gain, **PROC**, **VAX**, and **AM Car**. The **Level** gauge spans −40 to +10 dB, with yellow from −10 and red from 0. The microphone source menu selects **MIC**, **BAL**, **LINE**, or **PC**; the **ACC** row is unavailable. Select **PC** for this computer's input, or the radio input matching the connected jack. The separate **VAX** toggle selects the station's VAX TX route; on Windows it is grayed with the same reason. The profile selector is the same TX profile list as the TX applet. Use **File > Settings... > Audio > Microphone** for the complete device, driver and buffer setup and local **Test Mic** procedure. The **+ACC** and Phone/CW **MON** controls are unavailable. The CW page is a placeholder because CW transmit is not implemented. The supported TX monitor is the **MON** control in the TX applet, distinct from the unavailable Phone/CW **MON** control.
+The compact **Phone/CW** applet's Phone page exposes **Level**, **Compression**, the active profile selector, microphone source, mic gain, **PROC**, **VAX**, and **AM Car**. The **Level** gauge spans −40 to +10 dB, with yellow from −10 and red from 0. The microphone source menu selects **MIC**, **BAL**, **LINE**, or **PC**; the **ACC** row is unavailable. Select **PC** for this computer's input, or the radio input matching the connected jack. The separate **VAX** toggle selects the station's VAX TX route; on Windows it is grayed with the same reason. The profile selector is the same TX profile list as the TX applet. Use **File > Settings... > Audio > Microphone** for the complete device, driver and buffer setup and local **Test Mic** procedure. The **+ACC** and Phone/CW **MON** controls are unavailable. The CW page holds the CW delay, speed, sidetone, pan, break-in, Iambic and pitch controls, the KEY, TX and keyer lamps, and the keyer status line. A container can hold a copy of this panel with chosen rows hidden; see [Customize](10-customize.md). The supported TX monitor is the **MON** control in the TX applet, distinct from the unavailable Phone/CW **MON** control.
 
 ## Use PROC, leveler, and ALC
 
@@ -72,16 +72,17 @@ checking its active name and curve mode.
 
 Open **Tools > TX Equalizer** or right-click the TX applet's **EQ** control and open the TX EQ editor. The **TX EQ** control enables or bypasses the equalizer stage; the editor's **Enable TX EQ** checkbox is the same master state. This is the transmit equalizer. **DSP > Equalizer** is explicitly unbuilt and is not an alternative receive or transmit EQ page.
 
-The candidate header offers **Graphic · Legacy** and **Parametric**. These
+The editor's header offers **Graphic · Legacy** and **Parametric**. These
 modes retain separate curves; changing mode applies that mode's stored settings.
-The older figure below uses a **Legacy EQ** checkbox for the same distinction.
 The mode choice is stored with the TX profile and follows the model in remote
 windows. Check the active mode and profile after recall.
 
 In **Graphic · Legacy**, **Pre** sets overall pre-gain from −12 to +15 dB.
-The ten band sliders have gain fields and editable center frequencies. Change
-one gain/frequency, compare the same phrase at the same input level, and read
-back the value. Positive boosts can require reducing Pre or another stage.
+The ten band sliders each have a dB box and, below it, a Hz box holding that
+band's center frequency, from 10 to 22000 Hz. Type a frequency or use the box's
+step arrows. Change one gain/frequency, compare the same phrase at the same
+input level, and read back the value. Positive boosts can require reducing Pre
+or another stage.
 **Reset curve** resets the graphic gains/pre-gain; use Undo or the saved profile
 when the prior curve is needed. Expand **Advanced** for **Nc**, **Mp**,
 **Cutoff** and **Wintype**. Nc is the filter coefficient count (32–8192), Mp
@@ -119,7 +120,7 @@ EQ state and the controlled audio evidence described above.
 
 [![Desktop TX Equalizer showing Graphic · Legacy mode, pre-gain, band gains and center frequencies](images/desktop-tx-eq-workspace-original.png)](images/desktop-tx-eq-workspace-original.png)
 
-*TX EQ editor in the workspace look: Graphic · Legacy is selected, Parametric is the other mode button, and Enable TX EQ is off. Undo and Redo and the Advanced section are at the top. The curve shown is the capture's illustrative curve, not a recommendation. Check the enable state separately from the visible curve; record a working profile before editing. Captured from the offscreen preview window with no radio connected, without curve changes; the Parametric mode is not pictured.*
+*TX EQ editor in the workspace look: Graphic · Legacy is selected, Parametric is the other mode button, and Enable TX EQ is off. Undo and Redo and the Advanced section are at the top. The curve shown is the capture's illustrative curve, not a recommendation. Check the enable state separately from the visible curve; record a working profile before editing. Captured from the offscreen preview window with no radio connected, without curve changes; the Parametric mode is not pictured. This capture predates the step arrows now on the Hz boxes.*
 
 ### Set TX EQ from iPhone or iPad
 
@@ -291,8 +292,7 @@ is not ready to key, record settings and defer the audible comparison.
    editing, change one band; compare the same phrases and read back the band
    values. Save a named copy before changing the parametric EQ editor’s
    5/10/18-band layout: applying a requested count resets its band points.
-   **Graphic · Legacy / Parametric** chooses the candidate EQ mode; the
-   older development figure uses a **Legacy EQ** switch. Save the accepted
+   **Graphic · Legacy / Parametric** chooses the EQ mode. Save the accepted
    chain under a descriptive name.
 8. If investigating Phase Rotator, CFC, or CESSB, test one stage at a time
    against the saved chain. Save a named copy before changing the CFC
@@ -316,10 +316,22 @@ are confirmed in [Set up and transmit](05-transmit.md). Use [PureSignal and
 diversity](18-puresignal-diversity.md) only after its compatible feedback path
 is configured.
 
-The visible **Two-tone** test control generates and transmits a two-tone signal when used; it is not a speech test. Configure two-tone output only for a controlled measurement setup and follow the calibration procedure in [PureSignal and diversity](18-puresignal-diversity.md). The Phone/CW **AM Car** control is wired: its 0–100 percent value sets the AM carrier level, also used for SAM and DSB. It is not a speech-level control; read the numeric label after adjustment. The Phone/CW profile selector uses the TX profile list, and its source selector supports MIC/BAL/LINE/PC where the radio permits. The separate Phone/CW **MON** and **ACC** controls are unavailable. CWX/keyer and FM transmit/repeater operation are not available in this build.
+The visible **Two-tone** test control generates and transmits a two-tone signal when used; it is not a speech test. Configure two-tone output only for a controlled measurement setup and follow the calibration procedure in [PureSignal and diversity](18-puresignal-diversity.md). The Phone/CW **AM Car** control is wired: its 0–100 percent value sets the AM carrier level, also used for SAM and DSB. It is not a speech-level control; read the numeric label after adjustment. The Phone/CW profile selector uses the TX profile list, and its source selector supports MIC/BAL/LINE/PC where the radio permits. The separate Phone/CW **MON** and **ACC** controls are unavailable. FM transmit and repeater operation are not available in this build. For CW, the **CWX** applet sends typed text and eight memories (**M1** to **M8**, right-click one to edit it), with **Stop**, a hand **Key**, **Speed**, **Rpt** and **KB→CW**. Show it from **Tools > CWX...** (**Ctrl+X**), by clicking **CWX** on the status bar, or from **Containers > Applets > CWX**. Keyer, break-in, sidetone and key input settings are in **Setup > DSP > CW**.
 
 ## Monitor AM modulation
 
 Open **Containers > Applets > AM Mod Monitor** or the applet panel's **☰** menu and select **AM Mod Monitor**. The monitor reports readings only while transmitting in AM, SAM, or DSB; it does not key the radio. If the applet says the Core cannot provide readings, check the Core connection and its monitor capability rather than changing microphone settings. Begin with the radio unkeyed and select **TX I/Q** to inspect the generated modulation. Select **PA FB** only when PureSignal feedback is running and the feedback receiver is known; choose the matching **rx** stream (0–4). The desktop source is an applet-local choice. On the phone, the AM Mod Monitor sits below the normal controls on the TX panel; use its settings sheet for the corresponding monitor choices.
 
 The positive peak gauge spans 0–160 percent, turns yellow at 100 percent, and red at 125 percent. The negative peak gauge spans 0–100 percent, turns yellow at 90 percent, and red at 98 percent. Read the held peak values and asymmetry alongside the live trace. **RESET** clears peak-hold and flashers; it does not change transmit processing. **VU** changes the local display style. The desktop positive and negative peak flasher controls span 50–160 percent and 50–100 percent respectively; these are local warning thresholds, not modulation targets. On the phone, the settings sheet separates **On this phone** display choices (source, thresholds, meter style) from **On the Core, for every device**, which selects the shared **PA feedback receiver**. A carrier status of **NO CARRIER**, **CARRIER LOW**, or **CARRIER HIGH** describes the monitor's live assessment. Stop transmitting and correct AM carrier/audio setup if a warning persists; do not use a monitor reading alone to infer legal power or RF spectral purity. Use the same known, low-risk station setup and compare readbacks after changing one parameter at a time.
+
+## Monitor SSB modulation
+
+The SSB Mod Monitor shows how hard the USB or LSB transmit signal is driven. Sideband has no carrier, so it does not report AM percent modulation. It measures the signal's envelope against digital full scale, where 100 percent is 0 dBFS. It reads only while transmitting in USB or LSB and does not key the radio.
+
+On the desktop the panel starts off. Turn it on from **Containers > Applets > SSB Mod Monitor** or the applet panel's **☰** menu. It appears directly under the AM Mod Monitor. Select **TX I/Q** to measure the signal NereusSDR sends to the radio. Select **PA FB** to measure the amplifier output through PureSignal's feedback; it is grayed until PureSignal is on, and its tooltip says why. **VU** switches between the analog needle faces (the default) and bar gauges. **RESET** clears the peak hold and the OVER lamp.
+
+The needles span 0 to 140 percent with a red zone from 100. The bars span 0 to 120 percent, turn yellow at 80 and red at 100. **PEAK** is the held peak and **AVG** the average, both in dBFS. **CREST** is peak over RMS across the last 300 ms of signal, with pauses left out. **%FS** is the held peak as a percent of full scale. The **OVER** lamp lights when the held peak reaches the threshold beside it, -20 to 0 dB, default -1 dB. The status lamp reads **NO RF** with no signal, **ON** while signal is present, and **OVER** past the threshold. The trace below shows the envelope over about half a second. The peak hold lasts about 1.5 seconds, then falls back. Readings clear shortly after transmit stops.
+
+In a window connected to a Core the readings come from the Core. If the panel says the Core does not send the monitor, update the Core. **RESET** there clears the hold for every device watching.
+
+Use these readings to compare one change at a time with the same station setup. Do not use them alone to judge power, ALC, or signal purity on the air.

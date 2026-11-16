@@ -1,0 +1,941 @@
+{
+  "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
+  "UUID": "com.nereussdr.radio",
+  "Version": "1.0.0.0",
+  "Name": "NereusSDR",
+  "Description": "Untested. No real host has run this plugin yet. Runs NereusSDR's hot key actions from your keys and dials, through a private connection to the NereusSDR window on this computer.",
+  "Author": "J.J. Boyd (KG4VCF)",
+  "URL": "https://github.com/boydsoftprez/NereusSDR",
+  "Icon": "imgs/plugin-icon",
+  "CodePath": "plugin.js",
+  "Category": "NereusSDR",
+  "CategoryIcon": "imgs/plugin-icon",
+  "SDKVersion": 2,
+  "Software": {
+    "MinimumVersion": "6.4"
+  },
+  "OS": [
+    {
+      "Platform": "mac",
+      "MinimumVersion": "13"
+    },
+    {
+      "Platform": "windows",
+      "MinimumVersion": "10"
+    }
+  ],
+  "Nodejs": {
+    "Version": "20"
+  },
+  "Actions": [
+    {
+      "UUID": "com.nereussdr.radio.tune.up",
+      "Name": "Tune up one step",
+      "Category": "Tuning",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Tune up one step",
+      "Controllers": [
+        "Keypad",
+        "Encoder"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ],
+      "Encoder": {
+        "layout": "$A1",
+        "TriggerDescription": {
+          "Rotate": "Tune up one step"
+        }
+      }
+    },
+    {
+      "UUID": "com.nereussdr.radio.tune.down",
+      "Name": "Tune down one step",
+      "Category": "Tuning",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Tune down one step",
+      "Controllers": [
+        "Keypad",
+        "Encoder"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ],
+      "Encoder": {
+        "layout": "$A1",
+        "TriggerDescription": {
+          "Rotate": "Tune down one step"
+        }
+      }
+    },
+    {
+      "UUID": "com.nereussdr.radio.tune.up10",
+      "Name": "Tune up ten steps",
+      "Category": "Tuning",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Tune up ten steps",
+      "Controllers": [
+        "Keypad",
+        "Encoder"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ],
+      "Encoder": {
+        "layout": "$A1",
+        "TriggerDescription": {
+          "Rotate": "Tune up ten steps"
+        }
+      }
+    },
+    {
+      "UUID": "com.nereussdr.radio.tune.down10",
+      "Name": "Tune down ten steps",
+      "Category": "Tuning",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Tune down ten steps",
+      "Controllers": [
+        "Keypad",
+        "Encoder"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ],
+      "Encoder": {
+        "layout": "$A1",
+        "TriggerDescription": {
+          "Rotate": "Tune down ten steps"
+        }
+      }
+    },
+    {
+      "UUID": "com.nereussdr.radio.step.larger",
+      "Name": "Tune step larger",
+      "Category": "Tuning",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Tune step larger",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.step.smaller",
+      "Name": "Tune step smaller",
+      "Category": "Tuning",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Tune step smaller",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.slice.lock",
+      "Name": "Lock",
+      "Category": "Tuning",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Lock",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.tune.goto",
+      "Name": "Go to frequency",
+      "Category": "Tuning",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Go to frequency",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.slice.next",
+      "Name": "Next slice",
+      "Category": "Tuning",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Next slice",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.filter.next",
+      "Name": "Filter next",
+      "Category": "Filter",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Filter next",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.filter.previous",
+      "Name": "Filter previous",
+      "Category": "Filter",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Filter previous",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.volume.up",
+      "Name": "Volume up",
+      "Category": "Audio",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Volume up",
+      "Controllers": [
+        "Keypad",
+        "Encoder"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ],
+      "Encoder": {
+        "layout": "$A1",
+        "TriggerDescription": {
+          "Rotate": "Volume up"
+        }
+      }
+    },
+    {
+      "UUID": "com.nereussdr.radio.volume.down",
+      "Name": "Volume down",
+      "Category": "Audio",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Volume down",
+      "Controllers": [
+        "Keypad",
+        "Encoder"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ],
+      "Encoder": {
+        "layout": "$A1",
+        "TriggerDescription": {
+          "Rotate": "Volume down"
+        }
+      }
+    },
+    {
+      "UUID": "com.nereussdr.radio.mute",
+      "Name": "Mute",
+      "Category": "Audio",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Mute",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.bandstack.next",
+      "Name": "Band stack next",
+      "Category": "Band and mode",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Band stack next",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.bandstack.previous",
+      "Name": "Band stack previous",
+      "Category": "Band and mode",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Band stack previous",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.band.next",
+      "Name": "Next band",
+      "Category": "Band and mode",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Next band",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.band.previous",
+      "Name": "Previous band",
+      "Category": "Band and mode",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Previous band",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.bandstack.add",
+      "Name": "Add band stack entry",
+      "Category": "Band and mode",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Add band stack entry",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.bandstack.panel",
+      "Name": "Open band stack panel",
+      "Category": "Band and mode",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Open band stack panel",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.mode.next",
+      "Name": "Mode next",
+      "Category": "Band and mode",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Mode next",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.mode.previous",
+      "Name": "Mode previous",
+      "Category": "Band and mode",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Mode previous",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.zoom.in",
+      "Name": "Zoom in",
+      "Category": "Display",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Zoom in",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.zoom.out",
+      "Name": "Zoom out",
+      "Category": "Display",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Zoom out",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.nr.toggle",
+      "Name": "Noise reduction",
+      "Category": "DSP",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Noise reduction",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.nb.toggle",
+      "Name": "Noise blanker",
+      "Category": "DSP",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Noise blanker",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.anf.toggle",
+      "Name": "Auto notch",
+      "Category": "DSP",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Auto notch",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.rit.toggle",
+      "Name": "RIT on or off",
+      "Category": "DSP",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "RIT on or off",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.xit.toggle",
+      "Name": "XIT on or off",
+      "Category": "DSP",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "XIT on or off",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.tx.hold",
+      "Name": "Hold to talk",
+      "Category": "Transmit",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Hold to talk",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.tx.mox",
+      "Name": "MOX",
+      "Category": "Transmit",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "MOX",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.tx.tune",
+      "Name": "TUNE",
+      "Category": "Transmit",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "TUNE",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.tx.twotone",
+      "Name": "Two-tone",
+      "Category": "Transmit",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Two-tone",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.vox.toggle",
+      "Name": "VOX on or off",
+      "Category": "Transmit",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "VOX on or off",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.cw.msg1",
+      "Name": "CW message 1",
+      "Category": "CW",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "CW message 1",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.cw.msg2",
+      "Name": "CW message 2",
+      "Category": "CW",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "CW message 2",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.cw.msg3",
+      "Name": "CW message 3",
+      "Category": "CW",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "CW message 3",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.cw.msg4",
+      "Name": "CW message 4",
+      "Category": "CW",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "CW message 4",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.cw.msg5",
+      "Name": "CW message 5",
+      "Category": "CW",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "CW message 5",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.cw.msg6",
+      "Name": "CW message 6",
+      "Category": "CW",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "CW message 6",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.cw.msg7",
+      "Name": "CW message 7",
+      "Category": "CW",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "CW message 7",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.cw.msg8",
+      "Name": "CW message 8",
+      "Category": "CW",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "CW message 8",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.cw.stop",
+      "Name": "Stop CW message",
+      "Category": "CW",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Stop CW message",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.cw.dot",
+      "Name": "CW dot",
+      "Category": "CW",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "CW dot",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.cw.dash",
+      "Name": "CW dash",
+      "Category": "CW",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "CW dash",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.cw.straight",
+      "Name": "CW straight key",
+      "Category": "CW",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "CW straight key",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.voice.msg1",
+      "Name": "Voice message 1",
+      "Category": "Voice",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Voice message 1",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.voice.msg2",
+      "Name": "Voice message 2",
+      "Category": "Voice",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Voice message 2",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.voice.msg3",
+      "Name": "Voice message 3",
+      "Category": "Voice",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Voice message 3",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.voice.msg4",
+      "Name": "Voice message 4",
+      "Category": "Voice",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Voice message 4",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.voice.stop",
+      "Name": "Stop voice message",
+      "Category": "Voice",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Stop voice message",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    }
+  ]
+}

@@ -546,6 +546,17 @@ class TstMoxDisplayController : public QObject {
     Q_OBJECT
 
 private slots:
+    // Each test function starts from empty shared settings, because anything
+    // in them lasts for the whole process and can reach a later test. A
+    // window's RadioModel saves its slices to AppSettings::instance(), not to
+    // the window's own settings, 500 ms after an edit. The case that showed
+    // this: a test that ran long enough for the timer left its XIT 700 Hz on
+    // the transmit frequency of later tests, through a new slice restoring it.
+    void init()
+    {
+        AppSettings::instance().clear();
+    }
+
     void savedMeasurementPreferenceWinsLateCoordinator_data()
     {
         QTest::addColumn<bool>("saved");
@@ -1381,6 +1392,15 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(two->m_centerHz, centreKeyed + 700.0, 5000);
         QTRY_VERIFY_WITH_TIMEOUT(std::abs(two->m_txCenterHz - two->m_centerHz) < 100.0, 5000);
         QTRY_COMPARE_WITH_TIMEOUT(two->m_txVfoOffsetHz, 700, 5000);
+        // The save RadioModel's 500 ms timer makes once this test runs long
+        // enough, which on a loaded machine it does. Made here so the XIT
+        // reaches the shared settings on every run, not only a slow one, and
+        // init() has to keep it from the next window.
+        window.station.flushPendingSettingsSave();
+        QCOMPARE(AppSettings::instance()
+                     .value(QStringLiteral("Slice%1/XitHz").arg(coreSlice->sliceIndex()))
+                     .toInt(),
+                 700);
         window.key(false);
         QTRY_VERIFY(!window.controller->isKeyed());
         const PanState after = PanState::of(two);

@@ -36,6 +36,7 @@
 // =================================================================
 
 #include "MultiDeviceHarness.h"
+#include "CapabilityOrder.h"
 
 #include <QScopeGuard>
 #include <QSignalSpy>
@@ -383,7 +384,7 @@ private slots:
     }
 
     // Level Cal 2: rx2AttenuatorVersion 1 reaches a peer that declared
-    // rx2Attenuator, as the last entry before coreBuildInfo; a peer that
+    // rx2Attenuator, as the last of the peer-gated entries; a peer that
     // did not is sent none. The entry reads back.
     void rx2AttenuatorVersion_onlyToADeclaringPeer()
     {
@@ -407,11 +408,13 @@ private slots:
         QVERIFY(!capability(appB->received(), QStringLiteral("rx2AttenuatorVersion")).has_value());
         const QJsonArray caps = firstOfType(appA->received(), QStringLiteral("capabilities"))
                                     .value(QStringLiteral("properties")).toArray();
-        QVERIFY(caps.size() >= 2);
-        QCOMPARE(caps.at(caps.size() - 2).toObject().value(QStringLiteral("name")).toString(),
-                 QStringLiteral("rx2AttenuatorVersion"));
-        QCOMPARE(caps.last().toObject().value(QStringLiteral("name")).toString(),
-                 QStringLiteral("coreBuildInfo"));
+        QCOMPARE(capabilityEntriesAfter(capabilityEntryNames(caps), QStringLiteral("rx2AttenuatorVersion")),
+                 kCapabilitiesAfterPeerGatedWithBuildInfo);
+        const QJsonArray plainCaps = firstOfType(appB->received(), QStringLiteral("capabilities"))
+                                         .value(QStringLiteral("properties")).toArray();
+        QVERIFY(!plainCaps.isEmpty());
+        QCOMPARE(capabilityBytesWithout(caps, {QStringLiteral("rx2AttenuatorVersion"), QStringLiteral("coreBuildInfo")}),
+                 capabilityBytesWithout(plainCaps));
 
         StationCapabilities sent;
         sent.rx2AttenuatorVersion = 1;
@@ -447,13 +450,16 @@ private slots:
         QVERIFY(!capability(appB->received(), QStringLiteral("radioMicVersion")).has_value());
         const QJsonArray caps = firstOfType(appA->received(), QStringLiteral("capabilities"))
                                     .value(QStringLiteral("properties")).toArray();
-        QVERIFY(caps.size() >= 3);
-        QCOMPARE(caps.at(caps.size() - 3).toObject().value(QStringLiteral("name")).toString(),
-                 QStringLiteral("rx2AttenuatorVersion"));
-        QCOMPARE(caps.at(caps.size() - 2).toObject().value(QStringLiteral("name")).toString(),
-                 QStringLiteral("radioMicVersion"));
-        QCOMPARE(caps.last().toObject().value(QStringLiteral("name")).toString(),
-                 QStringLiteral("coreBuildInfo"));
+        const QStringList names = capabilityEntryNames(caps);
+        QCOMPARE(capabilityEntriesAfter(names, QStringLiteral("radioMicVersion")),
+                 kCapabilitiesAfterPeerGatedWithBuildInfo);
+        QCOMPARE(names.indexOf(QStringLiteral("rx2AttenuatorVersion")) + 1,
+                 names.indexOf(QStringLiteral("radioMicVersion")));
+        const QJsonArray plainCaps = firstOfType(appB->received(), QStringLiteral("capabilities"))
+                                         .value(QStringLiteral("properties")).toArray();
+        QVERIFY(!plainCaps.isEmpty());
+        QCOMPARE(capabilityBytesWithout(caps, {QStringLiteral("rx2AttenuatorVersion"), QStringLiteral("radioMicVersion"), QStringLiteral("coreBuildInfo")}),
+                 capabilityBytesWithout(plainCaps));
 
         StationCapabilities sent;
         sent.radioMicVersion = 1;

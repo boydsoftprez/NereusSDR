@@ -197,6 +197,29 @@ private slots:
                  QStringLiteral("dfnr"));
         QCOMPARE(DeviceLayoutStore::captureSliceSettings(settings, kMac, 2), copy);
     }
+
+    // One step per slice, on every band: the copy carries Slice<id>/StepHz with
+    // the slice's other keys, and an older per-band step stays in it for the
+    // read that falls back to it.
+    void aSlicesStepIsInItsCopyAndWrittenUnderAnotherLetter()
+    {
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("NereusSDR.settings")));
+        settings.setValue(QStringLiteral("Slice1/StepHz"), QStringLiteral("5000"));
+        settings.setValue(QStringLiteral("Slice1/Band40m/StepHz"), QStringLiteral("250"));
+        settings.setValue(QStringLiteral("Slice2/StepHz"), QStringLiteral("10"));
+
+        const QMap<QString, QString> copy =
+            DeviceLayoutStore::captureSliceSettings(settings, kMac, 1);
+        QCOMPARE(copy.value(QStringLiteral("Slice/StepHz")), QStringLiteral("5000"));
+        QCOMPARE(copy.value(QStringLiteral("Slice/Band40m/StepHz")), QStringLiteral("250"));
+
+        DeviceLayoutStore::clearSliceSettings(settings, kMac, 1);
+        QVERIFY(!settings.contains(QStringLiteral("Slice1/StepHz")));
+
+        DeviceLayoutStore::writeSliceSettings(settings, kMac, 2, copy);
+        QCOMPARE(settings.value(QStringLiteral("Slice2/StepHz")).toString(), QStringLiteral("5000"));
+    }
 };
 
 QTEST_GUILESS_MAIN(TstDeviceLayoutStore)

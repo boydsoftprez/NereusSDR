@@ -17,7 +17,7 @@
 //   toggleOff_restoresPrevious           - toggleVaxSource(false) -> previous
 //   toggleOff_hl2LockedRestoresPc        - lock active, previous=Radio coerced
 //   persistence_perMacRoundTrip          - PreVax key round-trips per-MAC
-//   persistence_preconnectFallback       - missing per-MAC falls back to preconnect
+//   persistence_preconnectFallback       - a pick with no radio reaches the first radio
 // =================================================================
 //
 // Modification history (NereusSDR):
@@ -76,6 +76,8 @@ private:
         auto& s = AppSettings::instance();
         s.remove(preconnectMicKey());
         s.remove(preconnectPreVaxKey());
+        s.remove(TransmitModel::heldEditsPrefix() + QStringLiteral("tx/Mic_Source"));
+        s.remove(TransmitModel::heldEditsPrefix() + QStringLiteral("tx/Mic_Source_PreVax"));
         s.remove(perMacMicKey(mac));
         s.remove(perMacPreVaxKey(mac));
     }
@@ -200,14 +202,21 @@ private slots:
 
         // User picks Radio in Setup before connecting (no MAC bound).
         TransmitModel pre;
+        pre.setKeepsEditsWithoutRadio(true);
         pre.setMicSource(MicSource::Radio);
-        QCOMPARE(AppSettings::instance().value(preconnectPreVaxKey()).toString(),
+        QCOMPARE(AppSettings::instance()
+                     .value(TransmitModel::heldEditsPrefix()
+                            + QStringLiteral("tx/Mic_Source_PreVax"))
+                     .toString(),
                  QStringLiteral("Radio"));
+        QVERIFY(!AppSettings::instance().contains(preconnectPreVaxKey()));
 
-        // First connect to this radio: per-MAC PreVax absent, fall back to preconnect.
+        // First connect to this radio: the held choice is now this radio's.
         TransmitModel m;
         m.loadFromSettings(mac);
         QCOMPARE(m.previousNonVaxMicSource(), MicSource::Radio);
+        QVERIFY(!AppSettings::instance().contains(
+            TransmitModel::heldEditsPrefix() + QStringLiteral("tx/Mic_Source_PreVax")));
     }
 
     // A stale restore key must not override the source actually selected

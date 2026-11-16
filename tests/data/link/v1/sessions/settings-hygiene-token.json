@@ -475,6 +475,12 @@
                         "name": "accessoryTxVersion",
                         "ordinal": 0,
                         "value": 0
+                    },
+                    {
+                        "kind": "i64",
+                        "name": "txSsbModMonitorVersion",
+                        "ordinal": 0,
+                        "value": 1
                     }
                 ],
                 "type": "capabilities"

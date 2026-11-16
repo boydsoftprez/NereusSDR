@@ -750,6 +750,9 @@ QByteArray CatService::testCommand(int channel, const QByteArray& frame)
     // Native Tester policy: ZZLI1 calls PureSignalCoordinator::setAutoCalEnabled(true),
     // which starts calibration. Ordinary CAT transport behavior remains in CatTxCommands.
     const bool calibration=request.code=="ZZLI" && request.form==CatForm::Set && request.suffix=="1";
+    // See below: a CAT write with no radio holds nothing.
+    std::optional<TransmitModel::HeldEditPause> notAnEdit;
+    if (m_model) { notAnEdit.emplace(m_model->transmitModel()); }
     const CatCommandResult result=calibration ? CatCommandResult{CatResultKind::Error,"?;"} : m_router.execute(request,tester->context());
     if (!current()) { return "?;"; }
     const QByteArray reply=m_parser.format(*m_catalog.find(request.code),request,result,tester->context());
@@ -823,6 +826,11 @@ QByteArray CatService::processFrame(quint64 id, const QByteArray& frame)
     // Family handlers consume context.transmitAllowed before all key/tune/test actions.
     const QPointer<CatService> self(this);
     const quint64 generation = m_lifecycleGeneration;
+    // Holding a transmit value with no radio is for the operator's own edits in
+    // the app. A logger's write that comes before the radio does is dropped, or
+    // it would replace that radio's saved value at connect.
+    std::optional<TransmitModel::HeldEditPause> notAnEdit;
+    if (m_model) { notAnEdit.emplace(m_model->transmitModel()); }
     const CatCommandResult result = m_router.execute(request, current->context());
     if (!self || generation != m_lifecycleGeneration || !m_started || m_sessions.value(id) != current) { return "?;"; }
     current->applyGuidResult(request, result);

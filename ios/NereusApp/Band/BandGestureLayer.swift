@@ -8,6 +8,9 @@
 
 // 2026-10-30: Read exact-frequency cochannel reports without tuning, through
 // the existing Roundtable sheet. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-11-03: Overlay redesign D17, D18 and D20: the card and tags keep off the flags,
+// the side buttons and the dBm scale, and a frequency another flag speaks for has no tag.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import Combine
 import NereusBand
@@ -72,6 +75,8 @@ struct BandGestureLayer: View {
     var trailingInset: CGFloat = 0
     /// Sideways, the phone's other rounded edge on the left, which PTT keeps inside.
     var leadingInset: CGFloat = 0
+    /// The button column over this band, and whether it is folded; nil when there is none.
+    var buttonColumnFolded: Bool?
     /// The pan's display, which a drag up or down on the frequency-scale
     /// row (the split) or on the dBm scale moves; nil leaves those places to
     /// pan the band, as everywhere else.
@@ -107,6 +112,10 @@ struct BandGestureLayer: View {
     var roundtableLines: [Int: RoundtableFlagLine] = [:]
     /// A Roundtable line's tap, with its slice.
     var openRoundtable: ((Int) -> Void)?
+    /// Views a frequency without tuning there (overlay design D21).
+    var viewRoundtable: ((String) -> Void)?
+    /// A flag's Roundtable line: that slice's frequency, and the same line closes it (D26).
+    var toggleRoundtableLine: ((Int) -> Void)?
     /// The Roundtable sheet is up over a dial: the dial sits in the 92-point
     /// strip under it, the knob drawn smaller (spec 11.3).
     var dialStrip = false
@@ -116,6 +125,11 @@ struct BandGestureLayer: View {
     /// The Panadapter tab's swipes: a drag that starts in an edge zone and
     /// heads in is the swipe, not the band's; nil leaves the edges to the band.
     var swipes: SwipeShortcutModel?
+    /// The pan's band stack, whose saved entries the phone's switch marks at
+    /// the foot of the spectrum; nil marks none.
+    var bandStack: BandStackModel?
+    /// The radio is on the air, whatever keyed it: the marks wait.
+    var radioOnAir = false
     @Environment(\.uprightBandWidth) private var uprightWidth
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -133,6 +147,8 @@ struct BandGestureLayer: View {
     @State private var flagHeights: [Int: CGFloat] = [:]
     /// Moves on whenever the take changes, so each badge redraws.
     @State private var badgeTick = 0
+    /// Moves on whenever the band stack changes, so what keeps clear of its chips moves too.
+    @State private var markerTick = 0
 
     var body: some View {
         GeometryReader { proxy in
@@ -225,6 +241,12 @@ struct BandGestureLayer: View {
             }
         }
         let others = foreign.entries
+        _ = markerTick
+        let showsMarkers = BandStackMarkerLayout.shows(switchOn: settings.showBandStackMarkers,
+                                                       availability: bandStack?.availability ?? .notConnected,
+                                                       onAir: keyed || radioOnAir || band.transmitOverlay)
+        let markerModel = showsMarkers ? bandStack : nil
+        let markerRects = markerModel?.markerChips(geometry: geometry, layout: layout).map(\.rect) ?? []
         // Other devices' markers first, so this phone's own draw over them.
         let markers = ForeignSliceMarkers.markers(others.map(\.slice))
             + SliceMarkers.markers(slices: entries.map(\.slice), activeSliceId: slices.activeSliceId,
@@ -260,7 +282,7 @@ struct BandGestureLayer: View {
         let edgeRects = EdgeMarkers.rects(shown.edges, spectrumFoot: layout.spectrum.maxY,
                                           bandWidth: geometry.size.width, avoid: rects, sideways: sideways,
                                           large: large, dbmArrows: arrows, controls: controls)
-        let chipAvoid = rects + placements.filter(\.isFolded).map(\.rect) + edgeRects
+        let chipAvoid = rects + placements.filter(\.isFolded).map(\.rect) + edgeRects + markerRects
             + (jumped && slices.shownEntry != nil ? [JumpBar.rect(sideways: sideways, large: large)] : [])
             + (band.settings.showFps && band.framesPerSecond != nil ? [BandReadouts.fpsRect(layout: layout)] : [])
         let chipRect = WideChip.rect(layout: layout, avoid: chipAvoid, sideways: sideways,
@@ -273,10 +295,10 @@ struct BandGestureLayer: View {
         let flagAndTagRects = rects + placements.filter(\.isFolded).map(\.rect)
         let spotsModel = spots
         let emptyBand: (CGPoint) -> Bool = { point in
-            let spotRects = spotsModel.map { model in
+            let spotRects = (spotsModel.map { model in
                 BandMenuHit.spotRects(SpotLayout.layout(spots: model.bandSpots, flags: placements, geometry: geometry,
                                                         settings: model.display))
-            } ?? []
+            } ?? []) + (markerModel?.markerChips(geometry: geometry, layout: layout).map(\.rect) ?? [])
             let stations = others.compactMap { BandMenuHit.stationRect($0.slice, geometry: geometry, layout: layout) }
             return BandMenuHit.isEmptyBand(at: point, flags: flagAndTagRects, spots: spotRects, stations: stations,
                                            layout: layout)
@@ -295,27 +317,40 @@ struct BandGestureLayer: View {
                 // Spots start under the flags, which draw over them (D13).
                 SpotLayer(spots: spots, geometry: geometry, placements: placements)
             }
+            if let markerModel {
+                BandStackMarkerLayer(model: markerModel, geometry: geometry, layout: layout, leadingInset: leadingInset)
+            }
+            if let bandStack {
+                BandStackExpiryNoteLayer(model: bandStack, layout: layout, leadingInset: leadingInset)
+            }
             if let roundtable {
-                // 8 points above the band plan, clear of every flag and folded tag.
+                // Just above the band plan, clear of every flag and folded tag.
                 RoundtableTagLayer(roundtable: roundtable, sliceIds: entries.map { Int64($0.id) },
                                    geometryWidth: geometry.size.width, lowHz: geometry.lowHz,
                                    hzPerPoint: geometry.spanHz / Double(max(1, geometry.size.width)),
                                    top: layout.strip.minY - RoundtableTagLayout.footGap - RoundtableTagLayout.height,
                                    tickFoot: layout.strip.minY,
-                                   flagRects: rects + placements.filter(\.isFolded).map(\.rect) + [arrows]
-                                    + (sideways ? [CGRect(x: BandColumnLayout.origin, y: BandColumnLayout.origin,
-                                        width: BandColumnLayout.columnWidth(columns: BandColumnLayout.columns(bandHeight: geometry.size.height)),
-                                        height: BandColumnLayout.columnHeight(rows: BandColumnLayout.buttonCount
-                                            / BandColumnLayout.columns(bandHeight: geometry.size.height)))] : []), keyed: keyed,
+                                   flagRects: placements.map(\.rect) + columns.values.sorted { $0.minX < $1.minX }, keyed: keyed,
                                    sliceLetter: slices.active?.slice.letter ?? "A",
+                                   panKeepOut: [arrows] + markerRects
+                                    + (buttonColumnFolded.map { [BandColumnLayout.frame(bandHeight: layout.size.height,
+                                                                                         leadingInset: leadingInset, folded: $0)] } ?? []),
+                                   usableWidth: arrows.minX,
+                                   otherFlagHz: Set(flags.filter { !$0.1.isFolded && $0.0.id != slices.activeSliceId }
+                                    .map { Int64($0.0.slice.frequencyHz.rounded()) }),
                                    readReports: { context in
-                    Task {
-                        await roundtable.read(context)
+                    if roundtable.frequencyAvailable {
+                        // Your own frequency's reports are your own room, with nothing to read.
                         openRoundtable?(slices.activeSliceId ?? entries.first?.id ?? 0)
+                    } else {
+                        Task {
+                            await roundtable.read(context)
+                            openRoundtable?(slices.activeSliceId ?? entries.first?.id ?? 0)
+                        }
                     }
-                }) { room in
+                }, viewFrequency: viewRoundtable) { room in
                     // As the sheet's Tune here: the active slice to the room, then back to its own room.
-                    slices.tap(to: Double(room.hz))
+                    slices.tune(toHz: room.hz, family: room.family)
                     Task { await roundtable.backToSlice() }
                 }
             }
@@ -382,6 +417,9 @@ struct BandGestureLayer: View {
         }
         .onReceive(take?.objectWillChange.eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher()) { _ in
             badgeTick &+= 1
+        }
+        .onReceive(bandStack?.objectWillChange.eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher()) { _ in
+            markerTick &+= 1
         }
         // In the same update as the jump, not on a later turn of the main
         // queue: the first frame drawn after the jump already holds the
@@ -484,9 +522,9 @@ struct BandGestureLayer: View {
                         bypassOn: controls?.bypassOn ?? false,
                         openDiversity: controls.map { controls in { controls.openDiversity(entry) } },
                         roundtable: roundtableLines[id],
-                        openRoundtable: openRoundtable.map { open in {
+                        openRoundtable: toggleRoundtableLine.map { toggle in {
                             controls?.close()
-                            open(id)
+                            toggle(id)
                         } })
                 .onTapGesture(coordinateSpace: .local) { point in
                     // Even if an ancestor recognises the tap, the DIV target never selects its band slice.

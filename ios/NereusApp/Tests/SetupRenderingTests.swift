@@ -35,7 +35,7 @@ struct SetupRenderingTests {
                                             "Diagnostics", "About this app"])
         #expect(categories.map(\.tag) == [.core, .both, .both, .both, .both, .both, .both, .thisPhone])
         #expect(categories.map(\.summary) == ["Paired phones and computers \u{00B7} Add a device",
-                                              "Navigation \u{00B7} Battery and sessions", "On this phone",
+                                              "Navigation \u{00B7} Battery and sessions \u{00B7} Band Stack", "On this phone",
                                               "On this phone", "PTT buttons", "Rotor \u{00B7} Data use", "Logs",
                                               "Build · Credits · Licenses"])
         // Nothing the phone leaves off (spec section 5.2 item 7), and no page the Core would describe.

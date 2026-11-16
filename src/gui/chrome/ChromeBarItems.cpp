@@ -100,8 +100,12 @@ void registerChromeBarItems(ChromeBarController& c, const ChromeBarWidgets& w)
     // The band-stack dots fold at this rung too but are registered
     // separately, because they sit at the very head of the bar ahead of
     // +PAN rather than inside the group. Rung governs visibility, the
-    // layout governs position, and the two are independent.
+    // layout governs position, and the two are independent. The stack number
+    // goes with them, because the two are one thing on the bar. A number is a
+    // live reading, and this rung still suits it: only TNF folds later, and the
+    // Band menu reaches the panel on a bar too narrow for either.
     add(c, w.bandStackLabel, nullptr, 10, QString());
+    add(c, w.bandStackNumber, nullptr, 10, QString());
     add(c, w.placeholderGroup, w.placeholderSep, 10,
         QCoreApplication::translate("ChromeBar", "Band Stack / CWX / DVK / FDX"));
 

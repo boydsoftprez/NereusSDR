@@ -2,6 +2,9 @@
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-06 ZZTI under a foreign key and with no slice. J.J. Boyd (KG4VCF),
 //            AI-assisted via Anthropic Claude Code.
+// 2026-11-06 The SM read pair is compared with the receive lane held, so a
+//            refresh cannot land between them. J.J. Boyd (KG4VCF), AI-assisted
+//            via Anthropic Claude Code.
 #include <QtTest>
 #include "CatFixtureHarness.h"
 #include <QSemaphore>
@@ -90,7 +93,11 @@ private slots:
   for(int block=0;block<160;++block) { for(int n=0;n<64;++n) { const double phase=2.0*3.141592653589793*(block*64+n)*1000/48000.0; inI[size_t(n)]=float(0.01*std::cos(phase)); inQ[size_t(n)]=float(0.01*std::sin(phase)); } first->processIq(inI.data(),inQ.data(),outI.data(),outQ.data(),64); }
   first->getMeter(RxMeterType::SignalPeak); QVERIFY(engine->receiveLane()->waitIdleForTest(30000));
   QTRY_VERIFY(service.adapter().readRxMeter(binding,CatVfo::Primary,RxMeterType::SignalPeak,value));
-  const double actual=first->getMeter(RxMeterType::SignalPeak); QVERIFY(engine->receiveLane()->waitIdleForTest(30000)); QVERIFY(actual>-400); QCOMPARE(value,actual+model.rxMeterOffsetDbForSlice(0));
+  // Each read asks for a refresh, so one read pair holds the lane to see one cache.
+  QSemaphore readEntered,readRelease; const auto readPairRelease=qScopeGuard([&] { readRelease.release(); }); engine->receiveLane()->postBarrier([&] { readEntered.release(); readRelease.acquire(); }); QVERIFY(readEntered.tryAcquire(1,30000));
+  QVERIFY(service.adapter().readRxMeter(binding,CatVfo::Primary,RxMeterType::SignalPeak,value));
+  const double actual=first->getMeter(RxMeterType::SignalPeak);
+  readRelease.release(); QVERIFY(engine->receiveLane()->waitIdleForTest(30000)); QVERIFY(actual>-400); QCOMPARE(value,actual+model.rxMeterOffsetDbForSlice(0));
   // Deterministic cache injection proves selector distinctions and source
   // formatting on these same actual active/ready channel wrappers.
   QSemaphore formatsEntered,formatsRelease; const auto formatRelease=qScopeGuard([&] { formatsRelease.release(); }); engine->receiveLane()->postBarrier([&] { formatsEntered.release(); formatsRelease.acquire(); }); QVERIFY(formatsEntered.tryAcquire(1,30000));

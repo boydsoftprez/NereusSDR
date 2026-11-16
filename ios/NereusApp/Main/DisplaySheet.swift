@@ -15,6 +15,9 @@ import SwiftUI
 struct DisplaySheet: View {
     @ObservedObject var model: DisplaySheetModel
     @ObservedObject var core: CoreDisplayModel
+    /// This pan's band stack and this phone's settings, for the Band stack switch.
+    let bandStack: BandStackModel
+    let settings: PhoneSettings
     /// A line over the rows: why the Display pill's tabs are not here.
     var topNote: String? = nil
     /// Switches to the Setup tab.
@@ -118,7 +121,9 @@ struct DisplaySheet: View {
                     model.toggleClassicPeakHold()
                 }
                 .accessibilityIdentifier("classicPeakHold")
+                BandStackMarkerSheetButton(model: bandStack, settings: settings)
             }
+            BandStackMarkerSheetNote(model: bandStack)
             if !model.extrasAvailable {
                 SheetNote("Active peak hold, Peaks and Noise floor: \(CatalogFeed.needsNewerCoreText)")
             }

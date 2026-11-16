@@ -1,0 +1,110 @@
+{
+  "bands": {
+    "20m": {
+      "order": [
+        "20m-ft8"
+      ],
+      "returnMode": "lastUsed",
+      "specificId": ""
+    },
+    "40m": {
+      "order": [
+        "40m-net",
+        "40m-ssb"
+      ],
+      "returnMode": "specific",
+      "specificId": "40m-net"
+    },
+    "80m": {
+      "order": [
+        "80m-low"
+      ],
+      "returnMode": "current",
+      "specificId": ""
+    }
+  },
+  "entries": [
+    {
+      "band": "80m",
+      "centerHz": 3573000,
+      "filterHighHz": 3000,
+      "filterLowHz": 200,
+      "frequencyHz": 3573000,
+      "id": "80m-low",
+      "lastUsedMs": 0,
+      "locked": false,
+      "mode": "DIGU",
+      "name": "",
+      "seeded": true,
+      "spanHz": 0
+    },
+    {
+      "band": "40m",
+      "centerHz": 7230000,
+      "filterHighHz": -100,
+      "filterLowHz": -2800,
+      "frequencyHz": 7230000,
+      "id": "40m-net",
+      "lastUsedMs": 1762300000123,
+      "locked": true,
+      "mode": "LSB",
+      "name": "Evening net",
+      "seeded": false,
+      "spanHz": 192000
+    },
+    {
+      "band": "40m",
+      "centerHz": 7250000,
+      "filterHighHz": -100,
+      "filterLowHz": -2800,
+      "frequencyHz": 7250000,
+      "id": "40m-ssb",
+      "lastUsedMs": 0,
+      "locked": false,
+      "mode": "LSB",
+      "name": "",
+      "seeded": true,
+      "spanHz": 0
+    },
+    {
+      "band": "20m",
+      "centerHz": 14074000,
+      "filterHighHz": 3000,
+      "filterLowHz": 200,
+      "frequencyHz": 14074000,
+      "id": "20m-ft8",
+      "lastUsedMs": 1762300000456,
+      "locked": false,
+      "mode": "DIGU",
+      "name": "",
+      "seeded": false,
+      "spanHz": 48000
+    }
+  ],
+  "lastExpiry": {
+    "batchId": "",
+    "count": 0
+  },
+  "lastRecall": {
+    "applyView": false,
+    "centerHz": 0,
+    "seq": 0,
+    "sliceId": -1,
+    "spanHz": 0
+  },
+  "options": {
+    "dupeProtection": true,
+    "dwellSeconds": 30,
+    "expiryMinutes": 15
+  },
+  "places": {
+    "A": {
+      "40m": "40m-net"
+    },
+    "B": {
+      "20m": "20m-ft8"
+    }
+  },
+  "region": "United States",
+  "schema": 1
+}

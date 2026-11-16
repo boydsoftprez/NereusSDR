@@ -472,12 +472,12 @@ struct DisplayV29Presentation: ViewModifier {
             let files = FileManager.default
             let support = try files.url(for: .applicationSupportDirectory, in: .userDomainMask,
                                         appropriateFor: nil, create: true)
-            let directory = support.appendingPathComponent("DisplayPictures", isDirectory: true)
+            let directory = support.appendingPathComponent(BandBackgroundPicture.directoryName, isDirectory: true)
             try files.createDirectory(at: directory, withIntermediateDirectories: true)
             let destination = directory.appendingPathComponent(UUID().uuidString)
                 .appendingPathExtension(url.pathExtension)
             try files.copyItem(at: url, to: destination)
-            main.changeDisplay { $0.backgroundImagePath = destination.path; $0.backgroundEnabled = true }
+            main.changeDisplay { $0.backgroundImagePath = BandBackgroundPicture.storedPath(fileName: destination.lastPathComponent); $0.backgroundEnabled = true }
         } catch { pictureProblem = error.localizedDescription }
     }
 }

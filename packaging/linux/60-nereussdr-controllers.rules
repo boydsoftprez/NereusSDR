@@ -1,0 +1,22 @@
+# Lets the person at this computer use USB tuning knobs and controllers in NereusSDR.
+# Copy to /etc/udev/rules.d/, then run: sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+# Icom RC-28, and the RC-28 emulator's own id
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0c26", ATTRS{idProduct}=="001e", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="0266", TAG+="uaccess"
+# Griffin PowerMate
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="077d", ATTRS{idProduct}=="0410", TAG+="uaccess"
+SUBSYSTEM=="input", ATTRS{idVendor}=="077d", ATTRS{idProduct}=="0410", TAG+="uaccess"
+# Griffin SoundKnob, the PowerMate's older id
+SUBSYSTEM=="input", ATTRS{idVendor}=="077d", ATTRS{idProduct}=="04aa", TAG+="uaccess"
+# Contour ShuttleXpress and ShuttlePro v2
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b33", ATTRS{idProduct}=="0020", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b33", ATTRS{idProduct}=="0030", TAG+="uaccess"
+# FlexControl, which shows up as a serial port
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2192", ATTRS{idProduct}=="0010", TAG+="uaccess"
+# ELAD TMate 2
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1721", ATTRS{idProduct}=="0614", TAG+="uaccess"
+# Elgato Stream Deck+
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0fd9", ATTRS{idProduct}=="0084", TAG+="uaccess"
+# Ulanzi Dial, which shows up as a keyboard
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Ulanzi Dial*", TAG+="uaccess"

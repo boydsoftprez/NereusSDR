@@ -16,6 +16,59 @@ struct PhoneSettingsTests {
         return defaults
     }
 
+    @Test("the Display pill's FPS is kept on the phone, and is unset until it is moved")
+    func displayPaintFps() throws {
+        let defaults = try freshDefaults()
+        let settings = PhoneSettings(defaults: defaults)
+        #expect(settings.displayPaintFps == nil)
+        settings.displayPaintFps = 15
+        #expect(PhoneSettings(defaults: defaults).displayPaintFps == 15)
+    }
+
+    @Test("Reconnect automatically starts as its one named default and forgets nothing else")
+    func autoReconnect() throws {
+        let defaults = try freshDefaults()
+        let settings = PhoneSettings(defaults: defaults)
+        // JJ's ruling: off until the operator turns it on.
+        #expect(!PhoneSettings.autoReconnectDefault)
+        #expect(settings.autoReconnect == PhoneSettings.autoReconnectDefault)
+        settings.autoReconnect = !PhoneSettings.autoReconnectDefault
+        #expect(PhoneSettings(defaults: defaults).autoReconnect != PhoneSettings.autoReconnectDefault)
+        #expect(defaults.object(forKey: "phone.connect.autoReconnect") != nil)
+        #expect(settings.lastCore == nil)
+        settings.lastCore = "abc"
+        #expect(PhoneSettings(defaults: defaults).lastCore == "abc")
+        settings.lastCore = nil
+        #expect(defaults.object(forKey: "phone.connect.lastCore") == nil)
+        #expect(settings.lastUsedCore == nil)
+        settings.lastUsedCore = "abc"
+        #expect(PhoneSettings(defaults: defaults).lastUsedCore == "abc")
+        #expect(defaults.object(forKey: "phone.connect.lastCore") == nil)
+        settings.lastUsedCore = nil
+        #expect(defaults.object(forKey: "phone.connect.lastUsedCore") == nil)
+    }
+
+    @Test("the band screen's layout is kept: pill tab, applet column, folded columns")
+    func layoutKept() throws {
+        let defaults = try freshDefaults()
+        let settings = PhoneSettings(defaults: defaults)
+        #expect(settings.displayPillTab == .spectrum)
+        #expect(settings.appletColumnShown)
+        #expect(!settings.buttonColumnFolded)
+        #expect(settings.foldedPanColumns.isEmpty)
+        settings.displayPillTab = .fft
+        settings.appletColumnShown = false
+        settings.buttonColumnFolded = true
+        settings.foldedPanColumns = [2, 3]
+        let again = PhoneSettings(defaults: defaults)
+        #expect(again.displayPillTab == .fft)
+        #expect(!again.appletColumnShown)
+        #expect(again.buttonColumnFolded)
+        #expect(again.foldedPanColumns == [2, 3])
+        defaults.set("gone", forKey: "phone.layout.displayPillTab")
+        #expect(again.displayPillTab == .spectrum)
+    }
+
     @Test("an unset setting reads its default")
     func defaults() throws {
         let settings = PhoneSettings(defaults: try freshDefaults())

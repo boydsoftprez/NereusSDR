@@ -203,6 +203,7 @@ private slots:
     void olderCoreOffersNoTransmitSettings();
     void olderAppIsNotOfferedTransmitSettings();
     void keyingSetStaysRefusedOnAndOffTheAir();
+    void aCoreHoldsAWriteAndItsWindowMirrorHoldsNothing();
     void settingAppliedOffTheAirAndReturnsToTheWindow();
     void settingTakenWhileOnTheAir();
     void settingVerbsAreTheStationKeysWhileItHoldsTransmit();
@@ -390,6 +391,49 @@ void TstTransmitSettingsGate::olderAppIsNotOfferedTransmitSettings()
     QCOMPARE(received(SessionMessageKind::SettingsReject).first().reason, kReceiveOnly);
     QCOMPARE(settings.value(QStringLiteral("DspOptionsBufferSizePhoneTx")).toString(),
              QStringLiteral("1024"));
+}
+
+// With no radio bound the Core holds a client's write for its next radio. The
+// window mirrors the Core's values through setters and holds none of them: they
+// are not edits, and that install could later connect to a radio directly.
+void TstTransmitSettingsGate::aCoreHoldsAWriteAndItsWindowMirrorHoldsNothing()
+{
+    const auto held = [] {
+        QStringList keys;
+        for (const QString& key : AppSettings::instance().allKeys()) {
+            if (key.startsWith(TransmitModel::heldEditsPrefix())) {
+                keys.append(key);
+            }
+        }
+        return keys;
+    };
+    const auto clearHeld = qScopeGuard([&held] {
+        for (const QString& key : held()) {
+            AppSettings::instance().remove(key);
+        }
+    });
+    QCOMPARE(held(), QStringList{});
+
+    Session s(m_securityDir.path(), this);
+    s.core->transmitModel().setMicGainDb(-17);
+    s.core->keepTransmitEditsWithoutRadio();
+    // MainWindow makes this call whatever its role.
+    s.window.keepTransmitEditsWithoutRadio();
+    QVERIFY(s.core->transmitModel().keepsEditsWithoutRadio());
+    QVERIFY(!s.window.transmitModel().keepsEditsWithoutRadio());
+    QVERIFY(s.connect());
+    QTRY_COMPARE(s.window.transmitModel().micGainDb(), -17);
+    QCOMPARE(held(), QStringList{});
+
+    const SessionPropertyResult result = s.writeTransmit(
+        QByteArrayLiteral("micGainDb"), MirrorWireKind::Int64, QVariant(qlonglong(-5)));
+    QVERIFY2(result.accepted, qPrintable(result.reason));
+    QCOMPARE(s.core->transmitModel().micGainDb(), -5);
+    QCOMPARE(held(), QStringList{TransmitModel::heldEditsPrefix() + QStringLiteral("tx/MicGain")});
+    QCOMPARE(AppSettings::instance()
+                 .value(TransmitModel::heldEditsPrefix() + QStringLiteral("tx/MicGain"))
+                 .toString(),
+             QStringLiteral("-5"));
 }
 
 void TstTransmitSettingsGate::keyingSetStaysRefusedOnAndOffTheAir()
