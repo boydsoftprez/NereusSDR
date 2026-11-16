@@ -4,6 +4,8 @@
 // 2026-11-16: Recording plan Task 16: Record and Play join the column, now
 //   gray icons with no box inside the flag's height. J.J. Boyd (KG4VCF),
 //   AI-assisted via Claude Code.
+// 2026-11-16: The armed Record ring drops its AUTO caption. J.J. Boyd
+//   (KG4VCF), AI-assisted via Claude Code.
 
 import NereusBand
 import SwiftUI
@@ -15,8 +17,8 @@ import SwiftUI
 /// height (five rows 30 points tall, 44 across, 2 apart). Close the slice
 /// (greyed on slice A, which always stays, and a tap says so), lock its
 /// frequency (lit while locked), Record (blinks red with the time under
-/// it while the Core records the slice; a hollow red ring and AUTO while
-/// it waits for a transmit), Play (a blue stop square with the position
+/// it while the Core records the slice; a hollow red ring while it
+/// waits for a transmit), Play (a blue stop square with the position
 /// under it while this phone plays, red while that goes on the air), and
 /// more, which opens the desktop flag's right-click menu (lit while open).
 /// Close, lock and Record ask the Core, which decides. A Record or Play
@@ -57,7 +59,6 @@ struct FlagSideButtons: View {
     static let recordRed = WorkspacePalette.rgb(0xFF453A)
     static let recordTime = WorkspacePalette.rgb(0xFF8A84)
     static let armedRed = WorkspacePalette.rgb(0xFF6B62)
-    static let armedWords = WorkspacePalette.rgb(0xC9A3A1)
     static let playBlue = WorkspacePalette.rgb(0x3A9CFF)
     static let playTime = WorkspacePalette.rgb(0x8CC4FF)
     /// A Record or Play that cannot act.
@@ -151,9 +152,7 @@ struct FlagSideButtons: View {
         case .idle:
             glyph(Circle().fill(Self.iconGray), size: 12, caption: nil)
         case .armed:
-            glyph(Circle().strokeBorder(Self.armedRed, lineWidth: 2.2).padding(0.6), size: 11.6,
-                  caption: Text("AUTO").font(.system(size: 8, weight: .semibold)).kerning(0.3)
-                    .foregroundStyle(Self.armedWords))
+            glyph(Circle().strokeBorder(Self.armedRed, lineWidth: 2.2).padding(0.6), size: 11.6, caption: nil)
         case .recording(let elapsed):
             glyph(Circle().fill(Self.recordRed).opacity(blinkLow ? 0.35 : 1), size: 9.5,
                   caption: Text(RecordingFlagModel.lengthText(elapsed))

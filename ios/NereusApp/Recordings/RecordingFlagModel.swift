@@ -3,6 +3,8 @@
 // Modification history (NereusSDR):
 // 2026-11-16: Recording plan Task 16, the phone's flag Record and Play.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: The armed ring drops its AUTO caption. J.J. Boyd (KG4VCF),
+//   AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -34,7 +36,7 @@ final class RecordingFlagModel {
     /// What Record shows.
     enum RecordLook: Equatable {
         case idle
-        /// Start by itself when I transmit is on: a hollow red ring and "AUTO".
+        /// Start by itself when I transmit is on: a hollow red ring.
         case armed
         /// Blinks red with the running time under it.
         case recording(elapsedMs: Int64)
