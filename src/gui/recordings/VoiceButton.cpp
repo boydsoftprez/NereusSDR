@@ -12,6 +12,10 @@
 //   2026-11-16 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 12.
+//   2026-11-16 - J.J. Boyd (KG4VCF), against the desktop-voice-button
+//                 mockup: an older Core dims VOICE as a whole, and held
+//                 elsewhere the box's messages dim with Take transmit live.
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/recordings/VoiceButton.h"
@@ -46,7 +50,9 @@ namespace NereusSDR {
 
 namespace {
 
+// The mockup's #vBtn.off and .t.off (desktop-voice-button/index.html).
 constexpr qreal kDimmedOpacity = 0.45;
+constexpr qreal kHeldTileOpacity = 0.42;
 constexpr int kTileHeight = 37;
 constexpr int kBoxGap = 4;
 constexpr int kProgressHeight = 3;
@@ -502,7 +508,8 @@ void VoiceButton::refresh()
         voice->setStyleSheet(style);
     }
     // Held elsewhere: VOICE dims (it still opens the box, which says why).
-    const bool dim = usable && !m_permitted && !s.has_value();
+    // An older Core dims all of it too, label and box with the icon.
+    const bool dim = !usable || (!m_permitted && !s.has_value());
     if (dim && voice->graphicsEffect() == nullptr) {
         auto* effect = new QGraphicsOpacityEffect(voice);
         effect->setOpacity(kDimmedOpacity);
@@ -557,6 +564,16 @@ void VoiceButton::refreshBox()
         tile->setAccessibleName(slot.empty ? QStringLiteral("M%1, empty").arg(n)
                                            : QStringLiteral("M%1, %2").arg(n).arg(m_snapshot.label(n)));
         tile->setAccessibleDescription(tile->isEnabled() ? QString() : tile->toolTip());
+        // Held elsewhere, a message that would key dims, as the mockup's
+        // .t.off; Take transmit below stays bright.
+        const bool dimTile = usable && !m_permitted && !slot.empty;
+        if (dimTile && tile->graphicsEffect() == nullptr) {
+            auto* effect = new QGraphicsOpacityEffect(tile);
+            effect->setOpacity(kHeldTileOpacity);
+            tile->setGraphicsEffect(effect);
+        } else if (!dimTile && tile->graphicsEffect() != nullptr) {
+            tile->setGraphicsEffect(nullptr);
+        }
         if (sending && s->waitingMs <= 0) {
             progress->setGeometry(0, tile->height() - kProgressHeight,
                                   static_cast<int>(std::lround(tile->width() * m_fill)), kProgressHeight);

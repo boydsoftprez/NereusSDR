@@ -15,10 +15,14 @@
 //   2026-11-16 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 12.
+//   2026-11-16 - J.J. Boyd (KG4VCF), the older Core's VOICE dims whole and
+//                 held elsewhere the box's messages dim. AI-assisted
+//                 implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QAction>
 #include <QFileInfo>
+#include <QGraphicsOpacityEffect>
 #include <QJsonArray>
 #include <QLabel>
 #include <QMenu>
@@ -409,7 +413,15 @@ private slots:
         r.voice->openBox();
         QVERIFY(!r.voice->tileForTest(1)->isEnabled());
         QCOMPARE(r.voice->tileForTest(1)->toolTip(), kHeld);
+        // The messages that would key dim, as the mockup's; Take transmit does not.
+        for (int n = 1; n <= 4; ++n) {
+            auto* effect = qobject_cast<QGraphicsOpacityEffect*>(r.voice->tileForTest(n)->graphicsEffect());
+            QVERIFY2(effect != nullptr, qPrintable(QString::number(n)));
+            QCOMPARE(effect->opacity(), 0.42);
+        }
+        QVERIFY(r.voice->takeTransmitForTest()->graphicsEffect() == nullptr);
         QVERIFY(r.voice->tileForTest(5)->isEnabled());   // an empty one still opens the panel
+        QVERIFY(r.voice->tileForTest(5)->graphicsEffect() == nullptr);
         QCOMPARE(r.voice->holderNoteForTest()->text(), kHeld);
         QVERIFY(r.voice->takeTransmitForTest()->isVisible());
         r.voice->takeTransmitForTest()->click();
@@ -419,6 +431,7 @@ private slots:
         r.voice->setTransmitPermitted(true, QString());
         QVERIFY(voice->graphicsEffect() == nullptr);
         QVERIFY(r.voice->tileForTest(1)->isEnabled());
+        QVERIFY(r.voice->tileForTest(1)->graphicsEffect() == nullptr);
         r.voice->closeBox();
     }
 
@@ -431,6 +444,11 @@ private slots:
         QVERIFY(voice->isVisible());
         QVERIFY(!voice->isEnabled());
         QCOMPARE(voice->toolTip(), QStringLiteral("This Core needs an update for recordings."));
+        QCOMPARE(voice->accessibleDescription(), QStringLiteral("This Core needs an update for recordings."));
+        // All of it dims, label and box with the icon, as the mockup's #vBtn.off.
+        auto* effect = qobject_cast<QGraphicsOpacityEffect*>(voice->graphicsEffect());
+        QVERIFY(effect != nullptr);
+        QCOMPARE(effect->opacity(), 0.45);
     }
 
     void repeatInTheBoxSetsIt()
