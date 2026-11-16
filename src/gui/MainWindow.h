@@ -563,6 +563,28 @@ public:
     // Liste legen und danach fragen, ob es schon zurueck ist.
     int schwebendeMitziehenForTest() { return schwebendeMitziehen(); }
     void vergissMitziehBasisForTest() { m_mitziehBasis.clear(); }   // wie ein frischer Start
+    // Die Grundlage, mit der das Mitziehen gerechnet HAT -- als Text fuer
+    // eine Fehlermeldung. Ohne sie bleibt ein roter Pruefstand ein Raten:
+    // eine wiederverwendete Grundlage aus dem Fall davor und eine frisch
+    // gemessene fuehren zu verschiedenen Groessen, und beides sieht im
+    // Protokoll gleich aus (CI-Lauf 43619257941, Shard Linux 2/4).
+    // Der Rahmen, GEGEN den das naechste Mitziehen rechnet. Er wandert
+    // bei jedem Schritt des Hauptfensters mit -- auch dann, wenn der
+    // Durchlauf danach nichts umrechnet. Passt er nicht zu den Groessen
+    // der schwebenden Fenster, rechnet die naechste frische Messung
+    // gegen einen Rahmen, den sie nie gesehen haben.
+    QRect hauptrahmenBasisForTest() const { return m_hauptrahmenBasis; }
+
+    QString mitziehBasisAlsTextForTest(const QWidget* w) const
+    {
+        const auto bi = m_mitziehBasis.constFind(w);
+        if (bi == m_mitziehBasis.constEnd()) { return QStringLiteral("none"); }
+        return QStringLiteral("ratios x=%1 y=%2 w=%3 h=%4, set %5,%6 %7x%8")
+            .arg(bi->x, 0, 'f', 4).arg(bi->y, 0, 'f', 4)
+            .arg(bi->w, 0, 'f', 4).arg(bi->h, 0, 'f', 4)
+            .arg(bi->gesetzt.x()).arg(bi->gesetzt.y())
+            .arg(bi->gesetzt.width()).arg(bi->gesetzt.height());
+    }
     void setProfilRahmenForTest(const QRect& r) { m_profilRahmen = r; m_profilRahmenOffen = r.isValid(); }
     bool schwebendeNachProfilrahmenForTest() { return schwebendeNachProfilrahmen(); }
     QMargins leistenRaenderForTest() const { return leistenRaender(); }
