@@ -522,6 +522,22 @@ struct ModesTabBindingTests {
         #expect(await settle { modes.rxlMode == .auto })
         await deliver(station, key: "slice:0", property: "rxLevelerGainDb", ordinal: 162, value: .f64(3.24))
         #expect(await settle { modes.rxlGainText == "Gain now: +3.2 dB" })
+        // A new gain moves only the gain line: the tab publishes nothing,
+        // so none of its other views redraw (JJ: mind the phone's CPU).
+        var tabPublished = 0
+        var gainPublished = 0
+        let tabWatch = modes.objectWillChange.sink { _ in tabPublished += 1 }
+        let gainWatch = modes.rxlGain.objectWillChange.sink { _ in gainPublished += 1 }
+        for dB in [4.1, -2.5, 6.0] {
+            await deliver(station, key: "slice:0", property: "rxLevelerGainDb", ordinal: 162, value: .f64(dB))
+            #expect(await settle { modes.rxlGainText == String(format: "Gain now: %+.1f dB", dB) })
+            // The rebuild the gain queued runs on a later main-actor turn.
+            for _ in 0..<200 { await Task.yield() }
+        }
+        tabWatch.cancel()
+        gainWatch.cancel()
+        #expect(tabPublished == 0)
+        #expect(gainPublished == 3)
 
         // Custom: the settings move, snapped and held to the Core's ranges.
         modes.selectRxlMode(.custom)

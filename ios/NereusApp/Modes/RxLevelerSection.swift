@@ -1,6 +1,8 @@
 // NereusSDR for iOS: the Modes tab's receive leveler (RXL): its mode, live gain and Custom settings
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // 2026-11-14: New; J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-15: the live gain line watches only the gain (RxlGainLine). J.J.
+//   Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import SwiftUI
 
@@ -28,12 +30,7 @@ struct RxLevelerSection: View {
             if let reason = model.rxlReason {
                 ModesChrome.note("RXL: \(reason)")
             }
-            if let gain = model.rxlGainText {
-                Text(gain)
-                    .font(.system(size: 11))
-                    .foregroundStyle(ChromeColours.textDim)
-                    .accessibilityIdentifier("modesRxlGain")
-            }
+            RxlGainLine(gain: model.rxlGain)
             if let note = model.rxlModeNote {
                 ModesChrome.note(note)
             }
@@ -51,6 +48,21 @@ struct RxLevelerSection: View {
             if let reason = model.rxlSettingsReason, model.rxlReason == nil {
                 ModesChrome.note(reason)
             }
+        }
+    }
+}
+
+/// "Gain now: +3.2 dB" while RXL is on: the only view a new live gain
+/// redraws.
+struct RxlGainLine: View {
+    @ObservedObject var gain: ModesTabModel.RxlGain
+
+    var body: some View {
+        if let text = gain.text {
+            Text(text)
+                .font(.system(size: 11))
+                .foregroundStyle(ChromeColours.textDim)
+                .accessibilityIdentifier("modesRxlGain")
         }
     }
 }

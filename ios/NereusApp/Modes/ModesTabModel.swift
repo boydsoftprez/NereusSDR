@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // 2026-10-12: J.J. Boyd (KG4VCF), V2 opt-in/authority gate; AI-assisted via OpenAI Codex.
 // 2026-11-14: The receive leveler (RXL): its switch, mode, settings and live gain; J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-15: RXL's live gain kept apart from the tab (rxlGain), so a new
+//   gain redraws only its line, not the whole Modes tab (JJ: mind the
+//   phone's CPU). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -327,12 +330,20 @@ final class ModesTabModel: ObservableObject {
     /// Why APF tune cannot move: it works in CW with APF on.
     @Published private(set) var apfTuneReason: String?
     /// RXL: the slice's mode, why it cannot change, a note when the slice's
-    /// mode is one RXL leaves alone, the Core's live gain while on, and the
-    /// five Custom settings with their catalogue ranges.
+    /// mode is one RXL leaves alone, the Core's live gain while on
+    /// (``rxlGain``), and the five Custom settings with their catalogue ranges.
     @Published private(set) var rxlMode: RxlMode?
     @Published private(set) var rxlReason: String?
     @Published private(set) var rxlModeNote: String?
-    @Published private(set) var rxlGainText: String?
+    /// The Core's live RXL gain as the tab shows it, "Gain now: +3.2 dB",
+    /// while RXL is on in a voice mode, else nil. It moves several times a
+    /// second, so it lives apart from this model: a new gain redraws only
+    /// the line that watches it (``RxlGainLine``), never the tab.
+    final class RxlGain: ObservableObject {
+        @Published fileprivate(set) var text: String?
+    }
+    let rxlGain = RxlGain()
+    var rxlGainText: String? { rxlGain.text }
     @Published private(set) var rxlValues: [String: Double] = [:]
     @Published private(set) var rxlRanges: [String: StationCatalog.Range] = [:]
     @Published private(set) var rxlSettingsReason: String?
@@ -1252,7 +1263,10 @@ final class ModesTabModel: ObservableObject {
         let voice = label.map { Self.rxlVoiceLabels.contains($0) } ?? true
         set(\.rxlModeNote, rxl != nil && rxl != .off && !voice ? Self.rxlVoiceOnlyText : nil)
         let gain = rxl != nil && rxl != .off && voice ? RxPanelModel.number(sliceValue(Property.rxLevelerGainDb)) : nil
-        set(\.rxlGainText, gain.map { String(format: "Gain now: %+.1f dB", $0) })
+        let gainText = gain.map { String(format: "Gain now: %+.1f dB", $0) }
+        if rxlGain.text != gainText {
+            rxlGain.text = gainText
+        }
         var rxlValues: [String: Double] = [:]
         var rxlRanges: [String: StationCatalog.Range] = [:]
         for setting in Self.rxlSettings {
