@@ -4,13 +4,18 @@
 // Modification history (NereusSDR):
 // 2026-11-15  J.J. Boyd / KG4VCF; recording kinds, entries and names
 //             (spec 6.4). AI tooling: Anthropic Claude Code.
+// 2026-11-15  J.J. Boyd / KG4VCF; filterRecordings, for the list's slice and
+//             kind (recording plan Task 7). AI tooling: Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
 
 #include <QDateTime>
+#include <QList>
 #include <QString>
 #include <QtGlobal>
+
+#include <optional>
 
 namespace NereusSDR {
 
@@ -46,5 +51,11 @@ NEREUS_CORE_EXPORT bool isValidRecordingName(const QString& name, QString* reaso
 // "Contact", "WholePan", "Sound": the recordings index's words for a kind.
 NEREUS_CORE_EXPORT QString recordingKindKey(RecordingKind kind);
 NEREUS_CORE_EXPORT bool recordingKindFromKey(const QString& key, RecordingKind* kind);
+
+// The entries of `all`, in its order, on slice `sliceId` and of `kind`; an
+// empty filter takes every slice or every kind.
+NEREUS_CORE_EXPORT QList<RecordingEntry> filterRecordings(const QList<RecordingEntry>& all,
+                                                          std::optional<int> sliceId,
+                                                          std::optional<RecordingKind> kind);
 
 }  // namespace NereusSDR

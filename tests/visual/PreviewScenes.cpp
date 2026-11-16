@@ -310,6 +310,12 @@
 //                Slice A's Record and Play against a fake recordings access, at 7.236.400 LSB
 //                as the approved desktop-flag and recording-together mockups do.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 7: recordings-panel--list,
+//                --recording-row and --menu pose the Recordings applet in the window's column,
+//                and recordings-window--all, --filtered and --delete-confirm the Recordings
+//                window, against a fake recordings access, as the approved recordings-panel and
+//                recordings-window mockups do.
+//                AI-assisted implementation via Anthropic Claude Code.
 
 #include "models/MainPowerMeter.h"
 #include "models/AmplifierModel.h"
@@ -529,6 +535,9 @@
 #include "fakes/FakeStationLink.h"
 #include "fakes/FakeRecordingsAccess.h"
 #include "gui/recordings/FlagRecordPlay.h"
+#include "gui/recordings/RecordingsPanel.h"
+#include "gui/recordings/RecordingsWindow.h"
+#include "gui/applets/AppletVisibilityController.h"
 #include "core/roundtable/RoundtableState.h"
 #include "gui/roundtable/RoundtableFirstRunDialog.h"
 #include "gui/roundtable/RoundtablePanel.h"
@@ -8698,6 +8707,232 @@ void sceneFlagRecPlay(SceneContext& ctx, const QString& name, RecPlayPose pose)
     shootPopup(ctx, name, [play]() { sendContextMenu(play, middleOf(play)); }, shot);
 }
 
+// ---- Recording plan Task 7: the Recordings panel and window ----
+//
+// The recordings the approved mockups list, on a fake recordings access: no
+// Core is behind it, it plays and keys nothing.
+
+const QDateTime kRecordingsNow(QDate(2026, 11, 15), QTime(15, 2), QTimeZone::utc());
+
+RecordingEntry recordingRow(const QString& id, RecordingKind kind, int slice, const QDateTime& start,
+                            qint64 lengthMs, qint64 bytes, qint64 hz, const QString& mode, const QString& call,
+                            const QString& name = {})
+{
+    RecordingEntry e;
+    e.id = id;
+    e.kind = kind;
+    e.sliceId = slice;
+    e.startUtc = start;
+    e.lengthMs = lengthMs;
+    e.frequencyHz = hz;
+    e.mode = mode;
+    e.call = call;
+    e.name = name.isEmpty() ? recordingBaseName(start, hz, mode, call) : name;
+    e.fileName = e.name + (kind == RecordingKind::WholePan ? QStringLiteral(".iq") : QStringLiteral(".mp3"));
+    e.sizeBytes = bytes;
+    return e;
+}
+
+// recordings-panel/'s nine, newest first.
+QList<RecordingEntry> panelRecordings()
+{
+    const QDateTime n = kRecordingsNow;
+    constexpr qint64 kMb = 1000 * 1000;
+    return {recordingRow(QStringLiteral("p1"), RecordingKind::Contact, 0, n.addSecs(-1800), 312000, 9 * kMb, 7185000,
+                         QStringLiteral("LSB"), QStringLiteral("K4ABC")),
+            recordingRow(QStringLiteral("p2"), RecordingKind::WholePan, -1, n.addSecs(-5400), 600000, 1650 * kMb,
+                         7220000, QString(), QString(), QStringLiteral("40 m net, whole pan")),
+            recordingRow(QStringLiteral("p3"), RecordingKind::Contact, 0, n.addSecs(-9000), 205000, 6 * kMb, 7236400,
+                         QStringLiteral("LSB"), QStringLiteral("W1XYZ")),
+            recordingRow(QStringLiteral("p4"), RecordingKind::Sound, -1, n.addSecs(-86400), 64000, 2 * kMb, 14250000,
+                         QStringLiteral("USB"), QString()),
+            recordingRow(QStringLiteral("p5"), RecordingKind::Contact, 1, n.addSecs(-90000), 540000, 15 * kMb, 7200000,
+                         QStringLiteral("LSB"), QStringLiteral("N4QQ")),
+            recordingRow(QStringLiteral("p6"), RecordingKind::Contact, 0, n.addSecs(-170000), 1210000, 34 * kMb,
+                         3880000, QStringLiteral("LSB"), QString()),
+            recordingRow(QStringLiteral("p7"), RecordingKind::Contact, 1, n.addSecs(-200000), 188000, 5 * kMb,
+                         14313000, QStringLiteral("USB"), QStringLiteral("VE3ABC")),
+            recordingRow(QStringLiteral("p8"), RecordingKind::Sound, -1, n.addSecs(-260000), 402000, 11 * kMb, 21300000,
+                         QStringLiteral("USB"), QStringLiteral("EA8XX")),
+            recordingRow(QStringLiteral("p9"), RecordingKind::Contact, 0, n.addSecs(-400000), 150000, 4 * kMb, 7191000,
+                         QStringLiteral("LSB"), QStringLiteral("KD4Z"))};
+}
+
+// recordings-window/'s eight.
+QList<RecordingEntry> windowRecordings()
+{
+    const auto at = [](int day, int h, int m) { return QDateTime(QDate(2026, 11, day), QTime(h, m), QTimeZone::utc()); };
+    constexpr qint64 kMb = 1000 * 1000;
+    QList<RecordingEntry> out{
+        recordingRow(QStringLiteral("w1"), RecordingKind::Contact, 0, at(14, 15, 2), 312000, 15 * kMb, 7188000,
+                     QStringLiteral("LSB"), QStringLiteral("W4XYZ")),
+        recordingRow(QStringLiteral("w3"), RecordingKind::Sound, -1, at(14, 13, 5), 390000, 6 * kMb, 7198500,
+                     QStringLiteral("LSB"), QStringLiteral("K4ABC")),
+        recordingRow(QStringLiteral("w2"), RecordingKind::WholePan, -1, at(14, 13, 2), 600000, 460 * kMb, 7185000,
+                     QString(), QString(), QStringLiteral("Sunday net")),
+        recordingRow(QStringLiteral("w4"), RecordingKind::Contact, 1, at(13, 23, 11), 2410000, 116 * kMb, 3873000,
+                     QStringLiteral("LSB"), QStringLiteral("N4RDR")),
+        recordingRow(QStringLiteral("w6"), RecordingKind::Contact, 0, at(13, 21, 5), 95000, 4600 * 1000, 14250000,
+                     QStringLiteral("USB"), QString()),
+        recordingRow(QStringLiteral("w5"), RecordingKind::WholePan, -1, at(13, 21, 0), 900000, 690 * kMb, 14250000,
+                     QString(), QString(), QStringLiteral("20 m opening")),
+        recordingRow(QStringLiteral("w8"), RecordingKind::Sound, -1, at(12, 18, 22), 640000, 10 * kMb, 7200000,
+                     QStringLiteral("LSB"), QStringLiteral("AA5ABC")),
+        recordingRow(QStringLiteral("w7"), RecordingKind::WholePan, -1, at(12, 18, 15), 1800000, 1380 * kMb, 7200000,
+                     QString(), QStringLiteral("AA5ABC"))};
+    return out;
+}
+
+FakeRecordingsAccess* fakeRecordings(QObject* owner, const QList<RecordingEntry>& entries, const QJsonArray& slices,
+                                     const QString& diskName, qint64 freeBytes)
+{
+    auto* access = new FakeRecordingsAccess(owner);
+    access->entries = entries;
+    QJsonObject doc = FakeRecordingsAccess::document(
+        slices, 1, QDir::homePath() + QStringLiteral("/Music/NereusSDR Recordings"));
+    qint64 used = 0;
+    for (const RecordingEntry& e : entries) {
+        used += e.sizeBytes;
+    }
+    QJsonObject index = doc.value(QStringLiteral("index")).toObject();
+    index.insert(QStringLiteral("count"), entries.size());
+    index.insert(QStringLiteral("usedBytes"), used);
+    index.insert(QStringLiteral("freeBytes"), freeBytes);
+    doc.insert(QStringLiteral("index"), index);
+    QJsonObject settings = doc.value(QStringLiteral("settings")).toObject();
+    settings.insert(QStringLiteral("disk"), QString());
+    settings.insert(QStringLiteral("disks"), QJsonArray{QJsonObject{{QStringLiteral("root"), QStringLiteral("/")},
+                                                                    {QStringLiteral("name"), diskName},
+                                                                    {QStringLiteral("own"), true}}});
+    doc.insert(QStringLiteral("settings"), settings);
+    access->setDocument(doc);
+    return access;
+}
+
+enum class RecordingsPanelPose { List, RecordingRow, Menu };
+
+RecordingsPanel* poseRecordingsPanel(SceneContext& ctx, RecordingsPanelPose pose)
+{
+    auto* visibility = ctx.window->findChild<AppletVisibilityController*>();
+    if (visibility == nullptr) {
+        ctx.failure = QStringLiteral("no applet visibility controller in the window");
+        return nullptr;
+    }
+    visibility->setVisible(QStringLiteral("Recordings"), true);
+    pump(kSettleMs);
+    auto* panel = ctx.window->findChild<RecordingsPanel*>();
+    if (panel == nullptr || !panel->isVisible()) {
+        ctx.failure = QStringLiteral("the Recordings applet is not in the window");
+        return nullptr;
+    }
+    const QJsonArray slices{FakeRecordingsAccess::slice(0, pose == RecordingsPanelPose::RecordingRow
+                                                               ? QStringLiteral("recording")
+                                                               : QStringLiteral("idle"),
+                                                        83000, true)};
+    FakeRecordingsAccess* access =
+        fakeRecordings(ctx.window, panelRecordings(), slices, QStringLiteral("T7"), qint64(812) * 1000 * 1000 * 1000);
+    if (pose == RecordingsPanelPose::List) {
+        access->setPlayback(PlaybackState{QStringLiteral("local"), QStringLiteral("p3"), 74000, 205000, true, false});
+    }
+    panel->setClockForTest([] { return kRecordingsNow; });
+    panel->setSliceTextSource([](int slice) { return slice == 0 ? QStringLiteral("7.185.000 LSB") : QString(); });
+    panel->setAccess(access);
+    for (QWidget* up = panel->parentWidget(); up != nullptr; up = up->parentWidget()) {
+        if (auto* area = qobject_cast<QScrollArea*>(up)) {
+            area->ensureWidgetVisible(panel, 0, 0);
+            break;
+        }
+    }
+    ctx.notes.append(QStringLiteral("the Recordings applet follows a fake recordings access (no Core)"));
+    return panel;
+}
+
+void sceneRecordingsPanel(SceneContext& ctx, const QString& name, RecordingsPanelPose pose)
+{
+    ctx.provenance = provProposed();
+    if (pose == RecordingsPanelPose::RecordingRow) {
+        noteNotShown(ctx, QStringLiteral("the red dot's blink"),
+                     QStringLiteral("a still image holds one phase; the dot is shown at full red"));
+    }
+    RecordingsPanel* panel = nullptr;
+    runWindowScene(ctx, recPlayPoses(), 0, [&panel, pose](SceneContext& c) { panel = poseRecordingsPanel(c, pose); });
+    if (!ctx.failure.isEmpty() || panel == nullptr) {
+        return;
+    }
+    pump(kFinalSettleMs);
+    if (pose == RecordingsPanelPose::Menu) {
+        QFrame* row = panel->rowForTest(QStringLiteral("p1"));
+        if (row == nullptr) {
+            ctx.failure = QStringLiteral("no first row in the Recordings panel");
+            return;
+        }
+        const QPoint at(row->width() / 3, row->height() / 2);
+        PopupShot shot;
+        shot.anchor = globalAt(row, at);
+        shot.provenance = provProposed();
+        shot.submenus = false;
+        shootPopup(ctx, name, [row, at]() { sendContextMenu(row, at); }, shot);
+        return;
+    }
+    captureWindow(ctx, name);
+    // The applet with its container's title bar, as the mockup's close-up.
+    QWidget* shown = panel->parentWidget() != nullptr && panel->parentWidget()->height() < panel->height() + 60
+        ? panel->parentWidget()
+        : panel;
+    CapturedImage img;
+    img.name = name + QStringLiteral("--applet");
+    img.kind = QStringLiteral("detail");
+    img.image = grabWidget(shown);
+    img.logicalSize = shown->size();
+    img.dpr = img.image.devicePixelRatio();
+    ctx.images.append(img);
+}
+
+enum class RecordingsWindowPose { All, Filtered, DeleteConfirm };
+
+void sceneRecordingsWindow(SceneContext& ctx, const QString& name, RecordingsWindowPose pose)
+{
+    ctx.provenance = provProposed();
+    prepareForDialog(ctx);
+    FakeRecordingsAccess* access =
+        fakeRecordings(ctx.window, windowRecordings(), {}, QStringLiteral("the USB SSD"), qint64(884) * 1000 * 1000 * 1000);
+    access->coreHere = false;
+    RecordingsWindow window(access, ctx.window);
+    window.resize(RecordingsWindow::kDefaultWidth, RecordingsWindow::kDefaultHeight);
+    if (pose == RecordingsWindowPose::All) {
+        access->setPlayback(PlaybackState{QStringLiteral("local"), QStringLiteral("w4"), 312000, 2410000, true, false});
+        window.setSelectedIds({QStringLiteral("w2")});
+    } else if (pose == RecordingsWindowPose::Filtered) {
+        window.setFilter(RecordingsWindow::Filter::Contact);
+        window.setSearchText(QStringLiteral("LSB"));
+        window.setSelectedIds({QStringLiteral("w1"), QStringLiteral("w4")});
+    } else {
+        window.setSelectedIds({QStringLiteral("w4"), QStringLiteral("w6"), QStringLiteral("w5")});
+    }
+    window.show();
+    pump(kTabSettleMs);
+    if (pose != RecordingsWindowPose::DeleteConfirm) {
+        captureDialog(ctx, &window, name);
+        window.hide();
+        ctx.notes.append(QStringLiteral("the Recordings window on a fake recordings access, the Core on another "
+                                        "computer"));
+        return;
+    }
+    QList<RecordingEntry> chosen;
+    for (const RecordingEntry& e : window.entries()) {
+        if (window.selectedIds().contains(e.id)) {
+            chosen.append(e);
+        }
+    }
+    RecordingsDeleteConfirm confirm(chosen, &window);
+    confirm.show();
+    pump(kTabSettleMs);
+    captureDialog(ctx, &confirm, name);
+    confirm.hide();
+    window.hide();
+    ctx.notes.append(QStringLiteral("Delete 3... in the Recordings window: the confirm"));
+}
+
 void sceneFlagFoldTwoBand(SceneContext& ctx, const QString& name)
 {
     runWindowScene(ctx, twoBandPoses(), 0, {}, [](SceneContext& c) {
@@ -10701,6 +10936,25 @@ QVector<Scene> fixedScenes()
         const RecPlayPose p = pose;
         scenes.append({name, QStringLiteral("1"), false,
                        [name, p](SceneContext& ctx) { sceneFlagRecPlay(ctx, name, p); }, true});
+    }
+    // ---- Recording plan Task 7: the Recordings panel and window ----
+    for (const auto& [suffix, pose] : std::initializer_list<std::pair<const char*, RecordingsPanelPose>>{
+             {"list", RecordingsPanelPose::List},
+             {"recording-row", RecordingsPanelPose::RecordingRow},
+             {"menu", RecordingsPanelPose::Menu}}) {
+        const QString name = QStringLiteral("recordings-panel--") + QLatin1String(suffix);
+        const RecordingsPanelPose p = pose;
+        scenes.append({name, QStringLiteral("1"), false,
+                       [name, p](SceneContext& ctx) { sceneRecordingsPanel(ctx, name, p); }, true});
+    }
+    for (const auto& [suffix, pose] : std::initializer_list<std::pair<const char*, RecordingsWindowPose>>{
+             {"all", RecordingsWindowPose::All},
+             {"filtered", RecordingsWindowPose::Filtered},
+             {"delete-confirm", RecordingsWindowPose::DeleteConfirm}}) {
+        const QString name = QStringLiteral("recordings-window--") + QLatin1String(suffix);
+        const RecordingsWindowPose p = pose;
+        scenes.append({name, QStringLiteral("2v"), true,
+                       [name, p](SceneContext& ctx) { sceneRecordingsWindow(ctx, name, p); }, true});
     }
     // ---- Longpath instruments as container content (switch on) ----
     scenes.append({QStringLiteral("instruments-sheet"), QStringLiteral("2v"), false,

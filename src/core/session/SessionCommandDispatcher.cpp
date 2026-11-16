@@ -6,6 +6,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-15: Recording plan Task 7: recordings.list takes slice, kind and
+//               reader; the answer names the reader.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-15: Recording plan Task 5: the recordings.* verbs (handleRecordings).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05: The station device's fill at connect restores the receiver, on its
@@ -373,6 +376,7 @@
 #include "core/session/SliceAccessPolicy.h"
 #include "models/bandstack/BandStackController.h"
 #include "core/recordings/RecordingDisks.h"
+#include "core/recordings/RecordingNames.h"
 #include "core/recordings/RecordingService.h"
 #include "core/recordings/RecordingStore.h"
 #include "core/session/RecordingsFacade.h"
@@ -936,8 +940,12 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
          kRadioIdentitySessionProtocolMinor},
         {"recordings.stop", {arg("slice", kInt)}, "recordingsVersion", 1,
          kRadioIdentitySessionProtocolMinor},
-        {"recordings.list", {arg("offset", kInt), arg("count", kInt)}, "recordingsVersion", 1,
-         kRadioIdentitySessionProtocolMinor},
+        // Recording plan Task 7: `slice` and `kind` (Contact, WholePan,
+        // Sound) narrow the list; `reader` comes back in the answer.
+        {"recordings.list",
+         {arg("offset", kInt), arg("count", kInt), optionalArg("slice", kInt),
+          optionalArg("kind", kUtf8), optionalArg("reader", kInt)},
+         "recordingsVersion", 1, kRadioIdentitySessionProtocolMinor},
         {"recordings.play", {arg("id", kUtf8)}, "recordingsVersion", 1,
          kRadioIdentitySessionProtocolMinor},
         {"recordings.stopPlay", {}, "recordingsVersion", 1, kRadioIdentitySessionProtocolMinor},
@@ -5124,19 +5132,42 @@ void SessionCommandDispatcher::handleRecordings(const SessionMessage& invoke)
             refuse(notUnderstood);
             return;
         }
-        const QList<RecordingEntry> entries = service->store()->entries();
+        std::optional<int> sliceFilter;
+        if (arguments.contains(QStringLiteral("slice"))) {
+            const qint64 slice = arguments.value(QStringLiteral("slice")).toInteger(-1);
+            if (slice < -1 || slice > std::numeric_limits<int>::max()) {
+                refuse(notUnderstood);
+                return;
+            }
+            sliceFilter = static_cast<int>(slice);
+        }
+        std::optional<RecordingKind> kindFilter;
+        if (arguments.contains(QStringLiteral("kind"))) {
+            RecordingKind kind = RecordingKind::Contact;
+            if (!recordingKindFromKey(arguments.value(QStringLiteral("kind")).toString(), &kind)) {
+                refuse(notUnderstood);
+                return;
+            }
+            kindFilter = kind;
+        }
+        const QList<RecordingEntry> entries =
+            filterRecordings(service->store()->entries(), sliceFilter, kindFilter);
         QJsonArray page;
         const qint64 end = std::min<qint64>(
             entries.size(), offset + std::min<qint64>(count, RecordingsFacade::kListPageMax));
         for (qint64 i = offset; i < end; ++i) {
             page.append(RecordingsFacade::entryJson(entries.at(static_cast<qsizetype>(i))));
         }
-        accept({MirrorUpdate{0, "entries", MirrorWireKind::Utf8,
-                             QVariant(QString::fromUtf8(
-                                 QJsonDocument(page).toJson(QJsonDocument::Compact)))},
-                MirrorUpdate{0, "offset", MirrorWireKind::Int64, QVariant(qlonglong(offset))},
-                MirrorUpdate{0, "total", MirrorWireKind::Int64,
-                             QVariant(qlonglong(entries.size()))}});
+        QList<MirrorUpdate> values{
+            MirrorUpdate{0, "entries", MirrorWireKind::Utf8,
+                         QVariant(QString::fromUtf8(QJsonDocument(page).toJson(QJsonDocument::Compact)))},
+            MirrorUpdate{0, "offset", MirrorWireKind::Int64, QVariant(qlonglong(offset))},
+            MirrorUpdate{0, "total", MirrorWireKind::Int64, QVariant(qlonglong(entries.size()))}};
+        if (arguments.contains(QStringLiteral("reader"))) {
+            values.append(MirrorUpdate{0, "reader", MirrorWireKind::Int64,
+                                       QVariant(qlonglong(arguments.value(QStringLiteral("reader")).toInteger()))});
+        }
+        accept(values);
     } else if (verb == "recordings.play" || verb == "recordings.stopPlay"
                || verb == "recordings.seek") {
         if (listener.isEmpty()) {

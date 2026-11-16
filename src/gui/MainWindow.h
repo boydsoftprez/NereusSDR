@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-15: m_recordingsApplet and openRecordingsWindow() (recording plan Task 7).
+//                J.J. Boyd (KG4VCF), AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-05: applyDisplayPillFps(), windowPaintFps(), applyWindowPaintFps():
 //               each window on a Core keeps its own paint rate. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -2576,6 +2578,10 @@ private:
     class TunerApplet*      m_tunerApplet{nullptr};
     class RotorApplet*      m_rotorApplet{nullptr};
     class RoundtableApplet* m_roundtableApplet{nullptr};  // Roundtable plan Task 13
+    class RecordingsPanel*  m_recordingsApplet{nullptr};  // Recording plan Task 7
+    // Recording plan Task 7: All recordings... on a flag or in the panel,
+    // with the recording to select (empty for none).
+    void openRecordingsWindow(const QString& recordingId);
     bool m_roundtableRefreshPending{false};               // latest trailing sample
     QTimer* m_roundtableRefreshTimer{nullptr};
     QHash<QString, QString> m_roundtableRoomStructures;

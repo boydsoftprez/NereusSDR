@@ -1616,6 +1616,21 @@
                     "kind": "i64",
                     "name": "count",
                     "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "slice",
+                    "optional": true
+                },
+                {
+                    "kind": "utf8",
+                    "name": "kind",
+                    "optional": true
+                },
+                {
+                    "kind": "i64",
+                    "name": "reader",
+                    "optional": true
                 }
             ],
             "capability": "recordingsVersion",

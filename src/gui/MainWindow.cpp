@@ -1182,6 +1182,9 @@
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 6: one FlagRecordPlay per slice flag, fed by
 //                RadioModel::recordings(). AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 7: the Recordings applet (Containers >
+//                Applets, hidden at first) and the Recordings window, opened by All recordings...
+//                on every flag and in the panel. AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -1406,6 +1409,8 @@ warren@wpratt.com
 #include "TxHeldIndicator.h"
 #include "gui/ScopedChildWidget.h"
 #include "gui/recordings/FlagRecordPlay.h"
+#include "gui/recordings/RecordingsPanel.h"
+#include "gui/recordings/RecordingsWindow.h"
 #include "SessionEndSave.h"
 #include "gui/multidevice/DeviceWords.h"
 #include "gui/multidevice/MultiDeviceController.h"
@@ -6611,7 +6616,9 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     // Recording plan Task 6: Record and Play on this flag, through the
     // model's recordings access (the Core here or across the link). Owned by
     // the flag.
-    new FlagRecordPlay(newFlag, m_radioModel->recordings(), sliceIndex, newFlag);
+    auto* recordPlay = new FlagRecordPlay(newFlag, m_radioModel->recordings(), sliceIndex, newFlag);
+    // Recording plan Task 7: All recordings... opens the Recordings window.
+    connect(recordPlay, &FlagRecordPlay::allRecordingsRequested, this, &MainWindow::openRecordingsWindow);
     // A flag can die with its pan while its entry remains: the map never holds a
     // dead flag. m_vfoFlagLifetime goes before the map and before the children,
     // so this never runs on the map once it is gone (see ~MainWindow's toasts).
@@ -14205,6 +14212,23 @@ void MainWindow::populateDefaultMeter()
         }
     }
 
+    // Recording plan Task 7 (design section 3, Recordings panel): the six
+    // latest recordings on the Core, for quick listening. All recordings...
+    // opens the Recordings window. Its red row names the slice's frequency
+    // and mode.
+    m_recordingsApplet = new RecordingsPanel(m_radioModel, m_radioModel->recordings(), nullptr);
+    panel->addApplet(m_recordingsApplet);
+    connect(m_recordingsApplet, &RecordingsPanel::allRecordingsRequested, this,
+            &MainWindow::openRecordingsWindow);
+    m_recordingsApplet->setSliceTextSource([this](int sliceId) {
+        SliceModel* slice = m_radioModel ? m_radioModel->sliceById(sliceId) : nullptr;
+        if (slice == nullptr) {
+            return QString();
+        }
+        return recordingFrequencyText(static_cast<qint64>(std::llround(slice->frequency()))) + QLatin1Char(' ')
+            + SliceModel::modeName(slice->dspMode());
+    });
+
     // ── Applet visibility controller (Containers > Applets + ☰ menus) ──
     // NereusSDR-original. Backs the show/hide menu surfaces.
     //
@@ -14249,6 +14273,7 @@ void MainWindow::populateDefaultMeter()
     m_appletsById[QStringLiteral("RfKit")]      = m_rfKitApplet;
     m_appletsById[QStringLiteral("Cat")]        = m_catApplet;
     m_appletsById[QStringLiteral("Cwx")]        = m_cwxApplet;
+    m_appletsById[QStringLiteral("Recordings")] = m_recordingsApplet;
 #ifdef HAVE_WEBSOCKETS
     if (m_tciApplet) {
         m_appletsById[QStringLiteral("Tci")]        = m_tciApplet;
@@ -14321,6 +14346,10 @@ void MainWindow::populateDefaultMeter()
         });
     m_appletVis->registerApplet(QStringLiteral("RfKit"),
                                 QStringLiteral("RF-Kit RF2K-S"), true);
+    // Recording plan Task 7: placed hidden, one tick away under
+    // Containers > Applets.
+    m_appletVis->registerApplet(QStringLiteral("Recordings"),
+                                QStringLiteral("Recordings"),   false);
 #ifdef HAVE_WEBSOCKETS
     if (m_tciApplet) {
         m_appletVis->registerApplet(QStringLiteral("Tci"),
@@ -21703,6 +21732,15 @@ void MainWindow::showSupportDialog()
 //   psform.Focus();
 //
 // NereusSDR mirrors via raise()+activateWindow() instead of Focus().
+void MainWindow::openRecordingsWindow(const QString& recordingId)
+{
+    if (m_shuttingDown || !m_radioModel) {
+        return;
+    }
+    RecordingsWindow* window = RecordingsWindow::showFor(m_radioModel->recordings(), this);
+    window->selectRecording(recordingId);
+}
+
 void MainWindow::openPureSignalDialog()
 {
     if (!m_psForm) {

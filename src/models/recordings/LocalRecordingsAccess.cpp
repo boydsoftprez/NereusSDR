@@ -6,6 +6,9 @@
 //   2026-11-15 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 5.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 7: each list
+//                 reader's own answer, filtered by slice and kind.
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "models/recordings/LocalRecordingsAccess.h"
@@ -136,16 +139,21 @@ void LocalRecordingsAccess::stop(int sliceId)
     }
 }
 
-void LocalRecordingsAccess::requestList(int offset, int count)
+void LocalRecordingsAccess::requestList(int reader, const RecordingsListQuery& query)
 {
     RecordingService* recordings = begin();
     if (recordings == nullptr) {
         return;
     }
-    const QList<RecordingEntry> entries = recordings->store()->entries();
-    const qsizetype from = std::clamp<qsizetype>(offset, 0, entries.size());
-    m_listed = entries.mid(from, std::max(0, count));
-    emit listChanged();
+    const QList<RecordingEntry> entries =
+        filterRecordings(recordings->store()->entries(), query.sliceId, query.kind);
+    const qsizetype from = std::clamp<qsizetype>(query.offset, 0, entries.size());
+    RecordingsListPage page;
+    page.offset = static_cast<int>(from);
+    page.total = static_cast<int>(entries.size());
+    page.entries = entries.mid(from, std::max(0, query.count));
+    m_pages.insert(reader, page);
+    emit listChanged(reader);
 }
 
 void LocalRecordingsAccess::play(const QString& id)

@@ -6,6 +6,10 @@
 //   2026-11-15 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 5.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 7: recordings.list
+//                 carries the reader, its slice and kind; the Core's answer
+//                 names the reader, so each reader gets its own page.
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "models/recordings/RemoteRecordingsAccess.h"
@@ -116,11 +120,18 @@ void RemoteRecordingsAccess::stop(int sliceId)
     send(QStringLiteral("recordings.stop"), QJsonObject{{QStringLiteral("slice"), sliceId}});
 }
 
-void RemoteRecordingsAccess::requestList(int offset, int count)
+void RemoteRecordingsAccess::requestList(int reader, const RecordingsListQuery& query)
 {
-    send(QStringLiteral("recordings.list"),
-         QJsonObject{{QStringLiteral("offset"), std::max(0, offset)},
-                     {QStringLiteral("count"), std::max(1, count)}});
+    QJsonObject arguments{{QStringLiteral("offset"), std::max(0, query.offset)},
+                          {QStringLiteral("count"), std::max(1, query.count)},
+                          {QStringLiteral("reader"), reader}};
+    if (query.sliceId.has_value()) {
+        arguments.insert(QStringLiteral("slice"), *query.sliceId);
+    }
+    if (query.kind.has_value()) {
+        arguments.insert(QStringLiteral("kind"), recordingKindKey(*query.kind));
+    }
+    send(QStringLiteral("recordings.list"), arguments);
 }
 
 void RemoteRecordingsAccess::play(const QString& id)
@@ -286,16 +297,19 @@ void RemoteRecordingsAccess::takeResult(const QByteArray& verb, bool accepted, c
         return;
     }
     if (verb == "recordings.list") {
-        QList<RecordingEntry> entries;
-        const QJsonArray page =
+        RecordingsListPage page;
+        const QJsonArray rows =
             QJsonDocument::fromJson(valueOf(values, "entries").toString().toUtf8()).array();
-        for (const QJsonValue& value : page) {
+        for (const QJsonValue& value : rows) {
             if (const std::optional<RecordingEntry> entry = RecordingsFacade::entryFromJson(value.toObject())) {
-                entries.append(*entry);
+                page.entries.append(*entry);
             }
         }
-        m_listed = entries;
-        emit listChanged();
+        page.offset = valueOf(values, "offset").toInt();
+        page.total = valueOf(values, "total").toInt();
+        const int reader = valueOf(values, "reader").toInt();
+        m_pages.insert(reader, page);
+        emit listChanged(reader);
     }
 }
 

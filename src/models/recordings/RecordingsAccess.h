@@ -19,11 +19,19 @@
 // kept after this window first saw the document, with the document's `kept`
 // object.
 //
+// Each reader of the list (a flag, the Recordings panel, the Recordings
+// window) takes its own token from newListReader() and asks with it: the
+// answer comes back as listChanged(token) and stays in listed(token), so
+// readers never see each other's pages.
+//
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-11-15 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 5.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 7: a token per list
+//                 reader and the list's slice and kind filters. AI-assisted
+//                 implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QJsonObject>
@@ -39,6 +47,22 @@
 #include "core/recordings/RecordingPlayer.h"
 
 namespace NereusSDR {
+
+/// One request for the list: `count` recordings from `offset`, newest first,
+/// of only one slice and only one kind when those are set.
+struct RecordingsListQuery {
+    int offset = 0;
+    int count = 0;
+    std::optional<int> sliceId;
+    std::optional<RecordingKind> kind;
+};
+
+/// One answer: the page from `offset`, and how many recordings match.
+struct RecordingsListPage {
+    int offset = 0;
+    int total = 0;
+    QList<RecordingEntry> entries;
+};
 
 class NEREUS_CORE_EXPORT RecordingsAccess : public QObject {
     Q_OBJECT
@@ -56,10 +80,13 @@ public:
     virtual QJsonObject document() const = 0;
     virtual void start(int sliceId) = 0;
     virtual void stop(int sliceId) = 0;
-    /// Asks for `count` recordings from `offset`, newest first; listed()
-    /// holds them when listChanged() fires.
-    virtual void requestList(int offset, int count) = 0;
-    virtual QList<RecordingEntry> listed() const = 0;
+    /// A new reader's token (never 0): its answers are its own.
+    int newListReader() { return ++m_lastListReader; }
+    /// Asks for a page for `reader`; listed(reader) holds it when
+    /// listChanged(reader) fires. A later answer replaces an earlier one.
+    virtual void requestList(int reader, const RecordingsListQuery& query) = 0;
+    /// The last answer to `reader`; empty until one comes.
+    virtual RecordingsListPage listed(int reader) const = 0;
     virtual void play(const QString& id) = 0;
     virtual void stopPlay() = 0;
     virtual void seek(qint64 ms) = 0;
@@ -80,12 +107,15 @@ public:
 signals:
     void documentChanged();
     void stateChanged();
-    void listChanged();
+    void listChanged(int reader);
     void playbackChanged();
     void kept(const QJsonObject& event);
     void downloadProgress(const QString& id, qint64 done, qint64 total);
     void downloadFinished(const QString& id, bool ok, const QString& error);
     void refused(const QString& reason);
+
+private:
+    int m_lastListReader = 0;
 };
 
 } // namespace NereusSDR

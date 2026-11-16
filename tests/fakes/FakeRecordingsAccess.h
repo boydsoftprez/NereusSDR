@@ -7,15 +7,21 @@
 // A RecordingsAccess for GUI tests and preview scenes: records every call and
 // shows whatever state, document, list and playback it is given. It adds no
 // signals, so it needs no moc; a test emits the inherited signals itself
-// (kept(), refused()). requestList() answers at once from `entries`.
+// (kept(), refused()). requestList() answers at once from `entries`, to the
+// reader that asked. With `appliesChanges`, rename and remove change
+// `entries` and move the document's index revision, as the Core would.
 //
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-11-15 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 6.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 7: list readers,
+//                 the slice and kind filters and appliesChanges.
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
+#include <QHash>
 #include <QJsonArray>
 #include <QList>
 #include <QStringList>
@@ -34,6 +40,9 @@ public:
         QString id;
         int offset{0};
         int count{0};
+        int reader{0};
+        std::optional<int> listSlice;
+        std::optional<RecordingKind> listKind;
     };
 
     explicit FakeRecordingsAccess(QObject* parent = nullptr) : RecordingsAccess(parent) {}
@@ -41,6 +50,7 @@ public:
     QList<Call> calls;
     QList<RecordingEntry> entries;   // the Core's whole index, newest first
     bool coreHere = true;
+    bool appliesChanges = false;   // rename and remove change `entries`
 
     QStringList verbs() const
     {
@@ -112,14 +122,22 @@ public:
     QJsonObject document() const override { return m_document; }
     void start(int sliceId) override { calls.append({QStringLiteral("start"), sliceId}); }
     void stop(int sliceId) override { calls.append({QStringLiteral("stop"), sliceId}); }
-    void requestList(int offset, int count) override
+    void requestList(int reader, const RecordingsListQuery& query) override
     {
-        calls.append({QStringLiteral("requestList"), -1, {}, offset, count});
-        const qsizetype from = std::clamp<qsizetype>(offset, 0, entries.size());
-        m_listed = entries.mid(from, std::max(0, count));
-        emit listChanged();
+        Call call{QStringLiteral("requestList"), -1, {}, query.offset, query.count, reader};
+        call.listSlice = query.sliceId;
+        call.listKind = query.kind;
+        calls.append(call);
+        const QList<RecordingEntry> matching = filterRecordings(entries, query.sliceId, query.kind);
+        const qsizetype from = std::clamp<qsizetype>(query.offset, 0, matching.size());
+        RecordingsListPage page;
+        page.offset = static_cast<int>(from);
+        page.total = static_cast<int>(matching.size());
+        page.entries = matching.mid(from, std::max(0, query.count));
+        m_pages.insert(reader, page);
+        emit listChanged(reader);
     }
-    QList<RecordingEntry> listed() const override { return m_listed; }
+    RecordingsListPage listed(int reader) const override { return m_pages.value(reader); }
     void play(const QString& id) override { calls.append({QStringLiteral("play"), -1, id}); }
     void stopPlay() override { calls.append({QStringLiteral("stopPlay")}); }
     void seek(qint64 ms) override { calls.append({QStringLiteral("seek"), -1, QString::number(ms)}); }
@@ -127,10 +145,32 @@ public:
     void rename(const QString& id, const QString& name) override
     {
         calls.append({QStringLiteral("rename"), -1, id + QLatin1Char('=') + name});
+        if (appliesChanges) {
+            for (RecordingEntry& e : entries) {
+                if (e.id == id) {
+                    e.name = name;
+                }
+            }
+            moveIndexRevision();
+        }
     }
     void remove(const QStringList& ids) override
     {
         calls.append({QStringLiteral("remove"), -1, ids.join(QLatin1Char(','))});
+        if (appliesChanges) {
+            entries.removeIf([&ids](const RecordingEntry& e) { return ids.contains(e.id); });
+            moveIndexRevision();
+        }
+    }
+    /// The document's index revision moves by one, as the Core's does when
+    /// its list changes.
+    void moveIndexRevision()
+    {
+        QJsonObject index = m_document.value(QStringLiteral("index")).toObject();
+        index.insert(QStringLiteral("revision"), index.value(QStringLiteral("revision")).toInteger() + 1);
+        index.insert(QStringLiteral("count"), entries.size());
+        m_document.insert(QStringLiteral("index"), index);
+        emit documentChanged();
     }
     void download(const QString& id, const QString& toPath) override
     {
@@ -142,7 +182,7 @@ public:
 private:
     State m_state = State::Ready;
     QJsonObject m_document;
-    QList<RecordingEntry> m_listed;
+    QHash<int, RecordingsListPage> m_pages;
     std::optional<PlaybackState> m_playback;
 };
 

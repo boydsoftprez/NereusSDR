@@ -18,6 +18,9 @@
 //   2026-11-15 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 5.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 7: recordings.list
+//                 by slice and kind, and the reader in its answer.
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -435,6 +438,30 @@ private slots:
         QCOMPARE(valueIn(listed, QStringLiteral("total")).toInteger(), 2);
         QVERIFY(listedNames(listed).contains(QStringLiteral("Field Day")));
         QVERIFY(!listedNames(listed).contains(QStringLiteral("older")));
+        QVERIFY(valueIn(listed, QStringLiteral("reader")).isNull());
+
+        // Only slice 0's contact recordings, for reader 7; slice 2 has none,
+        // and the answer names the reader that asked.
+        const QJsonObject mine = core.invoke(second, "recordings.list",
+                                             {int64("offset", 0), int64("count", 10), int64("slice", 0),
+                                              utf8("kind", QStringLiteral("Contact")), int64("reader", 7)});
+        QCOMPARE(refusalOf(mine), QString());
+        QCOMPARE(valueIn(mine, QStringLiteral("reader")).toInteger(), 7);
+        QCOMPARE(valueIn(mine, QStringLiteral("total")).toInteger(), 2);
+        const QJsonObject none = core.invoke(second, "recordings.list",
+                                             {int64("offset", 0), int64("count", 10), int64("slice", 2),
+                                              int64("reader", 8)});
+        QCOMPARE(valueIn(none, QStringLiteral("reader")).toInteger(), 8);
+        QCOMPARE(valueIn(none, QStringLiteral("total")).toInteger(), 0);
+        QCOMPARE(listedNames(none), QStringList());
+        const QJsonObject pans = core.invoke(second, "recordings.list",
+                                             {int64("offset", 0), int64("count", 10),
+                                              utf8("kind", QStringLiteral("WholePan"))});
+        QCOMPARE(valueIn(pans, QStringLiteral("total")).toInteger(), 0);
+        QCOMPARE(refusalOf(core.invoke(second, "recordings.list",
+                                       {int64("offset", 0), int64("count", 10),
+                                        utf8("kind", QStringLiteral("Pictures"))})),
+                 kNotUnderstood);
 
         const QString ids = QString::fromUtf8(QJsonDocument(QJsonArray{older}).toJson(QJsonDocument::Compact));
         QCOMPARE(refusalOf(core.invoke(first, "recordings.delete", {utf8("ids", ids)})), QString());

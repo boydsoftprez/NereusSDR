@@ -17,9 +17,15 @@
 //   2026-11-15 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 5.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 7: two list
+//                 readers, local and remote, each get their own page, with
+//                 the slice and kind filters. AI-assisted implementation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
+
+#include <algorithm>
 
 #include <QLoggingCategory>
 #include <QRandomGenerator>
@@ -155,6 +161,85 @@ private:
         return store->add(e);
     }
 
+    // A recording of `kind` on `slice`, `minutesAgo` before 14:00 UTC.
+    static QString addKind(Core& core, const QString& name, RecordingKind kind, int slice, int minutesAgo)
+    {
+        RecordingStore* store = core.model->recordingService()->store();
+        if (store == nullptr || store->folder().isEmpty()) {
+            return {};
+        }
+        const QString fileName = name + QStringLiteral(".wav");
+        QFile file(QDir(store->folder()).filePath(fileName));
+        if (!file.open(QIODevice::WriteOnly) || file.write(QByteArray(100, 'r')) != 100) {
+            return {};
+        }
+        file.close();
+        RecordingEntry e;
+        e.kind = kind;
+        e.sliceId = slice;
+        e.startUtc = QDateTime(QDate(2026, 11, 15), QTime(14, 0, 0), QTimeZone::UTC).addSecs(-60 * minutesAgo);
+        e.lengthMs = 1000;
+        e.frequencyHz = 7236400;
+        e.mode = QStringLiteral("LSB");
+        e.name = name;
+        e.fileName = fileName;
+        return store->add(e);
+    }
+
+    static QStringList namesOf(const RecordingsListPage& page)
+    {
+        QStringList out;
+        for (const RecordingEntry& e : page.entries) {
+            out.append(e.name);
+        }
+        return out;
+    }
+
+    // Two readers ask at once, one for slice 1's contacts and one for the
+    // newest two of everything: each gets its own page, whatever order the
+    // answers come in.
+    void twoReadersGetTheirOwnPages(Core& core, RecordingsAccess* access)
+    {
+        QVERIFY(!addKind(core, QStringLiteral("a-old"), RecordingKind::Contact, 0, 50).isEmpty());
+        QVERIFY(!addKind(core, QStringLiteral("b-old"), RecordingKind::Contact, 1, 40).isEmpty());
+        QVERIFY(!addKind(core, QStringLiteral("pan"), RecordingKind::WholePan, -1, 30).isEmpty());
+        QVERIFY(!addKind(core, QStringLiteral("b-sound"), RecordingKind::Sound, 1, 20).isEmpty());
+        QVERIFY(!addKind(core, QStringLiteral("b-new"), RecordingKind::Contact, 1, 10).isEmpty());
+        QTRY_COMPARE(countIn(access->document()), 5);
+
+        const int flag = access->newListReader();
+        const int panel = access->newListReader();
+        QVERIFY(flag != 0);
+        QVERIFY(panel != flag);
+        QSignalSpy listed(access, &RecordingsAccess::listChanged);
+        access->requestList(flag, RecordingsListQuery{0, 8, 1, RecordingKind::Contact});
+        access->requestList(panel, RecordingsListQuery{0, 2, {}, {}});
+        QTRY_COMPARE(listed.count(), 2);
+        QList<int> answered{listed.at(0).at(0).toInt(), listed.at(1).at(0).toInt()};
+        std::sort(answered.begin(), answered.end());
+        QCOMPARE(answered, (QList<int>{flag, panel}));
+
+        QCOMPARE(namesOf(access->listed(flag)), (QStringList{QStringLiteral("b-new"), QStringLiteral("b-old")}));
+        QCOMPARE(access->listed(flag).total, 2);
+        QCOMPARE(namesOf(access->listed(panel)),
+                 (QStringList{QStringLiteral("b-new"), QStringLiteral("b-sound")}));
+        QCOMPARE(access->listed(panel).total, 5);
+
+        // A later page for one reader leaves the other's alone.
+        access->requestList(panel, RecordingsListQuery{2, 2, {}, {}});
+        QTRY_COMPARE(listed.count(), 3);
+        QCOMPARE(listed.last().at(0).toInt(), panel);
+        QCOMPARE(access->listed(panel).offset, 2);
+        QCOMPARE(namesOf(access->listed(panel)), (QStringList{QStringLiteral("pan"), QStringLiteral("b-old")}));
+        QCOMPARE(namesOf(access->listed(flag)), (QStringList{QStringLiteral("b-new"), QStringLiteral("b-old")}));
+
+        const int sounds = access->newListReader();
+        access->requestList(sounds, RecordingsListQuery{0, 10, {}, RecordingKind::WholePan});
+        QTRY_COMPARE(listed.count(), 4);
+        QCOMPARE(namesOf(access->listed(sounds)), QStringList{QStringLiteral("pan")});
+        QVERIFY(access->listed(access->newListReader()).entries.isEmpty());
+    }
+
     static QString addPlayable(Core& core, const QString& name)
     {
         RecordingStore* store = core.model->recordingService()->store();
@@ -275,10 +360,12 @@ private slots:
         QCOMPARE(refused.last().at(0).toString(), QStringLiteral("That slice is not open."));
 
         QSignalSpy listed(access, &RecordingsAccess::listChanged);
-        access->requestList(0, 10);
+        const int reader = access->newListReader();
+        access->requestList(reader, RecordingsListQuery{0, 10, {}, {}});
         QCOMPARE(listed.count(), 1);
-        QCOMPARE(access->listed().size(), 1);
-        const QString id = access->listed().first().id;
+        QCOMPARE(listed.first().at(0).toInt(), reader);
+        QCOMPARE(access->listed(reader).entries.size(), 1);
+        const QString id = access->listed(reader).entries.first().id;
 
         access->rename(id, QStringLiteral("Field Day"));
         QCOMPARE(service->store()->find(id)->name, QStringLiteral("Field Day"));
@@ -320,7 +407,26 @@ private slots:
         QCOMPARE(refused.last().at(0).toString(), QString::fromLatin1(RecordingService::kPlayGoneReason));
     }
 
+    void aLocalWindowsReadersEachGetTheirOwnPage()
+    {
+        Core core;
+        useTestDisk(core);
+        twoReadersGetTheirOwnPages(core, core.model->recordings());
+    }
+
     // ── A remote window ──────────────────────────────────────────────────
+
+    void aRemoteWindowsReadersEachGetTheirOwnPage()
+    {
+        Core core(/*upgradedWithToken=*/true);
+        useTestDisk(core);
+        RemoteWindow remote;
+        RecordingsAccess* access = remote.access();
+        QVERIFY(remote.connectTo(core, this));
+        QTRY_COMPARE(access->state(), RecordingsAccess::State::Ready);
+        twoReadersGetTheirOwnPages(core, access);
+        remote.client.disconnectFromStation(QStringLiteral("test over"));
+    }
 
     void aRemoteWindowOnAnOlderCoreIsToldAndSendsNothing()
     {
@@ -343,7 +449,7 @@ private slots:
         QSignalSpy finished(access, &RecordingsAccess::downloadFinished);
         access->start(0);
         access->stop(0);
-        access->requestList(0, 10);
+        access->requestList(access->newListReader(), RecordingsListQuery{0, 10, {}, {}});
         access->play(QStringLiteral("x"));
         access->stopPlay();
         access->seek(100);
@@ -394,11 +500,13 @@ private slots:
         QTRY_COMPARE(countIn(access->document()), 1);
 
         QSignalSpy listed(access, &RecordingsAccess::listChanged);
-        access->requestList(0, 10);
+        const int reader = access->newListReader();
+        access->requestList(reader, RecordingsListQuery{0, 10, {}, {}});
         QTRY_COMPARE(listed.count(), 1);
-        QCOMPARE(access->listed().size(), 1);
-        const QString id = access->listed().first().id;
-        QCOMPARE(access->listed().first().id, service->store()->entries().first().id);
+        QCOMPARE(listed.first().at(0).toInt(), reader);
+        QCOMPARE(access->listed(reader).entries.size(), 1);
+        const QString id = access->listed(reader).entries.first().id;
+        QCOMPARE(id, service->store()->entries().first().id);
 
         access->rename(id, QStringLiteral("Field Day"));
         QTRY_COMPARE(service->store()->find(id)->name, QStringLiteral("Field Day"));

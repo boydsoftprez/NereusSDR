@@ -2078,6 +2078,10 @@ set(GUI_SOURCES
     src/gui/recordings/FlagRecordPlay.h
     src/gui/recordings/RevealFile.cpp
     src/gui/recordings/RevealFile.h
+    src/gui/recordings/RecordingsPanel.cpp
+    src/gui/recordings/RecordingsPanel.h
+    src/gui/recordings/RecordingsWindow.cpp
+    src/gui/recordings/RecordingsWindow.h
     src/gui/widgets/MetricLabel.cpp
     src/gui/widgets/MetricLabel.h
     src/gui/widgets/SystemTile.cpp

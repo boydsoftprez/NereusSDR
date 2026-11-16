@@ -4,6 +4,8 @@
 // Modification history (NereusSDR):
 // 2026-11-15  J.J. Boyd / KG4VCF; recording kinds, entries and names
 //             (spec 6.4). AI tooling: Anthropic Claude Code.
+// 2026-11-15  J.J. Boyd / KG4VCF; filterRecordings (recording plan Task 7).
+//             AI tooling: Anthropic Claude Code.
 
 #include "RecordingNames.h"
 
@@ -91,6 +93,18 @@ bool recordingKindFromKey(const QString& key, RecordingKind* kind)
         }
     }
     return false;
+}
+
+QList<RecordingEntry> filterRecordings(const QList<RecordingEntry>& all, std::optional<int> sliceId,
+                                       std::optional<RecordingKind> kind)
+{
+    QList<RecordingEntry> out;
+    for (const RecordingEntry& entry : all) {
+        if ((!sliceId.has_value() || entry.sliceId == *sliceId) && (!kind.has_value() || entry.kind == *kind)) {
+            out.append(entry);
+        }
+    }
+    return out;
 }
 
 }  // namespace NereusSDR

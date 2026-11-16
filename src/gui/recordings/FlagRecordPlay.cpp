@@ -15,6 +15,10 @@
 //   2026-11-15 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 6.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 7: its own list
+//                 reader, asking for the slice's last eight contact
+//                 recordings. AI-assisted implementation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "gui/recordings/FlagRecordPlay.h"
@@ -247,7 +251,7 @@ void FlagRecordPlay::setAccess(RecordingsAccess* access)
     m_access = access;
     m_entries.clear();
     m_listRevision = -1;
-    m_listPending = false;
+    m_listReader = access != nullptr ? access->newListReader() : 0;
     if (access != nullptr) {
         m_accessConnections = {
             connect(access, &RecordingsAccess::documentChanged, this, &FlagRecordPlay::onDocumentChanged),
@@ -503,7 +507,6 @@ void FlagRecordPlay::requestListIfStale()
     if (!m_access || !unavailableReason().isEmpty()) {
         m_entries.clear();
         m_listRevision = -1;
-        m_listPending = false;
         return;
     }
     const QJsonObject index = m_access->document().value(QStringLiteral("index")).toObject();
@@ -515,19 +518,20 @@ void FlagRecordPlay::requestListIfStale()
         return;
     }
     m_listRevision = revision;
-    m_listPending = true;
-    m_access->requestList(0, kListRequestCount);
+    RecordingsListQuery query;
+    query.count = kMenuRecordings;
+    query.sliceId = m_sliceId;
+    query.kind = RecordingKind::Contact;
+    m_access->requestList(m_listReader, query);
 }
 
-void FlagRecordPlay::onListChanged()
+void FlagRecordPlay::onListChanged(int reader)
 {
-    // The list is the access's, shared with every reader: take the answer
-    // to this flag's own request.
-    if (!m_listPending || !m_access) {
+    // Other readers' answers are theirs.
+    if (reader != m_listReader || !m_access) {
         return;
     }
-    m_listPending = false;
-    m_entries = m_access->listed();
+    m_entries = m_access->listed(reader).entries;
     refresh();
 }
 

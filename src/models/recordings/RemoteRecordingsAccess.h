@@ -22,9 +22,13 @@
 //   2026-11-15 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 5.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 7: each list
+//                 reader's own answer. AI-assisted implementation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include <QByteArray>
+#include <QHash>
 #include <QJsonObject>
 #include <QList>
 #include <QPointer>
@@ -54,8 +58,8 @@ public:
     QJsonObject document() const override { return m_document; }
     void start(int sliceId) override;
     void stop(int sliceId) override;
-    void requestList(int offset, int count) override;
-    QList<RecordingEntry> listed() const override { return m_listed; }
+    void requestList(int reader, const RecordingsListQuery& query) override;
+    RecordingsListPage listed(int reader) const override { return m_pages.value(reader); }
     void play(const QString& id) override;
     void stopPlay() override;
     void seek(qint64 ms) override;
@@ -90,7 +94,7 @@ private:
     QString m_json;
     QJsonObject m_document;
     std::optional<qint64> m_seenKept;
-    QList<RecordingEntry> m_listed;
+    QHash<int, RecordingsListPage> m_pages;   // by reader
     std::optional<PlaybackState> m_playback;
     QList<std::shared_ptr<Download>> m_downloads;
     // The recording each recordings.export in flight asks for, in the order

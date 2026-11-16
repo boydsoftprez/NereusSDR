@@ -6596,7 +6596,7 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `bandStack.restoreExpired` | `batchId` utf8 | `bandStackVersion` | 1 | 11 |
 | `recordings.start` | `slice` i64 | `recordingsVersion` | 1 | 11 |
 | `recordings.stop` | `slice` i64 | `recordingsVersion` | 1 | 11 |
-| `recordings.list` | `offset` i64, `count` i64 | `recordingsVersion` | 1 | 11 |
+| `recordings.list` | `offset` i64, `count` i64, `slice` i64 (optional), `kind` utf8 (optional), `reader` i64 (optional) | `recordingsVersion` | 1 | 11 |
 | `recordings.play` | `id` utf8 | `recordingsVersion` | 1 | 11 |
 | `recordings.stopPlay` | none | `recordingsVersion` | 1 | 11 |
 | `recordings.seek` | `positionMs` i64 | `recordingsVersion` | 1 | 11 |
@@ -7028,6 +7028,10 @@ These command groups need a sentence beyond the table:
   array as text, newest first, at most 100 from `offset`: `id`, `kind`,
   `slice`, `startUtc`, `lengthMs`, `frequencyHz`, `mode`, `call`, `name`,
   `fileName`, `sizeBytes`), `offset` and `total` in the result's `values`.
+  The optional `slice` and `kind` (`Contact`, `WholePan` or `Sound`) narrow
+  the list, and `total` counts only what matches; an optional `reader`, the
+  asking window's own number for one of its lists, comes back as `reader` in
+  the `values`, so a window with several lists gives each its own answer.
   `recordings.play`, `recordings.stopPlay` and `recordings.seek` are the
   requesting device's own playback, heard in its own speakers only; the Core
   sends that device's sessions, and no other, a `command.result` with verb

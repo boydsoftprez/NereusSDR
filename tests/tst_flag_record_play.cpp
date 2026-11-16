@@ -24,6 +24,9 @@
 //   2026-11-15 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 6.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 7: the flag's list
+//                 request is its own slice's last eight contact recordings.
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QAction>
@@ -231,7 +234,11 @@ private slots:
                             contact(QStringLiteral("a1"), 0, kNow.addSecs(-5400), 64000)};
         f.ready({FakeRecordingsAccess::slice(0, QStringLiteral("idle"))}, 2);
         QCOMPARE(f.access.calls.last().verb, QStringLiteral("requestList"));
-        QCOMPARE(f.access.calls.last().count, FlagRecordPlay::kListRequestCount);
+        // Its own slice's last eight contact recordings, for its own reader.
+        QCOMPARE(f.access.calls.last().count, FlagRecordPlay::kMenuRecordings);
+        QCOMPARE(f.access.calls.last().listSlice, std::optional<int>(0));
+        QCOMPARE(f.access.calls.last().listKind, std::optional<RecordingKind>(RecordingKind::Contact));
+        QVERIFY(f.access.calls.last().reader != 0);
         QVERIFY(f.play()->isEnabled());
         QCOMPARE(f.rp->latestRecordingId(), QStringLiteral("a2"));
 

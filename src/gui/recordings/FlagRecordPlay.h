@@ -41,6 +41,10 @@
 //   2026-11-15 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 6.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 7: the flag asks
+//                 for its own slice's last eight contact recordings, with a
+//                 list reader of its own. AI-assisted implementation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include <QDateTime>
@@ -76,9 +80,6 @@ public:
     static constexpr int kKeptNoticeMs = 6000;
     /// Recordings in the right-click list.
     static constexpr int kMenuRecordings = 8;
-    /// Recordings asked for at once (all kinds and slices, newest first);
-    /// the slice's own are picked from them.
-    static constexpr int kListRequestCount = 100;
     /// Half a blink of Record while it records.
     static constexpr int kBlinkMs = 550;
     /// How often the playing label's position is read while it plays.
@@ -140,7 +141,7 @@ protected:
 private:
     void attachButtons();
     void onDocumentChanged();
-    void onListChanged();
+    void onListChanged(int reader);
     void onKept(const QJsonObject& event);
     void onRecordClicked();
     void onPlayClicked();
@@ -182,9 +183,9 @@ private:
     RecordLook m_recordLook = RecordLook::Idle;
     qint64 m_elapsedMs = 0;
     bool m_myVoice = false;
-    QList<RecordingEntry> m_entries;   // the last list asked for, all slices
+    QList<RecordingEntry> m_entries;   // the slice's last contact recordings
     qint64 m_listRevision = -1;
-    bool m_listPending = false;
+    int m_listReader = 0;              // this flag's list reader on m_access
 
     std::function<bool(const QString&)> m_reveal;
     std::function<QDateTime()> m_now;
