@@ -11239,8 +11239,31 @@ endif()
 # the audio functions as _audio and _audio2, every other function as the
 # rest, _part2 and _part3 (the test's main() places them; the limit is not
 # raised).
+#
+# Hosted Linux CI, 2026-11-15: _audio ran past the 300 s limit beside three
+# CPU-bound simulations (100 to 107 s in other runs), and QtTest's message
+# cap had hidden every FAIL and warning after the first 2000 (main() now
+# passes -maxwarnings 0). One wait on the media connection may legitimately
+# last 125.5 s (RemoteAudioSessionHarness::kMediaConnectionWaitMs), so the
+# audio functions now run as four entries, _audio to _audio4, each short
+# enough that such a wait still ends in a FAIL inside the limit, and each
+# takes two processors (PROCESSORS 2, as tst_remote_audio_clock), since its
+# DTLS/SRTP link and paced audio run on threads of their own. The function
+# watchdog is 160 s for every entry, past that one wait plus its case's
+# setup and below the 300 s limit, so a case stuck without a bounded wait
+# ends with QtTest's stacks instead of a silent ctest kill (the Linux CI job
+# exports 240 s, which ctest's kill would beat).
+if(TEST tst_remote_media_controller)
+    set_property(TEST tst_remote_media_controller APPEND PROPERTY ENVIRONMENT
+        "QTEST_FUNCTION_TIMEOUT=160000")
+endif()
 nereus_split_test(tst_remote_media_controller ENV NEREUS_REMOTE_MEDIA_GROUP
-    GROUPS audio audio2 part2 part3)
+    GROUPS audio audio2 audio3 audio4 part2 part3)
+foreach(_rmc_group audio audio2 audio3 audio4)
+    if(TEST tst_remote_media_controller_${_rmc_group})
+        set_tests_properties(tst_remote_media_controller_${_rmc_group} PROPERTIES PROCESSORS 2)
+    endif()
+endforeach()
 
 # iPhone app plan, desktop remote transmit (R-IOS-13, R-R3-42): the window's
 # side of the transmit verbs (copies, epochs, releases) on its own.
@@ -11958,6 +11981,13 @@ if(Qt6WebSockets_FOUND)
         fakes/RemoteWindowHarness.cpp fakes/LoopbackTransport.cpp fakes/FakeCaptureChild.cpp)
     target_compile_definitions(tst_hot_key_transmit PRIVATE NEREUS_BUILD_TESTS)
     target_link_libraries(tst_hot_key_transmit PRIVATE Qt6::WebSockets)
+    # Hosted Linux CI, 2026-11-15: every case builds its own MainWindow, and
+    # the run took 84 to 96 s of the 120 s limit on a 4-core runner and timed
+    # out once. Four entries, each case its own window as before: the test's
+    # main() deals the functions in turn to the rest, _part2, _part3 and
+    # _part4 (the limit is not raised).
+    nereus_split_test(tst_hot_key_transmit ENV NEREUS_HOT_KEY_TRANSMIT_GROUP
+        GROUPS part2 part3 part4)
 endif()
 nereus_add_test(tst_cw_soft_paddle)
 nereus_add_test(tst_hot_key_router fakes/RemoteWindowHarness.cpp)
@@ -11973,6 +12003,13 @@ if(Qt6WebSockets_FOUND)
         fakes/RemoteWindowHarness.cpp fakes/LoopbackTransport.cpp fakes/FakeCaptureChild.cpp)
     target_compile_definitions(tst_hot_key_cw PRIVATE NEREUS_BUILD_TESTS)
     target_link_libraries(tst_hot_key_cw PRIVATE Qt6::WebSockets)
+    # Hosted Linux CI, 2026-11-15: every case builds its own MainWindow, and
+    # the run took 92 to 102 s of the 120 s limit on a 4-core runner and
+    # timed out in four PR runs. Four entries, each case its own window as
+    # before: the test's main() deals the functions in turn to the rest,
+    # _part2, _part3 and _part4 (the limit is not raised).
+    nereus_split_test(tst_hot_key_cw ENV NEREUS_HOT_KEY_CW_GROUP
+        GROUPS part2 part3 part4)
 endif()
 nereus_add_test(tst_cat_settings CORE_ONLY)
 nereus_add_test(tst_cat_headless CORE_ONLY)
