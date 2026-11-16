@@ -14,6 +14,9 @@
 //     and renderNeedle's history wedge, for a container copy's dial)
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-15 - The comment on sealDialMenu() describes the parented menu:
+//                 solid over a clear container, closed with the dial.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-15 - The right-click menu is parented to the widget again, so
 //                 closing a floating dial with its menu open takes the menu
 //                 with it; sealDialMenu() still keeps it solid. J.J. Boyd
@@ -2170,12 +2173,12 @@ void SMeterWidget::contextMenuEvent(QContextMenuEvent* ev)
 }
 
 namespace {
-// The dial can sit in a window whose background is clear. A menu parented
-// there inherits that and draws see-through. This menu is its own window,
-// solid, in the app's popup colours.
-// NereusSDR 2026-11-15: the menu keeps the widget as its parent (a QMenu is
-// its own popup window either way), so the window closing while the menu is
-// open deletes the menu and exec() returns; these settings keep it solid.
+// The dial can sit in a container whose background is clear, and its menu
+// must still draw solid there, in the app's popup colors. The container's
+// clear style sheets are scoped to its own widgets, so they never reach the
+// menu, and these settings keep the menu itself opaque. The dial stays the
+// menu's parent (a QMenu is its own popup window either way), so closing the
+// dial while the menu is open closes the menu with it and exec() returns.
 void sealDialMenu(QMenu* menu)
 {
     menu->setAttribute(Qt::WA_TranslucentBackground, false);
