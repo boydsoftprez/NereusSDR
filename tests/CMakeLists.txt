@@ -10320,6 +10320,12 @@ nereus_add_test(tst_roundtable_panel)
 # own window stays on its own arrow), the container snaps, and a rooms
 # refresh leaves the saved workspace alone (offscreen).
 nereus_add_test(tst_roundtable_containers fakes/RemoteWindowHarness.cpp)
+# Each case builds a MainWindow (about 9 s of every case); the eight windows
+# took 85 s to past the 120 s limit on the hosted Linux runner. Three entries
+# of two or three windows each (the limit is not raised; groups in the
+# test's main()).
+nereus_split_test(tst_roundtable_containers ENV NEREUS_ROUNDTABLE_CONTAINERS_GROUP
+    GROUPS settings popout)
 # Roundtable plan Task 14: the Roundtable tags on a panadapter: where they
 # go, which fold into +N (your room and rooms that name you never do, a
 # lone neighbor moves aside, folds widen only when the tags don't fit),
