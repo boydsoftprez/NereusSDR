@@ -10,6 +10,10 @@
 // 2026-11-16  J.J. Boyd / KG4VCF; recording plan Task 11: a voice message
 //             follows another with no block of microphone between them.
 //             AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; recording plan Task 10b: the TX panel
+//             gain is held at the fixed playback level while a recording
+//             goes out and returns to the mic gain after. AI tooling:
+//             Anthropic Claude Code.
 
 #include "OnAirSource.h"
 
@@ -81,6 +85,7 @@ void OnAirSource::beginPlayback(const ListenerId& who)
     m_listener = who;
     m_playChannel.store(channel, std::memory_order_seq_cst);
     holdSwitches();
+    holdPanelGain();
     m_kind.store(Kind::Playback, std::memory_order_seq_cst);
 }
 
@@ -120,6 +125,7 @@ void OnAirSource::end()
     if (was == Kind::Playback || m_listener.has_value()) {
         m_listener.reset();
         releaseSwitches();
+        releasePanelGain();
         if (channel >= 0) {
             // Back to the speakers, from where the transmitter left it.
             m_service.endOnAir(channel);
@@ -243,6 +249,51 @@ void OnAirSource::releaseSwitches()
             ch->setStageRunning(TxChannel::Stage::PhRot, phaseRotator);
         }
     });
+}
+
+void OnAirSource::holdPanelGain()
+{
+    // Without the model there is no mic gain to return to: leave it alone.
+    if (m_model == nullptr) {
+        return;
+    }
+    m_gainHeld = true;
+    assertPanelGain();
+    // A mic gain or mic mute change while on the air stays in TransmitModel
+    // and is applied at the end (releasePanelGain). RadioModel's connection
+    // (micPreampChanged -> TxChannel::setMicPreamp) was made when the radio
+    // connected and runs first; this one posts after it, so the playback
+    // level is back before the next block.
+    m_gainConnection = QObject::connect(m_model, &TransmitModel::micPreampChanged, &m_context,
+                                        [this] { assertPanelGain(); });
+}
+
+void OnAirSource::assertPanelGain() const
+{
+    TxChannel* ch = m_channel ? m_channel() : nullptr;
+    if (ch == nullptr || !m_gainHeld) {
+        return;
+    }
+    // From Thetis cmaster.cs:1093-1100 [v2.10.3.15]: while WavePlayback the
+    // panel gain is the wave level, whatever Audio.MicPreamp (and so the mic
+    // mute) says.
+    QMetaObject::invokeMethod(ch, [ch] { ch->setMicPreamp(kPlaybackPanelGain); });
+}
+
+void OnAirSource::releasePanelGain()
+{
+    QObject::disconnect(m_gainConnection);
+    m_gainConnection = {};
+    const bool held = m_gainHeld;
+    m_gainHeld = false;
+    TxChannel* ch = m_channel ? m_channel() : nullptr;
+    if (!held || ch == nullptr || m_model == nullptr) {
+        return;
+    }
+    // The mic gain (or 0.0 while muted) as TransmitModel has it now, written
+    // after any re-assert still on its way to the channel.
+    const double micPreamp = m_model->micPreampLinear();
+    QMetaObject::invokeMethod(ch, [ch, micPreamp] { ch->setMicPreamp(micPreamp); });
 }
 
 void OnAirSource::waitForPulls() const

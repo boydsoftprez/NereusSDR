@@ -15,6 +15,11 @@
 // Modification history (NereusSDR):
 //   2026-11-15 - Created. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code. Recording plan Task 10.
+//   2026-11-16 - A recording goes on the air at the fixed playback level
+//                (Thetis cmaster.cs:1093-1110 [v2.10.3.15]), not the mic
+//                gain; a voice message keeps the mic gain. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code. Recording
+//                plan Task 10b.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -811,6 +816,119 @@ private slots:
         std::vector<float> tx(kBlock);
         QVERIFY(!svc->onAirSource()->pull(tx.data(), kBlock));
         svc->keyChanged(false, kLocal);
+    }
+    // ---- Task 10b: a recording goes out at a fixed level, not the mic gain.
+
+    void aRecordingGoesOutAtTheFixedLevel()
+    {
+        TxChannel ch(kTxChannelId);
+        RadioModel model;
+        RecordingService* svc = model.recordingService();
+        QVERIFY(svc != nullptr);
+        useDisk(*svc);
+        TransmitModel& tm = model.transmitModel();
+        tm.setMicMute(true);   // Thetis name: true = mic in use
+        tm.setMicGainDb(20);
+        model.wireTransmitChainForTest(&ch);
+        const double micGain = std::pow(10.0, 20.0 / 20.0);
+        QCOMPARE(ch.lastMicPreampForTest(), micGain);
+        svc->play(kLocal, addRamp(*svc, 2 * kRate));
+        svc->pumpForTest();
+        QSignalSpy gainChanged(&tm, &TransmitModel::micPreampChanged);
+
+        svc->keyChanged(true, kLocal);
+        QCOMPARE(svc->onAirSource()->active(), OnAirSource::Kind::Playback);
+        std::vector<float> tx(kBlock);
+        for (int block = 0; block < 8; ++block) {
+            QVERIFY(svc->onAirSource()->pull(tx.data(), kBlock));
+            QCOMPARE(ch.lastMicPreampForTest(), 1.0);
+        }
+        svc->keyChanged(false, kLocal);
+        QCOMPARE(ch.lastMicPreampForTest(), micGain);
+        // TransmitModel was never written.
+        QCOMPARE(gainChanged.count(), 0);
+        QCOMPARE(tm.micGainDb(), 20);
+        model.injectTxChannelForTest(nullptr);
+    }
+
+    void aMicGainChangeOnTheAirWaitsForTheEnd()
+    {
+        TxChannel ch(kTxChannelId);
+        RadioModel model;
+        RecordingService* svc = model.recordingService();
+        QVERIFY(svc != nullptr);
+        useDisk(*svc);
+        TransmitModel& tm = model.transmitModel();
+        tm.setMicMute(true);
+        tm.setMicGainDb(0);
+        model.wireTransmitChainForTest(&ch);
+        svc->play(kLocal, addRamp(*svc, 2 * kRate));
+        svc->pumpForTest();
+
+        svc->keyChanged(true, kLocal);
+        QCOMPARE(ch.lastMicPreampForTest(), 1.0);
+        tm.setMicGainDb(-20);
+        QCOMPARE(ch.lastMicPreampForTest(), 1.0);
+        tm.setMicGainDb(10);
+        QCOMPARE(ch.lastMicPreampForTest(), 1.0);
+        svc->keyChanged(false, kLocal);
+        QCOMPARE(ch.lastMicPreampForTest(), std::pow(10.0, 10.0 / 20.0));
+        model.injectTxChannelForTest(nullptr);
+    }
+
+    void aMutedMicDoesNotMuteARecording()
+    {
+        TxChannel ch(kTxChannelId);
+        RadioModel model;
+        RecordingService* svc = model.recordingService();
+        QVERIFY(svc != nullptr);
+        useDisk(*svc);
+        TransmitModel& tm = model.transmitModel();
+        tm.setMicGainDb(6);
+        tm.setMicMute(false);   // muted
+        model.wireTransmitChainForTest(&ch);
+        QCOMPARE(ch.lastMicPreampForTest(), 0.0);
+        svc->play(kLocal, addRamp(*svc, 2 * kRate));
+        svc->pumpForTest();
+
+        svc->keyChanged(true, kLocal);
+        QCOMPARE(ch.lastMicPreampForTest(), 1.0);
+        // Muting or unmuting on the air does not move it either.
+        tm.setMicMute(true);
+        QCOMPARE(ch.lastMicPreampForTest(), 1.0);
+        tm.setMicMute(false);
+        QCOMPARE(ch.lastMicPreampForTest(), 1.0);
+        svc->keyChanged(false, kLocal);
+        QCOMPARE(ch.lastMicPreampForTest(), 0.0);
+        model.injectTxChannelForTest(nullptr);
+    }
+
+    void aVoiceMessageKeepsTheMicGain()
+    {
+        TxChannel ch(kTxChannelId);
+        RadioModel model;
+        RecordingService* svc = model.recordingService();
+        QVERIFY(svc != nullptr);
+        useDisk(*svc);
+        TransmitModel& tm = model.transmitModel();
+        tm.setMicMute(true);
+        tm.setMicGainDb(20);
+        model.wireTransmitChainForTest(&ch);
+        const double micGain = std::pow(10.0, 20.0 / 20.0);
+        OnAirSource* onAir = svc->onAirSource();
+        onAir->beginVoiceMessage(QStringLiteral("M1"), [](float* out, int frames) {
+            std::fill(out, out + frames, 0.25f);
+            return frames;
+        });
+        QCOMPARE(onAir->active(), OnAirSource::Kind::VoiceMessage);
+        std::vector<float> tx(kBlock);
+        QVERIFY(onAir->pull(tx.data(), kBlock));
+        QCOMPARE(ch.lastMicPreampForTest(), micGain);
+        tm.setMicGainDb(10);
+        QCOMPARE(ch.lastMicPreampForTest(), std::pow(10.0, 10.0 / 20.0));
+        onAir->end();
+        QCOMPARE(ch.lastMicPreampForTest(), std::pow(10.0, 10.0 / 20.0));
+        model.injectTxChannelForTest(nullptr);
     }
 };
 

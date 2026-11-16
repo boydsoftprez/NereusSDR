@@ -8,6 +8,9 @@
 //             that playback from where it plays, and the five processing
 //             switches apply until it stops going out (spec 3, 6.1, 6.3,
 //             V5, V6, V7, A6, A7). AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; recording plan Task 10b: a recording
+//             goes on the air at Thetis's fixed wave playback level, not
+//             the mic gain. AI tooling: Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -39,6 +42,10 @@ class TxChannel;
 // (clsAudioRecordPlayback.cs:270-283, 533-543 [v2.10.3.15]). Here a
 // listener's playback goes out only while that listener keys (V6), and each
 // of the five stays on when its "use while it goes out" setting says so.
+// While a playback goes out, the TX panel gain is the fixed playback level
+// in place of the mic gain (mute included), as Thetis does while
+// Audio.WavePlayback is true (cmaster.cs:1093-1110 [v2.10.3.15]). A voice
+// message keeps the mic gain.
 //
 // Threads: pull() and active() on the transmit worker (any thread for
 // active()); everything else on the main (model) thread.
@@ -89,12 +96,24 @@ public:
     QString voiceMessageSlot() const { return m_voiceSlot; }
 
 private:
+    // The TX panel gain while a recording goes out: Thetis's
+    // WavePreamp * WavePreampAdjust, clamped to -70..+70 dB, in place of
+    // Audio.MicPreamp (cmaster.cs:1093-1110 [v2.10.3.15]). WavePreamp
+    // starts at 1.0 (From Thetis audio.cs:226 [v2.10.3.15]) and
+    // WavePreampAdjust is 10^(adjustGain_dB/20) with adjustGain_dB = 0 by
+    // default (From Thetis clsAudioRecordPlayback.cs:1736, 1830
+    // [v2.10.3.15]): 1.0, 0 dB. NereusSDR has no Setup control for it.
+    static constexpr double kPlaybackPanelGain = 1.0;
+
     // The five switches (spec 6.5, V7).
     enum Switch : unsigned { kTxEq = 1u, kCompressor = 2u, kLeveler = 4u, kCfc = 8u, kPhaseRotator = 16u };
 
     void holdSwitches();
     void assertHeld() const;
     void releaseSwitches();
+    void holdPanelGain();
+    void assertPanelGain() const;
+    void releasePanelGain();
     void waitForPulls() const;
 
     RecordingService& m_service;
@@ -113,6 +132,8 @@ private:
     unsigned m_held = 0;
     QObject m_context;   // the connections that keep the held switches off
     QList<QMetaObject::Connection> m_holdConnections;
+    bool m_gainHeld = false;
+    QMetaObject::Connection m_gainConnection;   // keeps the playback level held
 };
 
 }  // namespace NereusSDR
