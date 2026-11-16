@@ -216,6 +216,9 @@ struct SetupTab: View {
             DataUsePage(settings: app.phoneSettings, meter: app.longSession.meter)
         case .coreLogs:
             CoreLogsPage(log: app.coreLog)
+        case .recordingSettings:
+            RecordingSettingsPage(model: app.recordingSettings,
+                                  openRecordings: { app.phoneNavigation?.openRecordings() })
         case .about:
             AboutAppPage(buildTag: buildTag)
         }

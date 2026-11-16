@@ -261,9 +261,10 @@ struct SetupDescribedPagesTests {
         }
         let tree = SetupTree.categories(described: described, order: FakeStation.setupCategoryIds, unreadable: [:])
         #expect(tree.map(\.title) == ["Devices", "General", "Hardware", "PA", "Audio", "DSP", "Display", "Transmit",
-                                      "Appearance", "CAT & Network", "Test", "Diagnostics", "About this app"])
+                                      "Appearance", "CAT & Network", "Test", "Diagnostics", "Recording settings",
+                                      "About this app"])
         #expect(tree.map(\.tag) == [.core, .both, .core, .core, .both, .core, .both, .both, .thisPhone, .both, .core,
-                                    .both, .thisPhone])
+                                    .both, .core, .thisPhone])
         func pages(_ title: String) -> [String] { tree.first { $0.title == title }?.pages.map(\.title) ?? [] }
         // A Core below description 30 lists General's Filters page greyed with its reason.
         #expect(pages("General") == ["Startup & Preferences", "Navigation", "Battery and sessions", "Options", "Band Stack", "Filters"])

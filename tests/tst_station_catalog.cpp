@@ -56,6 +56,9 @@
 //               take the radio mic, the HL2 with the add-on note. J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
+//   2026-11-16: Recording plan Task 17: the Recordings tool after VAX
+//               Audio, offered where the Core runs the recordings service.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -70,6 +73,7 @@
 
 #include <cmath>
 #include <memory>
+#include <utility>
 
 #include "core/AppSettings.h"
 #include "core/BoardCapabilities.h"
@@ -553,7 +557,7 @@ void checkDesktopValues(const QJsonObject& catalog, HPSDRModel model, ProtocolVe
                                  QStringLiteral("Diversity"), QStringLiteral("CWX"),
                                  QStringLiteral("Memory Manager"), QStringLiteral("CAT Control"),
                                  QStringLiteral("TCI Server"), QStringLiteral("VAX Audio"),
-                                 QStringLiteral("Network Diagnostics"),
+                                 QStringLiteral("Recordings"), QStringLiteral("Network Diagnostics"),
                                  QStringLiteral("Support Bundle"), QStringLiteral("Rotor")}));
     QStringList radioItems;
     for (const QJsonValue& r : catalog.value(QStringLiteral("radioItems")).toArray()) {
@@ -874,6 +878,34 @@ private slots:
         }
         QVERIFY(found);
     }
+    // Recording plan Task 17: Recordings after VAX Audio, at the Core,
+    // offered only where the Core runs the recordings service.
+    void recordingsToolFollowsTheService()
+    {
+        BandPlanManager plans;
+        plans.loadPlans();
+        StationCatalog::Inputs inputs = inputsFor(HPSDRModel::ANAN_G2, ProtocolVersion::Protocol2, plans);
+        const auto recordings = [&inputs]() {
+            const QJsonArray tools = StationCatalog::build(inputs).value(QStringLiteral("tools")).toArray();
+            for (int i = 0; i < tools.size(); ++i) {
+                const QJsonObject tool = tools.at(i).toObject();
+                if (tool.value(QStringLiteral("id")).toString() == QStringLiteral("recordings")) {
+                    const QString before =
+                        i > 0 ? tools.at(i - 1).toObject().value(QStringLiteral("id")).toString() : QString();
+                    return std::make_pair(tool, before);
+                }
+            }
+            return std::make_pair(QJsonObject(), QString());
+        };
+        const auto [without, before] = recordings();
+        QCOMPARE(before, QStringLiteral("vaxAudio"));
+        QCOMPARE(without.value(QStringLiteral("label")).toString(), QStringLiteral("Recordings"));
+        QCOMPARE(without.value(QStringLiteral("where")).toString(), QStringLiteral("station"));
+        QCOMPARE(without.value(QStringLiteral("offered")), QJsonValue(false));
+        inputs.recordingService = true;
+        QCOMPARE(recordings().first.value(QStringLiteral("offered")), QJsonValue(true));
+    }
+
     void fixturesHoldTheDesktopsValues()
     {
         const QJsonObject g2 = catalogInFixture(QStringLiteral("catalog-anan-g2.json"));

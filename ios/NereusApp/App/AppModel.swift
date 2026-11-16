@@ -8,6 +8,8 @@
 // by the tab bar and the band. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-16: Recording plan Task 16, the recordings client wired to this phone's
 //   device id and PTT, fed the session's events. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan Task 17, Tools > Recordings and Setup > Recording
+//   settings, kept while the tabs are rebuilt. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -93,6 +95,10 @@ final class AppModel: ObservableObject {
         model.showRefusal = { [weak slices = main.slices] text in slices?.showReason(text) }
         return model
     }()
+    /// Tools > Recordings; kept here, since the Tools tab is rebuilt on every tab switch.
+    lazy var recordingsList = RecordingsListModel(client: recordings)
+    /// Setup > Recording settings.
+    lazy var recordingSettings = RecordingSettingsModel(client: recordings)
     /// The Core's spots on the band and Spot Hub.
     let spots: SpotsModel
     /// FreeDV Reporter as the Core runs it; kept here, since the Tools tab is rebuilt on every tab switch.

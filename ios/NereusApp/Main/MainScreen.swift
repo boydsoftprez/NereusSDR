@@ -23,6 +23,8 @@
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-11-16: Recording plan Task 16, each flag's Record and Play on the band.
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan Task 17, the playing bar's All recordings… and
+// Recording settings… open their pages. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -96,6 +98,10 @@ struct MainScreen: View {
     /// The toolbar's link dot opens the same destination as Tools.
     let openPerformance: () -> Void
     let openTransmitSettings: () -> Void
+    /// The playing bar's All recordings… (Tools > Recordings) and Recording
+    /// settings… (Setup > Recording settings).
+    let openAllRecordings: () -> Void
+    let openRecordingSettings: () -> Void
 
     @State private var rxPanelOpen: Bool
     @State private var txPanelOpen: Bool
@@ -169,7 +175,8 @@ struct MainScreen: View {
          roundtableSheet: RoundtableSheet.Detent? = nil, holdObserver: ((PttHold.Action) -> Void)? = nil,
          swipes: SwipeShortcutModel? = nil, roundtableWide: Bool = false,
          openSetup: @escaping () -> Void = {}, openRadio: @escaping () -> Void = {},
-         openPerformance: @escaping () -> Void = {}, openTransmitSettings: @escaping () -> Void = {}) {
+         openPerformance: @escaping () -> Void = {}, openTransmitSettings: @escaping () -> Void = {},
+         openAllRecordings: @escaping () -> Void = {}, openRecordingSettings: @escaping () -> Void = {}) {
         self.app = app
         self.main = main
         transmit = main.transmit
@@ -189,6 +196,8 @@ struct MainScreen: View {
         self.openRadio = openRadio
         self.openPerformance = openPerformance
         self.openTransmitSettings = openTransmitSettings
+        self.openAllRecordings = openAllRecordings
+        self.openRecordingSettings = openRecordingSettings
         offline = flow?.offline ?? false
         _rxPanelOpen = State(initialValue: rxPanelOpen)
         _sheet = State(initialValue: sheet)
@@ -1123,7 +1132,8 @@ struct MainScreen: View {
                              dialStrip: strip, roundtable: first ? roundtable : nil,
                              swipes: swipesHere ? swipes : nil,
                              bandStack: controls.bandStack, radioOnAir: transmit.coreOnAir,
-                             recordings: app.recordingFlag)
+                             recordings: app.recordingFlag, openAllRecordings: openAllRecordings,
+                             openRecordingSettings: openRecordingSettings)
             DbmScaleArrows(display: controls.display, band: band, trailingInset: trailingInset)
             BandReadouts(band: band, trailingInset: trailingInset)
             TransmitDisplayBanner(band: band)

@@ -10,6 +10,8 @@
 // iPad too. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-08: band stack follow-up, a UI test's band launch keeps the
 // Panadapter tab on its first return. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan Task 17, the playing bar's All recordings… and
+// Recording settings… open their pages. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusBand
 import SwiftUI
@@ -85,6 +87,10 @@ struct RootView: View {
         navigation.openPage = { page in
             setupRouter.open(page)
             selectSetup()
+        }
+        navigation.openRecordings = {
+            toolsRouter.openRecordings()
+            selectTools()
         }
         return navigation
     }
@@ -345,7 +351,15 @@ struct RootView: View {
                        openPerformance: {
                            toolsRouter.openPerformance()
                            selection = .tools
-                       }, openTransmitSettings: { txSettingsRouter.openTransmit() })
+                       }, openTransmitSettings: { txSettingsRouter.openTransmit() },
+                       // The playing bar's Others: All recordings… and Recording settings….
+                       openAllRecordings: {
+                           toolsRouter.openRecordings()
+                           selection = .tools
+                       }, openRecordingSettings: {
+                           setupRouter.open(.recordingSettings)
+                           selection = .setup
+                       })
             #if DEBUG
             .overlay(alignment: .topLeading) {
                 if let log = UITestBand.holdLog {

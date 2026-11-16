@@ -6,6 +6,10 @@
 // 2026-10-26: CW transmit, CWX opens its page; a Core that lists it unbuilt
 //             leaves it out (R-CW-50). J.J. Boyd (KG4VCF), AI-assisted via
 //             Claude Code.
+// 2026-11-16: Recording plan Task 17, Recordings after VAX Audio; a Core
+//             that lists its tools without it is too old, and the row is
+//             greyed with that reason. J.J. Boyd (KG4VCF), AI-assisted via
+//             Claude Code.
 
 import NereusModels
 
@@ -44,6 +48,7 @@ enum StationToolList {
         case supportBundle
         case rotor
         case roundtable
+        case recordings
     }
 
     /// One row of the list.
@@ -77,6 +82,11 @@ enum StationToolList {
     static let noRotorReason = "No rotor is set up on this Core."
     static let rotorOlderCoreReason = "This Core does not control a rotor. Updating the Core may help."
     static let rotorId = "rotor"
+    /// Recordings (the recording design of 2026-11-15, section 6.4).
+    static let recordingsId = "recordings"
+    /// V9's words, as `RecordingsClient.updateReason` says them: a Core
+    /// that lists its tools without Recordings is older than them.
+    static let recordingsOlderCoreReason = "This Core needs an update for recordings."
 
     /// The tools a radio without their hardware leaves out when the Core
     /// does not offer them (the hardware-presence exception).
@@ -135,6 +145,8 @@ enum StationToolList {
               tag: .core, page: .tciServer),
         Known(id: "vaxAudio", title: "VAX Audio", detail: "Audio for digital-mode apps on the Core's computer",
               tag: .core, page: .vaxAudio),
+        Known(id: recordingsId, title: "Recordings", detail: "Contacts and saved stretches kept on the Core",
+              tag: .core, page: .recordings),
         Known(id: performanceId, title: "Connection and performance",
               detail: "Live routes, traffic, audio and Core history", tag: .both, page: .performance),
         Known(id: "supportBundle", title: "Support Bundle", detail: "This phone's log and the Core's bundle, to share",
@@ -183,6 +195,16 @@ enum StationToolList {
             $0.id == performanceId
         }) {
             entries.append(entry(performance, tag: performance.tag, reason: nil))
+        }
+        // A Core that lists its tools but not Recordings is older than them:
+        // the row stays, greyed with V9's reason, after VAX Audio as the
+        // Core lists it.
+        if !entries.contains(where: { $0.id == recordingsId }),
+           let recordings = known.first(where: { $0.id == recordingsId }) {
+            let row = entry(recordings, tag: recordings.tag,
+                            reason: connected ? recordingsOlderCoreReason : notConnectedReason)
+            let after = entries.firstIndex { $0.id == "vaxAudio" }
+            entries.insert(row, at: after.map { $0 + 1 } ?? entries.count)
         }
         // A Core that lists its tools but not the rotor is older than the
         // rotor; the row stays, greyed with that reason, last as the desktop
