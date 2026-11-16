@@ -197,7 +197,7 @@ struct RecordingsPagesTests {
         #expect(!model.selecting && model.selected.isEmpty)
     }
 
-    @Test("a tap plays on this phone, again stops it; a whole-pan stretch says why it cannot open")
+    @Test("a tap plays on this phone, again stops it; a whole-pan stretch on a Core without the recorder says why")
     func tapPlays() async {
         let (rig, model) = await Self.listRig()
         model.received(Self.entries())
@@ -215,7 +215,31 @@ struct RecordingsPagesTests {
         #expect(rig.sent.invokes[1].verb == "recordings.stopPlay")
         await model.tap(Self.entries()[1])
         #expect(rig.sent.invokes.count == 2)
-        #expect(model.note == RecordingsListModel.wholePanReason)
+        #expect(model.note == RecordingsClient.updateReason && model.stretchReason == RecordingsClient.updateReason)
+    }
+
+    @Test("a whole-pan stretch opens on the pan and saves its sound only; the Core's words show")
+    func wholePanOpensAndSavesItsSound() async {
+        let (rig, model) = await Self.listRig(version: 4)
+        model.received(Self.entries())
+        let pan = Self.entries()[1]
+        #expect(model.stretchReason == nil)
+        let open = Task { await model.tap(pan) }
+        await Flag.answer(rig, 0)
+        await open.value
+        #expect(rig.sent.invokes[0].verb == "recordings.openStretch")
+        #expect(rig.sent.invokes[0].args == [.init(name: "id", value: .utf8(pan.id))])
+        #expect(model.note == nil)
+        let refused = Task { await model.openStretch(pan) }
+        await Flag.answer(rig, 1, accepted: false, reason: "Slice A belongs to another device.")
+        await refused.value
+        #expect(model.note == "Slice A belongs to another device.")
+        let sound = Task { await model.saveSoundOnly(pan) }
+        await Flag.answer(rig, 2, values: [.init(name: "note", value: .utf8("Saving the sound to Recordings."))])
+        await sound.value
+        #expect(rig.sent.invokes[2].verb == "recordings.saveSoundOnly")
+        #expect(rig.sent.invokes[2].args == [.init(name: "id", value: .utf8(pan.id))])
+        #expect(model.note == "Saving the sound to Recordings.")
     }
 
     @Test("a big whole-pan copy says how big it is before it starts; a small one copies at once")

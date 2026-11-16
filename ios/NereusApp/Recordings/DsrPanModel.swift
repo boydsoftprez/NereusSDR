@@ -3,6 +3,12 @@
 // Modification history (NereusSDR):
 // 2026-11-16: Recording plan Task 28, the phone's and iPad's Digital Spectrum
 //   Recorder. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan fix round: the picture follows only this
+//   device's own rewind, LIVE reaches every slice it rewound, nothing is owed
+//   across a reconnect, moments the Core does not keep are not asked again,
+//   the past spectrum keeps up while the sound plays, the hours are asked
+//   again as the recorder changes, one save at a time.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusMirror
@@ -50,6 +56,13 @@ final class DsrPanModel {
     nonisolated static let liveSlackSeconds = 0.3
     /// How long a note stays on the waterfall.
     nonisolated static let noteSeconds = 4.0
+    /// The past spectrum is asked for at most this often while the sound
+    /// plays, one ask at a time (the desktop's SpectrumWidget kDsrSpectrumIntervalMs, 100 ms).
+    nonisolated static let spectrumIntervalSeconds = 0.1
+    /// The hours are asked again at least this often while the recorder runs.
+    nonisolated static let hoursIntervalSeconds = 3600.0
+    /// The most moments remembered as not kept before the memory starts again.
+    nonisolated static let mostUnkept = 100_000
 
     let client: RecordingsClient
 
@@ -90,26 +103,53 @@ final class DsrPanModel {
     private(set) var bracket: (Double, Double)?
     /// A note over the waterfall: the Core's words for a save, a refusal or a reason.
     private(set) var note: String?
-    /// The PTT took the slice live without LIVE: LIVE stays red until pressed.
-    private(set) var liveOwed = false
+    /// The slices this device rewound and the Core still plays from the past.
+    /// Only these move the picture with their sound, and LIVE returns each.
+    private(set) var mine: Set<Int> = []
+    /// The slices a key took live after this device rewound them: LIVE stays
+    /// red until pressed, and still returns them to the frequency before.
+    private(set) var owed: Set<Int> = []
+    /// A save is with the Core: both save buttons wait for its answer.
+    private(set) var saveInFlight = false
     /// The time sheet is open.
     var timeSheetOpen = false
 
     @ObservationIgnored private var rowsTask: Task<Void, Never>?
     @ObservationIgnored private var spectrumTask: Task<Void, Never>?
+    @ObservationIgnored private var spectrumAskedAt: Double?
     @ObservationIgnored private var noteTask: Task<Void, Never>?
-    @ObservationIgnored private var hoursAsked = false
-    /// The moment played and when it was, from the document or our own rewind.
-    @ObservationIgnored private var playAnchor: (utc: Double, at: Double)?
-    /// The rewound entry last seen in the document, to tell a key's go-live apart.
-    @ObservationIgnored private var lastRewound: RecordingsDocument.Rewound?
-    @ObservationIgnored private var askedLive = false
+    @ObservationIgnored private var hoursTask: Task<Void, Never>?
+    /// What the hours were last asked for: the oldest kept hour, the newest
+    /// hour and how many erases there have been; nil before any ask.
+    @ObservationIgnored private var hoursKey: String?
+    /// The moment each slice played and when it was, from the document or our own rewind.
+    @ObservationIgnored private var anchors: [Int: (utc: Double, at: Double)] = [:]
+    /// The rewound entries last seen in the document, to tell a key's go-live apart.
+    @ObservationIgnored private var lastRewound: [Int: RecordingsDocument.Rewound] = [:]
+    /// The slices LIVE was sent for and the Core has not yet listed live.
+    @ObservationIgnored private var liveAsked: Set<Int> = []
     /// A finger is on the strip: the sound does not move the picture under it.
     @ObservationIgnored private var dragging = false
+    /// The session the state above belongs to: the client's link drops, -1 while offline.
+    @ObservationIgnored private var seenSession: Int
+    /// The recorder's bytes in use when last seen: a fall is an erase.
+    @ObservationIgnored private var seenUsedBytes: Int64?
+    @ObservationIgnored private var erases = 0
+    /// The recorder's settings that change what it keeps, when last seen.
+    @ObservationIgnored private var seenKeeping: String?
+    /// Moments asked for that the Core did not keep or refused, as row slots
+    /// (the moment over the waterfall's period) of the display they were asked
+    /// with: not asked again until the display or the recorder changes.
+    @ObservationIgnored private var unkept: Set<Int64> = []
+    @ObservationIgnored private var unkeptKey: String?
 
     init(client: RecordingsClient) {
         self.client = client
+        seenSession = client.state == .offline ? -1 : client.linkDrops
     }
+
+    /// The PTT took a slice this device rewound live without LIVE.
+    var liveOwed: Bool { sameSession && !owed.isEmpty }
 
     // MARK: Reasons
 
@@ -164,7 +204,7 @@ final class DsrPanModel {
     /// The picture's height in seconds.
     var pictureSeconds: Double { max(0, waterfallPoints) * secondsPerPoint }
 
-    /// The active slice's past, while it plays one.
+    /// The active slice's past, while it plays one (whoever rewound it).
     var rewound: RecordingsDocument.Rewound? {
         guard let slice = activeSlice() else {
             return nil
@@ -172,19 +212,33 @@ final class DsrPanModel {
         return client.dsr?.rewound(slice)
     }
 
+    /// The active slice plays a past this device asked for (its own rewind,
+    /// or a saved stretch open on the pan): the picture follows its sound.
+    var followsSound: Bool {
+        guard rewound != nil, let slice = activeSlice() else {
+            return false
+        }
+        return (sameSession && mine.contains(slice)) || client.dsr?.stretch != nil
+    }
+
     /// The picture shows the past (paused or playing).
     var inPast: Bool { viewTop != nil || client.dsr?.stretch != nil }
 
-    /// LIVE is red: the picture or the sound is in the past, or a key took it live.
-    var liveLit: Bool { inPast || rewound != nil || liveOwed }
+    /// LIVE is red: the picture or the active slice's sound is in the past,
+    /// another slice this device rewound still plays the past, or a key took one live.
+    var liveLit: Bool { inPast || rewound != nil || (sameSession && (!mine.isEmpty || !owed.isEmpty)) }
 
-    /// The moment the slice plays now, while rewound.
+    /// The moment the slice plays now, while it plays this device's rewind.
     var playedMoment: Double? {
-        guard rewound != nil, let playAnchor else {
+        guard followsSound, let slice = activeSlice(), let anchor = anchors[slice] else {
             return nil
         }
-        return playAnchor.utc + (clock() - playAnchor.at)
+        return anchor.utc + (clock() - anchor.at)
     }
+
+    /// The session this model's state belongs to is the client's now.
+    private var sessionKey: Int { client.state == .offline ? -1 : client.linkDrops }
+    private var sameSession: Bool { sessionKey >= 0 && sessionKey == seenSession }
 
     /// The top moment drawn: the picture's, or now.
     var top: Double { viewTop ?? newest }
@@ -204,18 +258,29 @@ final class DsrPanModel {
         }
         let total = Int(waterfallPoints)
         var missing = 0
-        for y in 0..<total where row(at: top - Double(y) * secondsPerPoint) == nil {
+        for y in 0..<total where waits(top - Double(y) * secondsPerPoint) {
             missing += 1
         }
         return Double(missing) / Double(total)
     }
 
-    /// "Digital Spectrum Recorder: drawing 13:40" while a quarter or more waits.
+    /// "Digital Spectrum Recorder: drawing 13:40" while the Core is asked
+    /// and a quarter or more of the picture waits for it.
     var drawingText: String? {
-        guard coreDraws, awaitingRows || missingShare >= Self.drawingShare, missingShare > 0 else {
+        guard coreDraws, awaitingRows, missingShare >= Self.drawingShare else {
             return nil
         }
         return "Digital Spectrum Recorder: drawing " + Self.hm(top)
+    }
+
+    /// The moment has no row yet and the Core has not said it keeps none.
+    private func waits(_ moment: Double) -> Bool {
+        row(at: moment) == nil && !unkept.contains(slot(moment))
+    }
+
+    /// The row slot a moment falls in: the moment over the waterfall's period.
+    private func slot(_ moment: Double) -> Int64 {
+        Int64((moment / max(secondsPerPoint, 0.001)).rounded())
     }
 
     /// The row kept for `moment`: the nearest within half a point.
@@ -257,7 +322,7 @@ final class DsrPanModel {
     func dragEnded() {
         dragging = false
         commit()
-        if let viewTop, let slice = activeSlice(), rewound != nil {
+        if let viewTop, let slice = activeSlice(), followsSound {
             let moment = viewTop
             Task { await self.seek(slice: slice, to: moment) }
         }
@@ -272,7 +337,7 @@ final class DsrPanModel {
         let newest = self.newest
         let moment = newest - min(1, max(0, fraction)) * (newest - oldest)
         setTop(moment + pictureSeconds / 2, commit: commit)
-        if commit, let viewTop, let slice = activeSlice(), rewound != nil {
+        if commit, let viewTop, let slice = activeSlice(), followsSound {
             let moment = viewTop
             Task { await self.seek(slice: slice, to: moment) }
         }
@@ -330,12 +395,18 @@ final class DsrPanModel {
         return true
     }
 
+    /// Rewinds `slice`. A refusal (a slice another device owns, the Core's
+    /// words) shows its reason and leaves the picture where it is.
     func rewind(slice: Int, moment: Double, hz: Double) async {
+        followSession()
         do {
             try await client.rewind(slice: slice, utcNs: Int64((moment * 1e9).rounded()),
                                     frequencyHz: Int64(hz.rounded()))
-            playAnchor = (moment, clock())
-            liveOwed = false
+            anchors[slice] = (moment, clock())
+            mine.insert(slice)
+            owed.remove(slice)
+            // A LIVE asked before this rewind is done with (the desktop's DsrRewindLink m_liveAsked).
+            liveAsked.remove(slice)
             // The clicked row slides to the top; the picture then moves with the sound.
             setTop(moment, commit: true)
         } catch {
@@ -343,63 +414,93 @@ final class DsrPanModel {
         }
     }
 
-    /// LIVE: the picture goes live, and a rewound slice (or one a key took
-    /// live) returns to the radio at the frequency it had before.
+    /// LIVE: the picture goes live, and every slice this device rewound
+    /// (the active one or another since), or a key took live, returns to
+    /// the radio at the frequency it had before. The active slice goes too
+    /// when it plays the past; the Core refuses one this device does not
+    /// own, and its words show.
     func goLive() async {
-        let slice = activeSlice()
-        let wasRewound = rewound != nil || liveOwed
+        followSession()
         viewTop = nil
         pastSpectrum = nil
         lookBack(0)
-        liveOwed = false
-        guard wasRewound || client.dsr?.stretch != nil, let slice else {
-            return
+        var slices = mine.union(owed)
+        if let active = activeSlice(), rewound != nil || client.dsr?.stretch != nil {
+            slices.insert(active)
         }
-        askedLive = true
-        do {
-            try await client.live(slice: slice)
-        } catch {
-            show(error)
+        for slice in slices.sorted() {
+            liveAsked.insert(slice)
+            do {
+                try await client.live(slice: slice)
+                mine.remove(slice)
+                owed.remove(slice)
+            } catch {
+                liveAsked.remove(slice)
+                show(error)
+            }
         }
     }
 
     private func seek(slice: Int, to moment: Double) async {
         do {
             try await client.seekPast(slice: slice, utcNs: Int64((moment * 1e9).rounded()))
-            playAnchor = (moment, clock())
+            anchors[slice] = (moment, clock())
         } catch {
             show(error)
         }
     }
 
-    /// The Core's document changed: a rewind the Core ended (a key, the end
-    /// of what is kept) takes the picture live, and LIVE stays red when it
-    /// was not asked for.
+    /// The Core's document changed: a rewind of this device's that the Core
+    /// ended (a key, the end of what is kept) takes the picture live, and
+    /// LIVE stays red when it was not asked for. Another device's rewind
+    /// never moves this picture.
     func documentChanged() {
-        let now = rewound
-        if let now, now != lastRewound {
-            playAnchor = (Double(now.utcNs) / 1e9, clock())
+        followSession()
+        var now: [Int: RecordingsDocument.Rewound] = [:]
+        for entry in client.dsr?.rewound ?? [] {
+            now[entry.slice] = entry
         }
-        if lastRewound != nil, now == nil {
-            if !askedLive {
-                liveOwed = true
+        for (slice, entry) in now {
+            if entry != lastRewound[slice] {
+                anchors[slice] = (Double(entry.utcNs) / 1e9, clock())
             }
-            viewTop = nil
-            pastSpectrum = nil
-            lookBack(0)
+            // Listed rewound: a LIVE asked before is done with, and nothing is owed.
+            liveAsked.remove(slice)
+            owed.remove(slice)
         }
-        if now == nil {
-            askedLive = false
+        let active = activeSlice()
+        for slice in lastRewound.keys where now[slice] == nil {
+            anchors[slice] = nil
+            guard mine.remove(slice) != nil else {
+                continue
+            }
+            if !liveAsked.contains(slice) {
+                owed.insert(slice)
+            }
+            if slice == active {
+                viewTop = nil
+                pastSpectrum = nil
+                lookBack(0)
+            }
+        }
+        for slice in liveAsked where now[slice] == nil && lastRewound[slice] != nil {
+            liveAsked.remove(slice)
         }
         lastRewound = now
+        followRecorder()
     }
 
     /// Called a few times a second: while the sound plays the picture
-    /// follows it, and rows ahead of it are asked for.
+    /// follows it, rows ahead of it and its spectrum are asked for, and the
+    /// hours are asked again when the recorder has changed.
     func tick() {
+        followSession()
+        followRecorder()
+        askForHoursIfDue()
         if !dragging, let played = playedMoment {
             if client.dsr?.stretch == nil, played >= clock() - Self.liveSlackSeconds {
                 viewTop = nil
+                pastSpectrum = nil
                 lookBack(0)
                 return
             }
@@ -408,7 +509,72 @@ final class DsrPanModel {
             if coreDraws {
                 askForRows(ahead: true)
             }
+            askForSpectrum(whilePlaying: true)
         }
+    }
+
+    /// A drop, a reconnect or another Core: nothing is owed across it, and
+    /// the past drawn, the hours and what was not kept are asked again.
+    private func followSession() {
+        let key = sessionKey
+        guard key != seenSession else {
+            return
+        }
+        seenSession = key
+        mine = []
+        owed = []
+        liveAsked = []
+        lastRewound = [:]
+        anchors = [:]
+        seenUsedBytes = nil
+        seenKeeping = nil
+        forgetPast()
+    }
+
+    /// Erase (a fall in the bytes kept) or a change in what the recorder
+    /// keeps drops the past drawn and the hours; rows older than the oldest
+    /// kept go as the loop erases them.
+    private func followRecorder() {
+        guard let dsr = client.dsr else {
+            return
+        }
+        let keeping = "\(dsr.enabled)|\(dsr.disk)|\(dsr.sizeLimitGb)|\(dsr.stretch?.id ?? "")"
+        if let seenUsedBytes, dsr.usedBytes < seenUsedBytes {
+            erases += 1
+            forgetPast()
+        } else if let seenKeeping, seenKeeping != keeping {
+            forgetPast()
+        }
+        seenUsedBytes = dsr.usedBytes
+        seenKeeping = keeping
+        if dsr.stretch == nil, !rows.isEmpty {
+            let oldestNs = dsr.oldestUtcMs * 1_000_000
+            if oldestNs <= 0 {
+                rows = []
+            } else if rows[0].utcNs < oldestNs {
+                rows.removeAll { $0.utcNs < oldestNs }
+            }
+        }
+    }
+
+    /// Drops the rows drawn, the hours and the moments not kept.
+    private func forgetPast() {
+        rowsTask?.cancel()
+        rowsTask = nil
+        awaitingRows = false
+        rows = []
+        rowsView = nil
+        rowsLayout = nil
+        unkept = []
+        unkeptKey = nil
+        spectrumTask?.cancel()
+        spectrumTask = nil
+        spectrumAskedAt = nil
+        pastSpectrum = nil
+        hoursTask?.cancel()
+        hoursTask = nil
+        hours = []
+        hoursKey = nil
     }
 
     // MARK: Time sheet
@@ -498,6 +664,20 @@ final class DsrPanModel {
         self.bracket = bracket
     }
 
+    /// The handle's step for VoiceOver's adjust: one tick of the strip, ten points.
+    nonisolated static let handleStepPoints = 10.0
+
+    /// Moves one of the bracket's handles a step later (up) or earlier (down),
+    /// as dragging it would: the way to it without a drag.
+    func stepHandle(_ which: Int, later: Bool) {
+        guard let bracket else {
+            return
+        }
+        let moment = which == 0 ? bracket.0 : bracket.1
+        let pointsDown = (top - moment) / max(secondsPerPoint, 0.001)
+        moveHandle(which, toPointsDown: pointsDown + (later ? -Self.handleStepPoints : Self.handleStepPoints))
+    }
+
     /// The stretch, oldest first.
     var stretch: (from: Double, to: Double)? {
         guard let bracket else {
@@ -549,9 +729,14 @@ final class DsrPanModel {
         return "Slice A\(at), about " + Self.megabytes(bytesPerSecond * (stretch.to - stretch.from))
     }
 
+    /// One save at a time: a second tap while the Core answers the first sends nothing.
     func save(_ kind: DsrStretchKind) async {
-        guard let stretch else {
+        guard let stretch, !saveInFlight else {
             return
+        }
+        saveInFlight = true
+        defer {
+            saveInFlight = false
         }
         do {
             let note = try await client.saveStretch(fromUtcNs: Int64((stretch.from * 1e9).rounded()),
@@ -566,17 +751,35 @@ final class DsrPanModel {
 
     // MARK: Asking the Core
 
-    /// The hours, once, when the map first shows.
-    func askForHoursOnce() {
-        guard !hoursAsked, usable else {
+    /// The hours, when the recorder becomes usable and again when what it
+    /// keeps has moved: a new oldest hour, a new hour now (at most once an
+    /// hour while it runs), an erase, a reconnect. One ask at a time.
+    func askForHoursIfDue() {
+        followSession()
+        followRecorder()
+        guard usable, hoursTask == nil, let oldest = oldestKept else {
             return
         }
-        hoursAsked = true
-        Task {
+        let hour = Self.hoursIntervalSeconds
+        let key = "\(Int64((oldest / hour).rounded(.down)))|\(Int64((clock() / hour).rounded(.down)))|\(erases)"
+        guard key != hoursKey else {
+            return
+        }
+        hoursKey = key
+        hoursTask = Task {
             do {
-                hours = try await client.hours()
+                let answer = try await client.hours()
+                if !Task.isCancelled {
+                    hours = answer
+                }
             } catch {
-                hoursAsked = false
+                if !Task.isCancelled {
+                    // Asked again on the next tick.
+                    hoursKey = nil
+                }
+            }
+            if !Task.isCancelled {
+                hoursTask = nil
             }
         }
     }
@@ -630,12 +833,17 @@ final class DsrPanModel {
             rowsView = view
             rowsLayout = nil
         }
+        let memory = "\(view)|\(secondsPerPoint)"
+        if unkeptKey != memory || unkept.count > Self.mostUnkept {
+            unkept = []
+            unkeptKey = memory
+        }
         let total = Int(waterfallPoints)
         var newestMissing: Double?
         var oldestMissing: Double?
         for y in 0..<total {
             let moment = top - Double(y) * secondsPerPoint
-            if row(at: moment) == nil {
+            if waits(moment) {
                 newestMissing = newestMissing ?? moment
                 oldestMissing = moment
             }
@@ -654,21 +862,42 @@ final class DsrPanModel {
         rowsTask?.cancel()
         awaitingRows = true
         rowsTask = Task {
+            var answered = true
             do {
                 try await client.pastRows(slice: slice, view: view, fromUtcNs: Int64((from * 1e9).rounded()),
                                           toUtcNs: Int64((to * 1e9).rounded()), rowCount: count) { frames in
                     self.received(frames, view: view)
                 }
             } catch is CancellationError {
+                answered = false
             } catch {
                 if !Task.isCancelled {
                     show(error)
                 }
             }
             if !Task.isCancelled {
+                if answered {
+                    // What the Core left out, or refused, is not kept: not asked again.
+                    rememberUnkept(from: from, to: to, memory: memory)
+                }
                 awaitingRows = false
                 rowsTask = nil
             }
+        }
+    }
+
+    /// The moments from `from` to `to` that still have no row once the Core has answered.
+    private func rememberUnkept(from: Double, to: Double, memory: String) {
+        guard unkeptKey == memory, to >= from else {
+            return
+        }
+        let spp = max(secondsPerPoint, 0.001)
+        var moment = to
+        while moment >= from - spp / 2 {
+            if row(at: moment) == nil {
+                unkept.insert(slot(moment))
+            }
+            moment -= spp
         }
     }
 
@@ -694,18 +923,34 @@ final class DsrPanModel {
         rows = next
     }
 
-    private func askForSpectrum() {
-        guard coreDraws || rewound != nil, usable, let view = panView(), let slice = activeSlice() else {
+    /// The spectrum at the picture's top or the moment played. While the
+    /// sound plays it is asked again at the desktop's interval, one ask at a
+    /// time; a moved picture replaces any ask under way.
+    private func askForSpectrum(whilePlaying: Bool = false) {
+        guard coreDraws || followsSound, usable, let view = panView(), let slice = activeSlice() else {
             pastSpectrum = nil
             return
         }
+        let now = clock()
+        if whilePlaying {
+            if spectrumTask != nil {
+                return
+            }
+            if let spectrumAskedAt, now - spectrumAskedAt < Self.spectrumIntervalSeconds {
+                return
+            }
+        }
+        spectrumAskedAt = now
         let moment = playedMoment ?? top
         spectrumTask?.cancel()
         spectrumTask = Task {
-            if let frame = try? await client.pastSpectrum(slice: slice, view: view,
-                                                          utcNs: Int64((moment * 1e9).rounded())),
-               !Task.isCancelled {
-                pastSpectrum = frame
+            let frame = try? await client.pastSpectrum(slice: slice, view: view,
+                                                       utcNs: Int64((moment * 1e9).rounded()))
+            if !Task.isCancelled {
+                if let frame {
+                    pastSpectrum = frame
+                }
+                spectrumTask = nil
             }
         }
     }
@@ -730,8 +975,10 @@ final class DsrPanModel {
     }
 
     private func show(_ error: Error) {
-        if let reason = (error as? RecordingsError)?.reason {
+        if let error = error as? RecordingsError, let reason = error.reason {
             showNote(reason)
+        } else if (error as? RecordingsError) == .notConnected {
+            showNote(Self.notConnectedReason)
         } else {
             showNote("The Core did not answer.")
         }

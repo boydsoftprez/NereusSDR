@@ -103,7 +103,7 @@ struct IPadRecordingsAppletTests {
 
     // MARK: Taps
 
-    @Test("a row's play plays it on this iPad and stops it while it plays; a whole-pan stretch says why instead")
+    @Test("a row's play plays it on this iPad and stops it while it plays; a whole-pan stretch on a Core without the recorder says why")
     func playAndStop() async throws {
         let (rig, model) = await Self.rig()
         await Self.listed(rig, model)
@@ -122,7 +122,7 @@ struct IPadRecordingsAppletTests {
         let pan = try #require(model.actions.entries.first { $0.kind == .wholePan })
         await model.tapPlay(pan)
         #expect(rig.sent.invokes.count == 3)
-        #expect(model.note == RecordingsListModel.wholePanReason)
+        #expect(model.note == RecordingsClient.updateReason)
     }
 
     @Test("a recording row's stop square stops that slice on the Core, and a refusal shows the Core's words")

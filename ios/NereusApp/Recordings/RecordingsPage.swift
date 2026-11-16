@@ -9,6 +9,9 @@
 // 2026-11-16: Recording plan Task 19, the row menu and the confirms shared with
 //   the iPad's Recordings panel.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan fix round: a whole-pan stretch opens on the pan
+//   and saves its sound only, as the desktop's Recordings window does.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -107,9 +110,10 @@ final class RecordingsListModel {
     nonisolated static let reader: Int64 = 17
     /// A whole-pan copy this big or bigger says so before it starts.
     nonisolated static let bigShareBytes: Int64 = 100_000_000
-    /// The desktop's words while the Digital Spectrum Recorder is not there
-    /// to open a whole-pan stretch.
-    nonisolated static let wholePanReason = "Available when the Digital Spectrum Recorder is built."
+    /// What a whole-pan stretch's open does, for its button's hint.
+    nonisolated static let openStretchHint = "Opens it on the pan. Slice A plays it."
+    /// The words when the Core gives none for a sound-only save.
+    nonisolated static let soundSavedText = "Sound saved to Recordings on the Core."
     nonisolated static let recorderNote = "The Digital Spectrum Recorder's loop is separate and not counted here."
     nonisolated static let searchPrompt = "Search call or name"
     nonisolated static let copyFailedText = "The copy did not finish. Try again."
@@ -151,6 +155,12 @@ final class RecordingsListModel {
             return RecordingFlagModel.notConnectedReason
         }
         return client.unavailableReason(needs: RecordingsClient.recordingsVersion)
+    }
+
+    /// Why a whole-pan stretch cannot open on the pan or save its sound
+    /// now (not connected, or a Core without the recorder), or nil.
+    var stretchReason: String? {
+        reason ?? client.unavailableReason(needs: RecordingsClient.dsrVersion)
     }
 
     /// What the list redraws on: the session and the Core's list.
@@ -250,12 +260,39 @@ final class RecordingsListModel {
             note = reason
             return
         }
-        guard entry.kind != .wholePan else {
-            note = Self.wholePanReason
+        if entry.kind == .wholePan {
+            await openStretch(entry)
             return
         }
         note = nil
         await run { try await client.play(id: entry.id) }
+    }
+
+    /// A whole-pan stretch opens on the pan: Slice A plays it like a rewind.
+    /// The Core's refusal shows in its words.
+    func openStretch(_ entry: RecordingEntry) async {
+        if let why = stretchReason {
+            note = why
+            return
+        }
+        note = nil
+        await run { try await client.openStretch(id: entry.id) }
+    }
+
+    /// Keeps the sound of a whole-pan stretch as a recording of its own; the
+    /// Core's words for the save, or its refusal, show.
+    func saveSoundOnly(_ entry: RecordingEntry) async {
+        if let why = stretchReason {
+            note = why
+            return
+        }
+        note = nil
+        do {
+            let said = try await client.saveSoundOnly(id: entry.id)
+            note = said.isEmpty ? Self.soundSavedText : said
+        } catch {
+            show(error)
+        }
     }
 
     func stop() async {
@@ -1078,11 +1115,12 @@ struct RecordingRowMenuItems: View {
                 + RecordingsListModel.sizeText(entry.sizeBytes)) {
             if entry.kind == .wholePan {
                 Button {
+                    Task { await model.openStretch(entry) }
                 } label: {
                     Text("Open on the pan")
-                    Text(RecordingsListModel.wholePanReason)
+                    Text(model.stretchReason ?? RecordingsListModel.openStretchHint)
                 }
-                .disabled(true)
+                .disabled(model.stretchReason != nil)
             } else {
                 Button(playing ? "Stop" : "Play") {
                     Task { await model.tap(entry) }
@@ -1093,11 +1131,14 @@ struct RecordingRowMenuItems: View {
             }
             if entry.kind == .wholePan {
                 Button {
+                    Task { await model.saveSoundOnly(entry) }
                 } label: {
                     Text("Save sound only…")
-                    Text(RecordingsListModel.wholePanReason)
+                    if let why = model.stretchReason {
+                        Text(why)
+                    }
                 }
-                .disabled(true)
+                .disabled(model.stretchReason != nil)
             }
             Button("Share a copy…") {
                 Task { await model.share([entry]) }

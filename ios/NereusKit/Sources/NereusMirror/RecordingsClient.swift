@@ -5,6 +5,8 @@
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-16: Recording plan Task 28, the Digital Spectrum Recorder's verbs
 //   (version 4). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan fix round: linkDrops, so the recorder's screens
+//   drop what they kept across a reconnect. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusLink
@@ -114,6 +116,10 @@ public final class RecordingsClient {
     public private(set) var playbackRefusal: String?
     /// The Core's voice keyer sends this device's message, or waits to repeat it.
     public private(set) var voiceMessageSending = false
+    /// How many times the link has been lost. A screen that keeps
+    /// something for this session (a LIVE owed, the past it drew) compares
+    /// it to tell a reconnect or another Core from the same session.
+    public private(set) var linkDrops = 0
 
     /// Each open slice's Record.
     public var slices: [RecordingsDocument.Slice] { document?.slices ?? [] }
@@ -257,6 +263,7 @@ public final class RecordingsClient {
     }
 
     private func linkLost() {
+        linkDrops += 1
         state = .offline
         coreVersion = 0
         document = nil

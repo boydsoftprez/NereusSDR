@@ -106,9 +106,8 @@ struct DsrShotTests {
             try await answerRows(rig, model, geometry: geometry, share: 1)
             let (spectrumIndex, _) = try #require(await DsrTests.invoke(rig, "dsr.spectrum"))
             await Flag.answer(rig, spectrumIndex, values: Self.frames([model.top], geometry: geometry))
-            Flag.publish(rig, DsrTests.document(dsr: DsrTests.dsrPart(
-                rewound: DsrTests.rewound(Int64((model.top * 1e9).rounded())))), revision: 2)
-            model.documentChanged()
+            // Rewound from this device, so the picture follows the sound.
+            try await DsrTests.rewindHere(rig, model, moment: model.top, revision: 2)
             if frame == .ipadPast {
                 model.toggleSave()
             }
@@ -135,9 +134,14 @@ struct DsrShotTests {
                             share: Double) async throws {
         let (index, _) = try #require(await DsrTests.invoke(rig, "dsr.rows"))
         let top = model.top
+        let total = Int(model.waterfallPoints)
         let count = Int(model.waterfallPoints * share)
         let moments = (0..<count).map { top - Double($0) * model.secondsPerPoint }
-        await Flag.answer(rig, index, values: Self.frames(moments, geometry: geometry))
+        // Part of the picture: the rest is still to come, so the ask stays with the Core.
+        let next = Int64(((top - Double(count) * model.secondsPerPoint) * 1e9).rounded())
+        await Flag.answer(rig, index, values: Self.frames(moments, geometry: geometry,
+                                                          rowsLeft: count < total ? total - count : 0,
+                                                          next: count < total ? next : 0))
         #expect(await ShotWait.until { model.rows.count >= count })
     }
 
@@ -150,7 +154,8 @@ struct DsrShotTests {
 
     /// The Core's rows across the band's width: the noise, a few signals
     /// that come and go, and a stretch you transmitted.
-    static func frames(_ moments: [Double], geometry: BandGeometry) -> [LinkMessage.PropertyEntry] {
+    static func frames(_ moments: [Double], geometry: BandGeometry, rowsLeft: Int = 0,
+                       next: Int64 = 0) -> [LinkMessage.PropertyEntry] {
         let bins = Int(geometry.size.width)
         let hzPerBin = geometry.spanHz / Double(bins)
         var tenths: [Int16] = []
@@ -179,7 +184,7 @@ struct DsrShotTests {
                 .init(name: "times", value: .utf8(DsrPastFrames.packTimes(times).base64EncodedString())),
                 .init(name: "bins", value: .utf8(DsrPastFrames.packBins(tenths).base64EncodedString())),
                 .init(name: "transmit", value: .utf8(Data(transmit).base64EncodedString())),
-                .init(name: "rowsLeft", value: .i64(0)), .init(name: "nextToUtcNs", value: .i64(0))]
+                .init(name: "rowsLeft", value: .i64(Int64(rowsLeft))), .init(name: "nextToUtcNs", value: .i64(next))]
     }
 
     // MARK: The time sheet and Setup

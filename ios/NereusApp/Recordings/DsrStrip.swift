@@ -3,6 +3,9 @@
 // Modification history (NereusSDR):
 // 2026-11-16: Recording plan Task 28, the phone's and iPad's Digital Spectrum
 //   Recorder on the pan. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan fix round: SAVE's handles move by a step for
+//   VoiceOver, the hours are asked as the recorder changes, the play line
+//   shows only for this device's own rewind. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import CoreGraphics
 import NereusBand
@@ -124,7 +127,6 @@ struct DsrStripLayer: View {
             model.secondsPerPoint = max(seconds, 0.001)
         }
         .task {
-            model.askForHoursOnce()
             while !Task.isCancelled {
                 model.tick()
                 try? await Task.sleep(for: .milliseconds(250))
@@ -276,6 +278,11 @@ struct DsrStripLayer: View {
                         .accessibilityElement()
                         .accessibilityIdentifier("dsr.handle\(which)")
                         .accessibilityLabel(which == 0 ? "Bracket end" : "Bracket start")
+                        .accessibilityValue(handleMoment(which).map { DsrPanModel.hms($0) + " UTC" } ?? "")
+                        .accessibilityHint("Adjust to move it later or earlier")
+                        .accessibilityAdjustableAction { direction in
+                            model.stepHandle(which, later: direction == .increment)
+                        }
                         .offset(x: place.strip.minX + 8, y: y - DsrStripPlace.handleSize / 2)
                 }
             }
@@ -283,6 +290,10 @@ struct DsrStripLayer: View {
     }
 
     static let space = "dsrStrip"
+
+    private func handleMoment(_ which: Int) -> Double? {
+        model.bracket.map { which == 0 ? $0.0 : $0.1 }
+    }
 
     private func handleY(_ which: Int) -> CGFloat? {
         guard let bracket = model.bracket else {
@@ -386,7 +397,7 @@ struct DsrPictureLayer: View {
             if let stretch = model.stretch {
                 bracketBand(stretch)
             }
-            if model.rewound != nil, model.inPast {
+            if model.followsSound, model.inPast {
                 playLine
             }
             if let text = model.drawingText {

@@ -163,30 +163,120 @@ struct DsrTests {
         #expect(!model.liveLit)
     }
 
-    /// The Core ends a rewind when you key: the picture goes live and LIVE
-    /// stays red until pressed, which still sends the slice home.
-    @Test func aKeyWhileRewoundTakesItLive() async throws {
-        let (rig, model, _) = await Self.pan(dsr: Self.dsrPart(rewound: Self.rewound(Int64((Self.now - 600) * 1e9))))
-        model.documentChanged()
-        model.drag(from: model.top, by: -1_200)
-        #expect(model.inPast && model.rewound != nil)
+    /// Rewinds Slice A from this device at `moment` and publishes it rewound.
+    static func rewindHere(_ rig: Rig, _ model: DsrPanModel, moment: Double, slice: Int = 0,
+                           revision: Int64) async throws {
         let before = rig.sent.invokes.count
+        let rewind = Task { await model.rewind(slice: slice, moment: moment, hz: 7_240_500) }
+        let (index, _) = try #require(await invoke(rig, "dsr.rewind", after: before))
+        await RecordingFlagTests.answer(rig, index)
+        await rewind.value
+        let entry: [String: Any] = ["slice": slice, "utcNs": Int64((moment * 1e9).rounded()), "frequencyHz": 7_240_500,
+                                    "liveFrequencyHz": 7_236_400]
+        RecordingFlagTests.publish(rig, document(dsr: dsrPart(rewound: [entry])), revision: revision)
+        model.documentChanged()
+    }
+
+    /// The Core ends a rewind when you key: the picture goes live and LIVE
+    /// stays red until pressed, which still sends the slice home. After that
+    /// LIVE, a second rewind and a second key leave LIVE red again.
+    @Test func aKeyWhileRewoundTakesItLive() async throws {
+        let (rig, model, _) = await Self.pan()
+        for round in 0..<2 {
+            try await Self.rewindHere(rig, model, moment: Self.now - 600, revision: Int64(10 * round + 2))
+            #expect(model.inPast && model.followsSound)
+            let before = rig.sent.invokes.count
+            RecordingFlagTests.publish(rig, Self.document(dsr: Self.dsrPart()), revision: Int64(10 * round + 3))
+            model.documentChanged()
+            #expect(model.viewTop == nil && model.rewound == nil && model.liveLit && model.liveOwed)
+            #expect(!rig.sent.invokes.dropFirst(before).contains { $0.verb == "dsr.live" })
+            let live = Task { await model.goLive() }
+            let (index, _) = try #require(await Self.invoke(rig, "dsr.live", after: before))
+            await RecordingFlagTests.answer(rig, index)
+            await live.value
+            #expect(!model.liveLit)
+        }
+    }
+
+    /// Another device's rewind of the active slice never moves this picture;
+    /// the Core's refusals of a rewind or LIVE on a slice this device does
+    /// not own show its words and leave the picture where it was put.
+    @Test func anotherDevicesRewindLeavesThePictureAlone() async throws {
+        let theirs = Self.rewound(Int64((Self.now - 600) * 1e9))
+        let (rig, model, _) = await Self.pan(dsr: Self.dsrPart(rewound: theirs))
+        model.documentChanged()
+        model.tick()
+        #expect(model.viewTop == nil && !model.followsSound && model.playedMoment == nil)
+        model.drag(from: model.top, by: -200)
+        model.dragEnded()
+        let put = try #require(model.viewTop)
+        model.tick()
+        #expect(model.viewTop == put)
+        let refusal = "Slice A belongs to another device."
+        #expect(model.tapWaterfall(pointsDown: 20, hz: 7_240_500))
+        let (index, _) = try #require(await Self.invoke(rig, "dsr.rewind"))
+        await RecordingFlagTests.answer(rig, index, accepted: false, reason: refusal)
+        #expect(await Eventually.holds { model.note == refusal })
+        #expect(model.viewTop == put && model.mine.isEmpty)
+        // LIVE takes this picture live and asks for the slice; the Core says no.
+        let live = Task { await model.goLive() }
+        let (liveIndex, _) = try #require(await Self.invoke(rig, "dsr.live"))
+        await RecordingFlagTests.answer(rig, liveIndex, accepted: false, reason: refusal)
+        await live.value
+        #expect(model.note == refusal && model.viewTop == nil)
+        // Their rewind ending owes nothing here.
         RecordingFlagTests.publish(rig, Self.document(dsr: Self.dsrPart()), revision: 2)
         model.documentChanged()
-        #expect(model.viewTop == nil && model.rewound == nil && model.liveLit)
-        #expect(!rig.sent.invokes.dropFirst(before).contains { $0.verb == "dsr.live" })
+        #expect(!model.liveLit)
+    }
+
+    /// A slice rewound here stays in LIVE's reach after another slice becomes active.
+    @Test func liveReachesASliceRewoundBeforeTheActiveOneChanged() async throws {
+        let (rig, model, _) = await Self.pan()
+        var active = 0
+        model.activeSlice = { active }
+        try await Self.rewindHere(rig, model, moment: Self.now - 600, revision: 2)
+        active = 1
+        #expect(model.liveLit && !model.followsSound)
         let live = Task { await model.goLive() }
-        let (index, _) = try #require(await Self.invoke(rig, "dsr.live", after: before))
+        let (index, sent) = try #require(await Self.invoke(rig, "dsr.live"))
+        #expect(sent.args == [LinkMessage.PropertyEntry(name: "slice", value: .i64(0))])
         await RecordingFlagTests.answer(rig, index)
         await live.value
+        RecordingFlagTests.publish(rig, Self.document(dsr: Self.dsrPart()), revision: 3)
+        model.documentChanged()
         #expect(!model.liveLit)
+    }
+
+    /// A link drop owes no LIVE, before or after the reconnect, and a call
+    /// made while not connected says so.
+    @Test func aDropOwesNoLive() async throws {
+        let (rig, model, _) = await Self.pan()
+        try await Self.rewindHere(rig, model, moment: Self.now - 600, revision: 2)
+        // The picture dragged live: LIVE is red for the slice still playing the past.
+        model.drag(from: model.top, by: 10_000)
+        model.dragEnded()
+        #expect(model.viewTop == nil && model.liveLit)
+        rig.client.handle(.stateChanged(.connecting))
+        model.documentChanged()
+        #expect(!model.liveLit && !model.liveOwed)
+        await model.goLive()
+        #expect(model.note == nil)
+        await model.rewind(slice: 0, moment: Self.now - 600, hz: 7_240_500)
+        #expect(model.note == DsrPanModel.notConnectedReason)
+        rig.client.handle(.stateChanged(.receivingSnapshot))
+        rig.client.handle(.stateChanged(.ready))
+        RecordingFlagTests.publish(rig, Self.document(dsr: Self.dsrPart()), revision: 5)
+        model.documentChanged()
+        model.tick()
+        #expect(!model.liveLit && !model.liveOwed && model.mine.isEmpty)
     }
 
     /// The hours map: half way down is half way back through what is kept,
     /// with the picture centred there, and its label says when.
     @Test func theHoursMapJumps() async throws {
         let (rig, model, _) = await Self.pan()
-        model.askForHoursOnce()
+        model.askForHoursIfDue()
         let (index, _) = try #require(await Self.invoke(rig, "dsr.hours"))
         let starts: [Int64] = [1_763_298_000_000_000_000, 1_763_294_400_000_000_000, 1_763_290_800_000_000_000]
         await RecordingFlagTests.answer(rig, index, values: [
@@ -273,7 +363,7 @@ struct DsrTests {
             model.openTimeSheet()
             #expect(!model.timeSheetOpen)
             model.jump(toMapFraction: 0.5, commit: true)
-            model.askForHoursOnce()
+            model.askForHoursIfDue()
             // The strip still moves through the band's own minute, and the Core is asked nothing.
             model.drag(from: model.top, by: -60)
             model.dragEnded()
@@ -281,6 +371,126 @@ struct DsrTests {
             try? await Task.sleep(for: .milliseconds(100))
             #expect(!rig.sent.invokes.contains { $0.verb.hasPrefix("dsr.") })
         }
+    }
+
+    static func count(_ rig: Rig, _ verb: String) -> Int {
+        rig.sent.invokes.filter { $0.verb == verb }.count
+    }
+
+    /// Moments the Core leaves out, or refuses, are not asked again until
+    /// the display changes; "Drawing" shows only while an ask is with the Core.
+    @Test func momentsNotKeptAreNotAskedAgain() async throws {
+        let (rig, model, _) = await Self.pan()
+        model.drag(from: model.top, by: -1_000)
+        model.dragEnded()
+        let (first, _) = try #require(await Self.invoke(rig, "dsr.rows"))
+        let top = model.top
+        let moments = (0..<100).map { top - Double($0) * Self.spp }
+        await RecordingFlagTests.answer(rig, first, values: Self.rows(moments, rowsLeft: 0, next: 0))
+        #expect(await Eventually.holds { !model.awaitingRows && model.row(at: moments[50]) != nil })
+        #expect(model.drawingText == nil && model.missingShare == 0)
+        model.dragEnded()
+        model.tick()
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(Self.count(rig, "dsr.rows") == 1)
+        // Another display asks again; a refusal is remembered the same way.
+        model.panView = { DsrPanView(fftSize: 4096, windowType: 1, centreHz: 7_236_000, spanHz: 96_000, pixels: 402) }
+        model.dragEnded()
+        let (second, _) = try #require(await Self.invoke(rig, "dsr.rows", after: first + 1))
+        await RecordingFlagTests.answer(rig, second, accepted: false, reason: "Nothing is kept there.")
+        #expect(await Eventually.holds { !model.awaitingRows })
+        #expect(model.note == "Nothing is kept there." && model.drawingText == nil)
+        model.dragEnded()
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(Self.count(rig, "dsr.rows") == 2)
+    }
+
+    /// While the sound plays the past spectrum is asked again at the
+    /// desktop's interval, one ask at a time.
+    @Test func thePastSpectrumKeepsUpWhileTheSoundPlays() async throws {
+        let (rig, model, _) = await Self.pan()
+        var now = Self.now
+        model.clock = { now }
+        try await Self.rewindHere(rig, model, moment: Self.now - 600, revision: 2)
+        let (first, _) = try #require(await Self.invoke(rig, "dsr.spectrum"))
+        model.tick()
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(Self.count(rig, "dsr.spectrum") == 1)
+        await RecordingFlagTests.answer(rig, first, values: Self.rows([Self.now - 600], rowsLeft: 0, next: 0))
+        #expect(await Eventually.holds { model.pastSpectrum != nil })
+        now += 0.25
+        model.tick()
+        #expect(model.viewTop == Self.now - 599.75)
+        #expect(await Eventually.holds { Self.count(rig, "dsr.spectrum") == 2 })
+        now += 0.25
+        model.tick()
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(Self.count(rig, "dsr.spectrum") == 2)
+    }
+
+    /// The hours are asked once the recorder is usable, not again on every
+    /// tick, and again after an erase or a reconnect, which also drop the
+    /// hours and the past drawn.
+    @Test func theHoursFollowTheRecorder() async throws {
+        let (rig, model, _) = await Self.pan(dsr: Self.dsrPart(recording: false))
+        model.tick()
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(Self.count(rig, "dsr.hours") == 0)
+        RecordingFlagTests.publish(rig, Self.document(dsr: Self.dsrPart()), revision: 2)
+        model.tick()
+        let (index, _) = try #require(await Self.invoke(rig, "dsr.hours"))
+        let starts: [Int64] = [1_763_298_000_000_000_000, 1_763_294_400_000_000_000]
+        let hours: [LinkMessage.PropertyEntry] = [
+            .init(name: "starts", value: .utf8(DsrPastFrames.packTimes(starts).base64EncodedString())),
+            .init(name: "activity", value: .utf8("[0.9,0.2]")),
+        ]
+        await RecordingFlagTests.answer(rig, index, values: hours)
+        #expect(await Eventually.holds { model.hours.count == 2 })
+        model.tick()
+        model.tick()
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(Self.count(rig, "dsr.hours") == 1)
+        // Rows drawn, then erased on the Core.
+        model.drag(from: model.top, by: -1_000)
+        model.dragEnded()
+        let (rowsIndex, _) = try #require(await Self.invoke(rig, "dsr.rows"))
+        await RecordingFlagTests.answer(rig, rowsIndex, values: Self.rows([model.top], rowsLeft: 0, next: 0))
+        #expect(await Eventually.holds { !model.rows.isEmpty })
+        var erased = Self.dsrPart()
+        erased["usedBytes"] = 1_000_000
+        erased["oldestUtcMs"] = Int64(Self.now * 1000) - 5_000
+        RecordingFlagTests.publish(rig, Self.document(dsr: erased), revision: 3)
+        model.tick()
+        #expect(model.rows.isEmpty && model.hours.isEmpty)
+        let (again, _) = try #require(await Self.invoke(rig, "dsr.hours", after: index + 1))
+        await RecordingFlagTests.answer(rig, again, values: hours)
+        #expect(await Eventually.holds { model.hours.count == 2 })
+        // A reconnect drops them and asks again.
+        rig.client.handle(.stateChanged(.connecting))
+        rig.client.handle(.stateChanged(.receivingSnapshot))
+        rig.client.handle(.stateChanged(.ready))
+        RecordingFlagTests.publish(rig, Self.document(dsr: erased), revision: 4)
+        model.tick()
+        #expect(model.hours.isEmpty)
+        #expect(await Self.invoke(rig, "dsr.hours", after: again + 1) != nil)
+    }
+
+    /// A second tap while a save is with the Core sends nothing; the
+    /// handles move by a step without a drag.
+    @Test func oneSaveAtATimeAndTheHandlesStep() async throws {
+        let (rig, model, _) = await Self.pan()
+        model.toggleSave()
+        model.stepHandle(0, later: true)
+        model.stepHandle(1, later: false)
+        #expect(model.stretch?.to == Self.now - 30 && model.stretch?.from == Self.now - 130)
+        let save = Task { await model.save(.wholePan) }
+        let (index, _) = try #require(await Self.invoke(rig, "dsr.saveStretch"))
+        #expect(model.saveInFlight)
+        await model.save(.wholePan)
+        #expect(Self.count(rig, "dsr.saveStretch") == 1)
+        await RecordingFlagTests.answer(rig, index)
+        await save.value
+        #expect(!model.saveInFlight && !model.saving)
     }
 
     // MARK: Setup
@@ -348,6 +558,17 @@ struct DsrTests {
         await RecordingFlagTests.answer(rig, eraseIndex)
         await erase.value
         #expect(model.erasedNote == "Erased. The recorder starts again from now." && model.refusal == nil)
+        // A reconnect clears it.
+        rig.client.handle(.stateChanged(.connecting))
+        rig.client.handle(.stateChanged(.receivingSnapshot))
+        rig.client.handle(.stateChanged(.ready))
+        #expect(model.erasedNote == nil)
+    }
+
+    /// The Size slider reaches down to the Core's least, 1 GB.
+    @Test func theSizeSliderStartsAtTheCoresLeast() async {
+        let (_, model) = await Self.setup()
+        #expect(DsrSetupModel.sizeRange.lowerBound == 1 && model.sliderRange.lowerBound == 1)
     }
 
     @Test func anOlderCoreOrNotConnectedGreysTheSetupPage() async {

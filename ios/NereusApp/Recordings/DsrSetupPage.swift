@@ -3,6 +3,9 @@
 // Modification history (NereusSDR):
 // 2026-11-16: Recording plan Task 28, the phone's and iPad's Digital Spectrum
 //   Recorder Setup page. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan fix round: the Size slider starts at the Core's
+//   1 GB, and the erase note clears on a reconnect or another Core.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusMirror
@@ -29,9 +32,10 @@ final class DsrSetupModel {
     /// The Core's words when its only disk is an SD card (RecordingService::dsrReasonWords).
     nonisolated static let onlySdReason = "The only disk is an SD card."
     nonisolated static let refusedText = "The Core did not take the change."
-    /// The Size slider's reach, in GB (the phone mockup); a size the Core
-    /// holds beyond it widens the slider to it.
-    nonisolated static let sizeRange = 2...200
+    /// The Size slider's reach, in GB: from the Core's least
+    /// (RecordingSettings kDsrSizeLimitGbMin, 1) to the phone mockup's 200;
+    /// a size the Core holds beyond it widens the slider to it.
+    nonisolated static let sizeRange = 1...200
     /// The Core's default size (design section 6.7).
     nonisolated static let defaultSizeGb = 10
 
@@ -45,8 +49,16 @@ final class DsrSetupModel {
     var draggedSizeGb: Double?
     /// The erase question is open.
     var askingErase = false
-    /// The Core's answer to an erase, shown under the button.
-    private(set) var erasedNote: String?
+    /// The Core's answer to an erase, shown under the button until the
+    /// link drops (a reconnect or another Core).
+    var erasedNote: String? {
+        guard let erased, client.state != .offline, erased.drops == client.linkDrops else {
+            return nil
+        }
+        return erased.text
+    }
+
+    private var erased: (text: String, drops: Int)?
 
     init(client: RecordingsClient) {
         self.client = client
@@ -233,7 +245,7 @@ final class DsrSetupModel {
         refusal = nil
         do {
             try await client.eraseAll()
-            erasedNote = "Erased. The recorder starts again from now."
+            erased = ("Erased. The recorder starts again from now.", client.linkDrops)
         } catch {
             refusal = (error as? RecordingsError)?.reason ?? Self.refusedText
         }

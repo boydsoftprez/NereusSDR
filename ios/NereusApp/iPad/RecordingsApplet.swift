@@ -4,6 +4,8 @@
 // Modification history (NereusSDR):
 // 2026-11-16: Recording plan Task 19, the iPad's Recordings panel.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan fix round: a whole-pan row's button opens it on
+//   the pan. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -435,7 +437,8 @@ private struct RecordingsAppletRow: View {
             .buttonStyle(.plain)
             .disabled(!enabled)
             .accessibilityLabel(entry.kind == .wholePan ? "Open on the pan" : playing ? "Stop" : "Play")
-            .accessibilityHint(entry.kind == .wholePan ? RecordingsListModel.wholePanReason
+            .accessibilityHint(entry.kind == .wholePan
+                               ? model.actions.stretchReason ?? RecordingsListModel.openStretchHint
                                : playing ? "" : "Plays it on this iPad. Transmit while it plays to send it on the air.")
             .accessibilityIdentifier("recordingsApplet.play.\(entry.id)")
             VStack(alignment: .leading, spacing: 1) {

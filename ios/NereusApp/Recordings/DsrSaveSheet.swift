@@ -3,6 +3,8 @@
 // Modification history (NereusSDR):
 // 2026-11-16: Recording plan Task 28, the phone's and iPad's Digital Spectrum
 //   Recorder. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan fix round: both save buttons wait while a save
+//   is with the Core. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusModels
 import SwiftUI
@@ -69,6 +71,7 @@ struct DsrSavePanel: View {
             .frame(maxWidth: .infinity, minHeight: 56)
         }
         .buttonStyle(WorkspaceButtonStyle(look))
+        .disabled(model.saveInFlight)
         .accessibilityIdentifier(id)
     }
 }
