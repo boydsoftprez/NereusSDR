@@ -42,6 +42,9 @@
 //                 picture (past rows in chunks, a past spectrum frame, the
 //                 hours map). AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 25: saving a
+//                 stretch, sound only and opening a saved stretch.
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QByteArray>
@@ -102,6 +105,9 @@ public:
                          int rowCount) override;
     void requestPastSpectrum(int slice, const DsrPanView& view, qint64 utcNs) override;
     void requestHours() override;
+    void saveStretch(qint64 fromNs, qint64 toNs, bool wholePan) override;
+    void saveSoundOnly(const QString& id) override;
+    void openStretch(const QString& id) override;
 
     /// StationClient: a recordings.* answer, or the Core's recordings.playback.
     void takeResult(const QByteArray& verb, bool accepted, const QString& reason,

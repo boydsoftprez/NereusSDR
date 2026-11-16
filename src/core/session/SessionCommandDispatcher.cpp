@@ -6,6 +6,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Recording plan Task 25: dsr.saveStretch,
+//               recordings.saveSoundOnly and recordings.openStretch
+//               (handleDsr, recordingsVersion 4).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: Recording plan Task 24: dsr.rows and dsr.spectrum take the
 //               pan's width in `pixels` and answer each row's `transmit`.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1044,6 +1048,17 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
           arg("centreHz", kInt), arg("spanHz", kInt), arg("pixels", kInt)},
          "recordingsVersion", 4, kRadioIdentitySessionProtocolMinor},
         {"dsr.hours", {}, "recordingsVersion", 4, kRadioIdentitySessionProtocolMinor},
+        // Recording plan Task 25 (recordingsVersion 4): SAVE a stretch of the
+        // Digital Spectrum Recorder (`kind` WholePan or Sound, as the index
+        // names kinds), sound only from a saved whole-pan stretch, and a
+        // saved whole-pan stretch opened on slice A like rewind. None keys
+        // the radio.
+        {"dsr.saveStretch", {arg("fromUtcNs", kInt), arg("toUtcNs", kInt), arg("kind", kUtf8)},
+         "recordingsVersion", 4, kRadioIdentitySessionProtocolMinor},
+        {"recordings.saveSoundOnly", {arg("id", kUtf8)}, "recordingsVersion", 4,
+         kRadioIdentitySessionProtocolMinor},
+        {"recordings.openStretch", {arg("id", kUtf8)}, "recordingsVersion", 4,
+         kRadioIdentitySessionProtocolMinor},
         {"paProfile.setUseMax", {arg("band", kInt), arg("on", kBool)}, "paProfileVersion", 1,
          kRadioIdentitySessionProtocolMinor},
         // The Core's RF-Kit RF2K-S and the station TCI server (R-R3-47,
@@ -1951,7 +1966,9 @@ void SessionCommandDispatcher::dispatch(const SessionMessage& invoke)
         handleVoiceKeyer(invoke);
     } else if (invoke.commandVerb == "dsr.rewind" || invoke.commandVerb == "dsr.live"
                || invoke.commandVerb == "dsr.seek" || invoke.commandVerb == "dsr.rows"
-               || invoke.commandVerb == "dsr.spectrum" || invoke.commandVerb == "dsr.hours") {
+               || invoke.commandVerb == "dsr.spectrum" || invoke.commandVerb == "dsr.hours"
+               || invoke.commandVerb == "dsr.saveStretch" || invoke.commandVerb == "recordings.saveSoundOnly"
+               || invoke.commandVerb == "recordings.openStretch") {
         handleDsr(invoke);
     } else if (invoke.commandVerb == "requestIoBoardProbe") {
         handleRequestIoBoardProbe(invoke);
@@ -5425,7 +5442,36 @@ void SessionCommandDispatcher::handleDsr(const SessionMessage& invoke)
         handleDsrPast(invoke, arguments, slice);
         return;
     }
-    if (verb == "dsr.rewind") {
+    // Recording plan Task 25: SAVE, sound only and an opened stretch. The
+    // copy or the sound runs on the Core's worker; the answer carries what
+    // is being saved (`note`), and the list shows the recording when done.
+    if (verb == "dsr.saveStretch" || verb == "recordings.saveSoundOnly") {
+        QString note;
+        if (verb == "dsr.saveStretch") {
+            RecordingKind kind = RecordingKind::Contact;
+            if (!recordingKindFromKey(arguments.value(QStringLiteral("kind")).toString(), &kind)
+                || kind == RecordingKind::Contact) {
+                refuse(notUnderstood);
+                return;
+            }
+            ok = service->saveStretch(arguments.value(QStringLiteral("fromUtcNs")).toInteger(0),
+                                      arguments.value(QStringLiteral("toUtcNs")).toInteger(0),
+                                      kind == RecordingKind::WholePan, &note, &refusal);
+        } else {
+            ok = service->saveSoundOnly(arguments.value(QStringLiteral("id")).toString(), &note, &refusal);
+        }
+        if (!ok) {
+            refuse(refusal.isEmpty() ? notUnderstood : refusal);
+            return;
+        }
+        emit commandResultReady(SessionMessages::commandResult(
+            verb, invoke.commandId, true, QString(), {QByteArrayLiteral("recordings")},
+            {MirrorUpdate{0, "note", MirrorWireKind::Utf8, QVariant(note)}}));
+        return;
+    }
+    if (verb == "recordings.openStretch") {
+        ok = service->openStretch(arguments.value(QStringLiteral("id")).toString(), &refusal);
+    } else if (verb == "dsr.rewind") {
         ok = service->rewind(slice, arguments.value(QStringLiteral("utcNs")).toInteger(0),
                              arguments.value(QStringLiteral("frequencyHz")).toInteger(0), &refusal);
     } else if (verb == "dsr.live") {

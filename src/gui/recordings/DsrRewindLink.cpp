@@ -8,6 +8,9 @@
 //   2026-11-16 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 24.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 25: saving a
+//                 stretch, sound only and opening a saved stretch.
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/recordings/DsrRewindLink.h"
@@ -48,6 +51,7 @@ DsrRewindLink::DsrRewindLink(SpectrumWidget* spectrum, std::function<int()> slic
     connect(spectrum, &SpectrumWidget::dsrPastSignalClicked, this, &DsrRewindLink::onSignalClicked);
     connect(spectrum, &SpectrumWidget::dsrPastSeekWanted, this, &DsrRewindLink::onSeekWanted);
     connect(spectrum, &SpectrumWidget::dsrLiveRequested, this, &DsrRewindLink::onLiveRequested);
+    connect(spectrum, &SpectrumWidget::dsrSaveStretchWanted, this, &DsrRewindLink::onSaveWanted);
     connect(spectrum, &SpectrumWidget::dsrHoursWanted, this, [this] {
         if (m_access && unavailableReason().isEmpty()) {
             m_access->requestHours();
@@ -67,6 +71,7 @@ void DsrRewindLink::setAccess(RecordingsAccess* access)
     m_liveAsked = false;
     m_rowsAsked = false;
     m_spectrumAsked = false;
+    m_saveAsked = false;
     if (access != nullptr) {
         m_accessConnections = {
             connect(access, &RecordingsAccess::documentChanged, this, &DsrRewindLink::refresh),
@@ -89,6 +94,13 @@ void DsrRewindLink::setAccess(RecordingsAccess* access)
                         }
                         m_spectrumAsked = false;
                         m_spectrum->setDsrPastSpectrum(frame);
+                    }),
+            connect(access, &RecordingsAccess::stretchSaving, this,
+                    [this](const QString& note) {
+                        if (m_saveAsked && m_spectrum) {
+                            m_saveAsked = false;
+                            m_spectrum->showDsrNote(note);
+                        }
                     }),
             connect(access, &RecordingsAccess::hoursReady, this,
                     [this](const QList<DsrHour>& hours) {
@@ -116,6 +128,9 @@ QString DsrRewindLink::unavailableReason() const
         return version;
     }
     const QJsonObject dsr = m_access->document().value(QStringLiteral("dsr")).toObject();
+    if (dsr.value(QStringLiteral("stretch")).isObject()) {
+        return {};   // a saved stretch is open: it plays with the recorder off
+    }
     if (!dsr.value(QStringLiteral("enabled")).toBool(false)) {
         return recorderOffReason();
     }
@@ -162,8 +177,24 @@ void DsrRewindLink::refresh()
     const QString why = unavailableReason();
     const QJsonObject dsr = m_access ? m_access->document().value(QStringLiteral("dsr")).toObject()
                                      : QJsonObject();
-    m_spectrum->setDsrRewindAvailable(why.isEmpty(), why,
-                                      dsr.value(QStringLiteral("oldestUtcMs")).toInteger(0));
+    // A saved stretch that is open reaches as far back as it does.
+    qint64 oldestMs = dsr.value(QStringLiteral("oldestUtcMs")).toInteger(0);
+    const QJsonObject stretch = dsr.value(QStringLiteral("stretch")).toObject();
+    const qint64 stretchFromMs = stretch.value(QStringLiteral("fromUtcNs")).toInteger(0) / kNsPerMs;
+    if (stretchFromMs > 0) {
+        oldestMs = oldestMs > 0 ? std::min(oldestMs, stretchFromMs) : stretchFromMs;
+    }
+    m_spectrum->setDsrRewindAvailable(why.isEmpty(), why, oldestMs);
+    // The save box's sizes: what the recorder keeps per millisecond, and
+    // the Files format for sound only.
+    const qint64 keptMs = dsr.value(QStringLiteral("newestUtcMs")).toInteger(0)
+        - dsr.value(QStringLiteral("oldestUtcMs")).toInteger(0);
+    const double usedBytes = dsr.value(QStringLiteral("usedBytes")).toDouble(0.0);
+    const QJsonObject settings = m_access ? m_access->document().value(QStringLiteral("settings")).toObject()
+                                          : QJsonObject();
+    m_spectrum->setDsrSaveEstimates(keptMs > 0 ? usedBytes / double(keptMs) : 0.0,
+                                    settings.value(QStringLiteral("format")).toString()
+                                        == QLatin1String("wav"));
     const int s = slice();
     bool listed = false;
     qint64 playedNs = 0;
@@ -263,9 +294,27 @@ void DsrRewindLink::onLiveRequested()
     }
 }
 
+void DsrRewindLink::onSaveWanted(qint64 fromUtcMs, qint64 toUtcMs, bool wholePan)
+{
+    const QString why = unavailableReason();
+    if (!m_access || !why.isEmpty()) {
+        if (m_spectrum) {
+            m_spectrum->showDsrNote(why);
+        }
+        return;
+    }
+    m_saveAsked = true;
+    m_access->saveStretch(fromUtcMs * kNsPerMs, toUtcMs * kNsPerMs, wholePan);
+}
+
 void DsrRewindLink::onRefused(const QString& reason)
 {
     if (!m_spectrum) {
+        return;
+    }
+    if (m_saveAsked) {
+        m_saveAsked = false;
+        m_spectrum->showDsrNote(reason);
         return;
     }
     if (m_rewindAsked) {

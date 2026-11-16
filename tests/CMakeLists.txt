@@ -12120,6 +12120,15 @@ nereus_add_test(tst_dsr_past_rows CORE_ONLY)
 # Core or the recorder off keeps the strip as it was, the new parts disabled
 # with the reason (src/gui/SpectrumWidget.cpp, src/gui/recordings/).
 nereus_add_test(tst_dsr_desktop_rewind)
+# Recording plan Task 25: saving a stretch. A whole-pan save is a WholePan
+# recording of the bracket's length and the ring's bytes, kept outside the
+# ring; a stretch partly gone saves what is kept and says so; sound only is
+# slice A's sound in the Files format; Save sound only from a whole pan; a
+# saved stretch opened on the waterfall replays like rewind with the
+# recorder off. SAVE's yellow bracket and box against a fake access, SAVE
+# disabled with the reason, and the Recordings window's whole-pan rows
+# (src/core/recordings/, src/gui/recordings/DsrSaveBox.cpp, DsrHoursMap.cpp).
+nereus_add_test(tst_dsr_save)
 
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)

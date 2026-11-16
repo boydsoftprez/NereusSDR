@@ -11,6 +11,9 @@
 // Modification history (NereusSDR):
 //   2026-11-15 - Created. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 25: a whole-pan
+//                 recording plays its sound only. AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -542,19 +545,25 @@ private slots:
         engine->releaseOwnerMix(mixB);
     }
 
-    void wholePanIsRefused()
+    // A whole-pan recording played here is its sound only, rendered from
+    // the saved stretch (Task 25); a file that is not a stretch cannot be
+    // played, and without WDSP it says to open it on the waterfall.
+    void wholePanThatIsNotAStretchIsRefused()
     {
         std::unique_ptr<RecordingService> svc = makeService();
         const QString id = addRecording(*svc, QStringLiteral("pan"), 48000, tone(48000, 440.0, 0.1),
                                         RecordingKind::WholePan);
         QVERIFY(!id.isEmpty());
         QSignalSpy refused(svc.get(), &RecordingService::playbackRefused);
-        QSignalSpy changed(svc.get(), &RecordingService::playbackChanged);
         svc->play(QStringLiteral("deviceA"), id);
+#ifdef HAVE_WDSP
+        QTRY_COMPARE(refused.count(), 1);
+        QCOMPARE(refused.at(0).at(1).toString(), QStringLiteral("That recording cannot be played."));
+#else
         QCOMPARE(refused.count(), 1);
         QCOMPARE(refused.at(0).at(1).toString(), QStringLiteral("Open it on the waterfall."));
-        QCOMPARE(changed.count(), 0);
         QVERIFY(!svc->playback(QStringLiteral("deviceA")).has_value());
+#endif
     }
 };
 

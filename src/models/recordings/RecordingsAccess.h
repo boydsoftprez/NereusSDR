@@ -50,6 +50,9 @@
 //                 picture (requestPastRows, requestPastSpectrum,
 //                 requestHours). AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 25: saving a
+//                 stretch, sound only and opening a saved stretch.
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QJsonArray>
@@ -151,6 +154,19 @@ public:
     virtual void requestPastSpectrum(int slice, const DsrPanView& view, qint64 utcNs) = 0;
     /// Every kept hour, newest first, through hoursReady.
     virtual void requestHours() = 0;
+    // Saving a stretch (recordingsVersion 4; spec 3 "Saving a stretch",
+    // 6.3, 6.4, A13). The Core copies or demodulates it on its worker; the
+    // list shows the recording when it is done. stretchSaving() says what
+    // is being saved (and if only part of it is still kept); a refusal
+    // comes through refused(). None keys the radio.
+    /// `fromNs` to `toNs` (ns since 1970 UTC): the whole pan, or slice A's
+    /// sound in the Files format.
+    virtual void saveStretch(qint64 fromNs, qint64 toNs, bool wholePan) = 0;
+    /// A Sound recording of a saved whole-pan stretch.
+    virtual void saveSoundOnly(const QString& id) = 0;
+    /// A saved whole-pan stretch on the waterfall, like rewind: slice A
+    /// plays it and the document's `dsr.stretch` names it.
+    virtual void openStretch(const QString& id) = 0;
     /// Keys the radio and sends Mn; it unkeys at the end (or repeats).
     virtual void sendVoice(int n) = 0;
     /// Stops what goes out, or the wait to repeat it; the radio unkeys.
@@ -200,6 +216,8 @@ signals:
     void pastRowsReady(const NereusSDR::DsrPastFrames& rows);
     void pastSpectrumReady(const NereusSDR::DsrPastFrames& frame);
     void hoursReady(const QList<NereusSDR::DsrHour>& hours);
+    /// What a save is keeping, in words ("Saving 13:05 to 13:15 UTC...").
+    void stretchSaving(const QString& note);
 
 private:
     int m_lastListReader = 0;

@@ -2111,6 +2111,55 @@
             "arguments": [
                 {
                     "kind": "i64",
+                    "name": "fromUtcNs",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "toUtcNs",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "kind",
+                    "optional": false
+                }
+            ],
+            "capability": "recordingsVersion",
+            "capabilityVersion": 4,
+            "minMinor": 11,
+            "verb": "dsr.saveStretch"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "id",
+                    "optional": false
+                }
+            ],
+            "capability": "recordingsVersion",
+            "capabilityVersion": 4,
+            "minMinor": 11,
+            "verb": "recordings.saveSoundOnly"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "id",
+                    "optional": false
+                }
+            ],
+            "capability": "recordingsVersion",
+            "capabilityVersion": 4,
+            "minMinor": 11,
+            "verb": "recordings.openStretch"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "i64",
                     "name": "band",
                     "optional": false
                 },

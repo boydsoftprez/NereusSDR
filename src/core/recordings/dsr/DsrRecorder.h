@@ -9,6 +9,9 @@
 //             6.1, 6.7, A10, A17). AI tooling: Anthropic Claude Code.
 // 2026-11-16  J.J. Boyd / KG4VCF; DsrStatus carries the rewound slices
 //             (recording plan Task 22). AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; DsrStatus carries the opened stretch and
+//             the saves running (recording plan Task 25). AI tooling:
+//             Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -51,6 +54,12 @@ struct DsrStatus {
     qint64 newestUtcMs = 0;
     quint64 overflows = 0;     // tap blocks dropped because the writer fell behind
     QList<DsrRewoundSlice> rewound;   // the slices playing the past, by slice
+    // Task 25: a saved whole-pan stretch opened on slice A ("" for none)
+    // and its span; the saves still running.
+    QString stretchId;
+    qint64 stretchFromUtcNs = 0;
+    qint64 stretchToUtcNs = 0;
+    int saving = 0;
     double hoursHeld() const
     {
         return newestUtcMs > oldestUtcMs ? double(newestUtcMs - oldestUtcMs) / 3600000.0 : 0.0;

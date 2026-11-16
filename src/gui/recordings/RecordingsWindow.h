@@ -40,6 +40,9 @@
 //   2026-11-15 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 7.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 25: saving a
+//                 stretch, sound only and opening a saved stretch.
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QDateTime>
@@ -138,6 +141,8 @@ public:
     void saveCopiesOfSelected();
     void showSelectedInFinder();
     void deleteSelected();
+    /// Plays a whole-pan stretch's sound only on the speaker.
+    void playSoundOnly(const QString& id);
 
     // ---- Words shared with the Recordings panel.
     /// "Contact", "Whole pan", "Sound".
@@ -156,6 +161,10 @@ public:
     {
         return QStringLiteral("Available when the Digital Spectrum Recorder is built.");
     }
+    /// A whole-pan row's frequency column: the pan's range, "7.089 to
+    /// 7.281" (MHz), or its frequency when the range is not known.
+    static QString panRangeText(const RecordingEntry& entry);
+    static QString openOnPanTip() { return QStringLiteral("Open on the pan, like rewind"); }
     static QString coreElsewhereReason()
     {
         return QStringLiteral("The Core is on another computer. Use Save a copy here.");
@@ -206,6 +215,11 @@ private:
     void refreshPlayback();
     void refreshAvailability();
     void togglePlay(const QString& id);
+    /// Why a whole-pan stretch cannot be opened or its sound saved, or
+    /// empty (an older Core says it needs an update).
+    QString stretchReason() const;
+    void saveSoundOfSelected();
+    void showRowMenu(const QPoint& pos);
     void startNextCopy();
     void onDownloadProgress(const QString& id, qint64 done, qint64 total);
     void onDownloadFinished(const QString& id, bool ok, const QString& error);

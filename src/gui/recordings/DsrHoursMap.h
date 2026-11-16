@@ -15,6 +15,10 @@
 // docs/architecture/2026-11-15-recording-voice-keyer-dsr-design.md, section
 // 3 (Moving through hours), 6.7, A12; mockup dsr-rewind/hours.html.
 //
+// SAVE (Task 25) puts a yellow bracket on it, the stretch to save: drag
+// its top or bottom edge to move that end, or its middle to move it whole
+// (bracketChanged). At least 30 seconds, inside what is kept.
+//
 // With an older Core or the recorder off it stays in place, dimmed and
 // disabled, with the reason as its tooltip (SpectrumWidget also writes the
 // reason on the waterfall).
@@ -24,6 +28,9 @@
 //   2026-11-16 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 24.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 25: saving a
+//                 stretch, sound only and opening a saved stretch.
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QList>
@@ -61,8 +68,24 @@ public:
     qint64 positionUtcMs() const { return m_positionMs; }
     int hourCount() const { return int(m_hours.size()); }
 
+    // ---- The stretch to save (Task 25; mockup hours.html #bracket).
+    // The mockup's shortest stretch and the grab band on each edge.
+    static constexpr qint64 kMinBracketMs = 30000;
+    static constexpr int kBracketGrabPx = 4;
+    /// Shows the bracket from `fromUtcMs` to `toUtcMs`, kept inside the
+    /// map's range.
+    void setBracket(qint64 fromUtcMs, qint64 toUtcMs);
+    void clearBracket();
+    bool hasBracket() const { return m_hasBracket; }
+    qint64 bracketFromUtcMs() const { return m_bracketFromMs; }
+    qint64 bracketToUtcMs() const { return m_bracketToMs; }
+    /// The bracket's rectangle on the map (empty when there is none).
+    QRect bracketRect() const;
+
 signals:
     void jumpRequested(qint64 utcMs);
+    /// The bracket moved or changed length (also on setBracket).
+    void bracketChanged(qint64 fromUtcMs, qint64 toUtcMs);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -73,6 +96,8 @@ protected:
 private:
     static QColor heat(double activity);
     void jumpAt(int y);
+    void dragBracketTo(int y);
+    enum class BracketDrag { None, From, To, Whole };
 
     QList<DsrHour> m_hours;
     qint64 m_oldestMs = 0;
@@ -81,6 +106,13 @@ private:
     qint64 m_positionMs = 0;
     QString m_reason;
     bool m_dragging = false;
+    bool m_hasBracket = false;
+    qint64 m_bracketFromMs = 0;
+    qint64 m_bracketToMs = 0;
+    BracketDrag m_bracketDrag = BracketDrag::None;
+    int m_bracketDragY = 0;
+    qint64 m_bracketDragFromMs = 0;
+    qint64 m_bracketDragToMs = 0;
 };
 
 } // namespace NereusSDR

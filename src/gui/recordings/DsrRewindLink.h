@@ -23,6 +23,11 @@
 //   PTT          the Core takes a rewound slice live on the frequency played
 //                when it keys; the picture goes live and LIVE stays red
 //                until pressed, still returning to the old frequency.
+//   SAVE         the bracketed stretch is saved on the Core
+//                (saveStretch, recordingsVersion 4); what the Core says
+//                about it shows on the waterfall for a few seconds.
+//   Saved        a saved whole-pan stretch opened on the waterfall plays
+//                like rewind even with the recorder off.
 //   Not usable   an older Core, no connection or the recorder off: the
 //                waterfall keeps its own minutes and the hours map and the
 //                past click are disabled with the reason.
@@ -34,6 +39,9 @@
 //   2026-11-16 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 24.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 25: saving a
+//                 stretch, sound only and opening a saved stretch.
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QList>
@@ -80,6 +88,7 @@ private:
     void onSeekWanted(qint64 utcMs);
     void onLiveRequested();
     void onRefused(const QString& reason);
+    void onSaveWanted(qint64 fromUtcMs, qint64 toUtcMs, bool wholePan);
     int slice() const;
 
     QPointer<SpectrumWidget> m_spectrum;
@@ -92,6 +101,7 @@ private:
     bool m_rowsAsked = false;
     bool m_spectrumAsked = false;
     int m_askedSlice = -1;
+    bool m_saveAsked = false;      // saveStretch sent, not yet answered
 };
 
 } // namespace NereusSDR

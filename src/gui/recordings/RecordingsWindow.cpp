@@ -14,6 +14,9 @@
 //   2026-11-15 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 7.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 25: saving a
+//                 stretch, sound only and opening a saved stretch.
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/recordings/RecordingsWindow.h"
@@ -31,6 +34,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QLocale>
+#include <QMenu>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QStandardPaths>
@@ -424,6 +428,10 @@ void RecordingsWindow::buildUi()
             refreshButtons();
         }
     });
+    // A whole-pan row's right-click: open it on the pan, or play just its
+    // sound (Task 25).
+    m_table->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_table, &QWidget::customContextMenuRequested, this, &RecordingsWindow::showRowMenu);
     connect(m_table, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
         if (QTableWidgetItem* item = m_table->item(row, ColWhen)) {
             togglePlay(item->data(Qt::UserRole).toString());
@@ -454,6 +462,7 @@ void RecordingsWindow::buildUi()
     body->addLayout(acts);
     connect(m_play, &QPushButton::clicked, this, &RecordingsWindow::playSelected);
     connect(m_rename, &QPushButton::clicked, this, &RecordingsWindow::renameSelected);
+    connect(m_soundOnly, &QPushButton::clicked, this, &RecordingsWindow::saveSoundOfSelected);
     connect(m_copy, &QPushButton::clicked, this, &RecordingsWindow::saveCopiesOfSelected);
     connect(m_reveal, &QPushButton::clicked, this, &RecordingsWindow::showSelectedInFinder);
     connect(m_delete, &QPushButton::clicked, this, &RecordingsWindow::deleteSelected);
@@ -497,6 +506,8 @@ void RecordingsWindow::setAccess(RecordingsAccess* access)
             connect(access, &RecordingsAccess::playbackChanged, this, &RecordingsWindow::refreshPlayback),
             connect(access, &RecordingsAccess::refused, this,
                     [this](const QString& reason) { m_status->setText(reason); }),
+            connect(access, &RecordingsAccess::stretchSaving, this,
+                    [this](const QString& note) { m_status->setText(note); }),
             connect(access, &RecordingsAccess::downloadProgress, this, &RecordingsWindow::onDownloadProgress),
             connect(access, &RecordingsAccess::downloadFinished, this, &RecordingsWindow::onDownloadFinished),
         };
@@ -791,9 +802,11 @@ void RecordingsWindow::rebuildRows()
         play->setProperty("recordingId", e.id);
         play->setFocusPolicy(Qt::NoFocus);
         if (e.kind == RecordingKind::WholePan) {
-            play->setEnabled(false);
-            play->setToolTip(soundOnlyUnbuiltReason());
-            play->setAccessibleDescription(soundOnlyUnbuiltReason());
+            // A whole-pan stretch opens on the pan, like rewind.
+            const QString why = stretchReason();
+            play->setEnabled(why.isEmpty());
+            play->setToolTip(why.isEmpty() ? openOnPanTip() : why);
+            play->setAccessibleDescription(why);
         } else {
             play->setToolTip(QStringLiteral("Play on your speaker"));
         }
@@ -813,7 +826,8 @@ void RecordingsWindow::rebuildRows()
         auto* kind = cell(kindText(e.kind));
         kind->setForeground(QColor::fromString(kindTagColour(e.kind, false)));
         m_table->setItem(r, ColKind, kind);
-        m_table->setItem(r, ColFrequency, cell(recordingFrequencyText(e.frequencyHz)));
+        m_table->setItem(r, ColFrequency, cell(e.kind == RecordingKind::WholePan ? panRangeText(e)
+                                                                                : recordingFrequencyText(e.frequencyHz)));
         m_table->setItem(r, ColMode, cell(e.mode.isEmpty() ? dimDash() : e.mode));
         auto* call = cell(e.call.isEmpty() ? dimDash() : e.call);
         if (e.call.isEmpty()) {
@@ -878,12 +892,15 @@ void RecordingsWindow::refreshButtons()
 
     const bool playingThis = one && playingId(m_access) == chosen.first().id;
     m_play->setText(playingThis ? QStringLiteral("Stop") : QStringLiteral("Play"));
-    reason(m_play, one && !wholePan,
-           QStringLiteral("Play on this computer's speaker. Transmit while it plays to send it on the air."),
-           wholePan ? soundOnlyUnbuiltReason() : QString());
+    const QString stretchWhy = wholePan ? stretchReason() : QString();
+    reason(m_play, one && stretchWhy.isEmpty(),
+           wholePan ? openOnPanTip()
+                    : QStringLiteral("Play on this computer's speaker. Transmit while it plays to send it on the air."),
+           stretchWhy);
     reason(m_rename, one, QStringLiteral("Give this recording a name of your own"), QString());
-    reason(m_soundOnly, false, QString(),
-           wholePan ? soundOnlyUnbuiltReason() : QStringLiteral("Pick one whole-pan recording to save its sound."));
+    reason(m_soundOnly, wholePan && stretchWhy.isEmpty(),
+           QStringLiteral("Save its sound as a recording of its own"),
+           wholePan ? stretchWhy : QStringLiteral("Pick one whole-pan recording to save its sound."));
     reason(m_copy, any, QStringLiteral("Copy from the Core to this computer"), QString());
     reason(m_reveal, one && here, QStringLiteral("Show the recording's file in its folder"),
            here ? QString() : coreElsewhereReason());
@@ -911,8 +928,11 @@ void RecordingsWindow::refreshPlayback()
                     play->style()->unpolish(play);
                     play->style()->polish(play);
                 }
+                const std::optional<RecordingEntry> row = entryById(id);
+                const bool wholePan = row.has_value() && row->kind == RecordingKind::WholePan;
                 if (play->isEnabled()) {
-                    play->setToolTip(on ? QStringLiteral("Stop") : QStringLiteral("Play on your speaker"));
+                    play->setToolTip(on ? QStringLiteral("Stop")
+                                     : wholePan ? openOnPanTip() : QStringLiteral("Play on your speaker"));
                 }
             }
         }
@@ -939,7 +959,14 @@ void RecordingsWindow::togglePlay(const QString& id)
         return;
     }
     const std::optional<RecordingEntry> e = entryById(id);
-    if (!e.has_value() || e->kind == RecordingKind::WholePan) {
+    if (!e.has_value()) {
+        return;
+    }
+    if (e->kind == RecordingKind::WholePan) {
+        // Opens on the pan: slice A plays it like rewind.
+        if (stretchReason().isEmpty()) {
+            m_access->openStretch(id);
+        }
         return;
     }
     if (playingId(m_access) == id) {
@@ -1085,6 +1112,86 @@ void RecordingsWindow::deleteSelected()
         ids.append(e.id);
     }
     m_access->remove(ids);
+}
+
+// ---- Saved whole-pan stretches (recording plan Task 25) -----------------
+
+QString RecordingsWindow::panRangeText(const RecordingEntry& entry)
+{
+    if (entry.spanHz <= 0) {
+        return recordingFrequencyText(entry.frequencyHz);
+    }
+    constexpr double kHzPerMhz = 1.0e6;
+    const double low = (double(entry.centreHz) - double(entry.spanHz) / 2.0) / kHzPerMhz;
+    const double high = (double(entry.centreHz) + double(entry.spanHz) / 2.0) / kHzPerMhz;
+    return QStringLiteral("%1 to %2").arg(low, 0, 'f', 3).arg(high, 0, 'f', 3);
+}
+
+QString RecordingsWindow::stretchReason() const
+{
+    const QString why = unavailableReason();
+    if (!why.isEmpty()) {
+        return why;
+    }
+    return m_access ? m_access->unavailableReason(RecordingsAccess::kDsrVersion)
+                    : RecordingsAccess::notConnectedReason();
+}
+
+void RecordingsWindow::saveSoundOfSelected()
+{
+    const QList<RecordingEntry> chosen = selectedEntries();
+    if (!m_access || chosen.size() != 1 || chosen.first().kind != RecordingKind::WholePan) {
+        return;
+    }
+    const QString why = stretchReason();
+    if (!why.isEmpty()) {
+        m_status->setText(why);
+        return;
+    }
+    m_access->saveSoundOnly(chosen.first().id);
+}
+
+void RecordingsWindow::playSoundOnly(const QString& id)
+{
+    if (!m_access || !stretchReason().isEmpty()) {
+        return;
+    }
+    if (playingId(m_access) == id) {
+        m_access->stopPlay();
+    } else {
+        m_access->play(id);
+    }
+    refreshPlayback();
+}
+
+void RecordingsWindow::showRowMenu(const QPoint& pos)
+{
+    const int row = m_table->rowAt(pos.y());
+    QTableWidgetItem* when = row >= 0 ? m_table->item(row, ColWhen) : nullptr;
+    if (when == nullptr) {
+        return;
+    }
+    const QString id = when->data(Qt::UserRole).toString();
+    const std::optional<RecordingEntry> e = entryById(id);
+    if (!e.has_value() || e->kind != RecordingKind::WholePan) {
+        return;
+    }
+    const QString why = stretchReason();
+    QMenu menu(this);
+    QAction* open = menu.addAction(QStringLiteral("Open on the pan"));
+    QAction* sound = menu.addAction(playingId(m_access) == id ? QStringLiteral("Stop its sound")
+                                                              : QStringLiteral("Play its sound only"));
+    for (QAction* a : {open, sound}) {
+        a->setEnabled(why.isEmpty());
+        a->setToolTip(why);
+    }
+    menu.setToolTipsVisible(true);
+    QAction* chosen = menu.exec(m_table->viewport()->mapToGlobal(pos));
+    if (chosen == open) {
+        togglePlay(id);
+    } else if (chosen == sound) {
+        playSoundOnly(id);
+    }
 }
 
 }  // namespace NereusSDR

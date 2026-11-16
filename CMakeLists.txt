@@ -2097,6 +2097,8 @@ set(GUI_SOURCES
     src/gui/recordings/VoiceButton.h
     src/gui/recordings/DsrHoursMap.cpp
     src/gui/recordings/DsrHoursMap.h
+    src/gui/recordings/DsrSaveBox.cpp
+    src/gui/recordings/DsrSaveBox.h
     src/gui/recordings/DsrRewindLink.cpp
     src/gui/recordings/DsrRewindLink.h
     src/gui/widgets/MetricLabel.cpp

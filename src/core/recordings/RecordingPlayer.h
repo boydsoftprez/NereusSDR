@@ -6,10 +6,14 @@
 //             the recordings worker into a lock-free ring at 48 kHz, read
 //             by the audio thread (spec 6.1 Player, 6.3).
 //             AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; a saved whole-pan stretch plays its
+//             sound only, as the slice was set when it was saved (spec 6.3,
+//             recording plan Task 25). AI tooling: Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
 #include "core/recordings/SpscFloatRing.h"
+#include "core/recordings/dsr/DsrReplay.h"
 
 #include <QString>
 #include <QtGlobal>
@@ -21,6 +25,7 @@
 namespace NereusSDR {
 
 class AudioFileReader;
+class DsrRingFile;
 class Resampler;
 
 // Who hears a playback: "local" for the window that runs its own radio,
@@ -63,6 +68,10 @@ public:
     RecordingPlayer(const RecordingPlayer&) = delete;
     RecordingPlayer& operator=(const RecordingPlayer&) = delete;
 
+    // Before open(): the file is a saved whole-pan stretch (a ring file),
+    // played as its sound only, demodulated as `sound` says (spec 6.3,
+    // "Play its sound only").
+    void setStretchSound(const DsrSoundSettings& sound);
     // Worker. Opens the file at the start position; false with a reason.
     bool open(const QString& path, QString* error);
     // Worker. Decodes until kFillFrames wait in the ring or the file ends.
@@ -80,6 +89,7 @@ public:
 
 private:
     void push(const float* mono, int frames);
+    bool openStretch(const QString& path, QString* error);
 
     const qint64 m_startMs;
     std::atomic<qint64> m_lengthMs;
@@ -99,6 +109,11 @@ private:
     std::vector<float> m_read;
     std::vector<float> m_mono;
     std::vector<float> m_out;
+    // A saved whole-pan stretch: its file and its sound (worker only).
+    bool m_isStretch = false;
+    DsrSoundSettings m_stretchSound;
+    std::unique_ptr<DsrRingFile> m_stretchRing;
+    std::unique_ptr<DsrSoundRender> m_stretchRender;
 };
 
 }  // namespace NereusSDR

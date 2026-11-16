@@ -18,6 +18,9 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 22: `rewound` in
 //                 the `dsr` part. AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 25: `stretch` and
+//                 `saving` in the `dsr` part; a whole-pan entry's centre and
+//                 span. AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/RecordingsFacade.h"
@@ -258,7 +261,7 @@ QString RecordingsFacade::keptReasonKey(KeptReason reason)
 
 QJsonObject RecordingsFacade::entryJson(const RecordingEntry& entry)
 {
-    return QJsonObject{{QStringLiteral("id"), entry.id},
+    QJsonObject o{{QStringLiteral("id"), entry.id},
                        {QStringLiteral("kind"), recordingKindKey(entry.kind)},
                        {QStringLiteral("slice"), entry.sliceId},
                        {QStringLiteral("startUtc"), isoUtc(entry.startUtc)},
@@ -269,6 +272,12 @@ QJsonObject RecordingsFacade::entryJson(const RecordingEntry& entry)
                        {QStringLiteral("name"), entry.name},
                        {QStringLiteral("fileName"), entry.fileName},
                        {QStringLiteral("sizeBytes"), entry.sizeBytes}};
+    // Recording plan Task 25: a whole-pan stretch's pan, for its range.
+    if (entry.spanHz > 0) {
+        o.insert(QStringLiteral("centreHz"), entry.centreHz);
+        o.insert(QStringLiteral("spanHz"), entry.spanHz);
+    }
+    return o;
 }
 
 std::optional<RecordingEntry> RecordingsFacade::entryFromJson(const QJsonObject& object)
@@ -290,6 +299,8 @@ std::optional<RecordingEntry> RecordingsFacade::entryFromJson(const QJsonObject&
     entry.name = object.value(QStringLiteral("name")).toString();
     entry.fileName = object.value(QStringLiteral("fileName")).toString();
     entry.sizeBytes = object.value(QStringLiteral("sizeBytes")).toInteger();
+    entry.centreHz = object.value(QStringLiteral("centreHz")).toInteger();
+    entry.spanHz = object.value(QStringLiteral("spanHz")).toInteger();
     return entry;
 }
 
@@ -343,7 +354,16 @@ QJsonObject RecordingsFacade::dsrJson(const DsrStatus& status)
                        {QStringLiteral("newestUtcMs"), status.newestUtcMs},
                        {QStringLiteral("hoursHeld"), status.hoursHeld()},
                        {QStringLiteral("overflows"), static_cast<qint64>(status.overflows)},
-                       {QStringLiteral("rewound"), rewound}};
+                       {QStringLiteral("rewound"), rewound},
+                       // Recording plan Task 25: a saved stretch opened on
+                       // slice A, and the saves still running.
+                       {QStringLiteral("stretch"),
+                        status.stretchId.isEmpty()
+                            ? QJsonValue()
+                            : QJsonValue(QJsonObject{{QStringLiteral("id"), status.stretchId},
+                                                     {QStringLiteral("fromUtcNs"), status.stretchFromUtcNs},
+                                                     {QStringLiteral("toUtcNs"), status.stretchToUtcNs}})},
+                       {QStringLiteral("saving"), status.saving}};
 }
 
 bool RecordingsFacade::applySettingsChange(const QJsonObject& changed,

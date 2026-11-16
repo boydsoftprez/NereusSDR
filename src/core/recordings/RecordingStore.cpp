@@ -5,6 +5,9 @@
 // 2026-11-15  J.J. Boyd / KG4VCF; the Core's recording store: one folder
 //             and its recordings.json index (spec 6.4). AI tooling:
 //             Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; a whole-pan stretch keeps its pan and
+//             slice A's filter in the index (recording plan Task 25). AI
+//             tooling: Anthropic Claude Code.
 
 #include "RecordingStore.h"
 
@@ -40,6 +43,13 @@ QJsonObject toJson(const RecordingEntry& e)
     o.insert(QStringLiteral("name"), e.name);
     o.insert(QStringLiteral("fileName"), e.fileName);
     o.insert(QStringLiteral("sizeBytes"), double(e.sizeBytes));
+    // Recording plan Task 25: a whole-pan stretch's pan and slice A's filter.
+    if (e.kind == RecordingKind::WholePan) {
+        o.insert(QStringLiteral("centreHz"), double(e.centreHz));
+        o.insert(QStringLiteral("spanHz"), double(e.spanHz));
+        o.insert(QStringLiteral("filterLowHz"), e.filterLowHz);
+        o.insert(QStringLiteral("filterHighHz"), e.filterHighHz);
+    }
     return o;
 }
 
@@ -63,6 +73,10 @@ bool fromJson(const QJsonObject& o, RecordingEntry* e)
         e->name = QFileInfo(e->fileName).completeBaseName();
     }
     e->sizeBytes = qint64(o.value(QStringLiteral("sizeBytes")).toDouble());
+    e->centreHz = qint64(o.value(QStringLiteral("centreHz")).toDouble());
+    e->spanHz = qint64(o.value(QStringLiteral("spanHz")).toDouble());
+    e->filterLowHz = o.value(QStringLiteral("filterLowHz")).toInt();
+    e->filterHighHz = o.value(QStringLiteral("filterHighHz")).toInt();
     return true;
 }
 

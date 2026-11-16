@@ -10,18 +10,30 @@
 // 2026-11-16  J.J. Boyd / KG4VCF; rows reduced to the pan's pixels and
 //             your transmit marked per row (recording plan Task 24). AI
 //             tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; saving a stretch: the extent, the copy
+//             and slice A's sound (recording plan Task 25). AI tooling:
+//             Anthropic Claude Code.
 
 #include "DsrReplay.h"
 
 #include "core/FFTEngine.h"
+#include "core/LogCategories.h"
+#include "core/RxChannel.h"
+#include "core/WdspEngine.h"
+#include "core/WdspTypes.h"
+#include "core/platform/ThreadPlacement.h"
+#include "core/wdsp_api.h"
 #include "core/session/media/SpectrumEndpoint.h"
 #include "core/spectrum/SpectrumDetector.h"
 #include "core/spectrum/SpectrumReducer.h"
 
+#include <QFile>
 #include <QtEndian>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <mutex>
 #include <numbers>
 
 namespace NereusSDR {
@@ -529,6 +541,450 @@ QList<bool> DsrPastRenderer::unpackTransmit(const QByteArray& bytes)
         out.append(b != 0);
     }
     return out;
+}
+
+// ---- Saving a stretch (recording plan Task 25).
+
+qint64 DsrStretch::firstFrameAtOrAfter(const DsrBlockHeader& h, qint64 utcNs)
+{
+    if (utcNs <= h.utcNs || h.sampleRateHz <= 0) {
+        return 0;
+    }
+    // Rounded up: the first frame whose time is at or after utcNs.
+    const qint64 ns = utcNs - h.utcNs;
+    const qint64 frame = (ns * h.sampleRateHz + DsrRingFile::kNsPerSecond - 1) / DsrRingFile::kNsPerSecond;
+    return std::min<qint64>(frame, qint64(h.frames));
+}
+
+DsrStretchExtent DsrStretch::extent(const DsrRingFile& ring, qint64 fromUtcNs, qint64 toUtcNs)
+{
+    DsrStretchExtent out;
+    if (toUtcNs <= fromUtcNs) {
+        return out;
+    }
+    for (const int r : ring.receivers()) {
+        bool any = false;
+        qint64 cursor = fromUtcNs;
+        // Each pass moves the cursor to a block's end, so this only bounds
+        // a ring that changes under the walk.
+        for (int pass = 0; pass < 1 << 22; ++pass) {
+            DsrBlockHeader h;
+            if (!ring.blockAt(r, cursor, &h) && !ring.nextBlock(r, cursor, &h)) {
+                break;
+            }
+            if (h.utcNs >= toUtcNs || h.sampleRateHz <= 0) {
+                break;
+            }
+            const qint64 first = firstFrameAtOrAfter(h, cursor);
+            const qint64 end = firstFrameAtOrAfter(h, toUtcNs);
+            const qint64 blockEnd = h.utcNs + DsrRingFile::durationNs(h.frames, h.sampleRateHz);
+            if (end > first) {
+                const qint64 from = h.utcNs + DsrRingFile::durationNs(first, h.sampleRateHz);
+                const qint64 to = h.utcNs + DsrRingFile::durationNs(end, h.sampleRateHz);
+                out.fromUtcNs = out.kept() || any ? std::min(out.fromUtcNs, from) : from;
+                out.toUtcNs = std::max(out.toUtcNs, to);
+                out.bytes += DsrRingFile::blockBytes(int(end - first));
+                any = true;
+            }
+            if (blockEnd <= cursor) {
+                break;
+            }
+            cursor = blockEnd;
+        }
+        if (any) {
+            out.receivers.append(r);
+        }
+    }
+    return out;
+}
+
+int DsrStretch::receiverFor(const DsrRingFile& ring, qint64 fromUtcNs, qint64 toUtcNs, qint64 frequencyHz,
+                            int preferred, DsrBlockHeader* first)
+{
+    QList<int> receivers = ring.receivers();
+    if (receivers.removeOne(preferred)) {
+        receivers.prepend(preferred);
+    }
+    for (const int r : std::as_const(receivers)) {
+        DsrBlockHeader h;
+        if (!ring.blockAt(r, fromUtcNs, &h) && !ring.nextBlock(r, fromUtcNs, &h)) {
+            continue;
+        }
+        if (h.utcNs >= toUtcNs || h.sampleRateHz <= 0) {
+            continue;
+        }
+        // As rewind picks it: the frequency inside the kept span.
+        if (std::llabs(frequencyHz - h.centreHz) * 2 > qint64(h.sampleRateHz)) {
+            continue;
+        }
+        if (first != nullptr) {
+            *first = h;
+        }
+        return r;
+    }
+    return -1;
+}
+
+DsrStretchCopy::DsrStretchCopy() = default;
+
+DsrStretchCopy::~DsrStretchCopy() = default;
+
+bool DsrStretchCopy::begin(const QString& path, const DsrStretchExtent& extent, QString* error)
+{
+    m_extent = extent;
+    m_receiverIndex = 0;
+    m_cursor = extent.fromUtcNs;
+    m_bytes = 0;
+    m_copiedFrom = 0;
+    m_copiedTo = 0;
+    m_failed = false;
+    if (!m_out.open(path, kNeverWrapBytes, error)) {
+        m_failed = true;
+        return false;
+    }
+    return true;
+}
+
+bool DsrStretchCopy::step(const DsrRingFile& ring)
+{
+    if (m_failed) {
+        return true;
+    }
+    qint64 stepBytes = 0;
+    while (m_receiverIndex < m_extent.receivers.size()) {
+        if (stepBytes >= kStepBytes) {
+            return false;
+        }
+        const int r = m_extent.receivers.at(m_receiverIndex);
+        DsrBlockHeader h;
+        const bool found = ring.blockAt(r, m_cursor, &h) || ring.nextBlock(r, m_cursor, &h);
+        if (!found || h.utcNs >= m_extent.toUtcNs || h.sampleRateHz <= 0) {
+            ++m_receiverIndex;
+            m_cursor = m_extent.fromUtcNs;
+            continue;
+        }
+        const qint64 blockEnd = h.utcNs + DsrRingFile::durationNs(h.frames, h.sampleRateHz);
+        const qint64 first = DsrStretch::firstFrameAtOrAfter(h, m_cursor);
+        const qint64 end = DsrStretch::firstFrameAtOrAfter(h, m_extent.toUtcNs);
+        if (blockEnd <= m_cursor) {
+            ++m_receiverIndex;
+            m_cursor = m_extent.fromUtcNs;
+            continue;
+        }
+        m_cursor = blockEnd;
+        if (end <= first) {
+            continue;
+        }
+        const int want = int(end - first);
+        if (m_iq.size() < size_t(want) * 2) {
+            m_iq.resize(size_t(want) * 2);
+        }
+        DsrBlockHeader got;
+        const int n = ring.read(r, DsrRingFile::frameUtcNs(h.utcNs, first, h.sampleRateHz), m_iq.data(), want, &got);
+        if (n <= 0) {
+            continue;   // erased by the loop meanwhile: not kept any more
+        }
+        // Your transmit audio, beside the first receiver's blocks only.
+        int audioFrames = 0;
+        int audioRate = 0;
+        if (m_receiverIndex == 0 && got.transmit != 0) {
+            const qint64 duration = DsrRingFile::durationNs(n, got.sampleRateHz);
+            constexpr int kAudioMax = 1 << 18;
+            if (m_audio.size() < size_t(kAudioMax)) {
+                m_audio.resize(size_t(kAudioMax));
+            }
+            audioFrames = ring.readTransmitAudio(got.utcNs, m_audio.data(), kAudioMax, &audioRate);
+            if (audioFrames > 0 && audioRate > 0) {
+                audioFrames = int(std::min<qint64>(
+                    audioFrames, (duration * audioRate + DsrRingFile::kNsPerSecond - 1) / DsrRingFile::kNsPerSecond));
+            } else {
+                audioFrames = 0;
+            }
+        }
+        got.frames = quint32(n);
+        if (!m_out.append(got, m_iq.data(), n, audioFrames > 0 ? m_audio.data() : nullptr, audioFrames,
+                          audioRate)) {
+            qCWarning(lcRecordings) << "a saved stretch cannot be written to" << m_out.path();
+            m_failed = true;
+            return true;
+        }
+        const qint64 bytes = DsrRingFile::blockBytes(n, audioFrames);
+        m_bytes += bytes;
+        stepBytes += bytes;
+        const qint64 to = got.utcNs + DsrRingFile::durationNs(n, got.sampleRateHz);
+        m_copiedFrom = m_copiedTo > 0 ? std::min(m_copiedFrom, got.utcNs) : got.utcNs;
+        m_copiedTo = std::max(m_copiedTo, to);
+    }
+    return true;
+}
+
+bool DsrStretchCopy::finish(QString* error)
+{
+    const QString path = m_out.path();
+    m_out.close();
+    if (m_failed) {
+        if (error != nullptr) {
+            *error = QStringLiteral("The stretch could not be written.");
+        }
+        return false;
+    }
+    // The last block is written without its padding; the file takes the
+    // bytes its blocks take in the ring.
+    QFile file(path);
+    if (!file.resize(m_bytes)) {
+        if (error != nullptr) {
+            *error = file.errorString();
+        }
+        return false;
+    }
+    return true;
+}
+
+namespace {
+
+// The spare channel ids a render may use: above the receive slices, the
+// transmitter and PureSignal's feedback channel (WdspEngine), up to WDSP's
+// MAX_CHANNELS (third_party/wdsp/src/comm.h:127, 32).
+constexpr int kFirstRenderChannel = WdspEngine::kPsFeedbackChannelId + 1;
+constexpr int kRenderChannelLimit = 32;
+std::mutex g_renderChannelsMutex;
+std::array<bool, kRenderChannelLimit> g_renderChannelsInUse{};
+
+int takeRenderChannel()
+{
+    std::lock_guard<std::mutex> lock(g_renderChannelsMutex);
+    for (int id = kFirstRenderChannel; id < kRenderChannelLimit; ++id) {
+        if (!g_renderChannelsInUse[size_t(id)]) {
+            g_renderChannelsInUse[size_t(id)] = true;
+            return id;
+        }
+    }
+    return -1;
+}
+
+void giveRenderChannel(int id)
+{
+    std::lock_guard<std::mutex> lock(g_renderChannelsMutex);
+    if (id >= 0 && id < kRenderChannelLimit) {
+        g_renderChannelsInUse[size_t(id)] = false;
+    }
+}
+
+}  // namespace
+
+DsrSoundRender::DsrSoundRender() = default;
+
+DsrSoundRender::~DsrSoundRender()
+{
+    close();
+}
+
+bool DsrSoundRender::available()
+{
+#ifdef HAVE_WDSP
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool DsrSoundRender::begin(int receiver, int sampleRateHz, qint64 fromUtcNs, qint64 toUtcNs,
+                           const DsrSoundSettings& sound, int outRateHz, QString* error)
+{
+    close();
+    const auto fail = [error](const QString& why) {
+        if (error != nullptr) {
+            *error = why;
+        }
+        return false;
+    };
+    if (!available()) {
+        return fail(QStringLiteral("This Core cannot pull the sound out of a stretch."));
+    }
+    if (sampleRateHz < kDspRateHz || sampleRateHz % kDspRateHz != 0 || outRateHz <= 0
+        || (kBlockBaseFrames * outRateHz) % kDspRateHz != 0 || toUtcNs <= fromUtcNs) {
+        return fail(QStringLiteral("That stretch was kept at a rate its sound cannot come from."));
+    }
+    const int channel = takeRenderChannel();
+    if (channel < 0) {
+        return fail(QStringLiteral("The Core is busy pulling out other sound. Try again shortly."));
+    }
+    m_channel = channel;
+    m_receiver = receiver;
+    m_rate = sampleRateHz;
+    m_outRate = outRateHz;
+    // One demodulator block, as the live receivers take it
+    // (SampleRateCatalog bufferSizeForRate: 64 * rate / 48000).
+    m_inSize = kBlockBaseFrames * (sampleRateHz / kDspRateHz);
+    m_outSize = int(qint64(m_inSize) * outRateHz / sampleRateHz);
+    m_toUtcNs = toUtcNs;
+    m_frequencyHz = sound.frequencyHz;
+    m_shiftCentreHz = std::numeric_limits<qint64>::min();
+    m_totalFrames = (toUtcNs - fromUtcNs) * outRateHz / DsrRingFile::kNsPerSecond;
+    m_framesDone = 0;
+    m_nextUtcNs = fromUtcNs;
+    m_haveBlock = false;
+    m_frameInBlock = 0;
+    m_inI.assign(size_t(m_inSize), 0.0f);
+    m_inQ.assign(size_t(m_inSize), 0.0f);
+    m_outI.assign(size_t(std::max(m_outSize, m_inSize)), 0.0f);
+    m_outQ.assign(size_t(std::max(m_outSize, m_inSize)), 0.0f);
+    m_read.assign(size_t(m_inSize) * 2, 0);
+    m_pending.clear();
+    m_pendingAt = 0;
+#ifdef HAVE_WDSP
+    // As a live receive channel opens (WdspEngine::openRxChannelWdsp).
+    // From Thetis cmaster.c:72-86 (create_rcvr OpenChannel call)
+    OpenChannel(channel,
+                m_inSize,       // in_size
+                kDspSize,       // dsp_size (4096 from Thetis)
+                sampleRateHz,   // input sample rate
+                kDspRateHz,     // dsp sample rate
+                outRateHz,      // output sample rate
+                0,              // type: 0=RX
+                0,              // state: 0=off initially
+                0.010,          // tdelayup  — from Thetis cmaster.c:82
+                0.025,          // tslewup   — from Thetis cmaster.c:83
+                0.000,          // tdelaydown — from Thetis cmaster.c:84
+                0.010,          // tslewdown — from Thetis cmaster.c:85
+                1);             // bfo: block until output available
+    // The slice's own settings, as RadioModel pushes them to its receive
+    // channel (RxChannel::setMode, setFilterFreqs, setAgcMode, and the
+    // AGC seeds WdspEngine::openRxChannelWdsp gives every channel).
+    SetRXAMode(channel, static_cast<int>(RxChannel::wdspModeFor(static_cast<DSPMode>(sound.dspMode))));
+    // From Thetis rxa.cs:110-111, radio.cs:603-604 — both bp1 and nbp0
+    // filters must be updated together.
+    SetRXABandpassFreqs(channel, sound.filterLowHz, sound.filterHighHz);
+    RXANBPSetFreqs(channel, sound.filterLowHz, sound.filterHighHz);
+    SetRXAAGCMode(channel, sound.agcMode);
+    // [WDSP call as at Thetis Project Files/Source/Console/radio.cs:1032 [v2.10.3.15]]
+    SetRXAAGCTop(channel, static_cast<double>(RxChannel::kDefaultAgcMaxGainDb));
+    // [WDSP call as at Thetis Project Files/Source/Console/radio.cs:1013 [v2.10.3.15]]
+    SetRXAAGCFixed(channel, static_cast<double>(RxChannel::kDefaultAgcFixedGainDb));
+    // Dual-mono, as WdspEngine::openRxChannelWdsp sets every receiver:
+    // Thetis radio.cs:1157 drives this from BinOn, false by default.
+    SetRXAPanelBinaural(channel, 0);
+    SetChannelState(channel, 1, 0);
+#endif
+    return true;
+}
+
+void DsrSoundRender::close()
+{
+    if (m_channel < 0) {
+        return;
+    }
+#ifdef HAVE_WDSP
+    // As WdspEngine::destroyRxChannel: deactivate with drain, then close.
+    SetChannelState(m_channel, 0, 1);
+    CloseChannel(m_channel);
+    // Its worker and flush threads are gone; their IDs may be reused.
+    ThreadPlacement::instance().forgetChannel(m_channel);
+#endif
+    giveRenderChannel(m_channel);
+    m_channel = -1;
+}
+
+void DsrSoundRender::setShift(qint64 keptCentreHz)
+{
+    if (keptCentreHz == m_shiftCentreHz || m_channel < 0) {
+        return;
+    }
+    m_shiftCentreHz = keptCentreHz;
+#ifdef HAVE_WDSP
+    // From Thetis radio.cs:1419 [v2.10.3.15], as RadioModel sets it:
+    // SetRXAShiftFreq receives +(freq - center). RxChannel::setShiftFrequency
+    // sends the notch shift and the run flag with it.
+    const double offsetHz = double(m_frequencyHz - keptCentreHz);
+    SetRXAShiftFreq(m_channel, offsetHz);
+    RXANBPSetShiftFrequency(m_channel, offsetHz);
+    SetRXAShiftRun(m_channel, std::abs(offsetHz) < 0.5 ? 0 : 1);
+#endif
+}
+
+void DsrSoundRender::gather(const DsrRingFile& ring)
+{
+    // m_inSize frames of the receiver from m_nextUtcNs into m_inI/m_inQ;
+    // silence where nothing is kept.
+    int pos = 0;
+    std::fill(m_inI.begin(), m_inI.end(), 0.0f);
+    std::fill(m_inQ.begin(), m_inQ.end(), 0.0f);
+    for (int pass = 0; pass < 64 && pos < m_inSize; ++pass) {
+        if (!m_haveBlock) {
+            DsrBlockHeader h;
+            const bool found = m_nextUtcNs < m_toUtcNs
+                && (ring.blockAt(m_receiver, m_nextUtcNs, &h) || ring.nextBlock(m_receiver, m_nextUtcNs, &h));
+            const qint64 left = m_inSize - pos;
+            if (!found || h.utcNs >= m_toUtcNs || h.sampleRateHz != m_rate) {
+                // Nothing more kept at this rate: silence to the end.
+                m_nextUtcNs += DsrRingFile::durationNs(left, m_rate);
+                return;
+            }
+            if (h.utcNs > m_nextUtcNs) {
+                const qint64 gap = (h.utcNs - m_nextUtcNs) * m_rate / DsrRingFile::kNsPerSecond;
+                if (gap > 0) {
+                    const qint64 quiet = std::min(gap, left);
+                    pos += int(quiet);
+                    m_nextUtcNs += DsrRingFile::durationNs(quiet, m_rate);
+                    continue;
+                }
+            }
+            m_block = h;
+            m_haveBlock = true;
+            m_frameInBlock = DsrStretch::firstFrameAtOrAfter(h, std::max(m_nextUtcNs, h.utcNs));
+            setShift(h.centreHz);
+        }
+        const int want = int(std::min<qint64>(m_inSize - pos, qint64(m_block.frames) - m_frameInBlock));
+        DsrBlockHeader got;
+        const int n = want > 0
+            ? ring.read(m_receiver, DsrRingFile::frameUtcNs(m_block.utcNs, m_frameInBlock, m_rate), m_read.data(),
+                        want, &got)
+            : 0;
+        if (n <= 0) {
+            m_haveBlock = false;
+            m_nextUtcNs = m_block.utcNs + DsrRingFile::durationNs(m_block.frames, m_rate);
+            continue;
+        }
+        for (int k = 0; k < n; ++k) {
+            m_inI[size_t(pos + k)] = float(m_read[size_t(2 * k)]) / DsrReplay::kIqScale;
+            m_inQ[size_t(pos + k)] = float(m_read[size_t(2 * k + 1)]) / DsrReplay::kIqScale;
+        }
+        pos += n;
+        m_frameInBlock += n;
+        m_nextUtcNs = DsrRingFile::frameUtcNs(m_block.utcNs, m_frameInBlock, m_rate);
+        if (m_frameInBlock >= qint64(m_block.frames)) {
+            m_haveBlock = false;
+            m_nextUtcNs = m_block.utcNs + DsrRingFile::durationNs(m_block.frames, m_rate);
+        }
+    }
+}
+
+int DsrSoundRender::render(const DsrRingFile& ring, float* out, int maxFrames)
+{
+    if (m_channel < 0 || out == nullptr || maxFrames <= 0) {
+        return 0;
+    }
+    int produced = 0;
+    while (produced < maxFrames && m_framesDone < m_totalFrames) {
+        if (m_pendingAt >= int(m_pending.size())) {
+            gather(ring);
+#ifdef HAVE_WDSP
+            int error = 0;
+            fexchange2(m_channel, m_inI.data(), m_inQ.data(), m_outI.data(), m_outQ.data(), &error);
+#endif
+            // The demodulated sound is the I output (as the live slices'
+            // audio and tst_dsr_rewind's tone take it).
+            m_pending.assign(m_outI.begin(), m_outI.begin() + m_outSize);
+            m_pendingAt = 0;
+        }
+        const int take = int(std::min<qint64>({qint64(maxFrames - produced), qint64(m_pending.size()) - m_pendingAt,
+                                                m_totalFrames - m_framesDone}));
+        std::copy(m_pending.begin() + m_pendingAt, m_pending.begin() + m_pendingAt + take, out + produced);
+        m_pendingAt += take;
+        produced += take;
+        m_framesDone += take;
+    }
+    return produced;
 }
 
 }  // namespace NereusSDR

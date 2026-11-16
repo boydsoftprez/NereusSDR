@@ -1,4 +1,7 @@
 // Modification history (NereusSDR):
+//   2026-11-16: SAVE above the hours map, its yellow bracket and the save
+//               box (recording plan Task 25). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-11-16: Rewind on the waterfall (recording plan Task 24): the time
 //               strip reaches past this window's own history into rows the
 //               Core draws from the Digital Spectrum Recorder, a click on a
@@ -1790,6 +1793,26 @@ public:
     int dsrCachedRowsForTest() const { return int(m_dsrRows.size()); }
     QWidget* dsrHoursMapForTest() const;
     QWidget* dsrGotoBoxForTest() const;
+    // ---- Saving a stretch (recording plan Task 25; design 3 "Saving a
+    // stretch"; mockup hours.html #saveBtn). SAVE sits above the hours map:
+    // it puts up a yellow bracket, 10 minutes by default, and the box with
+    // the stretch's times, length, sizes and the save choices; pressing it
+    // again takes them down. Disabled with the reason whenever the map is.
+    /// The mockup's default bracket and how long a note stays up.
+    static constexpr qint64 kDsrSaveDefaultMs = 10LL * 60LL * 1000LL;
+    static constexpr qint64 kDsrSaveNewestGapMs = 1000;
+    static constexpr int kDsrNoteMs = 4000;
+    /// About how many bytes a millisecond of the whole pan takes on the
+    /// Core, and whether sound only saves as WAV (the Files setting).
+    void setDsrSaveEstimates(double panBytesPerMs, bool soundAsWav);
+    /// Shows `text` for a few seconds where the waterfall writes reasons
+    /// (a save started, or why it was refused).
+    void showDsrNote(const QString& text);
+    QString dsrNoteForTest() const { return m_dsrNote; }
+    QWidget* dsrSaveButtonForTest() const;
+    QWidget* dsrSaveBoxForTest() const;
+    /// Presses SAVE, as a click does.
+    void toggleDsrSaveBracket();
     const QVector<float>& renderedPixelsForTest() const { return m_renderedPixels; }
     void setWaterfallHistoryOffsetForTest(int rows)
     {
@@ -3364,6 +3387,9 @@ signals:
     void dsrLiveRequested();
     /// The hours map is shown: it wants the kept hours.
     void dsrHoursWanted();
+    /// A save button in the save box: the bracketed stretch, whole pan or
+    /// slice A's sound only (recording plan Task 25).
+    void dsrSaveStretchWanted(qint64 fromUtcMs, qint64 toUtcMs, bool wholePan);
     // Phase 3J-2 Task E1: emitted when the user clicks a spot label
     // (or selects a spot from a cluster badge popup). spotIndex is the
     // SpotMarker::index that was bound to the clicked label so spot
@@ -3772,6 +3798,8 @@ private:
     void  askDsrPastSpectrum();
     bool  dsrPastClick(const QPoint& pos);
     void  dsrGotoSubmit();
+    void  placeDsrSaveBox();
+    void  takeDownDsrSave();
     void  reprojectWaterfall(double oldCenterHz, double oldBandwidthHz,
                              double newCenterHz, double newBandwidthHz);
     // (clearWaterfallHistory moved to public slots: in sub-epic E task 4 review.)
@@ -4153,6 +4181,12 @@ private:
     QVector<quint8> m_wfHistoryTransmit;           // parallel; 1 = your transmit
     QPointer<QWidget> m_dsrHoursMap;
     QPointer<QWidget> m_dsrGoto;
+    QPointer<QWidget> m_dsrSaveButton;
+    QPointer<QWidget> m_dsrSaveBox;
+    double          m_dsrPanBytesPerMs{0.0};
+    bool            m_dsrSoundAsWav{false};
+    QString         m_dsrNote;
+    quint64         m_dsrNoteSerial{0};
     std::function<qint64()> m_wfClockForTest;
     qint64 wfNowMs() const;
 

@@ -44,6 +44,7 @@
 #include "core/MoxController.h"
 #include "core/audio/MasterMixer.h"
 #include "core/NoiseFloorTracker.h"
+#include "core/Resampler.h"
 #include "core/SpotSourceHost.h"
 #include "core/meters/SliceMeterPump.h"
 #include "core/recordings/ContactRecorder.h"
@@ -132,6 +133,20 @@ public:
     {
         return m_radio->setSliceReplay(slice, std::move(replay));
     }
+    // Task 25: how the slice is set, for its sound out of a stretch.
+    bool sliceSound(int slice, DsrSoundSettings* out) const override
+    {
+        const SliceModel* s = m_radio->sliceById(slice);
+        if (s == nullptr || out == nullptr) {
+            return false;
+        }
+        out->frequencyHz = std::llround(s->frequency());
+        out->dspMode = static_cast<int>(s->dspMode());
+        out->filterLowHz = double(s->filterLow());
+        out->filterHighHz = double(s->filterHigh());
+        out->agcMode = static_cast<int>(s->agcMode());
+        return true;
+    }
 
 private:
     RadioModel* m_radio;
@@ -166,6 +181,12 @@ RecordingService::RecordingService(RadioModel* radio, QObject* parent)
     m_quietTimer = new QTimer(this);
     m_quietTimer->setInterval(kQuietCheckIntervalMs);
     connect(m_quietTimer, &QTimer::timeout, this, &RecordingService::checkQuiet);
+    // Task 25: an opened stretch deleted from any device closes.
+    connect(m_store.get(), &RecordingStore::changed, this, [this] {
+        if (!m_stretch.id.isEmpty() && !m_store->find(m_stretch.id).has_value()) {
+            closeStretch();
+        }
+    });
 
     if (m_radio) {
         RadioModel* radio = m_radio;
@@ -851,16 +872,34 @@ void RecordingService::play(const ListenerId& who, const QString& recordingId)
         emit playbackRefused(who, QString::fromLatin1(kPlayGoneReason));
         return;
     }
-    // Spec 6.3: a whole-pan recording replays on the waterfall, not here.
+    const QString path = QDir(m_store->folder()).filePath(entry->fileName);
+    // Spec 6.3 (Task 25): a whole-pan recording opens on the waterfall
+    // (openStretch); played here it is its sound only ("Play its sound
+    // only"), slice A's as it was set when the stretch was saved.
     if (entry->kind == RecordingKind::WholePan) {
-        emit playbackRefused(who, QString::fromLatin1(kPlayWholePanReason));
+        DsrSoundSettings sound;
+        sound.frequencyHz = entry->frequencyHz;
+        sound.dspMode = static_cast<int>(SliceModel::modeFromName(entry->mode));
+        sound.filterLowHz = entry->filterLowHz;
+        sound.filterHighHz = entry->filterHighHz;
+        if (!DsrSoundRender::available()) {
+            emit playbackRefused(who, QString::fromLatin1(kPlayWholePanReason));
+            return;
+        }
+        playPath(who, recordingId, path, entry->lengthMs, sound);
         return;
     }
-    playFile(who, recordingId, QDir(m_store->folder()).filePath(entry->fileName), entry->lengthMs);
+    playPath(who, recordingId, path, entry->lengthMs, std::nullopt);
 }
 
 void RecordingService::playFile(const ListenerId& who, const QString& recordingId, const QString& path,
                                 qint64 lengthMs)
+{
+    playPath(who, recordingId, path, lengthMs, std::nullopt);
+}
+
+void RecordingService::playPath(const ListenerId& who, const QString& recordingId, const QString& path,
+                                qint64 lengthMs, const std::optional<DsrSoundSettings>& stretchSound)
 {
     auto it = m_listeners.find(who);
     if (it != m_listeners.end() && it->recordingId == recordingId && it->playing) {
@@ -884,6 +923,7 @@ void RecordingService::playFile(const ListenerId& who, const QString& recordingI
     l.recordingId = recordingId;
     l.path = path;
     l.lengthMs = lengthMs;
+    l.stretchSound = stretchSound;
     startPlayer(who, l, from);
     emit playbackChanged(who);
 }
@@ -1108,6 +1148,9 @@ void RecordingService::startPlayer(const ListenerId& who, Listener& l, qint64 fr
 {
     dropPlayer(l);
     auto player = std::make_shared<RecordingPlayer>(fromMs, l.lengthMs);
+    if (l.stretchSound.has_value()) {
+        player->setStretchSound(*l.stretchSound);
+    }
     l.player = player;
     l.playing = true;
     l.positionMs = fromMs;
@@ -1382,6 +1425,10 @@ DsrStatus RecordingService::dsrStatus() const
     st.reason = m_settings.dsrEnabled ? dsrReasonWords(m_dsrOff) : QString();
     st.overflows = m_dsr->overflows();
     st.rewound = rewound();
+    st.stretchId = m_stretch.id;
+    st.stretchFromUtcNs = m_stretch.fromUtcNs;
+    st.stretchToUtcNs = m_stretch.toUtcNs;
+    st.saving = int(m_saves.size());
     if (st.sizeLimitBytes == 0) {
         st.sizeLimitBytes = qint64(std::max(m_settings.dsrSizeLimitGb, RecordingSettings::kDsrSizeLimitGbMin))
                             * kBytesPerGb;
@@ -1607,12 +1654,15 @@ bool RecordingService::rewind(int slice, qint64 utcNs, qint64 frequencyHz, QStri
     if (m_rewindHost->sliceOnDiversity(slice)) {
         return refuse(kRewindDiversityReason);
     }
-    if (!m_dsrRunning || frequencyHz <= 0) {
+    // Task 25: an opened stretch plays on slice A wherever it keeps the
+    // moment; the recorder's ring otherwise.
+    const std::shared_ptr<DsrRingFile> stretch = stretchFor(slice, utcNs);
+    if ((!stretch && !m_dsrRunning) || frequencyHz <= 0) {
         return refuse(kRewindGoneReason);
     }
     // The receiver that kept that moment with that frequency in its span,
     // the slice's own receiver first.
-    const DsrRingFile& ring = m_dsr->ring();
+    const DsrRingFile& ring = stretch ? *stretch : m_dsr->ring();
     QList<int> receivers = ring.receivers();
     const int own = m_rewindHost->sliceReceiver(slice);
     if (receivers.removeOne(own)) {
@@ -1657,7 +1707,8 @@ bool RecordingService::rewind(int slice, qint64 utcNs, qint64 frequencyHz, QStri
         dropReplayOnWorker(entry.pending);
     }
     entry.pendingToken = m_nextRewindToken++;
-    entry.pending = startReplay(slice, receiver, kept.sampleRateHz, utcNs, entry.pendingToken);
+    entry.source = stretch;
+    entry.pending = startReplay(slice, receiver, kept.sampleRateHz, utcNs, entry.pendingToken, stretch);
     emit dsrChanged();
     return true;
 }
@@ -1695,11 +1746,12 @@ bool RecordingService::seekRewind(int slice, qint64 utcNs, QString* refusal)
         return refuse(kRewindNotRewoundReason);
     }
     const std::shared_ptr<DsrReplay>& current = it->pending ? it->pending : it->replay;
-    if (!current || !m_dsrRunning) {
+    if (!current || (!it->source && !m_dsrRunning)) {
         return refuse(kRewindGoneReason);
     }
+    const DsrRingFile& ring = it->source ? *it->source : m_dsr->ring();
     DsrBlockHeader h;
-    if (!m_dsr->ring().blockAt(current->receiver(), utcNs, &h)) {
+    if (!ring.blockAt(current->receiver(), utcNs, &h)) {
         return refuse(kRewindGoneReason);
     }
     if (h.sampleRateHz != current->sampleRateHz()) {
@@ -1711,7 +1763,7 @@ bool RecordingService::seekRewind(int slice, qint64 utcNs, QString* refusal)
         dropReplayOnWorker(it->pending);
     }
     it->pendingToken = m_nextRewindToken++;
-    it->pending = startReplay(slice, receiver, rate, utcNs, it->pendingToken);
+    it->pending = startReplay(slice, receiver, rate, utcNs, it->pendingToken, it->source);
     emit dsrChanged();
     return true;
 }
@@ -1755,17 +1807,18 @@ std::shared_ptr<DsrReplay> RecordingService::replayForTest(int slice) const
 }
 
 std::shared_ptr<DsrReplay> RecordingService::startReplay(int slice, int receiver, int rateHz, qint64 utcNs,
-                                                         quint64 token)
+                                                         quint64 token, std::shared_ptr<DsrRingFile> source)
 {
     const qint64 liveCentre =
         m_rewindHost ? m_rewindHost->receiverCentreHz(m_rewindHost->sliceReceiver(slice)) : 0;
     auto replay = std::make_shared<DsrReplay>(slice, receiver, rateHz, utcNs, liveCentre);
     ensureWorker();
-    QMetaObject::invokeMethod(m_workerContext, [this, slice, token, replay] {
+    QMetaObject::invokeMethod(m_workerContext, [this, slice, token, replay, source] {
         WorkerReplay w;
         w.slice = slice;
         w.token = token;
         w.replay = replay;
+        w.source = source;
         m_workerReplays.push_back(std::move(w));
         workerFillReplays();
         if (m_workerTimer && !m_workerTimer->isActive()) {
@@ -1829,6 +1882,10 @@ void RecordingService::endRewind(int slice, bool restoreFrequency)
     }
     const Rewound entry = *it;
     m_rewound.erase(it);
+    // Task 25: slice A going live closes the stretch it played.
+    if (entry.source && entry.source == m_stretch.ring) {
+        m_stretch = OpenStretch{};
+    }
     if (m_rewindHost) {
         m_rewindHost->feedSlice(slice, nullptr);
     }
@@ -1878,7 +1935,7 @@ void RecordingService::followLiveCentres()
 void RecordingService::workerFillReplays()
 {
     for (WorkerReplay& w : m_workerReplays) {
-        w.replay->fill(m_dsr->ring());
+        w.replay->fill(w.source ? *w.source : m_dsr->ring());
         const int slice = w.slice;
         const quint64 token = w.token;
         if (!w.readyTold && w.replay->primed()) {
@@ -1948,7 +2005,8 @@ bool RecordingService::checkPastRequest(int slice, const DsrPanView& view, int* 
     if (keptRate > 0 && view.spanHz > keptRate) {
         return refuse(kPastSpanReason);
     }
-    if (!m_dsrRunning) {
+    // Task 25: slice A's pan reads an opened stretch with the recorder off.
+    if (!m_dsrRunning && !(slice == kStretchSlice && m_stretch.ring)) {
         return refuse(kRewindGoneReason);
     }
     return true;
@@ -1980,10 +2038,12 @@ void RecordingService::pastRows(int slice, const DsrPanView& view, qint64 fromUt
     if (toUtcNs < fromUtcNs) {
         std::swap(fromUtcNs, toUtcNs);
     }
-    runOnWorker([this, slice, view, fromUtcNs, toUtcNs, rowCount, receiver, liveRate, liveCentre,
+    int readReceiver = receiver;
+    const std::shared_ptr<DsrRingFile> source = pastSource(slice, receiver, fromUtcNs, toUtcNs, &readReceiver);
+    runOnWorker([this, slice, view, fromUtcNs, toUtcNs, rowCount, readReceiver, liveRate, liveCentre, source,
                  done = std::move(done)]() mutable {
-        DsrPastFrames frames = workerPastRenderer().rows(m_dsr->ring(), receiver, liveRate, liveCentre, view,
-                                                         fromUtcNs, toUtcNs, rowCount);
+        DsrPastFrames frames = workerPastRenderer().rows(source ? *source : m_dsr->ring(), readReceiver, liveRate,
+                                                         liveCentre, view, fromUtcNs, toUtcNs, rowCount);
         frames.slice = slice;
         QMetaObject::invokeMethod(this, [done = std::move(done), frames] { done(true, QString(), frames); },
                                   Qt::QueuedConnection);
@@ -2000,10 +2060,13 @@ void RecordingService::pastSpectrum(int slice, const DsrPanView& view, qint64 ut
         done(false, refusal, DsrPastFrames{});
         return;
     }
-    runOnWorker([this, slice, view, utcNs, receiver, liveRate, liveCentre, done = std::move(done)]() mutable {
+    int readReceiver = receiver;
+    const std::shared_ptr<DsrRingFile> source = pastSource(slice, receiver, utcNs, utcNs, &readReceiver);
+    runOnWorker([this, slice, view, utcNs, readReceiver, liveRate, liveCentre, source,
+                 done = std::move(done)]() mutable {
         DsrPastFrames frame;
-        const bool kept =
-            workerPastRenderer().spectrum(m_dsr->ring(), receiver, liveRate, liveCentre, view, utcNs, &frame);
+        const bool kept = workerPastRenderer().spectrum(source ? *source : m_dsr->ring(), readReceiver, liveRate,
+                                                        liveCentre, view, utcNs, &frame);
         frame.slice = slice;
         QMetaObject::invokeMethod(this, [done = std::move(done), kept, frame] {
             done(kept, kept ? QString() : QString::fromLatin1(kRewindGoneReason), frame);
@@ -2013,15 +2076,471 @@ void RecordingService::pastSpectrum(int slice, const DsrPanView& view, qint64 ut
 
 void RecordingService::pastHours(HoursDone done)
 {
-    if (!m_dsrRunning) {
+    const std::shared_ptr<DsrRingFile> stretch = m_stretch.ring;
+    if (!m_dsrRunning && !stretch) {
         // Nothing is kept.
         done({});
         return;
     }
-    runOnWorker([this, done = std::move(done)]() mutable {
-        const QList<DsrHour> hours = workerPastRenderer().hours(m_dsr->ring());
+    const bool running = m_dsrRunning;
+    runOnWorker([this, running, stretch, done = std::move(done)]() mutable {
+        QList<DsrHour> hours = running ? workerPastRenderer().hours(m_dsr->ring()) : QList<DsrHour>{};
+        // Task 25: an opened stretch's hours too, newest first.
+        if (stretch) {
+            for (const DsrHour& h : workerPastRenderer().hours(*stretch)) {
+                const auto same = std::find_if(hours.begin(), hours.end(), [&h](const DsrHour& o) {
+                    return o.startUtcNs == h.startUtcNs;
+                });
+                if (same == hours.end()) {
+                    hours.append(h);
+                } else {
+                    same->activity = std::max(same->activity, h.activity);
+                }
+            }
+            std::sort(hours.begin(), hours.end(),
+                      [](const DsrHour& a, const DsrHour& b) { return a.startUtcNs > b.startUtcNs; });
+        }
         QMetaObject::invokeMethod(this, [done = std::move(done), hours] { done(hours); }, Qt::QueuedConnection);
     });
+}
+
+// ---- Saving a stretch (spec 3 "Saving a stretch", 6.3, 6.4, 6.7 SAVE, A13;
+// recording plan Task 25).
+//
+// Checked here on the main thread from the ring's index (no disk read); the
+// copy or the sound runs on the recordings worker in steps, each one
+// re-queued behind the worker's own rounds, and the recording goes into
+// the store here when it is done.
+
+namespace {
+
+QString utcText(qint64 utcNs)
+{
+    return QDateTime::fromMSecsSinceEpoch(utcNs / kNsPerMs, QTimeZone::UTC).toString(QStringLiteral("HH:mm"));
+}
+
+}  // namespace
+
+namespace {
+
+// A saved sound's format, as a note names it.
+QString savedFormatWord(bool asWav)
+{
+    return asWav ? QStringLiteral("WAV") : QStringLiteral("MP3");
+}
+
+}  // namespace
+
+// About two seconds of 48 kHz sound per step of a sound-only save, and room
+// for the resampler's few frames of carry.
+constexpr int kSaveStepFrames = DsrSoundRender::kDspRateHz * 2;
+constexpr int kSaveResampleSlack = 256;
+
+struct RecordingService::SaveJob {
+    quint64 token = 0;
+    bool wholePan = true;
+    std::shared_ptr<DsrRingFile> source;   // null: the recorder's ring
+    DsrStretchExtent extent;
+    QString path;
+    std::unique_ptr<DsrStretchCopy> copy;
+    std::unique_ptr<DsrSoundRender> render;
+    std::unique_ptr<AudioFileWriter> writer;
+    // The sound is demodulated at 48 kHz, as the live slices are, and
+    // brought to the file's rate as a Contact recording's is.
+    std::unique_ptr<Resampler> resampler;
+    std::vector<float> sound;
+    std::vector<float> resampled;
+};
+
+std::shared_ptr<DsrRingFile> RecordingService::stretchFor(int slice, qint64 utcNs) const
+{
+    if (slice != kStretchSlice || !m_stretch.ring || utcNs < m_stretch.fromUtcNs || utcNs >= m_stretch.toUtcNs) {
+        return nullptr;
+    }
+    return m_stretch.ring;
+}
+
+std::shared_ptr<DsrRingFile> RecordingService::pastSource(int slice, int liveReceiver, qint64 fromUtcNs,
+                                                          qint64 toUtcNs, int* receiver) const
+{
+    if (slice != kStretchSlice || !m_stretch.ring || toUtcNs < m_stretch.fromUtcNs
+        || fromUtcNs >= m_stretch.toUtcNs) {
+        return nullptr;
+    }
+    // The receiver slice A plays the stretch from, else the slice's own,
+    // else the stretch's first.
+    const QList<int> kept = m_stretch.ring->receivers();
+    int chosen = kept.isEmpty() ? liveReceiver : kept.first();
+    const auto it = m_rewound.constFind(slice);
+    if (it != m_rewound.cend() && it->source == m_stretch.ring) {
+        const std::shared_ptr<DsrReplay>& playing = it->pending ? it->pending : it->replay;
+        if (playing) {
+            chosen = playing->receiver();
+        }
+    } else if (kept.contains(liveReceiver)) {
+        chosen = liveReceiver;
+    }
+    *receiver = chosen;
+    return m_stretch.ring;
+}
+
+void RecordingService::closeStretch()
+{
+    if (m_stretch.id.isEmpty()) {
+        return;
+    }
+    const auto it = m_rewound.constFind(kStretchSlice);
+    if (it != m_rewound.cend() && it->source == m_stretch.ring) {
+        endRewind(kStretchSlice, true);   // closes it too
+    }
+    m_stretch = OpenStretch{};
+    emit dsrChanged();
+}
+
+bool RecordingService::saveStretch(qint64 fromUtcNs, qint64 toUtcNs, bool wholePan, QString* note,
+                                   QString* refusal)
+{
+    const auto refuse = [refusal](const char* why) {
+        if (refusal != nullptr) {
+            *refusal = QString::fromLatin1(why);
+        }
+        return false;
+    };
+    if (toUtcNs < fromUtcNs) {
+        std::swap(fromUtcNs, toUtcNs);
+    }
+    // The recorder's ring, or an opened stretch that keeps more of it.
+    std::shared_ptr<DsrRingFile> source;
+    DsrStretchExtent extent;
+    if (m_dsrRunning) {
+        extent = DsrStretch::extent(m_dsr->ring(), fromUtcNs, toUtcNs);
+    }
+    if (m_stretch.ring) {
+        const DsrStretchExtent fromStretch = DsrStretch::extent(*m_stretch.ring, fromUtcNs, toUtcNs);
+        if (fromStretch.toUtcNs - fromStretch.fromUtcNs > extent.toUtcNs - extent.fromUtcNs) {
+            extent = fromStretch;
+            source = m_stretch.ring;
+        }
+    }
+    if (!extent.kept() || extent.toUtcNs - extent.fromUtcNs < kMinStretchNs / 2) {
+        return refuse(kSaveNothingKeptReason);
+    }
+    const DsrRingFile& ring = source ? *source : m_dsr->ring();
+
+    // Slice A as it is now: its frequency names the recording, and its
+    // sound is what sound only keeps.
+    DsrSoundSettings sound;
+    const bool sliceOpen = m_rewindHost && m_rewindHost->sliceSound(kStretchSlice, &sound);
+    const int own = m_rewindHost ? m_rewindHost->sliceReceiver(kStretchSlice) : -1;
+    DsrBlockHeader first;
+    int soundReceiver = sliceOpen
+        ? DsrStretch::receiverFor(ring, extent.fromUtcNs, extent.toUtcNs, sound.frequencyHz, own, &first)
+        : -1;
+    if (!wholePan && soundReceiver < 0) {
+        return refuse(kSaveSliceReason);
+    }
+    if (soundReceiver < 0) {
+        // The pan's centre names a whole-pan stretch slice A is not in.
+        soundReceiver = extent.receivers.first();
+        if (!ring.blockAt(soundReceiver, extent.fromUtcNs, &first)) {
+            ring.nextBlock(soundReceiver, extent.fromUtcNs, &first);
+        }
+        if (!sliceOpen) {
+            sound.frequencyHz = first.centreHz;
+        }
+    }
+
+    RecordingEntry entry;
+    entry.kind = wholePan ? RecordingKind::WholePan : RecordingKind::Sound;
+    entry.sliceId = wholePan ? -1 : kStretchSlice;
+    entry.startUtc = QDateTime::fromMSecsSinceEpoch(extent.fromUtcNs / kNsPerMs, QTimeZone::UTC);
+    entry.frequencyHz = sound.frequencyHz;
+    entry.mode = sliceOpen ? SliceModel::modeName(static_cast<DSPMode>(sound.dspMode)) : QString();
+    if (wholePan) {
+        entry.centreHz = first.centreHz;
+        entry.spanHz = first.sampleRateHz;
+        entry.filterLowHz = int(std::lround(sound.filterLowHz));
+        entry.filterHighHz = int(std::lround(sound.filterHighHz));
+    }
+    if (!startSave(source, extent, wholePan, sound, soundReceiver, first.sampleRateHz, entry, refusal)) {
+        return false;
+    }
+    if (note != nullptr) {
+        const bool whole = extent.fromUtcNs <= fromUtcNs + kStretchSlackNs && extent.toUtcNs + kStretchSlackNs >= toUtcNs;
+        const QString format = savedFormatWord(m_saves.value(m_nextSaveToken - 1).asWav);
+        const QString what = wholePan ? QStringLiteral("whole pan") : QStringLiteral("sound only as %1").arg(format);
+        *note = whole ? QStringLiteral("Saving %1 to %2 UTC to Recordings, %3.")
+                            .arg(utcText(extent.fromUtcNs), utcText(extent.toUtcNs), what)
+                      : QStringLiteral("Only %1 to %2 UTC is still kept. Saving that part to Recordings, %3.")
+                            .arg(utcText(extent.fromUtcNs), utcText(extent.toUtcNs), what);
+    }
+    return true;
+}
+
+bool RecordingService::saveSoundOnly(const QString& recordingId, QString* note, QString* refusal)
+{
+    ensureStoreOpen();
+    const std::optional<RecordingEntry> entry = m_store->find(recordingId);
+    if (!entry) {
+        if (refusal != nullptr) {
+            *refusal = QString::fromLatin1(kPlayGoneReason);
+        }
+        return false;
+    }
+    if (entry->kind != RecordingKind::WholePan) {
+        if (refusal != nullptr) {
+            *refusal = QString::fromLatin1(kSaveNotWholePanReason);
+        }
+        return false;
+    }
+    auto ring = std::make_shared<DsrRingFile>();
+    QString error;
+    if (!ring->open(QDir(m_store->folder()).filePath(entry->fileName), DsrStretchCopy::kNeverWrapBytes, &error)
+        || ring->blockCount() == 0) {
+        qCWarning(lcRecordings) << "saved stretch" << entry->fileName << "cannot be read:" << error;
+        if (refusal != nullptr) {
+            *refusal = QString::fromLatin1(kPlayFailedReason);
+        }
+        return false;
+    }
+    const DsrStretchExtent extent = DsrStretch::extent(*ring, ring->oldestUtcNs(), ring->newestUtcNs());
+    // Slice A's sound as it was set when the stretch was saved.
+    DsrSoundSettings sound;
+    sound.frequencyHz = entry->frequencyHz;
+    sound.dspMode = static_cast<int>(SliceModel::modeFromName(entry->mode));
+    sound.filterLowHz = entry->filterLowHz;
+    sound.filterHighHz = entry->filterHighHz;
+    DsrBlockHeader first;
+    const int receiver =
+        DsrStretch::receiverFor(*ring, extent.fromUtcNs, extent.toUtcNs, sound.frequencyHz, -1, &first);
+    if (!extent.kept() || receiver < 0) {
+        if (refusal != nullptr) {
+            *refusal = QString::fromLatin1(kSaveSliceReason);
+        }
+        return false;
+    }
+    RecordingEntry out;
+    out.kind = RecordingKind::Sound;
+    out.sliceId = kStretchSlice;
+    out.startUtc = QDateTime::fromMSecsSinceEpoch(extent.fromUtcNs / kNsPerMs, QTimeZone::UTC);
+    out.frequencyHz = sound.frequencyHz;
+    out.mode = entry->mode;
+    out.call = entry->call;
+    if (!startSave(ring, extent, false, sound, receiver, first.sampleRateHz, out, refusal)) {
+        return false;
+    }
+    if (note != nullptr) {
+        const QString format = savedFormatWord(m_saves.value(m_nextSaveToken - 1).asWav);
+        *note = QStringLiteral("Saving the sound of %1 from that stretch to Recordings as %2.")
+                    .arg(recordingFrequencyText(sound.frequencyHz), format);
+    }
+    return true;
+}
+
+bool RecordingService::startSave(std::shared_ptr<DsrRingFile> source, const DsrStretchExtent& extent,
+                                 bool wholePan, const DsrSoundSettings& sound, int soundReceiver, int soundRateHz,
+                                 RecordingEntry entry, QString* refusal)
+{
+    ensureStoreOpen();
+    if (m_storeFolder.isEmpty()) {
+        if (refusal != nullptr) {
+            *refusal = QString::fromLatin1(kSaveNoFolderReason);
+        }
+        return false;
+    }
+    if (!wholePan && !DsrSoundRender::available()) {
+        if (refusal != nullptr) {
+            *refusal = QStringLiteral("This Core cannot pull the sound out of a stretch.");
+        }
+        return false;
+    }
+    ensureWorker();
+    PendingSave pending;
+    AudioFileFormat format = m_settings.format;
+    if (!wholePan && format == AudioFileFormat::Mp3 && !mp3Available()) {
+        // Section 7: no MP3 encoder means WAV.
+        format = AudioFileFormat::Wav;
+    }
+    pending.asWav = format == AudioFileFormat::Wav;
+    pending.suffix = wholePan ? QStringLiteral("ndsr") : suffixFor(format);
+    pending.workPath = QDir(m_storeFolder).filePath(QStringLiteral(".stretch-%1.%2")
+                                                        .arg(QUuid::createUuid().toString(QUuid::WithoutBraces),
+                                                             pending.suffix));
+    pending.entry = std::move(entry);
+    pending.lengthMs = (extent.toUtcNs - extent.fromUtcNs) / kNsPerMs;
+    const quint64 token = m_nextSaveToken++;
+    m_saves.insert(token, pending);
+
+    auto job = std::make_shared<SaveJob>();
+    job->token = token;
+    job->wholePan = wholePan;
+    job->source = std::move(source);
+    job->extent = extent;
+    job->path = pending.workPath;
+    const AudioFileSpec spec{format, ContactRecorder::kFileRateHz, 1, ContactRecorder::kMonoKbitPerSec};
+    QMetaObject::invokeMethod(m_workerContext, [this, job, spec, sound, soundReceiver, soundRateHz] {
+        QString error;
+        bool ok = true;
+        if (job->wholePan) {
+            job->copy = std::make_unique<DsrStretchCopy>();
+            ok = job->copy->begin(job->path, job->extent, &error);
+        } else {
+            job->render = std::make_unique<DsrSoundRender>();
+            ok = job->render->begin(soundReceiver, soundRateHz, job->extent.fromUtcNs, job->extent.toUtcNs, sound,
+                                    DsrSoundRender::kDspRateHz, &error);
+            job->resampler = std::make_unique<Resampler>(double(DsrSoundRender::kDspRateHz),
+                                                         double(spec.sampleRateHz), kSaveStepFrames);
+            if (ok) {
+                job->writer = m_writerFactory ? m_writerFactory(job->path, spec, &error)
+                                              : AudioFileWriter::open(job->path, spec, &error);
+                ok = job->writer != nullptr;
+            }
+        }
+        if (!ok) {
+            qCWarning(lcRecordings) << "a stretch cannot be saved:" << error;
+            const quint64 token = job->token;
+            QMetaObject::invokeMethod(this, [this, token, error] { onSaveDone(token, false, 0, error); },
+                                      Qt::QueuedConnection);
+            return;
+        }
+        workerSaveStep(job);
+    }, Qt::QueuedConnection);
+    emit dsrChanged();
+    return true;
+}
+
+void RecordingService::workerSaveStep(const std::shared_ptr<SaveJob>& job)
+{
+    const DsrRingFile& ring = job->source ? *job->source : m_dsr->ring();
+    bool done = false;
+    bool ok = true;
+    QString error;
+    qint64 lengthMs = 0;
+    if (job->copy) {
+        if (job->copy->step(ring)) {
+            done = true;
+            ok = job->copy->finish(&error) && job->copy->bytesCopied() > 0;
+            lengthMs = (job->copy->copiedToUtcNs() - job->copy->copiedFromUtcNs()) / kNsPerMs;
+        }
+    } else {
+        job->sound.resize(size_t(kSaveStepFrames));
+        job->resampled.resize(size_t(kSaveStepFrames) + kSaveResampleSlack);
+        const int rendered = job->render->render(ring, job->sound.data(), kSaveStepFrames);
+        const int n = rendered > 0 ? job->resampler->processInto(job->sound.data(), rendered, job->resampled.data(),
+                                                                 int(job->resampled.size()))
+                                   : 0;
+        if (n > 0 && !job->writer->write(job->resampled.data(), n)) {
+            done = true;
+            ok = false;
+            error = QStringLiteral("the disk refused the sound");
+        } else if (job->render->done() || rendered <= 0) {
+            done = true;
+            ok = job->writer->finish();
+            lengthMs = job->render->framesDone() * 1000 / DsrSoundRender::kDspRateHz;
+        }
+    }
+    if (!done) {
+        QMetaObject::invokeMethod(m_workerContext, [this, job] { workerSaveStep(job); }, Qt::QueuedConnection);
+        return;
+    }
+    job->copy.reset();
+    job->render.reset();
+    job->writer.reset();
+    const quint64 token = job->token;
+    QMetaObject::invokeMethod(this, [this, token, ok, lengthMs, error] { onSaveDone(token, ok, lengthMs, error); },
+                              Qt::QueuedConnection);
+}
+
+void RecordingService::onSaveDone(quint64 token, bool ok, qint64 lengthMs, const QString& error)
+{
+    const auto it = m_saves.find(token);
+    if (it == m_saves.end()) {
+        return;
+    }
+    PendingSave pending = it.value();
+    m_saves.erase(it);
+    if (!ok) {
+        qCWarning(lcRecordings) << "a stretch was not saved:" << error;
+        QFile::remove(pending.workPath);
+        emit stretchSaveFailed(QString::fromLatin1(kSaveFailedReason));
+        emit dsrChanged();
+        return;
+    }
+    ensureStoreOpen();
+    RecordingEntry entry = pending.entry;
+    const QString base = recordingBaseName(entry.startUtc, entry.frequencyHz, entry.mode, entry.call);
+    QString finalPath = pending.workPath;
+    const QString wanted = m_store->pathForNew(base, pending.suffix);
+    if (QFile::rename(pending.workPath, wanted)) {
+        finalPath = wanted;
+    } else {
+        qCWarning(lcRecordings) << "saved stretch" << pending.workPath << "kept under its working name:"
+                                << "it cannot be renamed to" << wanted;
+    }
+    entry.lengthMs = lengthMs > 0 ? lengthMs : pending.lengthMs;
+    entry.name = QFileInfo(finalPath).completeBaseName();
+    entry.fileName = QFileInfo(finalPath).fileName();
+    const QString id = m_store->add(entry);
+    emit stretchSaved(id);
+    emit dsrChanged();
+}
+
+bool RecordingService::openStretch(const QString& recordingId, QString* refusal)
+{
+    const auto refuse = [refusal](const char* why) {
+        if (refusal != nullptr) {
+            *refusal = QString::fromLatin1(why);
+        }
+        return false;
+    };
+    ensureStoreOpen();
+    const std::optional<RecordingEntry> entry = m_store->find(recordingId);
+    if (!entry) {
+        return refuse(kPlayGoneReason);
+    }
+    if (entry->kind != RecordingKind::WholePan) {
+        return refuse(kSaveNotWholePanReason);
+    }
+    if (!m_rewindHost || !m_rewindHost->sliceOpen(kStretchSlice)) {
+        return refuse(kRewindNoSliceReason);
+    }
+    auto ring = std::make_shared<DsrRingFile>();
+    QString error;
+    if (!ring->open(QDir(m_store->folder()).filePath(entry->fileName), DsrStretchCopy::kNeverWrapBytes, &error)
+        || ring->blockCount() == 0) {
+        qCWarning(lcRecordings) << "saved stretch" << entry->fileName << "cannot be opened:" << error;
+        return refuse(kPlayFailedReason);
+    }
+    // Another stretch slice A plays goes first.
+    if (!m_stretch.id.isEmpty() && m_stretch.id != recordingId) {
+        closeStretch();
+    }
+    const OpenStretch before = m_stretch;
+    m_stretch.id = recordingId;
+    m_stretch.ring = ring;
+    m_stretch.fromUtcNs = ring->oldestUtcNs();
+    m_stretch.toUtcNs = ring->newestUtcNs();
+    // From its start, at the frequency slice A was on when it was saved (or
+    // the kept centre when that is not in it).
+    qint64 hz = entry->frequencyHz;
+    DsrBlockHeader first;
+    if (DsrStretch::receiverFor(*ring, m_stretch.fromUtcNs, m_stretch.toUtcNs, hz, -1, &first) < 0) {
+        if (!ring->nextBlock(ring->receivers().first(), m_stretch.fromUtcNs, &first)) {
+            m_stretch = before;
+            return refuse(kPlayFailedReason);
+        }
+        hz = first.centreHz;
+    }
+    QString why;
+    if (!rewind(kStretchSlice, m_stretch.fromUtcNs, hz, &why)) {
+        m_stretch = before;
+        if (refusal != nullptr) {
+            *refusal = why;
+        }
+        return false;
+    }
+    emit dsrChanged();
+    return true;
 }
 
 }  // namespace NereusSDR

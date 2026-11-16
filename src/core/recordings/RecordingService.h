@@ -33,6 +33,12 @@
 //             past spectrum frame and the hours map, drawn on the worker
 //             with the asking pan's FFT settings (spec 3, 6.7, A12,
 //             recording plan Task 23). AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; saving a stretch (whole pan, or slice A's
+//             sound in the Files format), sound only from a saved stretch,
+//             a saved stretch opened like rewind, and a whole-pan
+//             recording's sound played on its own (spec 3, 6.3, 6.4, 6.7,
+//             A13, recording plan Task 25). AI tooling: Anthropic Claude
+//             Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -41,6 +47,7 @@
 #include "core/recordings/OnAirSource.h"
 #include "core/recordings/QuietRule.h"
 #include "core/recordings/RecordingDisks.h"
+#include "core/recordings/RecordingNames.h"
 #include "core/recordings/RecordingPlayer.h"
 #include "core/recordings/RecordingSettings.h"
 #include "core/recordings/VoiceKeyer.h"
@@ -293,6 +300,40 @@ public:
     // The thread the last past picture was drawn on.
     QThread* pastRenderThreadForTest() const { return m_pastRenderThread.load(); }
 
+    // ---- Saving a stretch (spec 3 "Saving a stretch", 6.3, 6.4, 6.7 SAVE,
+    // A13; recording plan Task 25). The copy and the sound run on the
+    // recordings worker in steps, so the recorder's own writes go on; the
+    // store lists the recording when it is done (stretchSaved). Main
+    // thread.
+    static constexpr const char* kSaveNothingKeptReason = "None of that stretch is still kept.";
+    static constexpr const char* kSaveNotWholePanReason = "That recording is not a whole-pan stretch.";
+    static constexpr const char* kSaveNoFolderReason = "The Core has nowhere to keep recordings.";
+    static constexpr const char* kSaveSliceReason = "Slice A is not on a frequency kept in that stretch.";
+    static constexpr const char* kSaveFailedReason = "The stretch could not be saved.";
+    // The slice whose sound a stretch gives, and that an opened stretch
+    // plays on (slice A).
+    static constexpr int kStretchSlice = 0;
+    // A saved stretch is at least this long.
+    static constexpr qint64 kMinStretchNs = 1000000000;
+    // Less than this missing at either end still counts as the whole stretch.
+    static constexpr qint64 kStretchSlackNs = 1000000000;
+    // Saves `fromUtcNs` to `toUtcNs`: the whole pan (every receiver's I/Q,
+    // a WholePan recording) or slice A's sound in the Files format (a
+    // Sound recording). What the recorder no longer keeps is left out and
+    // `note` says so; nothing kept is refused.
+    bool saveStretch(qint64 fromUtcNs, qint64 toUtcNs, bool wholePan, QString* note, QString* refusal);
+    // A Sound recording of a saved whole-pan stretch: slice A's sound as it
+    // was set when the stretch was saved.
+    bool saveSoundOnly(const QString& recordingId, QString* note, QString* refusal);
+    // A saved whole-pan stretch on the waterfall, like rewind: slice A plays
+    // it from its start at the frequency it was on, and the past picture
+    // and any click on slice A's pan come from it until slice A goes live.
+    bool openStretch(const QString& recordingId, QString* refusal);
+    // The stretch opened, or empty.
+    QString openStretchId() const { return m_stretch.id; }
+    // Saves still running on the worker.
+    int savesInProgress() const { return int(m_saves.size()); }
+
     // ---- The recordings worker thread, for work that must not run on the
     // main thread (the voice keyer's conversions).
     // Runs `job` on the worker after what is queued there already. From
@@ -329,6 +370,9 @@ signals:
     void playbackRefused(const NereusSDR::ListenerId& who, const QString& reason);
     // The recorder went on or off, its reason changed, or its figures moved.
     void dsrChanged();
+    // A saved stretch (Task 25) is in the store, or could not be saved.
+    void stretchSaved(const QString& recordingId);
+    void stretchSaveFailed(const QString& reason);
 
 private:
     struct SliceRecord {
@@ -381,6 +425,8 @@ private:
     struct Listener {
         QString recordingId;
         QString path;
+        // A whole-pan recording plays its sound only (Task 25).
+        std::optional<DsrSoundSettings> stretchSound;
         std::shared_ptr<RecordingPlayer> player;   // null when stopped
         qint64 positionMs = 0;                     // when stopped
         qint64 lengthMs = 0;
@@ -408,6 +454,8 @@ private:
         quint64 token = 0;
         std::shared_ptr<RecordingPlayer> player;
     };
+    void playPath(const ListenerId& who, const QString& recordingId, const QString& path, qint64 lengthMs,
+                  const std::optional<DsrSoundSettings>& stretchSound);
     void startPlayer(const ListenerId& who, Listener& l, qint64 fromMs);
     void dropPlayer(Listener& l);
     void endListener(const ListenerId& who);
@@ -445,8 +493,12 @@ private:
         quint64 replayToken = 0;
         std::shared_ptr<DsrReplay> pending;  // a rewind's or seek's, until it has read
         quint64 pendingToken = 0;
+        // Task 25: an opened stretch's file it plays from; null for the
+        // recorder's ring.
+        std::shared_ptr<DsrRingFile> source;
     };
-    std::shared_ptr<DsrReplay> startReplay(int slice, int receiver, int rateHz, qint64 utcNs, quint64 token);
+    std::shared_ptr<DsrReplay> startReplay(int slice, int receiver, int rateHz, qint64 utcNs, quint64 token,
+                                           std::shared_ptr<DsrRingFile> source = nullptr);
     void dropReplayOnWorker(const std::shared_ptr<DsrReplay>& replay);
     void onReplayReady(int slice, quint64 token);
     void onReplayFinished(int slice, quint64 token);
@@ -460,6 +512,29 @@ private:
     bool checkPastRequest(int slice, const DsrPanView& view, int* receiver, int* liveRateHz,
                           qint64* liveCentreHz, QString* refusal) const;
     DsrPastRenderer& workerPastRenderer();
+    // The opened stretch when `slice` is slice A and it keeps `utcNs`.
+    std::shared_ptr<DsrRingFile> stretchFor(int slice, qint64 utcNs) const;
+    // The opened stretch when a past picture of `slice` from `fromUtcNs`
+    // to `toUtcNs` reads it (slice A, overlapping), and the receiver in it;
+    // null for the recorder's ring.
+    std::shared_ptr<DsrRingFile> pastSource(int slice, int liveReceiver, qint64 fromUtcNs, qint64 toUtcNs,
+                                            int* receiver) const;
+    void closeStretch();
+
+    // Saving a stretch.
+    struct SaveJob;
+    struct PendingSave {
+        RecordingEntry entry;     // all but the file and the length
+        QString workPath;
+        QString suffix;
+        qint64 lengthMs = 0;
+        bool asWav = false;
+    };
+    bool startSave(std::shared_ptr<DsrRingFile> source, const DsrStretchExtent& extent, bool wholePan,
+                   const DsrSoundSettings& sound, int soundReceiver, int soundRateHz, RecordingEntry entry,
+                   QString* refusal);
+    void workerSaveStep(const std::shared_ptr<SaveJob>& job);
+    void onSaveDone(quint64 token, bool ok, qint64 lengthMs, const QString& error);
 
     RadioModel* m_radio = nullptr;
     mutable std::unique_ptr<RecordingStore> m_store;
@@ -535,10 +610,22 @@ private:
         int slice = -1;
         quint64 token = 0;
         std::shared_ptr<DsrReplay> replay;
+        std::shared_ptr<DsrRingFile> source;   // null: the recorder's ring
         bool readyTold = false;
         bool finishedTold = false;
     };
     std::vector<WorkerReplay> m_workerReplays;   // worker thread only
+
+    // Task 25: the opened stretch (one, on slice A), and the saves running.
+    struct OpenStretch {
+        QString id;
+        std::shared_ptr<DsrRingFile> ring;
+        qint64 fromUtcNs = 0;
+        qint64 toUtcNs = 0;
+    };
+    OpenStretch m_stretch;
+    QHash<quint64, PendingSave> m_saves;
+    quint64 m_nextSaveToken = 1;
 
     // The past picture: made, used and dropped on the worker.
     std::unique_ptr<DsrPastRenderer> m_pastRenderer;

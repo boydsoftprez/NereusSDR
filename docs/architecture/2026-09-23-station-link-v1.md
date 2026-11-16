@@ -1665,8 +1665,10 @@ When a feature is off, its version is 0:
   adds `dsr`, the Digital Spectrum Recorder (every receiver's I/Q kept on
   the Core's disk in a loop with a size limit), and `recordings.setSettings`
   takes `dsrEnabled`, `dsrDisk` and `dsrSizeLimitGb`, and the Core takes
-  the `dsr.*` verbs (rewind sound and the past picture, section 9) with
-  `dsr.rewound` in the document; a peer that declared
+  the `dsr.*` verbs (rewind sound, the past picture and saving a stretch,
+  section 9) with `dsr.rewound`, `dsr.stretch` and `dsr.saving` in the
+  document, and `recordings.saveSoundOnly` and `recordings.openStretch`; a
+  peer that declared
   `recordings` 1 is sent 4, and a client below 4 leaves its recorder
   controls visible and greyed with the words below. The session protocol
   minor did not change. A client on a Core that sends no entry shows
@@ -3860,7 +3862,10 @@ Notes on the keys:
   `dsr.*` verbs): `slice`, `utcNs` (the moment played when the document
   was built, ns since 1970 UTC), `frequencyHz` (the slice's frequency) and
   `liveFrequencyHz` (the frequency LIVE returns it to); it changes when a
-  slice is rewound, moved or goes live. While a slice
+  slice is rewound, moved or goes live. `stretch` is the saved whole-pan
+  stretch Slice A plays (`recordings.openStretch`), null when none: `id`,
+  `fromUtcNs` and `toUtcNs`, the moments it keeps. `saving` counts the
+  stretches being saved now. While a slice
   records, or a voice message goes out, the document is rebuilt once a
   second. `revision` moves by one each
   time `json` changes. The recordings themselves are not in it: a client asks
@@ -6665,6 +6670,9 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `dsr.rows` | `slice` i64, `fromUtcNs` i64, `toUtcNs` i64, `rowCount` i64, `fftSize` i64, `windowType` i64, `centreHz` i64, `spanHz` i64, `pixels` i64 | `recordingsVersion` | 4 | 11 |
 | `dsr.spectrum` | `slice` i64, `utcNs` i64, `fftSize` i64, `windowType` i64, `centreHz` i64, `spanHz` i64, `pixels` i64 | `recordingsVersion` | 4 | 11 |
 | `dsr.hours` | none | `recordingsVersion` | 4 | 11 |
+| `dsr.saveStretch` | `fromUtcNs` i64, `toUtcNs` i64, `kind` utf8 | `recordingsVersion` | 4 | 11 |
+| `recordings.saveSoundOnly` | `id` utf8 | `recordingsVersion` | 4 | 11 |
+| `recordings.openStretch` | `id` utf8 | `recordingsVersion` | 4 | 11 |
 | `paProfile.setUseMax` | `band` i64, `on` bool | `paProfileVersion` | 1 | 11 |
 | `configureRfKit` | `host` utf8, `port` i64 | `remoteRfKitControlVersion` | 2 | 11 |
 | `disconnectRfKit` | none | `remoteRfKitControlVersion` | 2 | 11 |
@@ -7088,7 +7096,9 @@ These command groups need a sentence beyond the table:
   device's words in `kept`. `recordings.list` answers with `entries` (a JSON
   array as text, newest first, at most 100 from `offset`: `id`, `kind`,
   `slice`, `startUtc`, `lengthMs`, `frequencyHz`, `mode`, `call`, `name`,
-  `fileName`, `sizeBytes`), `offset` and `total` in the result's `values`.
+  `fileName`, `sizeBytes`, and for a whole-pan stretch at
+  `recordingsVersion` 4 `centreHz` and `spanHz`, the pan it kept),
+  `offset` and `total` in the result's `values`.
   The optional `slice` and `kind` (`Contact`, `WholePan` or `Sound`) narrow
   the list, and `total` counts only what matches; an optional `reader`, the
   asking window's own number for one of its lists, comes back as `reader` in
@@ -7165,6 +7175,30 @@ These command groups need a sentence beyond the table:
   (a span of 0 or wider than the receiver's rate), "Ask for 1 to 4096 past
   rows at a time.", "The pan's width must be 1 to 4096 pixels." and "That moment is no longer kept." (the recorder is
   off, or for `dsr.spectrum` nothing is kept then).
+- **Saving a stretch** (`recordingsVersion` 4). `dsr.saveStretch`
+  (`fromUtcNs`, `toUtcNs`, ns since 1970 UTC, `kind` `WholePan` or `Sound`)
+  saves that stretch of the Digital Spectrum Recorder as a recording, on the
+  recordings worker. `WholePan` copies every receiver's kept I/Q for it out
+  of the loop into the recordings folder, where the loop never overwrites
+  it; `Sound` keeps Slice A's sound over it, demodulated as Slice A is set,
+  in the Files format. Only what is still kept is saved. Accepted, the
+  result's `values` carry `note`, the Core's words for what it is doing
+  ("Saving 14:00 to 14:10 UTC to Recordings, whole pan.", or "Only 14:02 to
+  14:10 UTC is still kept. Saving that part to Recordings, sound only as
+  MP3."); the recordings list shows it when it is done.
+  `recordings.saveSoundOnly` (`id`) keeps the sound of a saved whole-pan
+  stretch as a Sound recording, at the frequency, mode and filter Slice A
+  had when it was saved, with the same `note`. `recordings.play` on a
+  whole-pan stretch plays that sound only. `recordings.openStretch` (`id`)
+  opens a saved whole-pan stretch on the waterfall: Slice A plays it like
+  `dsr.rewind` from its start, even with the recorder off, `dsr.rows`,
+  `dsr.spectrum` and `dsr.hours` draw from it too, and `dsr.stretch` names
+  it until Slice A goes live. None keys the radio. Refusals: "None of that
+  stretch is still kept.", "Slice A is not on a frequency kept in that
+  stretch." (`Sound`), "That recording is not a whole-pan stretch.", "That
+  recording is no longer kept.", "That recording cannot be played.", "The
+  Core has nowhere to keep recordings." and, for `recordings.openStretch`,
+  the `dsr.rewind` refusals.
 - **The voice keyer** (`recordingsVersion` 3). Messages M1 to M8 are kept on
   the Core as 48 kHz 16-bit mono WAV, at most two minutes each.
   `voiceKeyer.send` (`n`) is the one verb that keys the radio: it keys as

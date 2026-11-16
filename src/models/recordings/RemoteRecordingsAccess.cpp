@@ -24,6 +24,9 @@
 //                 pixels go with dsr.rows and dsr.spectrum, and each row's
 //                 transmit mark comes back. AI-assisted implementation via
 //                 Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 25: saving a
+//                 stretch, sound only and opening a saved stretch.
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "models/recordings/RemoteRecordingsAccess.h"
@@ -208,6 +211,25 @@ void RemoteRecordingsAccess::requestPastSpectrum(int slice, const DsrPanView& vi
 void RemoteRecordingsAccess::requestHours()
 {
     sendDsrVerb(QStringLiteral("dsr.hours"), QJsonObject{});
+}
+
+void RemoteRecordingsAccess::saveStretch(qint64 fromNs, qint64 toNs, bool wholePan)
+{
+    sendDsrVerb(QStringLiteral("dsr.saveStretch"),
+                QJsonObject{{QStringLiteral("fromUtcNs"), fromNs},
+                            {QStringLiteral("toUtcNs"), toNs},
+                            {QStringLiteral("kind"), recordingKindKey(wholePan ? RecordingKind::WholePan
+                                                                               : RecordingKind::Sound)}});
+}
+
+void RemoteRecordingsAccess::saveSoundOnly(const QString& id)
+{
+    sendDsrVerb(QStringLiteral("recordings.saveSoundOnly"), QJsonObject{{QStringLiteral("id"), id}});
+}
+
+void RemoteRecordingsAccess::openStretch(const QString& id)
+{
+    sendDsrVerb(QStringLiteral("recordings.openStretch"), QJsonObject{{QStringLiteral("id"), id}});
 }
 
 bool RemoteRecordingsAccess::sendLink(const QString& verb, const QJsonObject& arguments)
@@ -629,6 +651,10 @@ void RemoteRecordingsAccess::takeResult(const QByteArray& verb, bool accepted, c
     }
     if (!accepted) {
         emit refused(reason);
+        return;
+    }
+    if (verb == "dsr.saveStretch" || verb == "recordings.saveSoundOnly") {
+        emit stretchSaving(valueOf(values, "note").toString());
         return;
     }
     if (verb == "recordings.list") {

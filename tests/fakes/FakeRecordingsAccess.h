@@ -36,6 +36,9 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 24: with their
 //                 moment, frequency, stretch and pan view. AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 25: saving a
+//                 stretch, sound only and opening a saved stretch.
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QHash>
@@ -258,6 +261,17 @@ public:
         calls.append(call);
     }
     void requestHours() override { calls.append({QStringLiteral("requestHours")}); }
+    // Task 25: the stretch's ends in fromUtcNs and utcNs, whole pan as
+    // sliceId 1 (sound only 0).
+    void saveStretch(qint64 fromNs, qint64 toNs, bool wholePan) override
+    {
+        Call call{QStringLiteral("saveStretch"), wholePan ? 1 : 0};
+        call.fromUtcNs = fromNs;
+        call.utcNs = toNs;
+        calls.append(call);
+    }
+    void saveSoundOnly(const QString& id) override { calls.append({QStringLiteral("saveSoundOnly"), -1, id}); }
+    void openStretch(const QString& id) override { calls.append({QStringLiteral("openStretch"), -1, id}); }
 
 private:
     State m_state = State::Ready;

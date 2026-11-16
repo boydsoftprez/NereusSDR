@@ -35,6 +35,9 @@
 //   2026-11-15 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 7.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 25: a whole-pan
+//                 row opens on the pan, and its menu plays its sound only.
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QDateTime>
@@ -151,6 +154,8 @@ private:
     std::optional<RecordingEntry> entryById(const QString& id) const;
     const Row* rowById(const QString& id) const;
     QString unavailableReason() const;
+    /// Why a whole-pan row cannot open or play its sound, or empty.
+    QString stretchReason() const;
     QString dayText(const QDateTime& startUtc) const;
 
     QPointer<RecordingsAccess> m_access;

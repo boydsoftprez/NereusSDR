@@ -15,6 +15,13 @@
 //             display reduces its bins) and your transmit marked per row
 //             (spec 3, recording plan Task 24). AI tooling: Anthropic
 //             Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; saving a stretch: DsrStretch (what the
+//             ring keeps of it), DsrStretchCopy (a whole-pan stretch copied
+//             out into a file of its own, never overwritten) and
+//             DsrSoundRender (slice A's sound demodulated out of a stretch
+//             by a WDSP receive channel of its own); DsrRewindHost says how
+//             a slice is set (spec 3, 6.3, 6.4, 6.7, A13, recording plan
+//             Task 25). AI tooling: Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -23,16 +30,29 @@
 
 #include <QByteArray>
 #include <QList>
+#include <QString>
 #include <QVector>
 #include <QtGlobal>
 
 #include <atomic>
+#include <limits>
 #include <memory>
 #include <vector>
 
 namespace NereusSDR {
 
 class FFTEngine;
+
+// How a slice is set, for its sound pulled out of a stretch (recording plan
+// Task 25): its frequency, its mode (DSPMode's number), its filter edges
+// as the slice holds them (signed, Hz) and its AGC (AGCMode's number).
+struct DsrSoundSettings {
+    qint64 frequencyHz = 0;
+    int dspMode = 0;
+    double filterLowHz = 0.0;
+    double filterHighHz = 0.0;
+    int agcMode = 3;   // AGCMode::Med, as a receive channel opens (WdspEngine)
+};
 
 // One rewound slice's input: the past I/Q of one receiver, read from the
 // ring file on the recordings worker into a lock-free ring, and taken by the
@@ -167,6 +187,14 @@ public:
     // Feeds the slice from `replay`, or (null) from the radio again. False
     // when there is no DSP worker to switch (no radio streaming).
     virtual bool feedSlice(int slice, std::shared_ptr<DsrReplay> replay) = 0;
+    // How the slice is set now (Task 25: its sound out of a stretch).
+    // False for a slice that is not open, or a host that cannot say.
+    virtual bool sliceSound(int slice, DsrSoundSettings* out) const
+    {
+        Q_UNUSED(slice);
+        Q_UNUSED(out);
+        return false;
+    }
 };
 
 // ---- The past picture (spec 3 "Rewind picture", "Moving through hours",
@@ -306,6 +334,142 @@ private:
     bool m_haveFrame = false;
     std::vector<qint16> m_read;
     QVector<float> m_feed;
+};
+
+// ---- Saving a stretch (spec 3 "Saving a stretch", 6.3, 6.4, 6.7 SAVE, A13;
+// recording plan Task 25).
+
+// What a ring file keeps of the stretch asked for: from its first kept
+// frame at or after the start to the end of its last kept frame before the
+// end, the receivers that kept any of it, and the bytes those frames take
+// as blocks of their own (DsrRingFile::blockBytes; your transmit audio not
+// counted).
+struct DsrStretchExtent {
+    qint64 fromUtcNs = 0;
+    qint64 toUtcNs = 0;
+    qint64 bytes = 0;
+    QList<int> receivers;
+    bool kept() const { return toUtcNs > fromUtcNs; }
+};
+
+class NEREUS_CORE_EXPORT DsrStretch {
+public:
+    // From the index only (no disk read); any thread.
+    static DsrStretchExtent extent(const DsrRingFile& ring, qint64 fromUtcNs, qint64 toUtcNs);
+    // The receiver that kept `frequencyHz` in its span at the first kept
+    // moment of the stretch, `preferred` first; -1 for none. `first` gets
+    // that receiver's first block in the stretch.
+    static int receiverFor(const DsrRingFile& ring, qint64 fromUtcNs, qint64 toUtcNs, qint64 frequencyHz,
+                           int preferred, DsrBlockHeader* first);
+    // The first frame of a block at or after `utcNs`, and the frames before
+    // `utcNs` (both clamped to the block).
+    static qint64 firstFrameAtOrAfter(const DsrBlockHeader& h, qint64 utcNs);
+};
+
+// Copies a stretch out of the ring into a file of its own: a ring file
+// that never wraps (its limit is far beyond the stretch), so a saved
+// stretch replays through the same rewind feed and is never overwritten.
+// Each receiver's frames from the stretch's start to its end, block by
+// block, trimmed at both ends; your transmit audio comes along with the
+// first receiver's blocks. The recordings worker only, in steps, so the
+// recorder's own writes go on between them.
+class NEREUS_CORE_EXPORT DsrStretchCopy {
+public:
+    // A step copies at most this many bytes of blocks.
+    static constexpr qint64 kStepBytes = 16LL * 1024 * 1024;
+    // A saved stretch's file never reaches this; it is not a loop.
+    static constexpr qint64 kNeverWrapBytes = 1LL << 50;
+
+    DsrStretchCopy();
+    ~DsrStretchCopy();
+    DsrStretchCopy(const DsrStretchCopy&) = delete;
+    DsrStretchCopy& operator=(const DsrStretchCopy&) = delete;
+
+    bool begin(const QString& path, const DsrStretchExtent& extent, QString* error);
+    // Copies up to kStepBytes more; true once every receiver is copied.
+    bool step(const DsrRingFile& ring);
+    // Closes the file at the bytes its blocks take; false on a disk error.
+    bool finish(QString* error);
+    bool failed() const { return m_failed; }
+    // The bytes of the blocks written (each rounded to kAlignBytes).
+    qint64 bytesCopied() const { return m_bytes; }
+    qint64 copiedFromUtcNs() const { return m_copiedFrom; }
+    qint64 copiedToUtcNs() const { return m_copiedTo; }
+
+private:
+    DsrRingFile m_out;
+    DsrStretchExtent m_extent;
+    int m_receiverIndex = 0;
+    qint64 m_cursor = 0;
+    qint64 m_bytes = 0;
+    qint64 m_copiedFrom = 0;
+    qint64 m_copiedTo = 0;
+    bool m_failed = false;
+    std::vector<qint16> m_iq;
+    std::vector<qint16> m_audio;
+};
+
+// A slice's sound out of a stretch: one receiver's kept I/Q, from
+// `fromUtcNs` to `toUtcNs`, fed through a WDSP receive channel of its own
+// set as the slice was (mode, filter, AGC, the shift to its frequency),
+// mono at `outRateHz`. Where nothing is kept it is silence, so the sound is
+// the stretch's length. The channel is opened as the live receive channels
+// are (WdspEngine::openRxChannelWdsp) on an id above every live channel,
+// and closed with the render. One thread at a time (the recordings
+// worker): no lock, and the radio's channels are untouched.
+class NEREUS_CORE_EXPORT DsrSoundRender {
+public:
+    // The live receive channels' block sizes (RadioModel: the demodulator
+    // block is 64 * rate / 48000, dsp_size 4096; SampleRateCatalog).
+    static constexpr int kDspSize = 4096;
+    static constexpr int kDspRateHz = 48000;
+    static constexpr int kBlockBaseFrames = 64;
+
+    DsrSoundRender();
+    ~DsrSoundRender();
+    DsrSoundRender(const DsrSoundRender&) = delete;
+    DsrSoundRender& operator=(const DsrSoundRender&) = delete;
+
+    // False without WDSP in this build.
+    static bool available();
+    // Opens the channel. False with a reason: no WDSP, every spare channel
+    // in use, or a rate that is not a multiple of 48 kHz.
+    bool begin(int receiver, int sampleRateHz, qint64 fromUtcNs, qint64 toUtcNs, const DsrSoundSettings& sound,
+               int outRateHz, QString* error);
+    // Up to `maxFrames` of the sound into `out`; 0 once all of it is out.
+    int render(const DsrRingFile& ring, float* out, int maxFrames);
+    qint64 totalFrames() const { return m_totalFrames; }
+    qint64 framesDone() const { return m_framesDone; }
+    bool done() const { return m_framesDone >= m_totalFrames; }
+
+private:
+    void gather(const DsrRingFile& ring);
+    void setShift(qint64 keptCentreHz);
+    void close();
+
+    int m_channel = -1;
+    int m_receiver = -1;
+    int m_rate = 0;
+    int m_outRate = 0;
+    int m_inSize = 0;
+    int m_outSize = 0;
+    qint64 m_toUtcNs = 0;
+    qint64 m_frequencyHz = 0;
+    qint64 m_shiftCentreHz = std::numeric_limits<qint64>::min();
+    qint64 m_totalFrames = 0;
+    qint64 m_framesDone = 0;
+    // The walk through the kept blocks (as DsrReplay::fill walks them).
+    qint64 m_nextUtcNs = 0;
+    bool m_haveBlock = false;
+    DsrBlockHeader m_block;
+    qint64 m_frameInBlock = 0;
+    std::vector<qint16> m_read;
+    std::vector<float> m_inI;
+    std::vector<float> m_inQ;
+    std::vector<float> m_outI;
+    std::vector<float> m_outQ;
+    std::vector<float> m_pending;
+    int m_pendingAt = 0;
 };
 
 }  // namespace NereusSDR

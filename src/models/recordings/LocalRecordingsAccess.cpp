@@ -27,6 +27,9 @@
 //                 picture (past rows in chunks, a past spectrum frame, the
 //                 hours map). AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 25: saving a
+//                 stretch, sound only and opening a saved stretch.
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "models/recordings/LocalRecordingsAccess.h"
@@ -244,6 +247,42 @@ void LocalRecordingsAccess::requestPastSpectrum(int slice, const DsrPanView& vie
                                      }
                                      emit self->pastSpectrumReady(frame);
                                  });
+    }
+}
+
+void LocalRecordingsAccess::saveStretch(qint64 fromNs, qint64 toNs, bool wholePan)
+{
+    if (RecordingService* recordings = begin()) {
+        QString note;
+        QString refusal;
+        if (!recordings->saveStretch(fromNs, toNs, wholePan, &note, &refusal)) {
+            emit refused(refusal);
+            return;
+        }
+        emit stretchSaving(note);
+    }
+}
+
+void LocalRecordingsAccess::saveSoundOnly(const QString& id)
+{
+    if (RecordingService* recordings = begin()) {
+        QString note;
+        QString refusal;
+        if (!recordings->saveSoundOnly(id, &note, &refusal)) {
+            emit refused(refusal);
+            return;
+        }
+        emit stretchSaving(note);
+    }
+}
+
+void LocalRecordingsAccess::openStretch(const QString& id)
+{
+    if (RecordingService* recordings = begin()) {
+        QString refusal;
+        if (!recordings->openStretch(id, &refusal)) {
+            emit refused(refusal);
+        }
     }
 }
 

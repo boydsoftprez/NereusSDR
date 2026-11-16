@@ -6,6 +6,9 @@
 //             (spec 6.4). AI tooling: Anthropic Claude Code.
 // 2026-11-15  J.J. Boyd / KG4VCF; filterRecordings, for the list's slice and
 //             kind (recording plan Task 7). AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; a whole-pan recording keeps the pan's
+//             centre and span and slice A's filter (recording plan Task 25).
+//             AI tooling: Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -33,6 +36,13 @@ struct RecordingEntry {
     QString name;               // shown name, also the file's base name
     QString fileName;           // in the store folder
     qint64 sizeBytes = 0;
+    // WholePan only (Task 25): the receiver's centre and span (its rate)
+    // when it was saved, so the pan's range can be shown ("7.089 to
+    // 7.281"); and slice A's filter edges then, for its sound only.
+    qint64 centreHz = 0;
+    qint64 spanHz = 0;
+    int filterLowHz = 0;
+    int filterHighHz = 0;
 };
 
 // "2026-11-15 1432Z 7.236.400 LSB K4ABC"; no trailing space when call is empty.

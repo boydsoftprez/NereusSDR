@@ -16,6 +16,9 @@
 //   2026-11-15 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 7.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 25: a whole-pan
+//                 row's reason is now the older Core's. AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include <QAction>
@@ -45,7 +48,8 @@ using namespace NereusSDR;
 namespace {
 
 const QDateTime kNow(QDate(2026, 11, 15), QTime(15, 2), QTimeZone::utc());
-const QString kDsrReason = QStringLiteral("Available when the Digital Spectrum Recorder is built.");
+// A whole-pan stretch needs a Core with the recorder (recordingsVersion 4).
+const QString kDsrReason = QStringLiteral("This Core needs an update for recordings.");
 
 RecordingEntry entry(const QString& id, RecordingKind kind, int slice, qint64 agoSeconds, qint64 lengthMs,
                      qint64 bytes, qint64 hz = 7236400, const QString& call = QString())
@@ -175,7 +179,7 @@ private slots:
         QVERIFY(panel.usageForTest()->text().contains(QStringLiteral("884 GB free on USB SSD")));
         QVERIFY(panel.noteForTest()->isHidden());
 
-        // A whole-pan stretch opens on the pan once the recorder is built.
+        // A whole-pan stretch opens on the pan with a Core that has the recorder.
         QPushButton* pan = panel.rowPlayButtonForTest(QStringLiteral("w1"));
         QVERIFY(!pan->isEnabled());
         QCOMPARE(pan->toolTip(), kDsrReason);
@@ -563,7 +567,7 @@ private slots:
         window.playButtonForTest()->click();
         QCOMPARE(f.access.verbs().last(), QStringLiteral("stopPlay"));
 
-        // Save sound only is the whole pan's, and waits for the recorder.
+        // Save sound only is the whole pan's, and needs a Core with the recorder.
         window.setSelectedIds({QStringLiteral("w1")});
         QVERIFY(!window.soundOnlyButtonForTest()->isEnabled());
         QCOMPARE(window.soundOnlyButtonForTest()->toolTip(), kDsrReason);

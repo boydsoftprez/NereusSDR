@@ -14,6 +14,9 @@
 //   2026-11-15 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 7.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 25: a whole-pan
+//                 row opens on the pan, and its menu plays its sound only.
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/recordings/RecordingsPanel.h"
@@ -254,6 +257,12 @@ QString RecordingsPanel::unavailableReason() const
     return m_access ? m_access->unavailableReason() : RecordingsAccess::notConnectedReason();
 }
 
+QString RecordingsPanel::stretchReason() const
+{
+    return m_access ? m_access->unavailableReason(RecordingsAccess::kDsrVersion)
+                    : RecordingsAccess::notConnectedReason();
+}
+
 void RecordingsPanel::onDocumentChanged()
 {
     const QString why = unavailableReason();
@@ -477,9 +486,10 @@ void RecordingsPanel::rebuildRows()
         Row& row = addRow(e.id, on ? QStringLiteral("playing") : QString(), shown++);
         if (e.kind == RecordingKind::WholePan) {
             row.play->setIcon(glyphIcon(Glyph::Pan, QColor::fromString(QStringLiteral("#5e5e66"))));
-            row.play->setEnabled(false);
-            row.play->setToolTip(RecordingsWindow::soundOnlyUnbuiltReason());
-            row.play->setAccessibleDescription(RecordingsWindow::soundOnlyUnbuiltReason());
+            const QString why = stretchReason();
+            row.play->setEnabled(why.isEmpty());
+            row.play->setToolTip(why.isEmpty() ? RecordingsWindow::openOnPanTip() : why);
+            row.play->setAccessibleDescription(why);
             row.play->setAccessibleName(QStringLiteral("Open on the pan"));
         } else {
             row.play->setIcon(glyphIcon(on ? Glyph::Square : Glyph::Triangle,
@@ -578,7 +588,14 @@ void RecordingsPanel::togglePlay(const QString& id)
         return;
     }
     const std::optional<RecordingEntry> e = entryById(id);
-    if (!e.has_value() || e->kind == RecordingKind::WholePan) {
+    if (!e.has_value()) {
+        return;
+    }
+    if (e->kind == RecordingKind::WholePan) {
+        // Opens on the pan: slice A plays it like rewind.
+        if (stretchReason().isEmpty()) {
+            m_access->openStretch(id);
+        }
         return;
     }
     const std::optional<PlaybackState> playback = m_access->playback();
@@ -671,9 +688,27 @@ void RecordingsPanel::populateRowMenu(QMenu* menu, const QString& id)
     const std::optional<PlaybackState> playback = m_access ? m_access->playback() : std::nullopt;
     const bool on = playback.has_value() && playback->playing && playback->recordingId == id;
     if (e->kind == RecordingKind::WholePan) {
+        const QString why = stretchReason();
         QAction* open = menu->addAction(QStringLiteral("Open on the pan"));
-        open->setEnabled(false);
-        open->setToolTip(RecordingsWindow::soundOnlyUnbuiltReason());
+        QAction* sound = menu->addAction(on ? QStringLiteral("Stop its sound") : QStringLiteral("Play its sound only"));
+        for (QAction* a : {open, sound}) {
+            a->setEnabled(why.isEmpty());
+            a->setToolTip(why);
+        }
+        connect(open, &QAction::triggered, this, [self, id]() {
+            if (self) {
+                self->togglePlay(id);
+            }
+        });
+        connect(sound, &QAction::triggered, this, [self, id, on]() {
+            if (self && self->m_access && self->stretchReason().isEmpty()) {
+                if (on) {
+                    self->m_access->stopPlay();
+                } else {
+                    self->m_access->play(id);
+                }
+            }
+        });
     } else {
         QAction* play = menu->addAction(on ? QStringLiteral("Stop") : QStringLiteral("Play"));
         connect(play, &QAction::triggered, this, [self, id]() {

@@ -335,6 +335,10 @@
 //                typed-time box, and an older Core with the new parts disabled) against a fake
 //                recordings access, as the dsr-rewind mockups do. AI-assisted implementation via
 //                Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 25: dsr-save--bracket (SAVE pressed:
+//                the 10 minute yellow bracket and the save box) and dsr-save--box (a longer
+//                stretch over the net, sizes in GB, sound only as WAV), as hours.html does.
+//                AI-assisted implementation via Anthropic Claude Code.
 
 #include "models/MainPowerMeter.h"
 #include "models/AmplifierModel.h"
@@ -9151,7 +9155,7 @@ void sceneVoiceButton(SceneContext& ctx, const QString& name, VoiceButtonPose po
 // rows and the spectrum the waterfall asks for with the band as the pose
 // feeds it, and keys nothing.
 
-enum class DsrRewindPose { Past, Hours, Drawing, TypedTime, OlderCore };
+enum class DsrRewindPose { Past, Hours, Drawing, TypedTime, OlderCore, SaveBracket, SaveBox };
 
 const qint64 kDsrSceneNowMs =
     QDateTime(QDate(2026, 11, 14), QTime(14, 32, 10), QTimeZone::utc()).toMSecsSinceEpoch();
@@ -9257,11 +9261,22 @@ void poseDsrRewind(SceneContext& ctx, DsrRewindPose pose, const PanSpectrum& ban
                                    {QStringLiteral("liveFrequencyHz"), 7185000}});
     }
     QJsonObject doc = FakeRecordingsAccess::document({}, 1);
+    // Task 25: the loop's figures give the save box its sizes, 46 MB a
+    // minute as hours.html has it.
+    constexpr double kSceneBytesPerMs = 46.0e6 / 60000.0;
     doc.insert(QStringLiteral("dsr"), QJsonObject{{QStringLiteral("enabled"), true},
                                                   {QStringLiteral("recording"), true},
                                                   {QStringLiteral("reason"), QString()},
                                                   {QStringLiteral("oldestUtcMs"), kDsrSceneNowMs - kDsrSceneKeptMs},
+                                                  {QStringLiteral("newestUtcMs"), kDsrSceneNowMs},
+                                                  {QStringLiteral("usedBytes"),
+                                                   kSceneBytesPerMs * double(kDsrSceneKeptMs)},
                                                   {QStringLiteral("rewound"), rewound}});
+    if (pose == DsrRewindPose::SaveBox) {
+        QJsonObject settings = doc.value(QStringLiteral("settings")).toObject();
+        settings.insert(QStringLiteral("format"), QStringLiteral("wav"));
+        doc.insert(QStringLiteral("settings"), settings);
+    }
     access->setDocument(doc);
     if (pose == DsrRewindPose::OlderCore) {
         access->setState(RecordingsAccess::State::NeedsNewerCore);
@@ -9288,6 +9303,21 @@ void poseDsrRewind(SceneContext& ctx, DsrRewindPose pose, const PanSpectrum& ban
     if (pose == DsrRewindPose::TypedTime) {
         const QRect strip = sw->waterfallTimeScaleRectForTest();
         sw->openDsrGoto(sw->waterfallTopUtcMs(), strip.top() + strip.height() / 3);
+    }
+    if (pose == DsrRewindPose::SaveBracket || pose == DsrRewindPose::SaveBox) {
+        // SAVE: the bracket from the top row, 10 minutes; the box beside it.
+        sw->toggleDsrSaveBracket();
+        auto* map = qobject_cast<DsrHoursMap*>(sw->dsrHoursMapForTest());
+        if (map == nullptr || !map->hasBracket()) {
+            ctx.failure = QStringLiteral("SAVE put up no bracket");
+            return;
+        }
+        if (pose == DsrRewindPose::SaveBox) {
+            // Its ends dragged out over the net: 12:55 to 13:20.
+            map->setBracket(QDateTime(QDate(2026, 11, 14), QTime(12, 55), QTimeZone::utc()).toMSecsSinceEpoch(),
+                            QDateTime(QDate(2026, 11, 14), QTime(13, 20), QTimeZone::utc()).toMSecsSinceEpoch());
+        }
+        pump(kSettleMs);
     }
     ctx.notes.append(QStringLiteral("the first pan's rewind follows a fake recordings access (no Core); its past "
                                     "rows are drawn from the pose's band"));
@@ -11375,6 +11405,14 @@ QVector<Scene> fixedScenes()
              {"typed-time", DsrRewindPose::TypedTime},
              {"older-core", DsrRewindPose::OlderCore}}) {
         const QString name = QStringLiteral("dsr-rewind--") + QLatin1String(suffix);
+        const DsrRewindPose p = pose;
+        scenes.append({name, QStringLiteral("1"), false,
+                       [name, p](SceneContext& ctx) { sceneDsrRewind(ctx, name, p); }, true});
+    }
+    // ---- Recording plan Task 25: saving a stretch ----
+    for (const auto& [suffix, pose] : std::initializer_list<std::pair<const char*, DsrRewindPose>>{
+             {"bracket", DsrRewindPose::SaveBracket}, {"box", DsrRewindPose::SaveBox}}) {
+        const QString name = QStringLiteral("dsr-save--") + QLatin1String(suffix);
         const DsrRewindPose p = pose;
         scenes.append({name, QStringLiteral("1"), false,
                        [name, p](SceneContext& ctx) { sceneDsrRewind(ctx, name, p); }, true});

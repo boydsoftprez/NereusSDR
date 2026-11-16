@@ -4,11 +4,15 @@
 // Modification history (NereusSDR):
 // 2026-11-15  J.J. Boyd / KG4VCF; one playback of a recording (spec 6.1
 //             Player, 6.3). AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; a saved whole-pan stretch plays its
+//             sound only (spec 6.3, recording plan Task 25). AI tooling:
+//             Anthropic Claude Code.
 
 #include "RecordingPlayer.h"
 
 #include "core/Resampler.h"
 #include "core/recordings/AudioFileReader.h"
+#include "core/recordings/dsr/DsrRingFile.h"
 
 #include <algorithm>
 #include <cmath>
@@ -31,8 +35,48 @@ RecordingPlayer::RecordingPlayer(qint64 startMs, qint64 lengthMs)
 
 RecordingPlayer::~RecordingPlayer() = default;
 
+void RecordingPlayer::setStretchSound(const DsrSoundSettings& sound)
+{
+    m_isStretch = true;
+    m_stretchSound = sound;
+}
+
+bool RecordingPlayer::openStretch(const QString& path, QString* error)
+{
+    auto ring = std::make_unique<DsrRingFile>();
+    if (!ring->open(path, DsrStretchCopy::kNeverWrapBytes, error)) {
+        return false;
+    }
+    const qint64 from = ring->oldestUtcNs();
+    const qint64 to = ring->newestUtcNs();
+    DsrBlockHeader first;
+    const int receiver =
+        DsrStretch::receiverFor(*ring, from, to, m_stretchSound.frequencyHz, -1, &first);
+    if (receiver < 0) {
+        if (error) {
+            *error = QStringLiteral("no receiver kept %1 Hz").arg(m_stretchSound.frequencyHz);
+        }
+        return false;
+    }
+    const qint64 lengthMs = (to - from) / 1000000;
+    m_lengthMs.store(lengthMs, std::memory_order_release);
+    const qint64 startNs = from + std::min(m_startMs, lengthMs) * 1000000;
+    auto render = std::make_unique<DsrSoundRender>();
+    if (!render->begin(receiver, first.sampleRateHz, startNs, to, m_stretchSound, kOutputRateHz, error)) {
+        return false;
+    }
+    m_expectedFrames = render->totalFrames();
+    m_out.assign(static_cast<size_t>(kChunkFrames), 0.0f);
+    m_stretchRing = std::move(ring);
+    m_stretchRender = std::move(render);
+    return true;
+}
+
 bool RecordingPlayer::open(const QString& path, QString* error)
 {
+    if (m_isStretch) {
+        return openStretch(path, error);
+    }
     std::unique_ptr<AudioFileReader> reader = AudioFileReader::open(path, error);
     if (!reader) {
         return false;
@@ -81,6 +125,17 @@ bool RecordingPlayer::open(const QString& path, QString* error)
 
 void RecordingPlayer::fill()
 {
+    if (m_stretchRender && !m_decodeDone.load(std::memory_order_acquire)) {
+        while (m_ring.available() < kFillFrames && m_ring.capacity() - m_ring.available() >= kChunkFrames) {
+            const int n = m_stretchRender->render(*m_stretchRing, m_out.data(), kChunkFrames);
+            if (n <= 0) {
+                m_decodeDone.store(true, std::memory_order_release);
+                return;
+            }
+            push(m_out.data(), n);
+        }
+        return;
+    }
     if (!m_reader || m_decodeDone.load(std::memory_order_acquire)) {
         return;
     }

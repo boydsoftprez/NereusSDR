@@ -8,6 +8,9 @@
 //   2026-11-16 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 24.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 25: saving a
+//                 stretch, sound only and opening a saved stretch.
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/recordings/DsrHoursMap.h"
@@ -23,6 +26,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 
 namespace NereusSDR {
 
@@ -40,6 +44,12 @@ constexpr int kLabelLeft = 20;
 constexpr int kMinLabelPx = 6;
 constexpr double kOwnBracketWidth = 1.5;
 constexpr double kDisabledOpacity = 0.35;
+// The bracket (hours.html #bracket): 2 px #ffd25a edge, its inside at 22 %,
+// 2 px beyond each end, at least 6 px tall; the newest it may reach is a
+// second before now.
+constexpr int kBracketEdgePx = 2;
+constexpr int kBracketMinPx = 6;
+constexpr qint64 kBracketNewestGapMs = 1000;
 
 } // namespace
 
@@ -128,6 +138,68 @@ QColor DsrHoursMap::heat(double activity)
                   int(std::lround(a[2] + (b[2] - a[2]) * f)));
 }
 
+void DsrHoursMap::setBracket(qint64 fromUtcMs, qint64 toUtcMs)
+{
+    const qint64 newest = m_newestMs - kBracketNewestGapMs;
+    qint64 len = std::max(kMinBracketMs, toUtcMs - fromUtcMs);
+    len = std::min(len, std::max<qint64>(kMinBracketMs, newest - m_oldestMs));
+    qint64 to = std::min(newest, std::max(toUtcMs, m_oldestMs + len));
+    qint64 from = std::max(m_oldestMs, to - len);
+    if (from >= to) {
+        from = to - kMinBracketMs;
+    }
+    m_hasBracket = true;
+    m_bracketFromMs = from;
+    m_bracketToMs = to;
+    update();
+    emit bracketChanged(from, to);
+}
+
+void DsrHoursMap::clearBracket()
+{
+    if (!m_hasBracket) {
+        return;
+    }
+    m_hasBracket = false;
+    m_bracketDrag = BracketDrag::None;
+    update();
+}
+
+QRect DsrHoursMap::bracketRect() const
+{
+    if (!m_hasBracket || m_newestMs <= m_oldestMs) {
+        return {};
+    }
+    const int yTop = yForUtcMs(m_bracketToMs);
+    const int yBottom = yForUtcMs(m_bracketFromMs);
+    return QRect(0, yTop - kBracketEdgePx, width(), std::max(kBracketMinPx, yBottom - yTop + 2 * kBracketEdgePx));
+}
+
+void DsrHoursMap::dragBracketTo(int y)
+{
+    const qint64 dt = utcMsAtY(y) - utcMsAtY(m_bracketDragY);
+    const qint64 newest = m_newestMs - kBracketNewestGapMs;
+    qint64 from = m_bracketFromMs;
+    qint64 to = m_bracketToMs;
+    if (m_bracketDrag == BracketDrag::From) {
+        // hours.html: the order of its max and min, so a range that shrank
+        // meanwhile never inverts the bounds.
+        from = std::max(m_oldestMs, std::min(to - kMinBracketMs, m_bracketDragFromMs + dt));
+    } else if (m_bracketDrag == BracketDrag::To) {
+        to = std::min(newest, std::max(from + kMinBracketMs, m_bracketDragToMs + dt));
+    } else {
+        const qint64 len = m_bracketDragToMs - m_bracketDragFromMs;
+        from = std::max(m_oldestMs, std::min(newest - len, m_bracketDragFromMs + dt));
+        to = from + len;
+    }
+    if (from != m_bracketFromMs || to != m_bracketToMs) {
+        m_bracketFromMs = from;
+        m_bracketToMs = to;
+        update();
+        emit bracketChanged(from, to);
+    }
+}
+
 void DsrHoursMap::paintEvent(QPaintEvent* /*event*/)
 {
     QPainter p(this);
@@ -190,6 +262,13 @@ void DsrHoursMap::paintEvent(QPaintEvent* /*event*/)
             tri.closeSubpath();
             p.fillPath(tri, Qt::white);
         }
+        // The stretch to save, above everything (hours.html #bracket).
+        if (m_hasBracket) {
+            const QRect r = bracketRect();
+            p.setPen(QPen(QColor(0xff, 0xd2, 0x5a), kBracketEdgePx));
+            p.setBrush(QColor(255, 210, 90, 56));
+            p.drawRoundedRect(QRectF(r).adjusted(1.0, 1.0, -1.0, -1.0), 2.0, 2.0);
+        }
     }
 }
 
@@ -202,6 +281,27 @@ void DsrHoursMap::jumpAt(int y)
 
 void DsrHoursMap::mousePressEvent(QMouseEvent* event)
 {
+    if (event->button() == Qt::LeftButton && m_reason.isEmpty() && m_hasBracket) {
+        // An edge moves that end, the middle moves it whole.
+        const QRect r = bracketRect();
+        const int y = int(event->position().y());
+        BracketDrag part = BracketDrag::None;
+        if (std::abs(y - (r.top() + kBracketEdgePx)) <= kBracketGrabPx) {
+            part = BracketDrag::To;
+        } else if (std::abs(y - (r.bottom() - kBracketEdgePx)) <= kBracketGrabPx) {
+            part = BracketDrag::From;
+        } else if (r.contains(int(event->position().x()), y)) {
+            part = BracketDrag::Whole;
+        }
+        if (part != BracketDrag::None) {
+            m_bracketDrag = part;
+            m_bracketDragY = y;
+            m_bracketDragFromMs = m_bracketFromMs;
+            m_bracketDragToMs = m_bracketToMs;
+            event->accept();
+            return;
+        }
+    }
     if (event->button() == Qt::LeftButton && m_reason.isEmpty()) {
         m_dragging = true;
         jumpAt(int(event->position().y()));
@@ -213,6 +313,11 @@ void DsrHoursMap::mousePressEvent(QMouseEvent* event)
 
 void DsrHoursMap::mouseMoveEvent(QMouseEvent* event)
 {
+    if (m_bracketDrag != BracketDrag::None) {
+        dragBracketTo(int(event->position().y()));
+        event->accept();
+        return;
+    }
     if (m_dragging) {
         jumpAt(int(event->position().y()));
         event->accept();
@@ -223,6 +328,11 @@ void DsrHoursMap::mouseMoveEvent(QMouseEvent* event)
 
 void DsrHoursMap::mouseReleaseEvent(QMouseEvent* event)
 {
+    if (m_bracketDrag != BracketDrag::None) {
+        m_bracketDrag = BracketDrag::None;
+        event->accept();
+        return;
+    }
     if (m_dragging) {
         m_dragging = false;
         event->accept();

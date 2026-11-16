@@ -8,6 +8,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16 J.J. Boyd / KG4VCF : SAVE above the hours map, its yellow
+//                 bracket and the save box (recording plan Task 25).
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-11-16 J.J. Boyd / KG4VCF : rewind on the waterfall (recording plan
 //                 Task 24): the strip reaches past this window's history
 //                 into the Core's rows, a past click rewinds the slice, PAST,
@@ -698,6 +701,8 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QStyle>
+#include <QTimer>
 #include <QRegularExpression>
 #include <QVBoxLayout>
 #include <QPropertyAnimation>
@@ -712,6 +717,7 @@
 
 #include "core/MemoryLock.h"
 #include "gui/recordings/DsrHoursMap.h"
+#include "gui/recordings/DsrSaveBox.h"
 #include "core/MemoryPressure.h"
 #include "core/PerfMonitor.h"
 #include <QMap>
@@ -10266,6 +10272,109 @@ QWidget* SpectrumWidget::dsrGotoBoxForTest() const
     return m_dsrGoto.data();
 }
 
+QWidget* SpectrumWidget::dsrSaveButtonForTest() const
+{
+    return m_dsrSaveButton.data();
+}
+
+QWidget* SpectrumWidget::dsrSaveBoxForTest() const
+{
+    return m_dsrSaveBox.data();
+}
+
+void SpectrumWidget::setDsrSaveEstimates(double panBytesPerMs, bool soundAsWav)
+{
+    m_dsrPanBytesPerMs = panBytesPerMs;
+    m_dsrSoundAsWav = soundAsWav;
+    if (auto* box = qobject_cast<DsrSaveBox*>(m_dsrSaveBox.data())) {
+        box->setEstimates(panBytesPerMs, soundAsWav);
+    }
+}
+
+void SpectrumWidget::showDsrNote(const QString& text)
+{
+    m_dsrNote = text;
+    const quint64 serial = ++m_dsrNoteSerial;
+    QTimer::singleShot(kDsrNoteMs, this, [this, serial] {
+        if (serial == m_dsrNoteSerial) {
+            m_dsrNote.clear();
+            markOverlayDirty();
+        }
+    });
+    markOverlayDirty();
+}
+
+void SpectrumWidget::toggleDsrSaveBracket()
+{
+    auto* map = qobject_cast<DsrHoursMap*>(m_dsrHoursMap.data());
+    if (map == nullptr || !m_dsrAvailable || m_wfLive) {
+        return;
+    }
+    if (map->hasBracket()) {
+        takeDownDsrSave();
+        return;
+    }
+    if (!m_dsrSaveBox) {
+        auto* box = new DsrSaveBox(this);
+        box->hide();
+        box->setEstimates(m_dsrPanBytesPerMs, m_dsrSoundAsWav);
+        connect(box, &DsrSaveBox::saveWanted, this, [this](qint64 fromMs, qint64 toMs, bool wholePan) {
+            takeDownDsrSave();
+            emit dsrSaveStretchWanted(fromMs, toMs, wholePan);
+        });
+        connect(box, &DsrSaveBox::cancelled, this, &SpectrumWidget::takeDownDsrSave);
+        m_dsrSaveBox = box;
+    }
+    if (m_dsrGoto) {
+        m_dsrGoto->hide();
+    }
+    // hours.html: the ten minutes from the top row, ending no later than a
+    // second ago.
+    const qint64 to = std::min(wfNowMs() - kDsrSaveNewestGapMs, waterfallTopUtcMs() + kDsrSaveDefaultMs);
+    map->setBracket(to - kDsrSaveDefaultMs, to);
+    m_dsrSaveBox->show();
+    m_dsrSaveBox->raise();
+    placeDsrSaveBox();
+    if (m_dsrSaveButton) {
+        m_dsrSaveButton->setProperty("on", true);
+        m_dsrSaveButton->style()->unpolish(m_dsrSaveButton);
+        m_dsrSaveButton->style()->polish(m_dsrSaveButton);
+    }
+}
+
+void SpectrumWidget::takeDownDsrSave()
+{
+    if (auto* map = qobject_cast<DsrHoursMap*>(m_dsrHoursMap.data())) {
+        map->clearBracket();
+    }
+    if (m_dsrSaveBox) {
+        m_dsrSaveBox->hide();
+    }
+    if (m_dsrSaveButton && m_dsrSaveButton->property("on").toBool()) {
+        m_dsrSaveButton->setProperty("on", false);
+        m_dsrSaveButton->style()->unpolish(m_dsrSaveButton);
+        m_dsrSaveButton->style()->polish(m_dsrSaveButton);
+    }
+}
+
+void SpectrumWidget::placeDsrSaveBox()
+{
+    auto* map = qobject_cast<DsrHoursMap*>(m_dsrHoursMap.data());
+    auto* box = qobject_cast<DsrSaveBox*>(m_dsrSaveBox.data());
+    if (map == nullptr || box == nullptr || !map->hasBracket()) {
+        return;
+    }
+    box->setStretch(map->bracketFromUtcMs(), map->bracketToUtcMs());
+    // hours.html: beside the map, its top 55 px above the bracket's middle,
+    // kept on the waterfall.
+    const QRect wf = spectrumLayout().waterfall;
+    const QRect r = map->bracketRect();
+    const int middle = map->y() + (r.top() + r.bottom()) / 2;
+    const int top = std::clamp(middle - DsrSaveBox::kAboveMiddlePx, wf.top() + 3,
+                               std::max(wf.top() + 3, wf.bottom() - box->height()));
+    box->move(std::max(0, map->x() - DsrSaveBox::kWidth - DsrSaveBox::kGapPx), top);
+}
+
 void SpectrumWidget::layoutDsrChildren()
 {
     // Only beside a waterfall a recordings link has spoken for (available,
@@ -10279,6 +10388,11 @@ void SpectrumWidget::layoutDsrChildren()
         if (m_dsrGoto) {
             m_dsrGoto->hide();
         }
+        // Going live takes the bracket down (hours.html goLive).
+        takeDownDsrSave();
+        if (m_dsrSaveButton) {
+            m_dsrSaveButton->hide();
+        }
         return;
     }
     if (!m_dsrHoursMap) {
@@ -10290,6 +10404,7 @@ void SpectrumWidget::layoutDsrChildren()
             }
             jumpWaterfallTo(utcMs);
         });
+        connect(map, &DsrHoursMap::bracketChanged, this, [this](qint64, qint64) { placeDsrSaveBox(); });
         m_dsrHoursMap = map;
     }
     auto* map = static_cast<DsrHoursMap*>(m_dsrHoursMap.data());
@@ -10319,6 +10434,37 @@ void SpectrumWidget::layoutDsrChildren()
     }
     if (m_dsrGoto && m_dsrGoto->isVisible()) {
         m_dsrGoto->move(std::max(0, map->x() - m_dsrGoto->width() - 6), m_dsrGoto->y());
+    }
+    // SAVE above the map (hours.html #saveBtn): 44 by 18, 2 px below the
+    // waterfall's top.
+    if (!m_dsrSaveButton) {
+        auto* save = new QPushButton(QStringLiteral("SAVE"), this);
+        save->setObjectName(QStringLiteral("DsrSaveButton"));
+        save->setFocusPolicy(Qt::NoFocus);
+        save->setStyleSheet(QStringLiteral(
+            "#DsrSaveButton { border-radius: 4px; border: 1px solid #405060; background: #1b1b1f;"
+            " color: #e8e8ec; font-weight: 700; font-size: 9.5px; padding: 0; }"
+            "#DsrSaveButton[on=\"true\"] { background: #264e78; border-color: #4a7ba8; color: #ffffff; }"
+            "#DsrSaveButton:disabled { color: #6a6a70; border-color: #2c2c31; }"));
+        connect(save, &QPushButton::clicked, this, &SpectrumWidget::toggleDsrSaveBracket);
+        m_dsrSaveButton = save;
+    }
+    constexpr int kSaveButtonHeight = 18;
+    constexpr int kSaveButtonTopGap = 2;
+    m_dsrSaveButton->setGeometry(map->x(), wf.top() + kSaveButtonTopGap, DsrHoursMap::kWidth, kSaveButtonHeight);
+    m_dsrSaveButton->setEnabled(m_dsrAvailable);
+    m_dsrSaveButton->setToolTip(m_dsrAvailable
+                                    ? QStringLiteral("Save a stretch to Recordings before it is overwritten")
+                                    : m_dsrReason);
+    if (!m_dsrAvailable) {
+        takeDownDsrSave();
+    }
+    if (m_dsrSaveButton->isHidden()) {
+        m_dsrSaveButton->show();
+        m_dsrSaveButton->raise();
+    }
+    if (m_dsrSaveBox && m_dsrSaveBox->isVisible()) {
+        placeDsrSaveBox();
     }
 }
 
@@ -10476,7 +10622,8 @@ void SpectrumWidget::drawDsrOverlay(QPainter& p, const QRect& specRect, const QR
                    QStringLiteral("Digital Spectrum Recorder: drawing %1…").arg(at));
     }
     // Why the past past this window cannot be reached, in words.
-    const QString why = !m_dsrAvailable ? m_dsrReason : m_dsrRowsRefusal;
+    const QString why = !m_dsrAvailable ? m_dsrReason
+                        : !m_dsrRowsRefusal.isEmpty() ? m_dsrRowsRefusal : m_dsrNote;
     if (!why.isEmpty()) {
         QFont f = WorkspacePreview::readableFont(p.font(), p.device());
         f.setPixelSize(12);
