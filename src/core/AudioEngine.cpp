@@ -19,6 +19,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: The microphone clip tap in pullTxMic (recording plan Task
+//               12). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 //   2026-11-15: Recording player (spec 6.1, 6.3): the playback slots are
 //               registered with the speakers mixer, and each drain names
 //               the local one and each owner mix's own, each topped up
@@ -5150,11 +5153,36 @@ int AudioEngine::pullTxMic(float* dst, int n)
         }
     }
 
+    // Recording plan Task 12: a copy for the microphone clip tap, before
+    // any processing. Lock-free and allocation-free; a copy that does not
+    // fit is dropped, and what goes to the transmitter is unchanged.
+    if (gotMonoSamples > 0 && m_txMicClipTapOn.load(std::memory_order_acquire)) {
+        m_txMicClipTapRateHz.store(fmt.sampleRate > 0 ? fmt.sampleRate : 48000,
+                                   std::memory_order_release);
+        (void)m_txMicClipTap.tryPush(dst, gotMonoSamples);
+    }
+
     // Phase 3M-1c TX pump architecture redesign (2026-04-29): no
     // accumulator side effects.  TxWorkerThread::onPumpTick is the
     // sole caller and uses the returned sample count directly.
 
     return gotMonoSamples;
+}
+
+void AudioEngine::setTxMicClipTap(bool on)
+{
+    if (on && !m_txMicClipTapOn.load(std::memory_order_acquire)) {
+        // The reader's side: what an earlier recording left goes first.
+        std::array<float, 4096> scratch{};
+        while (m_txMicClipTap.pop(scratch.data(), static_cast<int>(scratch.size())) > 0) {
+        }
+    }
+    m_txMicClipTapOn.store(on, std::memory_order_release);
+}
+
+int AudioEngine::drainTxMicClipTap(float* dst, int n)
+{
+    return m_txMicClipTap.pop(dst, n);
 }
 
 int AudioEngine::pullVaxTxMic(float* dst, int n)

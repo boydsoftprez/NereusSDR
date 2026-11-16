@@ -21,6 +21,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: The microphone clip tap (recording plan Task 12):
+//               setTxMicClipTap / drainTxMicClipTap, a copy of what
+//               pullTxMic hands the transmitter, for recording a voice
+//               keyer message on this computer. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-11-15: Recording player (spec 6.1, 6.3): a playback slot in the
 //               mixer for the local output and for each owner mix, and
 //               setOwnerMixPlayback, the owner mix's route to its own;
@@ -367,6 +372,7 @@
 #include "audio/IAudioStreamHost.h"
 #include "audio/MasterMixer.h"
 #include "audio/VaxChannelMixer.h"
+#include "core/recordings/SpscFloatRing.h"
 #include "audio/SpeakerFormatConverter.h"
 
 #if defined(Q_OS_LINUX)
@@ -1370,6 +1376,19 @@ public:
     // redesign (removal of accumulator side effects).
     int pullTxMic(float* dst, int n);
 
+    // Recording plan Task 12: the microphone clip tap. While it is on,
+    // pullTxMic also copies each block it returns (the microphone before
+    // any processing or gain) into a lock-free ring, and returns as
+    // before: the tap takes nothing from the transmitter. Copies that do
+    // not fit are dropped. One reader at a time, on the owner thread:
+    // turning it on empties the ring, drainTxMicClipTap takes what waits,
+    // txMicClipTapRateHz is the rate of what it holds.
+    static constexpr int kTxMicClipTapFloats = 1 << 16;   // about 1.4 s at 48 kHz
+    void setTxMicClipTap(bool on);
+    bool txMicClipTapOn() const { return m_txMicClipTapOn.load(std::memory_order_acquire); }
+    int drainTxMicClipTap(float* dst, int n);
+    int txMicClipTapRateHz() const { return m_txMicClipTapRateHz.load(std::memory_order_acquire); }
+
     // Pull VAX-TX audio samples from the VAX TX shared-memory bus.
     //
     // This is the consumer side of the VAX TX route: 3rd-party apps
@@ -2258,6 +2277,10 @@ private:
     // micSource=PC via setMicSourceLocked, and the resulting
     // micSourceChanged emit lands here as true.
     std::atomic<bool> m_micSourceWantsPc{false};
+    // Recording plan Task 12: the microphone clip tap (setTxMicClipTap).
+    SpscFloatRing m_txMicClipTap{kTxMicClipTapFloats};
+    std::atomic<bool> m_txMicClipTapOn{false};
+    std::atomic<int> m_txMicClipTapRateHz{48000};
 
     // Phase VAX-TX (eager-borg-d64bed, 2026-05-06) — VAX mic override gate.
     // Written by onMicSourceChangedVax() on the main thread (slot wired by

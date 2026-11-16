@@ -323,6 +323,12 @@
 //                recording on the air (the playing label red with ON AIR, Play's ring red), as
 //                the recording-together mockup shows it. AI-assisted implementation via
 //                Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 12: voice-keyer-panel--idle, --recording,
+//                --sending, --menu and --older-core pose the Voice keyer applet in the window's
+//                column, and voice-button--idle, --open, --sending, --waiting, --held and
+//                --older-core VOICE in the TX panel, against a fake recordings access, as the
+//                approved voice-keyer-panel (shape A) and desktop-voice-button mockups do.
+//                AI-assisted implementation via Anthropic Claude Code.
 
 #include "models/MainPowerMeter.h"
 #include "models/AmplifierModel.h"
@@ -545,6 +551,8 @@
 #include "gui/recordings/FlagRecordPlay.h"
 #include "gui/recordings/RecordingsPanel.h"
 #include "gui/recordings/RecordingsWindow.h"
+#include "gui/recordings/VoiceButton.h"
+#include "gui/applets/VoiceKeyerApplet.h"
 #include "gui/applets/AppletVisibilityController.h"
 #include "core/roundtable/RoundtableState.h"
 #include "gui/roundtable/RoundtableFirstRunDialog.h"
@@ -8944,6 +8952,189 @@ void sceneRecordingsWindow(SceneContext& ctx, const QString& name, RecordingsWin
 // Recording plan Task 8: defined beside the Setup scenes' helpers below.
 void sceneRecordingsSetup(SceneContext& ctx, const QString& name, bool sdCard);
 
+// ---- Recording plan Task 12: the Voice keyer panel and VOICE ----
+//
+// M1 to M8 as the approved mockups name them, on a fake recordings access:
+// no Core is behind it, it keys nothing and no microphone is read.
+
+QJsonObject voiceScenesDocument(const QJsonValue& sending, bool repeat = false)
+{
+    const struct { const char* name; int ms; } kept[] = {
+        {"CQ", 6200}, {"Call", 1800}, {"59 QTH", 4400}, {"73", 2100}};
+    QJsonArray slotList;
+    for (int n = 1; n <= 8; ++n) {
+        const bool has = n <= 4;
+        slotList.append(QJsonObject{{QStringLiteral("n"), n},
+                                    {QStringLiteral("name"), has ? QString::fromLatin1(kept[n - 1].name) : QString()},
+                                    {QStringLiteral("lengthMs"), has ? kept[n - 1].ms : 0},
+                                    {QStringLiteral("empty"), !has}});
+    }
+    QJsonObject doc = FakeRecordingsAccess::document({}, 1);
+    doc.insert(QStringLiteral("voiceKeyer"), QJsonObject{{QStringLiteral("slots"), slotList},
+                                                          {QStringLiteral("repeat"), repeat},
+                                                          {QStringLiteral("repeatDelaySec"), 5},
+                                                          {QStringLiteral("sending"), sending}});
+    return doc;
+}
+
+QJsonObject voiceScenesSending(int n, qint64 positionMs, qint64 lengthMs, qint64 waitingMs = 0)
+{
+    return QJsonObject{{QStringLiteral("n"), n},
+                       {QStringLiteral("positionMs"), positionMs},
+                       {QStringLiteral("lengthMs"), lengthMs},
+                       {QStringLiteral("waitingMs"), waitingMs},
+                       {QStringLiteral("by"), QStringLiteral("Desktop")},
+                       {QStringLiteral("deviceId"), QStringLiteral("station")}};
+}
+
+FakeRecordingsAccess* voiceScenesAccess(QObject* owner, const QJsonValue& sending, bool olderCore,
+                                        bool repeat = false)
+{
+    auto* access = new FakeRecordingsAccess(owner);
+    access->version = olderCore ? 2 : 3;
+    access->setDocument(voiceScenesDocument(sending, repeat));
+    return access;
+}
+
+void scrollIntoView(QWidget* w)
+{
+    for (QWidget* up = w->parentWidget(); up != nullptr; up = up->parentWidget()) {
+        if (auto* area = qobject_cast<QScrollArea*>(up)) {
+            area->ensureWidgetVisible(w, 0, 0);
+            return;
+        }
+    }
+}
+
+void addDetail(SceneContext& ctx, const QString& name, QWidget* shown)
+{
+    CapturedImage img;
+    img.name = name;
+    img.kind = QStringLiteral("detail");
+    img.image = grabWidget(shown);
+    img.logicalSize = shown->size();
+    img.dpr = img.image.devicePixelRatio();
+    ctx.images.append(img);
+}
+
+enum class VoicePanelPose { Idle, Recording, Sending, Menu, OlderCore };
+
+VoiceKeyerApplet* poseVoicePanel(SceneContext& ctx, VoicePanelPose pose)
+{
+    auto* visibility = ctx.window->findChild<AppletVisibilityController*>();
+    if (visibility == nullptr) {
+        ctx.failure = QStringLiteral("no applet visibility controller in the window");
+        return nullptr;
+    }
+    visibility->setVisible(QStringLiteral("VoiceKeyer"), true);
+    pump(kSettleMs);
+    auto* panel = ctx.window->findChild<VoiceKeyerApplet*>();
+    if (panel == nullptr || !panel->isVisible()) {
+        ctx.failure = QStringLiteral("the Voice keyer applet is not in the window");
+        return nullptr;
+    }
+    const QJsonValue sending = pose == VoicePanelPose::Sending ? QJsonValue(voiceScenesSending(1, 2500, 6200))
+                                                               : QJsonValue(QJsonValue::Null);
+    FakeRecordingsAccess* access = voiceScenesAccess(ctx.window, sending, pose == VoicePanelPose::OlderCore);
+    panel->setClockForTest([] { return qint64(0); });
+    panel->setAccess(access);
+    if (pose == VoicePanelPose::Recording) {
+        panel->showRecordingForTest(5, 4200, 0.62f);
+    }
+    scrollIntoView(panel);
+    ctx.notes.append(QStringLiteral("the Voice keyer applet follows a fake recordings access (no Core)"));
+    return panel;
+}
+
+void sceneVoicePanel(SceneContext& ctx, const QString& name, VoicePanelPose pose)
+{
+    ctx.provenance = provProposed();
+    if (pose == VoicePanelPose::Recording) {
+        noteNotShown(ctx, QStringLiteral("Record's blink"),
+                     QStringLiteral("a still image holds one phase; Record is shown at full red"));
+    }
+    VoiceKeyerApplet* panel = nullptr;
+    runWindowScene(ctx, recPlayPoses(), 0, [&panel, pose](SceneContext& c) { panel = poseVoicePanel(c, pose); });
+    if (!ctx.failure.isEmpty() || panel == nullptr) {
+        return;
+    }
+    pump(kFinalSettleMs);
+    if (pose == VoicePanelPose::Menu) {
+        QPushButton* m2 = panel->messageButtonForTest(2);
+        const QPoint at = middleOf(m2);
+        PopupShot shot;
+        shot.anchor = globalAt(m2, at);
+        shot.provenance = provProposed();
+        shot.submenus = false;
+        shootPopup(ctx, name, [m2, at]() { emit m2->customContextMenuRequested(at); }, shot);
+        return;
+    }
+    captureWindow(ctx, name);
+    QWidget* shown = panel->parentWidget() != nullptr && panel->parentWidget()->height() < panel->height() + 60
+        ? panel->parentWidget()
+        : panel;
+    addDetail(ctx, name + QStringLiteral("--applet"), shown);
+}
+
+enum class VoiceButtonPose { Idle, Open, Sending, Waiting, Held, OlderCore };
+
+VoiceButton* poseVoiceButton(SceneContext& ctx, VoiceButtonPose pose)
+{
+    auto* tx = ctx.window->findChild<TxApplet*>();
+    VoiceButton* voice = tx != nullptr ? tx->voiceButton() : nullptr;
+    if (voice == nullptr || voice->button() == nullptr || !voice->button()->isVisible()) {
+        ctx.failure = QStringLiteral("VOICE is not in the window's TX panel");
+        return nullptr;
+    }
+    QJsonValue sending = QJsonValue::Null;
+    if (pose == VoiceButtonPose::Sending) {
+        sending = voiceScenesSending(2, 1000, 1800);
+    } else if (pose == VoiceButtonPose::Waiting) {
+        sending = voiceScenesSending(2, 1800, 1800, 5000);
+    }
+    FakeRecordingsAccess* access = voiceScenesAccess(ctx.window, sending, pose == VoiceButtonPose::OlderCore,
+                                                     pose == VoiceButtonPose::Waiting);
+    voice->setClockForTest([] { return qint64(0); });
+    voice->setAccess(access);
+    if (pose == VoiceButtonPose::Held) {
+        const QString reason = QStringLiteral("iPhone has the transmitter. Take it to transmit from here.");
+        tx->setTransmitPermitted(false, reason);
+        tx->setTransmitHolderText(QStringLiteral("Transmit: iPhone"));
+        tx->setTakeTransmitOffered(true, false);
+    }
+    scrollIntoView(tx);
+    ctx.notes.append(QStringLiteral("VOICE follows a fake recordings access (no Core)"));
+    return voice;
+}
+
+void sceneVoiceButton(SceneContext& ctx, const QString& name, VoiceButtonPose pose)
+{
+    ctx.provenance = provProposed();
+    if (pose == VoiceButtonPose::Sending) {
+        noteNotShown(ctx, QStringLiteral("the running time"),
+                     QStringLiteral("a still image holds one moment: M2 at 0:01 of 0:02"));
+    }
+    VoiceButton* voice = nullptr;
+    runWindowScene(ctx, recPlayPoses(), 0, [&voice, pose](SceneContext& c) { voice = poseVoiceButton(c, pose); });
+    if (!ctx.failure.isEmpty() || voice == nullptr) {
+        return;
+    }
+    pump(kFinalSettleMs);
+    if (pose == VoiceButtonPose::Open || pose == VoiceButtonPose::Held) {
+        PopupShot shot;
+        shot.find = [voice]() -> QWidget* { return voice->boxForTest(); };
+        shot.provenance = provProposed();
+        shot.submenus = false;
+        shootPopup(ctx, name, [voice]() { voice->openBox(); }, shot);
+        return;
+    }
+    captureWindow(ctx, name);
+    auto* tx = ctx.window->findChild<TxApplet*>();
+    if (tx != nullptr) {
+        addDetail(ctx, name + QStringLiteral("--tx"), tx);
+    }
+}
+
 void sceneFlagFoldTwoBand(SceneContext& ctx, const QString& name)
 {
     runWindowScene(ctx, twoBandPoses(), 0, {}, [](SceneContext& c) {
@@ -10967,6 +11158,30 @@ QVector<Scene> fixedScenes()
         const RecordingsWindowPose p = pose;
         scenes.append({name, QStringLiteral("2v"), true,
                        [name, p](SceneContext& ctx) { sceneRecordingsWindow(ctx, name, p); }, true});
+    }
+    // ---- Recording plan Task 12: the Voice keyer panel and VOICE ----
+    for (const auto& [suffix, pose] : std::initializer_list<std::pair<const char*, VoicePanelPose>>{
+             {"idle", VoicePanelPose::Idle},
+             {"recording", VoicePanelPose::Recording},
+             {"sending", VoicePanelPose::Sending},
+             {"menu", VoicePanelPose::Menu},
+             {"older-core", VoicePanelPose::OlderCore}}) {
+        const QString name = QStringLiteral("voice-keyer-panel--") + QLatin1String(suffix);
+        const VoicePanelPose p = pose;
+        scenes.append({name, QStringLiteral("1"), false,
+                       [name, p](SceneContext& ctx) { sceneVoicePanel(ctx, name, p); }, true});
+    }
+    for (const auto& [suffix, pose] : std::initializer_list<std::pair<const char*, VoiceButtonPose>>{
+             {"idle", VoiceButtonPose::Idle},
+             {"open", VoiceButtonPose::Open},
+             {"sending", VoiceButtonPose::Sending},
+             {"waiting", VoiceButtonPose::Waiting},
+             {"held", VoiceButtonPose::Held},
+             {"older-core", VoiceButtonPose::OlderCore}}) {
+        const QString name = QStringLiteral("voice-button--") + QLatin1String(suffix);
+        const VoiceButtonPose p = pose;
+        scenes.append({name, QStringLiteral("1"), false,
+                       [name, p](SceneContext& ctx) { sceneVoiceButton(ctx, name, p); }, true});
     }
     // ---- Recording plan Task 8: Setup > Cores > Recordings ----
     for (const auto& [suffix, sd] : std::initializer_list<std::pair<const char*, bool>>{{"ssd", false},

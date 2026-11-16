@@ -1188,6 +1188,10 @@
 //   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 8: Recording settings... on every flag
 //                and Setup's Recordings › open Setup > Cores > Recordings and the Recordings
 //                window. AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 12: the Voice keyer applet (Containers >
+//                Applets, id "VoiceKeyer", hidden at first; DvkApplet stays unbuilt), VOICE in the
+//                TX panel opening it, and both gated with TUNE and MOX. AI-assisted implementation
+//                via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -1414,6 +1418,8 @@ warren@wpratt.com
 #include "gui/recordings/FlagRecordPlay.h"
 #include "gui/recordings/RecordingsPanel.h"
 #include "gui/recordings/RecordingsWindow.h"
+#include "gui/applets/VoiceKeyerApplet.h"
+#include "gui/recordings/LocalMicClipRecorder.h"
 #include "SessionEndSave.h"
 #include "gui/multidevice/DeviceWords.h"
 #include "gui/multidevice/MultiDeviceController.h"
@@ -5426,6 +5432,9 @@ void MainWindow::refreshRemoteDeviceScreens()
     }
     if (m_txApplet) {
         m_txApplet->setTakeTransmitOffered(takeOffered, elsewhere && tx.keyed());
+    }
+    if (m_voiceKeyerApplet) {
+        m_voiceKeyerApplet->setTakeTransmitOffered(takeOffered);
     }
     if (m_panStack) {
         for (PanadapterApplet* applet : m_panStack->allApplets()) {
@@ -14235,6 +14244,26 @@ void MainWindow::populateDefaultMeter()
             + SliceModel::modeName(slice->dspMode());
     });
 
+    // Recording plan Task 12 (design section 3, Voice keyer panel; 6.6):
+    // M1 to M8 on the Core, recorded from this computer's microphone before
+    // any processing. It replaces the unbuilt DvkApplet. VOICE in the TX
+    // panel opens it; Take transmit goes the TX panel's way.
+    m_voiceKeyerApplet = new VoiceKeyerApplet(m_radioModel, m_radioModel->recordings(), nullptr);
+    panel->addApplet(m_voiceKeyerApplet);
+    // This computer's own microphone, which the transmitter reads (the
+    // engine's clip tap copies it; a remote window's microphone too).
+    m_voiceKeyerApplet->setMicSourceFactory([this]() {
+        return MicClipSource::forAudioEngine(m_radioModel ? m_radioModel->localAudioDevices() : nullptr);
+    });
+    if (m_txApplet) {
+        connect(m_voiceKeyerApplet, &VoiceKeyerApplet::takeTransmitRequested, m_txApplet,
+                &TxApplet::takeTransmitRequested);
+        connect(m_txApplet, &TxApplet::voiceKeyerPanelRequested, this, &MainWindow::showVoiceKeyerPanel);
+        connect(m_txApplet, &TxApplet::voiceRefused, this, [this](const QString& words) {
+            showToast(words, ToastSeverity::Warning, 4000);
+        });
+    }
+
     // ── Applet visibility controller (Containers > Applets + ☰ menus) ──
     // NereusSDR-original. Backs the show/hide menu surfaces.
     //
@@ -14280,6 +14309,7 @@ void MainWindow::populateDefaultMeter()
     m_appletsById[QStringLiteral("Cat")]        = m_catApplet;
     m_appletsById[QStringLiteral("Cwx")]        = m_cwxApplet;
     m_appletsById[QStringLiteral("Recordings")] = m_recordingsApplet;
+    m_appletsById[QStringLiteral("VoiceKeyer")] = m_voiceKeyerApplet;
 #ifdef HAVE_WEBSOCKETS
     if (m_tciApplet) {
         m_appletsById[QStringLiteral("Tci")]        = m_tciApplet;
@@ -14356,6 +14386,10 @@ void MainWindow::populateDefaultMeter()
     // Containers > Applets.
     m_appletVis->registerApplet(QStringLiteral("Recordings"),
                                 QStringLiteral("Recordings"),   false);
+    // Recording plan Task 12: placed hidden, one tick away under
+    // Containers > Applets, and opened by VOICE's "Voice keyer panel ›".
+    m_appletVis->registerApplet(QStringLiteral("VoiceKeyer"),
+                                QStringLiteral("Voice keyer"),  false);
 #ifdef HAVE_WEBSOCKETS
     if (m_tciApplet) {
         m_appletVis->registerApplet(QStringLiteral("Tci"),
@@ -19875,6 +19909,31 @@ void MainWindow::resizeEvent(QResizeEvent* event)
 
 // CW transmit (R-CW-44): shows or hides the CWX applet, where the operator
 // can reach its header when shown.
+// Recording plan Task 12: VOICE's "Voice keyer panel ›" (n 0) or an empty
+// message (n 1 to 8, Record lit for it).
+void MainWindow::showVoiceKeyerPanel(int n)
+{
+    if (m_appletVis == nullptr || m_voiceKeyerApplet == nullptr) { return; }
+    m_appletVis->setVisible(QStringLiteral("VoiceKeyer"), true);
+    if (m_containerManager) {
+        m_containerManager->bringAppletOnScreen(
+            ContainerContentRegistry::appletTypeForVisibilityId(QStringLiteral("VoiceKeyer")));
+    }
+    if (n > 0) {
+        m_voiceKeyerApplet->armRecord(n);
+    }
+    QPointer<QWidget> applet(m_voiceKeyerApplet);
+    QTimer::singleShot(0, this, [applet]() {
+        if (applet.isNull()) { return; }
+        for (QWidget* w = applet->parentWidget(); w != nullptr; w = w->parentWidget()) {
+            if (auto* area = qobject_cast<QScrollArea*>(w)) {
+                area->ensureWidgetVisible(applet, 0, 0);
+                return;
+            }
+        }
+    });
+}
+
 void MainWindow::showCwxApplet(bool shown)
 {
     if (m_appletVis == nullptr) { return; }
@@ -21289,6 +21348,10 @@ void MainWindow::applyRemoteRoleGating()
     TxEqDialog::setSettingsPermitted(processingPermitted, processingReason);
     if (m_txApplet) {
         m_txApplet->setTransmitPermitted(transmitPermitted, transmitReason);
+        // Recording plan Task 12: the voice keyer's sends, as TUNE and MOX.
+        if (m_voiceKeyerApplet) {
+            m_voiceKeyerApplet->setTransmitPermitted(transmitPermitted, transmitReason);
+        }
         m_txApplet->setVoxPermitted(voxLine, voxReason);
         m_txApplet->setTransmitSettingsPermitted(settingsPermitted, settingsReason);
         m_txApplet->setTransmitChainSettingsPermitted(chainPermitted, chainReason);

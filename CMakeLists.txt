@@ -2086,6 +2086,10 @@ set(GUI_SOURCES
     src/gui/recordings/RecordingsPanel.h
     src/gui/recordings/RecordingsWindow.cpp
     src/gui/recordings/RecordingsWindow.h
+    src/gui/recordings/LocalMicClipRecorder.cpp
+    src/gui/recordings/LocalMicClipRecorder.h
+    src/gui/recordings/VoiceButton.cpp
+    src/gui/recordings/VoiceButton.h
     src/gui/widgets/MetricLabel.cpp
     src/gui/widgets/MetricLabel.h
     src/gui/widgets/SystemTile.cpp
@@ -2419,6 +2423,7 @@ set(GUI_SOURCES
     src/gui/applets/DiversityApplet.cpp
     src/gui/applets/CwxApplet.cpp
     src/gui/applets/DvkApplet.cpp
+    src/gui/applets/VoiceKeyerApplet.cpp
     src/gui/applets/CatApplet.cpp
     src/gui/applets/AccessoryReadouts.cpp
     src/gui/applets/TunerApplet.cpp

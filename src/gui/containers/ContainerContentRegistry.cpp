@@ -77,6 +77,9 @@
 //   2026-11-15 - The Recordings applet (applet:recordings), placed hidden,
 //                 recording plan Task 7. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-11-16 - The Voice keyer applet (applet:voice_keyer), placed hidden,
+//                 recording plan Task 12. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-24 - The Roundtable applet (applet:roundtable), Roundtable plan
 //                 Task 13, by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
@@ -293,13 +296,14 @@ void ContainerContentRegistry::placeFirstLaunchApplet(QVector<ContentEntry>& con
 
 // CW transmit (R-CW-44): the CWX applet is placed hidden until asked for
 // (Tools > CWX, the status-bar CWX label, CAT ZZKO), as its registration
-// says. The SSB Mod Monitor and the Recordings panel start off and are one
-// click away in the panels list. Every other applet keeps its first-launch state.
+// says. The SSB Mod Monitor, the Recordings panel and the Voice keyer start
+// off and are one click away in the panels list. Every other applet keeps its first-launch state.
 ContentEntry ContainerContentRegistry::firstLaunchEntry(ContentEntry entry)
 {
     if (entry.typeId == QLatin1String("applet:cwx")
         || entry.typeId == QLatin1String("applet:ssb_mod_monitor")
-        || entry.typeId == QLatin1String("applet:recordings")) {
+        || entry.typeId == QLatin1String("applet:recordings")
+        || entry.typeId == QLatin1String("applet:voice_keyer")) {
         entry.visible = false;
     }
     return entry;
@@ -311,7 +315,7 @@ QString ContainerContentRegistry::appletTypeForVisibilityId(const QString& id)
         {"Rx","rx"},{"Display","Display"},{"Tx","TX"},{"PhoneCw","PHCW"},
         {"Rade","RADE"},{"Vax","vax"},{"PureSignal","pure_signal"},
         {"ModMon","mod_monitor"},{"SsbModMon","ssb_mod_monitor"},{"Tci","tci"},{"ClientChain","tci_clients"},
-        {"Cat","cat"},{"Cwx","cwx"},{"Amp","amp"},{"Tuner","tuner"},{"Rotor","rotor"},{"Roundtable","roundtable"},{"Recordings","recordings"},{"RfKit","RfKit"},
+        {"Cat","cat"},{"Cwx","cwx"},{"Amp","amp"},{"Tuner","tuner"},{"Rotor","rotor"},{"Roundtable","roundtable"},{"Recordings","recordings"},{"VoiceKeyer","voice_keyer"},{"RfKit","RfKit"},
         {"SMeter","s_meter"}};
     return aliases.contains(id) ? QStringLiteral("applet:") + aliases.value(id) : QString();
 }
@@ -506,6 +510,7 @@ QVector<ContentDescriptor> ContainerContentRegistry::descriptors() const {
     add(QStringLiteral("applet:rotor"), QStringLiteral("Rotor"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:roundtable"), QStringLiteral("Roundtable"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:recordings"), QStringLiteral("Recordings"), ContentGroup::Panels, true);
+    add(QStringLiteral("applet:voice_keyer"), QStringLiteral("Voice keyer"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:RfKit"), QStringLiteral("RF-Kit RF2K-S"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:s_meter"), QStringLiteral("S-Meter"), ContentGroup::Panels, true);
     for (auto& descriptor : result) {

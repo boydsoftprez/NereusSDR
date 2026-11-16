@@ -1,6 +1,9 @@
 // no-port-check: NereusSDR-original tests of the container picker's names
 // and headings.
 // Modification history (NereusSDR):
+//   2026-11-16 - The Voice keyer applet (applet:voice_keyer), recording plan
+//                 Task 12. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-11-15 - The Recordings applet (applet:recordings), recording plan
 //                 Task 7. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
@@ -155,6 +158,7 @@ const Expected kExpected[] = {
     {"applet:cwx", "CWX", kPanels},
     {"applet:roundtable", "Roundtable", kPanels},
     {"applet:recordings", "Recordings", kPanels},
+    {"applet:voice_keyer", "Voice keyer", kPanels},
     {"applet:tci", "TCI Server", kPanels},
     {"applet:tci_clients", "TCI Clients", kPanels},
     {"applet:amp", "4O3A Power Genius", kPanels},
