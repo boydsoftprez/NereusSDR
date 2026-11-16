@@ -3,8 +3,8 @@
 //   2026-11-10: speaker RTP is delivered on the transport's playback thread
 //               (armPlaybackSink). The GUI publishes who may receive it and
 //               still keeps the stall clocks. A window move no longer holds
-//               the packets. Brian Sutton, AI-assisted via xAI Grok.
-//   2026-11-15: the 2026-11-10 entry names its author, Brian Sutton.
+//               the packets. Brian Sutton (W4KZO), AI-assisted via xAI Grok.
+//   2026-11-15: the 2026-11-10 entry names its author, Brian Sutton (W4KZO).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-06: a display with no frame in its session moves nothing on a
 //               direct path during a speaker fault, so that path has no

@@ -67,9 +67,9 @@
 //               audio other than the microphone line goes to a thread of
 //               its own ("NereusPlaybackRx") and is not also queued for
 //               the owner's drain. A busy owner (a window move, a waterfall
-//               paint) no longer holds those packets. Brian Sutton,
+//               paint) no longer holds those packets. Brian Sutton (W4KZO),
 //               AI-assisted via xAI Grok.
-//   2026-11-15: the 2026-11-10 entry names its author, Brian Sutton.
+//   2026-11-15: the 2026-11-10 entry names its author, Brian Sutton (W4KZO).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-01: TX diagnostics lane: the "media RTP timing" warning again
 //               covers the microphone line, from the line's own thread: a

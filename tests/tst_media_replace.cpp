@@ -31,6 +31,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-15: the playback tap's sink holds the tap weakly, so the tap
+//               and its sink no longer keep each other alive. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-15: a late packet from the old connection is handed over on the
 //               playback sink as well as rtpReceived(), and the new
 //               connection's packets are read where the speaker gets them
@@ -380,9 +383,10 @@ public:
             }
             return m_inner->setPlaybackPacketSink({});
         }
-        const std::shared_ptr<PlaybackTap> tap = m_tap;
-        PlaybackPacketSink tapped = [tap, sink](const QByteArray& packet, qint64 heldUs) {
-            {
+        // The tap holds this sink, so the sink holds the tap only weakly.
+        const std::weak_ptr<PlaybackTap> weakTap = m_tap;
+        PlaybackPacketSink tapped = [weakTap, sink](const QByteArray& packet, qint64 heldUs) {
+            if (const std::shared_ptr<PlaybackTap> tap = weakTap.lock()) {
                 const std::lock_guard<std::mutex> lock(tap->mutex);
                 if (tap->packets.size() >= PlaybackTap::kMaxPackets) {
                     tap->packets.removeFirst();
