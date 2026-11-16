@@ -14,6 +14,10 @@
 //             `sending`, the wait ends when the radio drops, imports convert
 //             on the recordings worker, a link import's file goes with its
 //             session. AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; a message on the air cannot be cleared,
+//             imported into or replaced ("M<n> is on the air."), and a
+//             Core's leftover import files go on load. AI tooling:
+//             Anthropic Claude Code.
 #pragma once
 
 #include "core/MoxController.h"
@@ -166,7 +170,7 @@ public:
 
     // ---- Keying.
     bool send(int n, const Requester& who, QString* refusal);
-    // The Core's own stop (teardown, a cleared message): whoever sent.
+    // The Core's own stop (teardown, the radio gone): whoever sent.
     void stop();
     // A device's Stop: the sender's, or the holder's after a take, stops
     // it; any other device is refused with the holder's words (ruling 8.5)
@@ -179,7 +183,10 @@ public:
     // repeat, is over, and nothing keys again on a reconnect.
     void connectionLost();
 
-    // ---- The messages. None of these keys.
+    // ---- The messages. None of these keys. A message on the air (going
+    // out, or waiting to repeat) cannot be cleared, imported into or
+    // replaced by anyone, its sender included: "M<n> is on the air." Stop
+    // ends it; renaming it is allowed.
     bool rename(int n, const QString& name, QString* refusal);
     bool clear(int n, QString* refusal);
     bool setRepeat(bool on, int delaySec, QString* refusal);
@@ -246,6 +253,8 @@ private:
     qint64 now() const;
     QString pathFor(int n) const;
     static QString emptyReason(int n);
+    static QString onAirReason(int n);
+    bool isOnAir(int n) const;
     std::shared_ptr<const std::vector<float>> loadSamples(int n, QString* refusal) const;
     bool startSend(int n, const Requester& who, std::shared_ptr<const std::vector<float>> samples,
                    QString* refusal);

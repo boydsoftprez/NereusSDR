@@ -7124,7 +7124,13 @@ These command groups need a sentence beyond the table:
   most 32 characters), `voiceKeyer.clear` (`n`), `voiceKeyer.setRepeat`
   (`on` bool, `delaySec` i64) and `voiceKeyer.listen` (`n`, the requesting
   device's own speakers, as `recordings.play`, never the air) key nothing.
-  Refusals: "The request for the voice keyer was not understood.", "Voice
+  A message on the air (going out or waiting to repeat) cannot be cleared,
+  imported into or replaced by any device, its sender included:
+  `voiceKeyer.clear`, `voiceKeyer.beginImport` and a `finishImport` that
+  would land on it are refused with "M1 is on the air." (the slot's own
+  number), and `voiceKeyer.stop` is how it ends; renaming it is allowed.
+  The Core removes import files left behind by a Core that shut down in
+  the middle of one when it loads the messages. Refusals: "The request for the voice keyer was not understood.", "Voice
   messages are M1 to M8.", "M3 is empty.", "Voice messages can be up to 2
   minutes long.", "That file cannot be read as sound.", "That file is too
   large for a voice message.", "The file did not arrive whole. Try again.",

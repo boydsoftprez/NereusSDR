@@ -9,6 +9,9 @@
 //             radio drops, imports convert on the recordings worker a few
 //             chunks a turn, a link import's file is numbered and goes with
 //             its session. AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; a message on the air is never cleared,
+//             imported into or replaced; leftover import files go on load.
+//             AI tooling: Anthropic Claude Code.
 
 #include "VoiceKeyer.h"
 
@@ -27,6 +30,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QSaveFile>
+#include <QSet>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QtEndian>
@@ -397,6 +401,16 @@ QString VoiceKeyer::emptyReason(int n)
     return QStringLiteral("M%1 is empty.").arg(n);
 }
 
+QString VoiceKeyer::onAirReason(int n)
+{
+    return QStringLiteral("M%1 is on the air.").arg(n);
+}
+
+bool VoiceKeyer::isOnAir(int n) const
+{
+    return m_phase != Phase::Idle && m_n == n;
+}
+
 void VoiceKeyer::ensureLoaded() const
 {
     if (m_loaded) {
@@ -410,6 +424,27 @@ void VoiceKeyer::ensureLoaded() const
                                      .value(QStringLiteral("names")).toArray();
         for (int i = 0; i < kVoiceKeyerSlots && i < names.size(); ++i) {
             m_names[static_cast<size_t>(i)] = names.at(i).toString().left(kNameMaxChars);
+        }
+    }
+    // A Core that shut down in the middle of an import leaves its file
+    // behind: nothing will finish it. One under way now is kept.
+    QSet<QString> inUse;
+    for (const Import& import : m_imports) {
+        if (import.file) {
+            inUse.insert(QFileInfo(import.file->fileName()).absoluteFilePath());
+        }
+    }
+    for (const auto& c : m_conversions) {
+        inUse.insert(QFileInfo(c->from).absoluteFilePath());
+        inUse.insert(QFileInfo(c->to).absoluteFilePath());
+    }
+    const QDir dir(m_folder);
+    const QStringList leftovers =
+        dir.entryList({QStringLiteral("import-*.part"), QStringLiteral("M*-*.part")}, QDir::Files);
+    for (const QString& name : leftovers) {
+        const QString path = dir.absoluteFilePath(name);
+        if (!inUse.contains(path) && !QFile::remove(path)) {
+            qCWarning(lcRecordings) << "a leftover voice message import cannot be removed:" << path;
         }
     }
     for (int n = 1; n <= kVoiceKeyerSlots; ++n) {
@@ -904,8 +939,10 @@ bool VoiceKeyer::clear(int n, QString* refusal)
         return false;
     }
     ensureLoaded();
-    if (m_phase != Phase::Idle && m_n == n) {
-        stop();
+    // A message going out is stopped with Stop, never by clearing it.
+    if (isOnAir(n)) {
+        setRefusal(refusal, onAirReason(n));
+        return false;
     }
     const QString path = pathFor(n);
     if (QFileInfo::exists(path) && !QFile::remove(path)) {
@@ -967,6 +1004,10 @@ void VoiceKeyer::importFile(int n, const QString& path, const QString& name, Imp
     const QString trimmed = name.trimmed();
     if (trimmed.size() > kNameMaxChars) {
         refuse(QStringLiteral("A message name can be up to %1 characters.").arg(kNameMaxChars));
+        return;
+    }
+    if (isOnAir(n)) {
+        refuse(onAirReason(n));
         return;
     }
     ensureLoaded();
@@ -1034,8 +1075,11 @@ void VoiceKeyer::finishConversion(const std::shared_ptr<Conversion>& c, bool ok)
     }
     ensureLoaded();
     const int n = pending.n;
-    if (m_phase != Phase::Idle && m_n == n) {
-        stop();
+    // Sent while it converted: the message on the air is not replaced.
+    if (isOnAir(n)) {
+        QFile::remove(c->to);
+        finish(false, onAirReason(n));
+        return;
     }
     const QString final = pathFor(n);
     QFile::remove(final);
@@ -1086,6 +1130,10 @@ bool VoiceKeyer::beginImport(const QString& owner, int n, const QString& name, q
         setRefusal(refusal, QStringLiteral("A message name can be up to %1 characters.").arg(kNameMaxChars));
         return false;
     }
+    if (isOnAir(n)) {
+        setRefusal(refusal, onAirReason(n));
+        return false;
+    }
     if (size <= 0) {
         setRefusal(refusal, text(kUnreadableReason));
         return false;
@@ -1094,6 +1142,8 @@ bool VoiceKeyer::beginImport(const QString& owner, int n, const QString& name, q
         setRefusal(refusal, text(kTooLargeReason));
         return false;
     }
+    // Its leftovers go before this import's file is made.
+    ensureLoaded();
     if (!QDir().mkpath(m_folder)) {
         setRefusal(refusal, text(kCannotKeepReason));
         return false;

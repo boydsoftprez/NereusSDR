@@ -36,6 +36,9 @@
 //                 PTT takes it; the sender's own key hands over; a session's
 //                 import file goes with it. AI-assisted via Anthropic Claude
 //                 Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF): a message on the air is not cleared
+//                 or replaced from any device. AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -396,6 +399,54 @@ private slots:
                         .value(QStringLiteral("sending")).isNull());
         QCOMPARE(mirrored(second).value(QStringLiteral("voiceKeyer")).toObject()
                      .value(QStringLiteral("slots")).toArray().size(), 8);
+    }
+
+    // A message on the air is not cleared or replaced from any device, the
+    // sender included: "M1 is on the air."; it goes on and Stop ends it.
+    // Renaming it is allowed.
+    void aMessageOnTheAirIsClearedOrReplacedByNoDevice()
+    {
+        Core core;
+        useTestDisk(core);
+        allowTransmit(core);
+        VoiceKeyer* vk = voiceKeyerWithMessage(core);
+        QVERIFY(vk != nullptr);
+        const QHash<QByteArray, int> features = voiceFeatures();
+        Device phone;
+        Device tablet(QStringLiteral("iPad"), QStringLiteral("tablet"));
+        core.pair(phone);
+        core.pair(tablet);
+        LoopbackTransport* sender = core.signIn(phone, features);
+        LoopbackTransport* other = core.signIn(tablet, features);
+        QVERIFY(admitted(sender));
+        QVERIFY(admitted(other));
+        MoxController* mox = core.model->moxController();
+        const QString onAir = QStringLiteral("M1 is on the air.");
+
+        QCOMPARE(refusalOf(core.invoke(sender, "voiceKeyer.send", {int64("n", 1)})), QString());
+        QVERIFY(mox->isMox());
+        for (LoopbackTransport* device : {sender, other}) {
+            QCOMPARE(refusalOf(core.invoke(device, "voiceKeyer.clear", {int64("n", 1)})), onAir);
+            QCOMPARE(refusalOf(core.invoke(device, "voiceKeyer.beginImport",
+                                           {int64("n", 1), utf8("name", QString()), int64("size", 1000)})),
+                     onAir);
+            QVERIFY(vk->sending().has_value());
+            QVERIFY(!vk->messages().at(0).empty);
+        }
+        QVERIFY(mox->isMox());
+        QCOMPARE(mox->currentKeyer().deviceId, phone.key.fingerprint());
+        QCOMPARE(core.model->recordingService()->onAirSource()->active(), OnAirSource::Kind::VoiceMessage);
+        QCOMPARE(QDir(vk->folder()).entryList({QStringLiteral("*.part")}, QDir::Files), QStringList());
+
+        QCOMPARE(refusalOf(core.invoke(sender, "voiceKeyer.rename",
+                                       {int64("n", 1), utf8("name", QStringLiteral("CQ test"))})),
+                 QString());
+        QCOMPARE(vk->messages().at(0).name, QStringLiteral("CQ test"));
+
+        QCOMPARE(refusalOf(core.invoke(sender, "voiceKeyer.stop", {})), QString());
+        QVERIFY(!mox->isMox());
+        QCOMPARE(refusalOf(core.invoke(other, "voiceKeyer.clear", {int64("n", 1)})), QString());
+        QVERIFY(vk->messages().at(0).empty);
     }
 
     // The sender's own tx.key, once admitted, hands the air from its

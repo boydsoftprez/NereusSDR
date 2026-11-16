@@ -21,6 +21,9 @@
 //                 key hands over; another device's send while a repeat waits
 //                 is refused; the wait ends when the radio drops; imports
 //                 convert off the main thread, which keeps running.
+//   2026-11-16 - J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. A message on the air is never cleared, imported into
+//                 or replaced; leftover import files go on load.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -677,6 +680,113 @@ private slots:
         r.vk->tickForTest();
         QVERIFY(r.mox->isMox());
         QCOMPARE(r.mox->currentKeyer().deviceId, kPhoneB);
+    }
+
+    // A message on the air is never cleared, imported into or replaced:
+    // "M1 is on the air.", whoever asks. It goes on, its file is the same,
+    // and renaming it is allowed. The same while a repeat waits.
+    void aMessageOnTheAirIsNeverClearedOrReplaced()
+    {
+        Rig r(newFolder());
+        qint64 t = 0;
+        r.vk->setClockForTest([&t] { return t; });
+        QVERIFY(fill(*r.vk, 1, 2 * kBlock, QStringLiteral("CQ")));
+        const QByteArray kept = readAll(r.vk->messagePath(1));
+        const QString onAir = QStringLiteral("M1 is on the air.");
+        const QString wav = writeWav(kRate, 1, kBlock);
+        const QByteArray file = readAll(wav);
+        QString refusal;
+
+        // Begun before the send: a link import and a conversion that would
+        // land on M1 while it goes out.
+        const QString early = QStringLiteral("early");
+        QVERIFY(r.vk->beginImport(early, 1, QString(), file.size(), &refusal));
+        QVERIFY(r.vk->importChunk(early, file, &refusal));
+        auto converting = std::make_shared<Ended>();
+        r.vk->importFile(1, writeWav(44100, 2, 10 * 44100), QString(), into(converting));
+
+        QVERIFY(r.vk->setRepeat(true, 5, &refusal));
+        QVERIFY(r.vk->send(1, phoneB(), &refusal));
+        QVERIFY(r.mox->isMox());
+
+        const auto refusedEverything = [&](const char* where) {
+            QString why;
+            QVERIFY2(!r.vk->clear(1, &why), where);
+            QCOMPARE(why, onAir);
+            why.clear();
+            QVERIFY2(!importNow(*r.vk, 1, wav, QStringLiteral("New"), &why), where);
+            QCOMPARE(why, onAir);
+            why.clear();
+            QVERIFY2(!r.vk->beginImport(QStringLiteral("late"), 1, QString(), file.size(), &why), where);
+            QCOMPARE(why, onAir);
+            QVERIFY2(r.vk->sending().has_value(), where);
+            QCOMPARE(r.vk->sending()->n, 1);
+            QVERIFY2(!r.vk->messages().at(0).empty, where);
+            QCOMPARE(readAll(r.vk->messagePath(1)), kept);
+        };
+
+        refusedEverything("going out");
+        QVERIFY(r.mox->isMox());
+        QCOMPARE(r.onAir->active(), OnAirSource::Kind::VoiceMessage);
+        QVERIFY(!finishNow(*r.vk, early, &refusal));
+        QCOMPARE(refusal, onAir);
+        QVERIFY(waitFor(converting));
+        QVERIFY(!converting->ok);
+        QCOMPARE(converting->refusal, onAir);
+        QVERIFY(r.mox->isMox());
+        QCOMPARE(readAll(r.vk->messagePath(1)), kept);
+        QCOMPARE(partFiles(r.vk->folder()), QStringList());
+        // Renaming is allowed.
+        QVERIFY(r.vk->rename(1, QStringLiteral("CQ test"), &refusal));
+        QCOMPARE(r.vk->messages().at(0).name, QStringLiteral("CQ test"));
+        // Another slot is not on the air.
+        QVERIFY(importNow(*r.vk, 2, wav, QString(), &refusal));
+        QVERIFY(r.vk->clear(2, &refusal));
+
+        // Waiting to repeat, it is still on the air.
+        std::vector<float> tx;
+        QVERIFY(r.pull(tx));
+        QVERIFY(r.pull(tx));
+        QVERIFY(r.pull(tx));
+        r.vk->tickForTest();
+        QVERIFY(!r.mox->isMox());
+        QVERIFY(r.vk->sending()->waitingMs > 0);
+        refusedEverything("waiting");
+
+        // Stop ends it, and then it can be cleared.
+        r.vk->stop();
+        QVERIFY(r.vk->clear(1, &refusal));
+        QVERIFY(r.vk->messages().at(0).empty);
+    }
+
+    // A Core that shut down in the middle of an import left its files:
+    // they go when the messages load, and nothing else does.
+    void leftoverImportFilesGoOnLoad()
+    {
+        const QString folder = newFolder();
+        {
+            Rig r(folder);
+            QVERIFY(fill(*r.vk, 1, kBlock, QStringLiteral("CQ")));
+        }
+        const QStringList leftovers{QStringLiteral("import-3.part"), QStringLiteral("M2-7.part")};
+        for (const QString& name : leftovers) {
+            QFile f(QDir(folder).filePath(name));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("half a message");
+        }
+        {
+            QFile f(QDir(folder).filePath(QStringLiteral("notes.txt")));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("kept");
+        }
+        QCOMPARE(partFiles(folder).size(), 2);
+        Rig again(folder);
+        const QList<VoiceKeyer::Message> list = again.vk->messages();
+        QCOMPARE(partFiles(folder), QStringList());
+        QVERIFY(!list.at(0).empty);
+        QCOMPARE(list.at(0).name, QStringLiteral("CQ"));
+        QVERIFY(list.at(1).empty);
+        QVERIFY(QFileInfo::exists(QDir(folder).filePath(QStringLiteral("notes.txt"))));
     }
 
     // The wait between repeats has MOX off: the radio dropping ends it, and
