@@ -8,6 +8,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-15 - theAttenuatorLabelStaysOnTheControlLine measures the
+//                 control's line by its real height, the larger of the size
+//                 hint and the minimum, so a 28 px control passes on Linux.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-14 - The RX Attenuator caption stays on the control's line
 //                 when the copy is taller than that line. Brian Sutton
 //                 (W4KZO), AI-assisted via xAI Grok.
@@ -590,8 +594,14 @@ private slots:
             if (label.height() > section->label()->sizeHint().height()) {
                 return QStringLiteral("the caption grew taller than its text: %1").arg(label.height());
             }
-            if (control.height() > section->stack()->sizeHint().height()) {
-                return QStringLiteral("the control grew taller than its line: %1").arg(control.height());
+            // The line is as tall as the control's real height. The pages
+            // are fixed at 28 px, which can be taller than the style's size
+            // hint (it is on Linux), so the minimum counts too.
+            const int line = qMax(section->stack()->sizeHint().height(),
+                                  section->stack()->minimumSizeHint().height());
+            if (control.height() > line) {
+                return QStringLiteral("the control grew taller than its line: %1 > %2")
+                    .arg(control.height()).arg(line);
             }
             const int mid = label.center().y();
             if (mid < control.top() || mid > control.bottom() || control.bottom() >= 80) {
