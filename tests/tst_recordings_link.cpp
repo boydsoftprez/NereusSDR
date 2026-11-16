@@ -61,8 +61,14 @@
 //                 another device's slice; a device's past spectrum carries
 //                 the Core's receive calibration. AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF): a peer that did not declare recordings
+//                 is sent main's capabilities list byte for byte (a golden
+//                 taken from main's Core); one that did gets the same list
+//                 and recordingsVersion before txSsbModMonitorVersion.
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
+#include "CapabilityOrder.h"
 #include "MultiDeviceHarness.h"
 
 #include <QFileInfo>
@@ -94,6 +100,57 @@ namespace {
 
 const QString kUpdateApp = QStringLiteral("Update this app to use recordings on this Core.");
 const QString kNotUnderstood = QStringLiteral("The request for recordings was not understood.");
+
+// Every feature main's Core reads from a hello, each at the highest version
+// it knows (the golden below was taken for this peer).
+const QHash<QByteArray, int> kEveryFeatureOnMain{
+    {"adcAttenuators", 1}, {"audioQuality", 1}, {"band2m", 1}, {"bandStack", 1},
+    {"coreAddresses", 1}, {"coreBuildInfo", 1}, {"coreSpeaker", 1}, {"deviceAuth", 1},
+    {"displayCodec", 2}, {"diversityControl", 1}, {"diversityPattern", 1},
+    {"firmwareBeta", 1}, {"logCategoryList", 1}, {"mediaDirect", 1}, {"miniDisplay", 1},
+    {"nnrLoadWarning", 1}, {"paProfiles", 1}, {"paTransmitBand", 1}, {"pairing", 1},
+    {"radeReason", 1}, {"radeStatus", 1}, {"radioAntennaRows", 2}, {"radioMic", 2},
+    {"radioModels", 1}, {"radioSpeaker", 1}, {"remoteCw", 3}, {"remoteTx", 1},
+    {"roundtable", 2}, {"rx2Attenuator", 1}, {"rxFilterLowPass", 1},
+    {"rxMeterStamps", 1}, {"sessionHolder", 1}, {"settingsBackup", 1},
+    {"settingsHygiene", 2}, {"setupDescription", 1}, {"sliceAccess", 3},
+    {"spectrumPicture", 1}, {"stationCat", 1}, {"stationTciSettings", 1},
+    {"tuneDriveSource", 1}, {"txEqCurve", 2}, {"txInhibitReason", 1},
+    {"txWatchPath", 1}, {"txWatchRelay", 1}, {"vax", 1}, {"waveform", 1}};
+
+// The capabilities message main's Core sent a kEveryFeatureOnMain peer, as
+// wire bytes (tests/data/recordings/capabilities-main-every-feature.hex).
+QByteArray mainCapabilitiesFrame()
+{
+    QFile file(QStringLiteral(NEREUS_TEST_DATA_DIR "/recordings/capabilities-main-every-feature.hex"));
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return {};
+    }
+    QByteArray hex;
+    for (const QByteArray& line : file.readAll().split('\n')) {
+        if (!line.startsWith('#')) {
+            hex += line.trimmed();
+        }
+    }
+    return QByteArray::fromHex(hex);
+}
+
+// The first capabilities message `app` was sent, as wire bytes.
+QByteArray capabilitiesFrameOf(const LoopbackTransport* app)
+{
+    for (const QByteArray& wire : app->received()) {
+        if (QJsonDocument::fromJson(wire).object().value(QStringLiteral("type")).toString()
+            == QLatin1String("capabilities")) {
+            return wire;
+        }
+    }
+    return {};
+}
+
+QJsonArray propertiesOf(const QByteArray& frame)
+{
+    return QJsonDocument::fromJson(frame).object().value(QStringLiteral("properties")).toArray();
+}
 
 const QHash<QByteArray, int> kRecordings{
     {"deviceAuth", 1}, {"sessionHolder", 1}, {"recordings", 1}};
@@ -807,6 +864,51 @@ private slots:
         }
         const MirrorUpdate wrongKind{0, "recordingsVersion", MirrorWireKind::Utf8, QVariant(QStringLiteral("1"))};
         QCOMPARE(StationCapabilities::fromUpdates({wrongKind}).recordingsVersion, 0);
+    }
+
+    // A peer that did not declare recordings is sent the message main's
+    // Core sends it, byte for byte, txSsbModMonitorVersion last and unchanged.
+    void aPeerWithoutRecordingsGetsMainsCapabilities()
+    {
+        const QByteArray golden = mainCapabilitiesFrame();
+        QVERIFY(!propertiesOf(golden).isEmpty());
+        Core core;
+        useTestDisk(core);
+        Device phone;
+        core.pair(phone);
+        LoopbackTransport* app = core.signIn(phone, kEveryFeatureOnMain);
+        QVERIFY(admitted(app));
+        const QByteArray frame = capabilitiesFrameOf(app);
+        QCOMPARE(frame, golden);
+        const QStringList names = capabilityEntryNames(propertiesOf(frame));
+        QCOMPARE(capabilityEntriesAfter(names, QStringLiteral("bandStackVersion")),
+                 kCapabilitiesAfterPeerGated);
+        QCOMPARE(capability(app->received(), QStringLiteral("txSsbModMonitorVersion")),
+                 std::optional<qint64>(1));
+    }
+
+    // One that did gets that list and one recordingsVersion, after
+    // bandStackVersion and before txSsbModMonitorVersion.
+    void aPeerWithRecordingsGetsMainsCapabilitiesAndOneEntry()
+    {
+        const QJsonArray golden = propertiesOf(mainCapabilitiesFrame());
+        QVERIFY(!golden.isEmpty());
+        Core core;
+        useTestDisk(core);
+        Device phone;
+        core.pair(phone);
+        QHash<QByteArray, int> features = kEveryFeatureOnMain;
+        features.insert("recordings", 1);
+        LoopbackTransport* app = core.signIn(phone, features);
+        QVERIFY(admitted(app));
+        const QJsonArray caps = propertiesOf(capabilitiesFrameOf(app));
+        const QStringList names = capabilityEntryNames(caps);
+        QCOMPARE(names.count(QStringLiteral("recordingsVersion")), 1);
+        QCOMPARE(capabilityEntriesAfter(names, QStringLiteral("bandStackVersion")),
+                 QStringList{QStringLiteral("recordingsVersion")} + kCapabilitiesAfterPeerGated);
+        QCOMPARE(capability(app->received(), QStringLiteral("recordingsVersion")), std::optional<qint64>(4));
+        QCOMPARE(capabilityBytesWithout(caps, {QStringLiteral("recordingsVersion")}),
+                 capabilityBytesWithout(golden));
     }
 
     void thePeerThatDidNotDeclareItGetsNothing()

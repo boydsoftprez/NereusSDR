@@ -10672,6 +10672,8 @@ target_compile_definitions(tst_bandstack_link PRIVATE
 nereus_add_test(tst_recordings_link
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
+target_compile_definitions(tst_recordings_link PRIVATE
+    NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
 nereus_add_test(tst_recordings_access
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
