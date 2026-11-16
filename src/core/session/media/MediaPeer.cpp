@@ -30,8 +30,10 @@
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-10: setPlaybackPacketSink, received audio other than the
 //               microphone line delivered on the transport's own thread
-//               with this peer's SSRC checks. J.J. Boyd (KG4VCF),
+//               with this peer's SSRC checks. Brian Sutton,
 //               AI-assisted via xAI Grok.
+//   2026-11-15: the 2026-11-10 entry names its author, Brian Sutton.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-01: TX mic thread fix round 2: the microphone sink's rejection
 //               is reported only while its start is still current, as on
 //               the owner's path. J.J. Boyd (KG4VCF), AI-assisted via

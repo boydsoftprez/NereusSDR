@@ -6,7 +6,9 @@
 // Modification history (NereusSDR):
 //   2026-11-10: speaker RTP is delivered on the transport's playback thread.
 //               A window move no longer holds those packets on the GUI.
-//               J.J. Boyd (KG4VCF), AI-assisted via xAI Grok.
+//               Brian Sutton, AI-assisted via xAI Grok.
+//   2026-11-15: the 2026-11-10 entry names its author, Brian Sutton.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-30: bounded passive retry schedule history and a hold boundary
 //               for canceled startup steps. J.J. Boyd (KG4VCF),
 //               AI-assisted via OpenAI Codex.
