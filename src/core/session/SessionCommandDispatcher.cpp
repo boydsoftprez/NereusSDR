@@ -6,6 +6,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Recording plan Task 24: dsr.rows and dsr.spectrum take the
+//               pan's width in `pixels` and answer each row's `transmit`.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: Recording plan Task 22: rewind sound's verbs dsr.rewind,
 //               dsr.live and dsr.seek (handleDsr, recordingsVersion 4).
 //   2026-11-16: Recording plan Task 23: the past picture's verbs dsr.rows,
@@ -1033,11 +1036,12 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
         // subscription does) and a slice on that pan, naming the receiver.
         {"dsr.rows",
          {arg("slice", kInt), arg("fromUtcNs", kInt), arg("toUtcNs", kInt), arg("rowCount", kInt),
-          arg("fftSize", kInt), arg("windowType", kInt), arg("centreHz", kInt), arg("spanHz", kInt)},
+          arg("fftSize", kInt), arg("windowType", kInt), arg("centreHz", kInt), arg("spanHz", kInt),
+          arg("pixels", kInt)},
          "recordingsVersion", 4, kRadioIdentitySessionProtocolMinor},
         {"dsr.spectrum",
          {arg("slice", kInt), arg("utcNs", kInt), arg("fftSize", kInt), arg("windowType", kInt),
-          arg("centreHz", kInt), arg("spanHz", kInt)},
+          arg("centreHz", kInt), arg("spanHz", kInt), arg("pixels", kInt)},
          "recordingsVersion", 4, kRadioIdentitySessionProtocolMinor},
         {"dsr.hours", {}, "recordingsVersion", 4, kRadioIdentitySessionProtocolMinor},
         {"paProfile.setUseMax", {arg("band", kInt), arg("on", kBool)}, "paProfileVersion", 1,
@@ -5483,6 +5487,13 @@ void SessionCommandDispatcher::handleDsrPast(const SessionMessage& invoke, const
     view.windowType = intArg("windowType");
     view.centreHz = arguments.value(QStringLiteral("centreHz")).toInteger(0);
     view.spanHz = arguments.value(QStringLiteral("spanHz")).toInteger(0);
+    // Recording plan Task 24: the pan's width in pixels, as its display
+    // subscription's `pixels`; each row comes reduced to it. The wire asks
+    // for 1 or more: 0 (unreduced, a caller on the Core only) is refused.
+    view.pixels = intArg("pixels");
+    if (view.pixels == 0) {
+        view.pixels = -1;
+    }
     const auto answer = [self, owner, verb, commandId](bool ok, const QString& refusal,
                                                       const DsrPastFrames& frames) {
         if (self.isNull()) {
@@ -5505,6 +5516,8 @@ void SessionCommandDispatcher::handleDsrPast(const SessionMessage& invoke, const
                           QVariant(QString::fromLatin1(DsrPastRenderer::packTimes(frames.utcNs).toBase64()))},
              MirrorUpdate{0, "bins", MirrorWireKind::Utf8,
                           QVariant(QString::fromLatin1(DsrPastRenderer::packRows(frames.rows).toBase64()))},
+             MirrorUpdate{0, "transmit", MirrorWireKind::Utf8,
+                          QVariant(QString::fromLatin1(DsrPastRenderer::packTransmit(frames.transmit).toBase64()))},
              MirrorUpdate{0, "rowsLeft", MirrorWireKind::Int64, QVariant(qlonglong(frames.rowsLeft))},
              MirrorUpdate{0, "nextToUtcNs", MirrorWireKind::Int64, QVariant(qlonglong(frames.nextToUtcNs))}}));
     };

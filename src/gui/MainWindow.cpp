@@ -1192,6 +1192,9 @@
 //                Applets, id "VoiceKeyer", hidden at first; DvkApplet stays unbuilt), VOICE in the
 //                TX panel opening it, and both gated with TUNE and MOX. AI-assisted implementation
 //                via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 24: one DsrRewindLink per pan, rewind on
+//                its waterfall for the slice it tunes. AI-assisted implementation via Anthropic
+//                Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -1415,6 +1418,7 @@ warren@wpratt.com
 #include "MainWindow.h"
 #include "TxHeldIndicator.h"
 #include "gui/ScopedChildWidget.h"
+#include "gui/recordings/DsrRewindLink.h"
 #include "gui/recordings/FlagRecordPlay.h"
 #include "gui/recordings/RecordingsPanel.h"
 #include "gui/recordings/RecordingsWindow.h"
@@ -9534,6 +9538,16 @@ void MainWindow::wireSpectrumSliceControls(SpectrumWidget* sw,
                 [this](const QString& id, int) { showOwnStreamOnPan(id); });
     }
     refreshStep();
+
+    // Recording plan Task 24: rewind on this pan's waterfall, for the slice
+    // it tunes (resolved on each use, as the handlers below are).
+    if (sw->findChild<DsrRewindLink*>(QStringLiteral("DsrRewindLink"), Qt::FindDirectChildrenOnly) == nullptr) {
+        auto* rewind = new DsrRewindLink(sw, [this, panId]() {
+            const SliceModel* s = m_shuttingDown ? nullptr : sliceForPan(panId);
+            return s != nullptr ? s->sliceIndex() : -1;
+        }, sw);
+        rewind->setAccess(m_radioModel->recordings());
+    }
 
     // Click on the spectrum tunes this pan's slice.
     connect(sw, &SpectrumWidget::frequencyClicked, this,

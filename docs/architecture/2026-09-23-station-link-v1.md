@@ -6662,8 +6662,8 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `dsr.rewind` | `slice` i64, `utcNs` i64, `frequencyHz` i64 | `recordingsVersion` | 4 | 11 |
 | `dsr.live` | `slice` i64 | `recordingsVersion` | 4 | 11 |
 | `dsr.seek` | `slice` i64, `utcNs` i64 | `recordingsVersion` | 4 | 11 |
-| `dsr.rows` | `slice` i64, `fromUtcNs` i64, `toUtcNs` i64, `rowCount` i64, `fftSize` i64, `windowType` i64, `centreHz` i64, `spanHz` i64 | `recordingsVersion` | 4 | 11 |
-| `dsr.spectrum` | `slice` i64, `utcNs` i64, `fftSize` i64, `windowType` i64, `centreHz` i64, `spanHz` i64 | `recordingsVersion` | 4 | 11 |
+| `dsr.rows` | `slice` i64, `fromUtcNs` i64, `toUtcNs` i64, `rowCount` i64, `fftSize` i64, `windowType` i64, `centreHz` i64, `spanHz` i64, `pixels` i64 | `recordingsVersion` | 4 | 11 |
+| `dsr.spectrum` | `slice` i64, `utcNs` i64, `fftSize` i64, `windowType` i64, `centreHz` i64, `spanHz` i64, `pixels` i64 | `recordingsVersion` | 4 | 11 |
 | `dsr.hours` | none | `recordingsVersion` | 4 | 11 |
 | `paProfile.setUseMax` | `band` i64, `on` bool | `paProfileVersion` | 1 | 11 |
 | `configureRfKit` | `host` utf8, `port` i64 | `remoteRfKitControlVersion` | 2 | 11 |
@@ -7139,15 +7139,19 @@ These command groups need a sentence beyond the table:
 - **The past picture** (`recordingsVersion` 4). The Core draws the past
   from the Digital Spectrum Recorder on its recordings worker, with the
   asking pan's own FFT settings, which the window sends with each request
-  (the same `fftSize`, `windowType`, `centreHz` and `spanHz` its display
-  subscription carries); `slice` is a slice on that pan and names the
-  receiver. `dsr.rows` (`fromUtcNs`, `toUtcNs`, `rowCount`, 1 to 4096) draws
+  (the same `fftSize`, `windowType`, `centreHz`, `spanHz` and `pixels` its
+  display subscription carries, `pixels` 1 to 4096); `slice` is a slice on
+  that pan and names the receiver. Each row is reduced to `pixels` points
+  the way the live display reduces bins to pixels (the Peak detector on
+  linear power, without averaging). `dsr.rows` (`fromUtcNs`, `toUtcNs`, `rowCount`, 1 to 4096) draws
   `rowCount` rows evenly from `toUtcNs` back to `fromUtcNs`, both ends
   included, newest first; a row over a moment no longer kept is left out.
   `dsr.spectrum` (`utcNs`) draws one frame. Both answer, in `values`, the bin
-  layout the live spectrum has for that pan (`binCount` bins from
-  `firstBinHz` up in steps of `hzPerBin`, f64), `slice`, `times` (base64 of
-  little-endian 64-bit ns since 1970 UTC, one per row) and `bins` (base64 of
+  layout (`binCount` points, the pan's `pixels`, from `firstBinHz` up in
+  steps of `hzPerBin`, f64, over the stretch the live spectrum shows for
+  that pan), `slice`, `times` (base64 of little-endian 64-bit ns since 1970
+  UTC, one per row), `transmit` (base64, one byte per row, 1 where you were
+  transmitting) and `bins` (base64 of
   little-endian signed 16-bit tenths of a dB, `binCount` per row, row after
   row; -200 dBm where nothing kept lies under a bin). An answer carries at
   most 196608 bytes of bins (at least one row); `rowsLeft` and
@@ -7159,7 +7163,7 @@ These command groups need a sentence beyond the table:
   size must be a power of two from 1024 to 262144.", "The Core does not
   know that spectrum window.", "The pan is wider than the receiver kept."
   (a span of 0 or wider than the receiver's rate), "Ask for 1 to 4096 past
-  rows at a time." and "That moment is no longer kept." (the recorder is
+  rows at a time.", "The pan's width must be 1 to 4096 pixels." and "That moment is no longer kept." (the recorder is
   off, or for `dsr.spectrum` nothing is kept then).
 - **The voice keyer** (`recordingsVersion` 3). Messages M1 to M8 are kept on
   the Core as 48 kHz 16-bit mono WAV, at most two minutes each.

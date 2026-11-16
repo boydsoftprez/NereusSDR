@@ -2044,6 +2044,11 @@
                     "kind": "i64",
                     "name": "spanHz",
                     "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "pixels",
+                    "optional": false
                 }
             ],
             "capability": "recordingsVersion",
@@ -2081,6 +2086,11 @@
                 {
                     "kind": "i64",
                     "name": "spanHz",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "pixels",
                     "optional": false
                 }
             ],

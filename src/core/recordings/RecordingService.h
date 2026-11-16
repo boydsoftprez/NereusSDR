@@ -277,6 +277,7 @@ public:
     static constexpr const char* kPastWindowReason = "The Core does not know that spectrum window.";
     static constexpr const char* kPastSpanReason = "The pan is wider than the receiver kept.";
     static constexpr const char* kPastRowsReason = "Ask for 1 to 4096 past rows at a time.";
+    static constexpr const char* kPastPixelsReason = "The pan's width must be 1 to 4096 pixels.";
     using PastFramesDone = std::function<void(bool ok, const QString& refusal, const DsrPastFrames& frames)>;
     using HoursDone = std::function<void(const QList<DsrHour>& hours)>;
     // `rowCount` rows of `slice`'s receiver from `toUtcNs` back to

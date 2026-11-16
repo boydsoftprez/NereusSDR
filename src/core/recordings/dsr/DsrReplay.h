@@ -10,6 +10,11 @@
 //             file with the pan's own FFT settings on the recordings worker
 //             (spec 3, 6.7, A12, recording plan Task 23). AI tooling:
 //             Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; desktop rewind: the pan's pixel width
+//             (DsrPanView::pixels; each row reduced to it as the live
+//             display reduces its bins) and your transmit marked per row
+//             (spec 3, recording plan Task 24). AI tooling: Anthropic
+//             Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -175,6 +180,10 @@ struct DsrPanView {
     int windowType = 1;        // WindowFunction
     qint64 centreHz = 0;
     qint64 spanHz = 0;
+    // The pan's width in pixels (Task 24): each row is reduced to this many
+    // points as the live display reduces its bins to pixels. 0 keeps the
+    // bins as the live crop has them (the wire always asks for pixels).
+    int pixels = 0;
 };
 
 // Past rows (or one past spectrum frame) in the pan's bin layout: the bins
@@ -188,6 +197,8 @@ struct DsrPastFrames {
     int binCount = 0;
     QList<qint64> utcNs;            // each row's moment, ns since 1970 UTC
     QList<QVector<float>> rows;
+    // Per row: you were transmitting then (Task 24: marked as yours).
+    QList<bool> transmit;
     // The rows of the request still to draw, from nextToUtcNs back to the
     // request's start: ask again for them (the rows come in chunks).
     int rowsLeft = 0;
@@ -211,6 +222,9 @@ public:
     static constexpr int kMaxFftSize = 262144;
     // A request draws at most this many rows.
     static constexpr int kMaxRows = 4096;
+    // The widest pan in pixels: the live display's own limit
+    // (SpectrumEndpoint::kMaxPixels; checked in DsrReplay.cpp).
+    static constexpr int kMaxPixels = 4096;
     // One answer carries at most this many bytes of bins (2 per bin), at
     // least one row; the rest of the request comes in later answers. The
     // size of one recording copy chunk (RecordingsFacade::kExportChunkBytes).
@@ -242,6 +256,9 @@ public:
     // `rateHz` around `streamCentreHz` (SpectrumReducer::visibleBinRange).
     // False when it selects no bins.
     static bool layout(int rateHz, qint64 streamCentreHz, const DsrPanView& view, DsrPastFrames* out);
+    // The answer's layout: `bins` itself, or with view.pixels set, the same
+    // stretch of frequency in that many points.
+    static DsrPastFrames pixelLayout(const DsrPastFrames& bins, const DsrPanView& view);
 
     // `rowCount` rows of `receiver` evenly from `toUtcNs` back to
     // `fromUtcNs` (both ends included), newest first, in the layout for the
@@ -264,6 +281,13 @@ public:
     static QList<qint64> unpackTimes(const QByteArray& bytes);
     static QByteArray packRows(const QList<QVector<float>>& rows);
     static QList<QVector<float>> unpackRows(const QByteArray& bytes, int binCount);
+    // One byte per row, 1 where you were transmitting.
+    static QByteArray packTransmit(const QList<bool>& transmit);
+    static QList<bool> unpackTransmit(const QByteArray& bytes);
+    // A row of dBm reduced to `pixels` points the way the live display
+    // reduces bins to pixels (SpectrumReducer::reduce: the Peak detector,
+    // ReducerConfig's default, on linear power, no averaging).
+    static QVector<float> toPixels(const QVector<float>& rowDbm, int pixels);
 
 private:
     // The FFT (dBm, FFT-shifted, as FFTEngine emits it) of `fftSize` frames

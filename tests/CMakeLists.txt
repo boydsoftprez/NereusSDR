@@ -12112,6 +12112,14 @@ nereus_add_test(tst_dsr_rewind CORE_ONLY)
 # worker; bad requests refused in plain words
 # (src/core/recordings/dsr/DsrReplay.cpp, RecordingService.cpp).
 nereus_add_test(tst_dsr_past_rows CORE_ONLY)
+# Recording plan Task 24: rewind on the desktop waterfall. A strip drag past
+# the window's own minutes asks the Core for rows and dims with "Drawing"; a
+# click on a past signal rewinds Slice A there and the picture moves with the
+# sound; the past spectrum replaces the trace; LIVE and PTT while rewound;
+# your transmit rows marked; the hours map and a typed time jump; an older
+# Core or the recorder off keeps the strip as it was, the new parts disabled
+# with the reason (src/gui/SpectrumWidget.cpp, src/gui/recordings/).
+nereus_add_test(tst_dsr_desktop_rewind)
 
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)

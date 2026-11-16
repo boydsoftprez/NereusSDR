@@ -2095,6 +2095,10 @@ set(GUI_SOURCES
     src/gui/recordings/LocalMicClipRecorder.h
     src/gui/recordings/VoiceButton.cpp
     src/gui/recordings/VoiceButton.h
+    src/gui/recordings/DsrHoursMap.cpp
+    src/gui/recordings/DsrHoursMap.h
+    src/gui/recordings/DsrRewindLink.cpp
+    src/gui/recordings/DsrRewindLink.h
     src/gui/widgets/MetricLabel.cpp
     src/gui/widgets/MetricLabel.h
     src/gui/widgets/SystemTile.cpp

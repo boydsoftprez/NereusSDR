@@ -15,6 +15,10 @@
 // Modification history (NereusSDR):
 //   2026-11-16 - Created. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code. Recording plan Task 23.
+//   2026-11-16 - Rows reduced to the pan's pixels as the live display
+//                 reduces bins, your transmit marked per row, and the
+//                 pixels refusal. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code. Recording plan Task 24.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -349,6 +353,81 @@ private slots:
     }
 
     // The wire form carries times exactly and bins to a tenth of a dB.
+    // Task 24: with the pan's pixels, each row is the live display's
+    // reduction of the same bins (SpectrumReducer, Peak, no averaging), and
+    // each row says whether you were transmitting.
+    void rowsComeReducedToThePansPixels()
+    {
+        DsrRingFile ring;
+        QString error;
+        QVERIFY2(ring.open(ringPath(), 64LL * 1000000LL, &error), qPrintable(error));
+        keepSeconds(ring, 1);
+        const std::vector<qint16> iq =
+            keptIq(kRate, kRate, kKeptCentreHz, kCarrierHz, kCarrierAmplitude, 0.001f, 2);
+        DsrBlockHeader h;
+        h.receiver = 0;
+        h.utcNs = kStartNs + kNs;
+        h.sampleRateHz = kRate;
+        h.centreHz = kKeptCentreHz;
+        h.transmit = 1;
+        QVERIFY(ring.append(h, iq.data(), int(iq.size() / 2)));
+
+        constexpr int kPixels = 300;
+        DsrPanView view = panView();
+        view.pixels = kPixels;
+        DsrPastRenderer renderer;
+        const DsrPastFrames bins = renderer.rows(ring, 0, kRate, kKeptCentreHz, panView(), kStartNs,
+                                                 kStartNs + kNs, 2);
+        const DsrPastFrames rows = renderer.rows(ring, 0, kRate, kKeptCentreHz, view, kStartNs,
+                                                 kStartNs + kNs, 2);
+        QCOMPARE(rows.rows.size(), 2);
+        QCOMPARE(rows.binCount, kPixels);
+        QCOMPARE(rows.firstBinHz, bins.firstBinHz);
+        QVERIFY(std::abs(rows.hzPerBin * kPixels - bins.hzPerBin * bins.binCount) < 1e-6);
+        // Newest first: the transmit second, then the one before.
+        QCOMPARE(rows.transmit, (QList<bool>{true, false}));
+
+        // The live display's reduction of the same crop of bins.
+        for (int r = 0; r < 2; ++r) {
+            QCOMPARE(rows.rows.at(r).size(), kPixels);
+            const QVector<float>& crop = bins.rows.at(r);
+            QVector<float> linear(crop.size());
+            for (int k = 0; k < crop.size(); ++k) {
+                linear[k] = std::pow(10.0f, crop[k] / 10.0f);
+            }
+            ReducerConfig cfg;
+            cfg.pixels = kPixels;
+            cfg.sampleRateHz = bins.hzPerBin * bins.binCount;
+            cfg.streamCentreHz = bins.firstBinHz + cfg.sampleRateHz / 2.0;
+            cfg.centreHz = cfg.streamCentreHz;
+            cfg.spanHz = cfg.sampleRateHz - bins.hzPerBin;   // exactly the crop's bins
+            cfg.detector = SpectrumDetectorMode::Peak;
+            cfg.averageMode = 0;
+            SpectrumReducer reducer;
+            reducer.setConfig(cfg);
+            QVector<float> live;
+            reducer.reduce(linear, 1.0, 0.0, live);
+            QCOMPARE(live.size(), kPixels);
+            for (int x = 0; x < kPixels; ++x) {
+                QVERIFY2(std::abs(live[x] - rows.rows.at(r).at(x)) < 0.01f,
+                         qPrintable(QStringLiteral("pixel %1: %2 vs %3").arg(x).arg(live[x])
+                                        .arg(rows.rows.at(r).at(x))));
+            }
+            const int peak = peakIndex(rows.rows.at(r));
+            QVERIFY(std::abs(rows.firstBinHz + (peak + 0.5) * rows.hzPerBin - double(kCarrierHz))
+                    <= rows.hzPerBin);
+        }
+
+        DsrPastFrames frame;
+        QVERIFY(renderer.spectrum(ring, 0, kRate, kKeptCentreHz, view, kStartNs + kNs, &frame));
+        QCOMPARE(frame.binCount, kPixels);
+        QCOMPARE(frame.rows.first(), rows.rows.first());
+        QCOMPARE(frame.transmit, QList<bool>{true});
+
+        const QList<bool> marks{true, false, true};
+        QCOMPARE(DsrPastRenderer::unpackTransmit(DsrPastRenderer::packTransmit(marks)), marks);
+    }
+
     void theWireFormRoundTrips()
     {
         const QList<qint64> times{kStartNs + 123456789, kStartNs, 1};
@@ -436,6 +515,10 @@ private slots:
         expectRefusal(RecordingService::kPastSpanReason);
         svc.pastRows(0, panView(), oldest, oldest + kNs, 0, refused);
         expectRefusal(RecordingService::kPastRowsReason);
+        bad = panView();
+        bad.pixels = DsrPastRenderer::kMaxPixels + 1;
+        svc.pastRows(0, bad, oldest, oldest + kNs, 4, refused);
+        expectRefusal(RecordingService::kPastPixelsReason);
         svc.pastRows(3, panView(), oldest, oldest + kNs, 4, refused);
         expectRefusal(RecordingService::kRewindNoSliceReason);
 

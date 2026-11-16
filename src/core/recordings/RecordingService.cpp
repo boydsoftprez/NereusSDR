@@ -32,6 +32,9 @@
 //             spectrum frame and the hours map, checked here and drawn on
 //             the worker (spec 3, 6.7, A12, recording plan Task 23). AI
 //             tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; the pan's width in pixels is checked with
+//             its other settings (recording plan Task 24). AI tooling:
+//             Anthropic Claude Code.
 
 #include "RecordingService.h"
 
@@ -1914,6 +1917,11 @@ bool RecordingService::checkPastRequest(int slice, const DsrPanView& view, int* 
     if (view.windowType < static_cast<int>(WindowFunction::Rectangular)
         || view.windowType >= static_cast<int>(WindowFunction::Count)) {
         return refuse(kPastWindowReason);
+    }
+    // 0 keeps the bins unreduced (a caller on the Core); the wire asks for
+    // 1 or more (SessionCommandDispatcher sends 0 here as -1).
+    if (view.pixels < 0 || view.pixels > DsrPastRenderer::kMaxPixels) {
+        return refuse(kPastPixelsReason);
     }
     if (view.spanHz <= 0) {
         return refuse(kPastSpanReason);

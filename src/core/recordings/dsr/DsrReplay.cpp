@@ -7,10 +7,15 @@
 // 2026-11-16  J.J. Boyd / KG4VCF; DsrPastRenderer: past rows, a past
 //             spectrum frame and the hours map (spec 3, 6.7, A12, recording
 //             plan Task 23). AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; rows reduced to the pan's pixels and
+//             your transmit marked per row (recording plan Task 24). AI
+//             tooling: Anthropic Claude Code.
 
 #include "DsrReplay.h"
 
 #include "core/FFTEngine.h"
+#include "core/session/media/SpectrumEndpoint.h"
+#include "core/spectrum/SpectrumDetector.h"
 #include "core/spectrum/SpectrumReducer.h"
 
 #include <QtEndian>
@@ -20,6 +25,9 @@
 #include <numbers>
 
 namespace NereusSDR {
+
+static_assert(DsrPastRenderer::kMaxPixels == SpectrumEndpoint::kMaxPixels,
+              "a past row is as wide as the live display allows");
 
 DsrReplay::DsrReplay(int slice, int receiver, int sampleRateHz, qint64 fromUtcNs, qint64 liveCentreHz)
     : m_slice(slice)
@@ -306,6 +314,35 @@ QVector<float> DsrPastRenderer::mapRow(const QVector<float>& binsDbm, const DsrB
     return row;
 }
 
+DsrPastFrames DsrPastRenderer::pixelLayout(const DsrPastFrames& bins, const DsrPanView& view)
+{
+    DsrPastFrames out = bins;
+    if (view.pixels > 0 && bins.binCount > 0) {
+        out.hzPerBin = bins.hzPerBin * double(bins.binCount) / double(view.pixels);
+        out.binCount = view.pixels;
+    }
+    return out;
+}
+
+QVector<float> DsrPastRenderer::toPixels(const QVector<float>& rowDbm, int pixels)
+{
+    if (pixels <= 0 || rowDbm.isEmpty()) {
+        return rowDbm;
+    }
+    // SpectrumReducer::reduce runs the detector on linear power (FFTEngine's
+    // fftReadyLinear) and takes 10 log10 of each pixel after it.
+    QVector<float> linear(rowDbm.size());
+    for (qsizetype k = 0; k < rowDbm.size(); ++k) {
+        linear[k] = std::pow(10.0f, rowDbm[k] / 10.0f);
+    }
+    QVector<float> out;
+    applySpectrumDetector(SpectrumDetectorMode::Peak, linear, pixels, out, 1.0);
+    for (float& v : out) {
+        v = v > 0.0f ? 10.0f * std::log10(v) : kFloorDbm;
+    }
+    return out;
+}
+
 DsrPastFrames DsrPastRenderer::rows(const DsrRingFile& ring, int receiver, int liveRateHz, qint64 liveCentreHz,
                                     const DsrPanView& view, qint64 fromUtcNs, qint64 toUtcNs, int rowCount,
                                     qint64 maxBinBytes)
@@ -315,10 +352,13 @@ DsrPastFrames DsrPastRenderer::rows(const DsrRingFile& ring, int receiver, int l
     rowCount = std::clamp(rowCount, 1, kMaxRows);
     int rate = 0;
     qint64 centre = 0;
+    DsrPastFrames grid;     // the live crop's bins, which each row is mapped into
     if (toUtcNs < fromUtcNs || !liveGrid(ring, receiver, liveRateHz, liveCentreHz, toUtcNs, &rate, &centre)
-        || !layout(rate, centre, view, &out)) {
+        || !layout(rate, centre, view, &grid)) {
         return out;
     }
+    out = pixelLayout(grid, view);
+    out.receiver = receiver;
     const qint64 step = rowCount > 1 ? (toUtcNs - fromUtcNs) / (rowCount - 1) : 0;
     const qint64 rowBytes = qint64(out.binCount) * 2;
     const int maxRows = int(std::clamp<qint64>(maxBinBytes / rowBytes, 1, kMaxRows));
@@ -329,7 +369,8 @@ DsrPastFrames DsrPastRenderer::rows(const DsrRingFile& ring, int receiver, int l
         QVector<float> bins;
         if (transformAt(ring, receiver, t, view.fftSize, view.windowType, &kept, &bins)) {
             out.utcNs.append(t);
-            out.rows.append(mapRow(bins, kept, out));
+            out.rows.append(toPixels(mapRow(bins, kept, grid), view.pixels));
+            out.transmit.append(kept.transmit != 0);
         }
     }
     out.rowsLeft = rowCount - i;
@@ -343,8 +384,9 @@ bool DsrPastRenderer::spectrum(const DsrRingFile& ring, int receiver, int liveRa
     out->receiver = receiver;
     int rate = 0;
     qint64 centre = 0;
+    DsrPastFrames grid;
     if (!liveGrid(ring, receiver, liveRateHz, liveCentreHz, utcNs, &rate, &centre)
-        || !layout(rate, centre, view, out)) {
+        || !layout(rate, centre, view, &grid)) {
         return false;
     }
     DsrBlockHeader kept;
@@ -352,8 +394,11 @@ bool DsrPastRenderer::spectrum(const DsrRingFile& ring, int receiver, int liveRa
     if (!transformAt(ring, receiver, utcNs, view.fftSize, view.windowType, &kept, &bins)) {
         return false;
     }
+    *out = pixelLayout(grid, view);
+    out->receiver = receiver;
     out->utcNs = {utcNs};
-    out->rows = {mapRow(bins, kept, *out)};
+    out->rows = {toPixels(mapRow(bins, kept, grid), view.pixels)};
+    out->transmit = {kept.transmit != 0};
     return true;
 }
 
@@ -463,6 +508,25 @@ QList<QVector<float>> DsrPastRenderer::unpackRows(const QByteArray& bytes, int b
             row[k] = float(v) / kWireStepsPerDb;
         }
         out.append(row);
+    }
+    return out;
+}
+
+QByteArray DsrPastRenderer::packTransmit(const QList<bool>& transmit)
+{
+    QByteArray bytes(transmit.size(), '\0');
+    for (qsizetype i = 0; i < transmit.size(); ++i) {
+        bytes[i] = transmit.at(i) ? '\1' : '\0';
+    }
+    return bytes;
+}
+
+QList<bool> DsrPastRenderer::unpackTransmit(const QByteArray& bytes)
+{
+    QList<bool> out;
+    out.reserve(bytes.size());
+    for (const char b : bytes) {
+        out.append(b != 0);
     }
     return out;
 }

@@ -20,6 +20,10 @@
 //                 picture (past rows in chunks, a past spectrum frame, the
 //                 hours map). AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 24: the pan's
+//                 pixels go with dsr.rows and dsr.spectrum, and each row's
+//                 transmit mark comes back. AI-assisted implementation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "models/recordings/RemoteRecordingsAccess.h"
@@ -184,7 +188,8 @@ void RemoteRecordingsAccess::sendPastRows(qint64 fromUtcNs, qint64 toUtcNs, int 
                                 {QStringLiteral("fftSize"), view.fftSize},
                                 {QStringLiteral("windowType"), view.windowType},
                                 {QStringLiteral("centreHz"), view.centreHz},
-                                {QStringLiteral("spanHz"), view.spanHz}})) {
+                                {QStringLiteral("spanHz"), view.spanHz},
+                                {QStringLiteral("pixels"), view.pixels}})) {
         m_pastRowsInFlight.append(m_pastRows.seq);
     }
 }
@@ -196,7 +201,8 @@ void RemoteRecordingsAccess::requestPastSpectrum(int slice, const DsrPanView& vi
                                                             {QStringLiteral("fftSize"), view.fftSize},
                                                             {QStringLiteral("windowType"), view.windowType},
                                                             {QStringLiteral("centreHz"), view.centreHz},
-                                                            {QStringLiteral("spanHz"), view.spanHz}});
+                                                            {QStringLiteral("spanHz"), view.spanHz},
+                                                            {QStringLiteral("pixels"), view.pixels}});
 }
 
 void RemoteRecordingsAccess::requestHours()
@@ -731,6 +737,8 @@ void RemoteRecordingsAccess::takePast(const QByteArray& verb, bool accepted, con
     frames.utcNs = DsrPastRenderer::unpackTimes(QByteArray::fromBase64(valueOf(values, "times").toString().toLatin1()));
     frames.rows = DsrPastRenderer::unpackRows(QByteArray::fromBase64(valueOf(values, "bins").toString().toLatin1()),
                                               frames.binCount);
+    frames.transmit = DsrPastRenderer::unpackTransmit(
+        QByteArray::fromBase64(valueOf(values, "transmit").toString().toLatin1()));
     frames.rowsLeft = valueOf(values, "rowsLeft").toInt();
     frames.nextToUtcNs = valueOf(values, "nextToUtcNs").toLongLong();
     if (frames.rows.size() != frames.utcNs.size()) {

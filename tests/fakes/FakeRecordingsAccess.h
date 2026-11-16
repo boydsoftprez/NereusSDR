@@ -33,6 +33,9 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 23: the past
 //                 picture's requests are recorded. AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 24: with their
+//                 moment, frequency, stretch and pan view. AI-assisted
+//                 implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QHash>
@@ -57,6 +60,12 @@ public:
         int reader{0};
         std::optional<int> listSlice;
         std::optional<RecordingKind> listKind;
+        // Task 24: the moment, frequency, stretch and pan view a DSR call
+        // carried.
+        qint64 utcNs{0};
+        qint64 hz{0};
+        qint64 fromUtcNs{0};
+        DsrPanView view{};
     };
 
     explicit FakeRecordingsAccess(QObject* parent = nullptr) : RecordingsAccess(parent) {}
@@ -218,20 +227,35 @@ public:
         calls.append({QStringLiteral("setVoiceRepeat"), on ? 1 : 0, QString::number(delaySec)});
     }
     void listenVoice(int n) override { calls.append({QStringLiteral("listenVoice"), n}); }
-    void rewind(int slice, qint64 /*utcNs*/, qint64 /*hz*/) override
+    void rewind(int slice, qint64 utcNs, qint64 hz) override
     {
-        calls.append({QStringLiteral("rewind"), slice});
+        Call call{QStringLiteral("rewind"), slice};
+        call.utcNs = utcNs;
+        call.hz = hz;
+        calls.append(call);
     }
     void live(int slice) override { calls.append({QStringLiteral("live"), slice}); }
-    void seekPast(int slice, qint64 /*utcNs*/) override { calls.append({QStringLiteral("seekPast"), slice}); }
-    void requestPastRows(int slice, const DsrPanView& /*view*/, qint64 /*fromUtcNs*/, qint64 /*toUtcNs*/,
+    void seekPast(int slice, qint64 utcNs) override
+    {
+        Call call{QStringLiteral("seekPast"), slice};
+        call.utcNs = utcNs;
+        calls.append(call);
+    }
+    void requestPastRows(int slice, const DsrPanView& view, qint64 fromUtcNs, qint64 toUtcNs,
                          int rowCount) override
     {
-        calls.append({QStringLiteral("requestPastRows"), slice, {}, 0, rowCount});
+        Call call{QStringLiteral("requestPastRows"), slice, {}, 0, rowCount};
+        call.fromUtcNs = fromUtcNs;
+        call.utcNs = toUtcNs;
+        call.view = view;
+        calls.append(call);
     }
-    void requestPastSpectrum(int slice, const DsrPanView& /*view*/, qint64 /*utcNs*/) override
+    void requestPastSpectrum(int slice, const DsrPanView& view, qint64 utcNs) override
     {
-        calls.append({QStringLiteral("requestPastSpectrum"), slice});
+        Call call{QStringLiteral("requestPastSpectrum"), slice};
+        call.utcNs = utcNs;
+        call.view = view;
+        calls.append(call);
     }
     void requestHours() override { calls.append({QStringLiteral("requestHours")}); }
 

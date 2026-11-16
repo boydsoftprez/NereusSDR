@@ -329,6 +329,12 @@
 //                --older-core VOICE in the TX panel, against a fake recordings access, as the
 //                approved voice-keyer-panel (shape A) and desktop-voice-button mockups do.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 24: dsr-rewind--past, --hours,
+//                --drawing, --typed-time and --older-core pose rewind on Slice A's waterfall
+//                (PAST on the spectrum, the hours map beside the strip, the Core drawing, the
+//                typed-time box, and an older Core with the new parts disabled) against a fake
+//                recordings access, as the dsr-rewind mockups do. AI-assisted implementation via
+//                Anthropic Claude Code.
 
 #include "models/MainPowerMeter.h"
 #include "models/AmplifierModel.h"
@@ -552,6 +558,8 @@
 #include "gui/recordings/RecordingsPanel.h"
 #include "gui/recordings/RecordingsWindow.h"
 #include "gui/recordings/VoiceButton.h"
+#include "gui/recordings/DsrHoursMap.h"
+#include "gui/recordings/DsrRewindLink.h"
 #include "gui/applets/VoiceKeyerApplet.h"
 #include "gui/applets/AppletVisibilityController.h"
 #include "core/roundtable/RoundtableState.h"
@@ -9135,6 +9143,182 @@ void sceneVoiceButton(SceneContext& ctx, const QString& name, VoiceButtonPose po
     }
 }
 
+// ---- Recording plan Task 24: rewind on the waterfall ----
+// Slice A at 7.185.000 LSB on one pan, as the dsr-rewind mockups show it,
+// the waterfall's clock on the mockup's afternoon (14:32 UTC on 14 November
+// 2026). The window's own recordings access has no Core behind it, so a
+// fake one takes the pan's rewind link: it keeps three hours, answers the
+// rows and the spectrum the waterfall asks for with the band as the pose
+// feeds it, and keys nothing.
+
+enum class DsrRewindPose { Past, Hours, Drawing, TypedTime, OlderCore };
+
+const qint64 kDsrSceneNowMs =
+    QDateTime(QDate(2026, 11, 14), QTime(14, 32, 10), QTimeZone::utc()).toMSecsSinceEpoch();
+constexpr qint64 kDsrSceneKeptMs = 3LL * 3600LL * 1000LL + 1800LL * 1000LL;   // 3.5 hours
+
+QVector<PanPose> dsrRewindPoses()
+{
+    return {twoBandPoses().constFirst()};
+}
+
+// One past row over the pan: the pose's noise, each voice signal on or off
+// by a fixed pattern per row (a net's overs), stronger toward the Core's
+// busy patch.
+QVector<float> dsrSceneRow(const PanSpectrum& band, double firstHz, double hzPerPoint, int points, qint64 utcMs)
+{
+    QVector<float> row(points, float(band.noiseDbm));
+    quint32 seed = quint32(utcMs / 50) * 2654435761u;
+    for (int x = 0; x < points; ++x) {
+        seed = seed * 1664525u + 1013904223u;
+        row[x] += float(int(seed >> 24) % 7) - 3.0f;
+    }
+    int k = 0;
+    for (const SignalSpec& sig : band.signalList) {
+        ++k;
+        const qint64 over = (utcMs / 400) / (3 + k);   // overs of a second or two
+        if (((over * 2654435761LL + k) & 3) == 0) {
+            continue;   // between overs
+        }
+        const double lo = sig.shape == SignalShape::Lsb ? sig.hz - 2400.0 : sig.hz;
+        const double hi = lo + 2400.0;
+        for (int x = 0; x < points; ++x) {
+            const double hz = firstHz + (x + 0.5) * hzPerPoint;
+            if (hz >= lo && hz <= hi) {
+                row[x] = std::max(row[x], float(sig.dbm - 6.0 * std::abs(hz - (lo + hi) / 2.0) / 1200.0));
+            }
+        }
+    }
+    return row;
+}
+
+void answerDsrScene(FakeRecordingsAccess* access, const PanSpectrum& band, int& answered)
+{
+    const QList<FakeRecordingsAccess::Call> calls = access->calls;
+    for (int i = answered; i < calls.size(); ++i) {
+        const FakeRecordingsAccess::Call& c = calls.at(i);
+        if (c.verb != QStringLiteral("requestPastRows") && c.verb != QStringLiteral("requestPastSpectrum")) {
+            continue;
+        }
+        const int points = std::max(1, c.view.pixels);
+        DsrPastFrames f;
+        f.slice = c.sliceId;
+        f.firstBinHz = double(c.view.centreHz) - double(c.view.spanHz) / 2.0;
+        f.hzPerBin = double(c.view.spanHz) / points;
+        f.binCount = points;
+        const int n = c.verb == QStringLiteral("requestPastRows") ? c.count : 1;
+        const qint64 step = n > 1 ? (c.utcNs - c.fromUtcNs) / (n - 1) : 0;
+        for (int r = 0; r < n; ++r) {
+            const qint64 ns = c.utcNs - qint64(r) * step;
+            f.utcNs.append(ns);
+            f.rows.append(dsrSceneRow(band, f.firstBinHz, f.hzPerBin, points, ns / 1000000LL));
+            f.transmit.append(false);
+        }
+        if (c.verb == QStringLiteral("requestPastRows")) {
+            emit access->pastRowsReady(f);
+        } else {
+            emit access->pastSpectrumReady(f);
+        }
+    }
+    answered = int(calls.size());
+}
+
+QList<DsrHour> dsrSceneHours()
+{
+    // Busier through the afternoon, a net around 13:05.
+    QList<DsrHour> hours;
+    const qint64 newestHour = (kDsrSceneNowMs / 3600000LL) * 3600000LL;
+    const double activity[] = {0.55, 0.85, 0.35, 0.22};
+    for (int h = 0; h < 4; ++h) {
+        hours.append(DsrHour{(newestHour - h * 3600000LL) * 1000000LL, activity[h]});
+    }
+    return hours;
+}
+
+void poseDsrRewind(SceneContext& ctx, DsrRewindPose pose, const PanSpectrum& band)
+{
+    SpectrumWidget* sw = spectrumFor(ctx.window, panIdAt(0));
+    DsrRewindLink* link = sw != nullptr
+        ? sw->findChild<DsrRewindLink*>(QStringLiteral("DsrRewindLink"), Qt::FindDirectChildrenOnly)
+        : nullptr;
+    if (link == nullptr) {
+        ctx.failure = QStringLiteral("no rewind link on the first pan's waterfall");
+        return;
+    }
+    auto* access = new FakeRecordingsAccess(ctx.window);
+    access->version = 4;
+    const qint64 rewoundMs =
+        QDateTime(QDate(2026, 11, 14), QTime(13, 5, 12), QTimeZone::utc()).toMSecsSinceEpoch();
+    QJsonArray rewound;
+    if (pose != DsrRewindPose::OlderCore) {
+        rewound.append(QJsonObject{{QStringLiteral("slice"), 0},
+                                   {QStringLiteral("utcNs"), rewoundMs * 1000000LL},
+                                   {QStringLiteral("frequencyHz"), 7185000},
+                                   {QStringLiteral("liveFrequencyHz"), 7185000}});
+    }
+    QJsonObject doc = FakeRecordingsAccess::document({}, 1);
+    doc.insert(QStringLiteral("dsr"), QJsonObject{{QStringLiteral("enabled"), true},
+                                                  {QStringLiteral("recording"), true},
+                                                  {QStringLiteral("reason"), QString()},
+                                                  {QStringLiteral("oldestUtcMs"), kDsrSceneNowMs - kDsrSceneKeptMs},
+                                                  {QStringLiteral("rewound"), rewound}});
+    access->setDocument(doc);
+    if (pose == DsrRewindPose::OlderCore) {
+        access->setState(RecordingsAccess::State::NeedsNewerCore);
+    }
+    link->setAccess(access);
+    if (pose == DsrRewindPose::OlderCore) {
+        // Pulled back as far as this window's own minutes go.
+        sw->setWaterfallHistoryOffsetForTest(sw->maxWaterfallHistoryOffsetRows());
+        if (sw->wfLive()) {
+            ctx.failure = QStringLiteral("the waterfall has no history to pull back into");
+        }
+        ctx.notes.append(QStringLiteral("the first pan's rewind follows a fake older Core (no recordings)"));
+        return;
+    }
+    int answered = 0;
+    if (pose != DsrRewindPose::Drawing) {
+        answerDsrScene(access, band, answered);
+        pump(kSettleMs);
+        answerDsrScene(access, band, answered);
+    }
+    if (auto* map = qobject_cast<DsrHoursMap*>(sw->dsrHoursMapForTest())) {
+        map->setHours(dsrSceneHours());
+    }
+    if (pose == DsrRewindPose::TypedTime) {
+        const QRect strip = sw->waterfallTimeScaleRectForTest();
+        sw->openDsrGoto(sw->waterfallTopUtcMs(), strip.top() + strip.height() / 3);
+    }
+    ctx.notes.append(QStringLiteral("the first pan's rewind follows a fake recordings access (no Core); its past "
+                                    "rows are drawn from the pose's band"));
+}
+
+void sceneDsrRewind(SceneContext& ctx, const QString& name, DsrRewindPose pose)
+{
+    ctx.provenance = provProposed();
+    const QVector<PanPose> poses = dsrRewindPoses();
+    const PanSpectrum band = poses.constFirst().spectrum;
+    const qint64 started = QDateTime::currentMSecsSinceEpoch();
+    noteNotShown(ctx, QStringLiteral("the waterfall's clock"),
+                 QStringLiteral("set to the mockup's 14:32 UTC; the strip's seconds move with the run"));
+    runWindowScene(
+        ctx, poses, 0,
+        [started](SceneContext& c) {
+            SpectrumWidget* sw = spectrumFor(c.window, panIdAt(0));
+            if (sw == nullptr) {
+                c.failure = QStringLiteral("no spectrum on the first pan");
+                return;
+            }
+            sw->setWaterfallClockForTest(
+                [started] { return kDsrSceneNowMs + (QDateTime::currentMSecsSinceEpoch() - started); });
+        },
+        [pose, band](SceneContext& c) { poseDsrRewind(c, pose, band); });
+    if (!ctx.failure.isEmpty()) {
+        return;
+    }
+    captureWindow(ctx, name);
+}
+
 void sceneFlagFoldTwoBand(SceneContext& ctx, const QString& name)
 {
     runWindowScene(ctx, twoBandPoses(), 0, {}, [](SceneContext& c) {
@@ -11182,6 +11366,18 @@ QVector<Scene> fixedScenes()
         const VoiceButtonPose p = pose;
         scenes.append({name, QStringLiteral("1"), false,
                        [name, p](SceneContext& ctx) { sceneVoiceButton(ctx, name, p); }, true});
+    }
+    // ---- Recording plan Task 24: rewind on the waterfall ----
+    for (const auto& [suffix, pose] : std::initializer_list<std::pair<const char*, DsrRewindPose>>{
+             {"past", DsrRewindPose::Past},
+             {"hours", DsrRewindPose::Hours},
+             {"drawing", DsrRewindPose::Drawing},
+             {"typed-time", DsrRewindPose::TypedTime},
+             {"older-core", DsrRewindPose::OlderCore}}) {
+        const QString name = QStringLiteral("dsr-rewind--") + QLatin1String(suffix);
+        const DsrRewindPose p = pose;
+        scenes.append({name, QStringLiteral("1"), false,
+                       [name, p](SceneContext& ctx) { sceneDsrRewind(ctx, name, p); }, true});
     }
     // ---- Recording plan Task 8: Setup > Cores > Recordings ----
     for (const auto& [suffix, sd] : std::initializer_list<std::pair<const char*, bool>>{{"ssd", false},
