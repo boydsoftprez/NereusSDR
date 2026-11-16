@@ -21,6 +21,9 @@
 //   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 7: recordings.list
 //                 by slice and kind, and the reader in its answer.
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 10: version 2 and
+//                 the five on-air switches. AI-assisted implementation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -297,9 +300,9 @@ private slots:
         core.pair(phone);
         LoopbackTransport* app = core.signIn(phone, kRecordings);
         QVERIFY(admitted(app));
-        QCOMPARE(capability(app->received(), QStringLiteral("recordingsVersion")), std::optional<qint64>(1));
+        QCOMPARE(capability(app->received(), QStringLiteral("recordingsVersion")), std::optional<qint64>(2));
         const QJsonObject document = mirrored(app);
-        QCOMPARE(document.value(QStringLiteral("version")).toInt(), 1);
+        QCOMPARE(document.value(QStringLiteral("version")).toInt(), 2);
         QCOMPARE(stateIn(document, 0), QStringLiteral("idle"));
         for (const char* key : {"slices", "kept", "index", "settings"}) {
             QVERIFY2(document.contains(QLatin1String(key)), key);
@@ -311,6 +314,12 @@ private slots:
         for (const char* key : {"keepMyVoice", "sidesApart", "autoStart", "autoStop", "quietMinutes",
                                 "disk", "disks"}) {
             QVERIFY2(settings.contains(QLatin1String(key)), key);
+        }
+        // Version 2: the on-air switches, each off by default.
+        for (const char* key : {"onAirUseTxEq", "onAirUseCompressor", "onAirUseLeveler", "onAirUseCfc",
+                                "onAirUsePhaseRotator"}) {
+            QVERIFY2(settings.contains(QLatin1String(key)), key);
+            QVERIFY2(!settings.value(QLatin1String(key)).toBool(true), key);
         }
 
         // A malformed request is refused in plain words.
@@ -324,6 +333,14 @@ private slots:
                  QString());
         QTRY_COMPARE(mirrored(app).value(QStringLiteral("settings")).toObject()
                          .value(QStringLiteral("quietMinutes")).toInt(), 5);
+        QCOMPARE(refusalOf(core.invoke(app, "recordings.setSettings",
+                                       {MirrorUpdate{0, "onAirUseCompressor", MirrorWireKind::Bool, QVariant(true)},
+                                        MirrorUpdate{0, "onAirUseCfc", MirrorWireKind::Bool, QVariant(true)}})),
+                 QString());
+        QTRY_VERIFY(mirrored(app).value(QStringLiteral("settings")).toObject()
+                        .value(QStringLiteral("onAirUseCompressor")).toBool());
+        QVERIFY(core.model->recordingService()->settings().onAirUseCfc);
+        QVERIFY(!core.model->recordingService()->settings().onAirUseTxEq);
         QCOMPARE(reasonOf(core.invoke(app, "recordings.setSettings", {int64("quietMinutes", 0)})),
                  QStringLiteral("Quiet can be 1 to 60 minutes."));
     }

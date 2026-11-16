@@ -10,6 +10,10 @@
 // =================================================================
 //
 // Modification history (NereusSDR):
+//   2026-11-15 - Recording plan Task 10 by J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code. The on-air input: a recording on
+//                 the air is pulled first in each block and replaces TCI and
+//                 every microphone (in the RADE path, the encoder's input).
 //   2026-10-15 - startPump starts the worker without a Qt priority on
 //                 macOS, so run()'s USER_INTERACTIVE QoS elevation is no
 //                 longer refused. Finding and measurement by Martin
@@ -133,6 +137,7 @@
 #include "audio/RealtimeAudioPriority.h"
 #include "audio/TxMicSource.h"
 #include "platform/ThreadPlacement.h"
+#include "recordings/OnAirSource.h"
 #include "session/media/RemoteMicReceiver.h"
 
 #include <QCoreApplication>
@@ -140,6 +145,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <thread>
 
 Q_LOGGING_CATEGORY(lcTxWorker, "nereus.tx.worker")
 
@@ -156,6 +162,7 @@ TxWorkerThread::TxWorkerThread(QObject* parent)
     m_in.assign(static_cast<size_t>(kBlockFrames) * 2, 0.0);
     m_pcMicBuf.assign(static_cast<size_t>(kBlockFrames), 0.0f);
     m_remoteMicBuf.assign(static_cast<size_t>(kBlockFrames), 0.0f);
+    m_onAirBuf.assign(static_cast<size_t>(kBlockFrames), 0.0f);
     static_assert(kBlockFrames == RemoteMicConfig::kPumpBlockFrames,
                   "the remote microphone ring is pulled a pump block at a time");
 
@@ -226,6 +233,15 @@ void TxWorkerThread::setRadeChannel(RadeChannel* channel)
 void TxWorkerThread::setRemoteMicFeed(RemoteMicFeed* feed)
 {
     m_remoteMicFeed.store(feed, std::memory_order_release);
+}
+
+void TxWorkerThread::setOnAirSource(OnAirSource* source)
+{
+    m_onAirSource.store(source, std::memory_order_seq_cst);
+    // A block that loaded the old source is out of it once this is zero.
+    while (m_onAirPullsInFlight.load(std::memory_order_seq_cst) != 0) {
+        std::this_thread::yield();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -635,6 +651,32 @@ void TxWorkerThread::dispatchOneBlock()
         m_waveformMicEpoch.fetch_add(1, std::memory_order_release);
     }
 
+    // ── Recording plan Task 10: a recording on the air ────────────────────
+    //
+    // OnAirSource, pulled first: while a listener that plays a recording
+    // keys, its playback is the transmit input in place of TCI and every
+    // microphone (in the RADE path, the encoder's input, below). With
+    // nothing on the air it gives no audio and the block goes on exactly as
+    // before. The pull copies from a lock-free ring and returns.
+    bool onAirAudio = false;
+    m_onAirPullsInFlight.fetch_add(1, std::memory_order_seq_cst);
+    if (OnAirSource* const onAir = m_onAirSource.load(std::memory_order_seq_cst)) {
+        onAirAudio = onAir->pull(m_onAirBuf.data(), kBlockFrames);
+    }
+    m_onAirPullsInFlight.fetch_sub(1, std::memory_order_seq_cst);
+    if (onAirAudio && !radePath) {
+        // The recording replaces the whole block, as the TCI branch below
+        // does; Q stays zero (real-only TX input).
+        for (int i = 0; i < kBlockFrames; ++i) {
+            m_in[static_cast<size_t>(2 * i + 0)] =
+                static_cast<double>(m_onAirBuf[static_cast<size_t>(i)]);
+            m_in[static_cast<size_t>(2 * i + 1)] = 0.0;
+        }
+        m_txChannel->pumpDexp(m_in.data());
+        m_txChannel->driveOneTxBlockFromInterleaved(m_in.data());
+        return;
+    }
+
     // ── Phase 3J-1 bench fix (2026-05-10): TCI audio source override ───────
     //
     // When a TCI client holds the TX audio mutex (trx:N,true,tci;) the
@@ -737,7 +779,14 @@ void TxWorkerThread::dispatchOneBlock()
         //
         // Empty pulls and short-pulls are zero-filled so silent ticks
         // produce silent RADE output (no leaked radio mic).
-        if (remoteMicInUse) {
+        if (onAirAudio) {
+            // Recording plan Task 10: a recording on the air is what the
+            // encoder hears, ahead of every microphone.
+            for (int i = 0; i < kBlockFrames; ++i) {
+                m_radeMicFloat[static_cast<size_t>(i)] =
+                    m_onAirBuf[static_cast<size_t>(i)];
+            }
+        } else if (remoteMicInUse) {
             // Task 36: a remote device's microphone, ahead of every local
             // source, as in the normal path below.
             for (int i = 0; i < kBlockFrames; ++i) {

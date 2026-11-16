@@ -21,6 +21,9 @@
 //                 readers, local and remote, each get their own page, with
 //                 the slice and kind filters. AI-assisted implementation via
 //                 Anthropic Claude Code.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 10: the Core offers
+//                 version 2. AI-assisted implementation via Anthropic Claude
+//                 Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -313,7 +316,7 @@ private slots:
         RecordingsAccess* access = core.model->recordings();
         QVERIFY(qobject_cast<LocalRecordingsAccess*>(access) != nullptr);
         QCOMPARE(access->state(), RecordingsAccess::State::Ready);
-        QCOMPARE(access->coreVersion(), 1);
+        QCOMPARE(access->coreVersion(), 2);
         QVERIFY(access->coreIsOnThisComputer());
 
         QSignalSpy state(access, &RecordingsAccess::stateChanged);
@@ -337,7 +340,9 @@ private slots:
         RecordingService* service = core.model->recordingService();
         RecordingsAccess* access = core.model->recordings();
         QCOMPARE(access->unavailableReason(), QString());
-        QCOMPARE(access->unavailableReason(2), kNewerCore);
+        // Version 2 (Task 10): the on-air switches work on this Core.
+        QCOMPARE(access->unavailableReason(2), QString());
+        QCOMPARE(access->unavailableReason(3), kNewerCore);
         QSignalSpy refused(access, &RecordingsAccess::refused);
         QSignalSpy kept(access, &RecordingsAccess::kept);
         QCOMPARE(stateOfSlice(access->document(), 0), QStringLiteral("idle"));
@@ -478,9 +483,11 @@ private slots:
         RecordingsAccess* access = remote.access();
         QVERIFY(remote.connectTo(core, this));
         QTRY_COMPARE(access->state(), RecordingsAccess::State::Ready);
-        QCOMPARE(access->coreVersion(), 1);
+        QCOMPARE(access->coreVersion(), 2);
         QCOMPARE(access->unavailableReason(), QString());
-        QCOMPARE(access->unavailableReason(2), kNewerCore);
+        // Version 2 (Task 10): the on-air switches work on this Core.
+        QCOMPARE(access->unavailableReason(2), QString());
+        QCOMPARE(access->unavailableReason(3), kNewerCore);
         QCOMPARE(stateOfSlice(access->document(), 0), QStringLiteral("idle"));
         QSignalSpy refused(access, &RecordingsAccess::refused);
         QSignalSpy kept(access, &RecordingsAccess::kept);

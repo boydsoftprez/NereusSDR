@@ -96,6 +96,9 @@ public:
     RecordLook recordLook() const { return m_recordLook; }
     /// This window plays a recording now.
     bool isPlaying() const;
+    /// This window's playback goes out on the air now (it keyed while it
+    /// plays): the playing label turns red with ON AIR, as does Play's ring.
+    bool isOnAir() const;
     /// The slice's latest contact recording, empty when it has none.
     QString latestRecordingId() const;
     /// The slice's contact recordings in the right-click list, newest first.

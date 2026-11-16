@@ -7,6 +7,10 @@
 // 2026-11-15  J.J. Boyd / KG4VCF; the player (spec 6.1 Player, 6.3, V6),
 //             and its feed to the listener's own speakers. AI tooling:
 //             Anthropic Claude Code.
+// 2026-11-15  J.J. Boyd / KG4VCF; on the air (spec 3, 6.1, 6.3, V5, V6,
+//             A6): the on-air source follows MOX, and a listener's playback
+//             has one reader, its speakers or the transmitter. AI tooling:
+//             Anthropic Claude Code.
 
 #include "RecordingService.h"
 
@@ -71,6 +75,7 @@ RecordingService::RecordingService(RadioModel* radio, QObject* parent)
     , m_store(std::make_unique<RecordingStore>())
     , m_settings(RecordingSettings::load())
     , m_clock([] { return QDateTime::currentMSecsSinceEpoch(); })
+    , m_onAir(std::make_unique<OnAirSource>(*this))
 {
     qRegisterMetaType<ListenerId>("NereusSDR::ListenerId");
     m_listenerSlots.insert(QString::fromLatin1(kLocalListener), AudioEngine::kLocalPlaybackSlotId);
@@ -79,9 +84,21 @@ RecordingService::RecordingService(RadioModel* radio, QObject* parent)
     connect(m_quietTimer, &QTimer::timeout, this, &RecordingService::checkQuiet);
 
     if (m_radio) {
+        RadioModel* radio = m_radio;
+        m_onAir->setTransmitChain([radio] { return radio->txChannel(); }, &radio->transmitModel());
         if (MoxController* mox = m_radio->moxController()) {
-            connect(mox, &MoxController::moxChanged, this,
-                    [this](int, bool, bool on) { setTransmitting(on); });
+            connect(mox, &MoxController::moxChanged, this, [this](int, bool, bool on) {
+                setTransmitting(on);
+                if (!on) {
+                    keyChanged(false, std::nullopt);
+                }
+            });
+            // On the air from the start of the key, so its first block is the
+            // recording, and off at the start of the unkey.
+            connect(mox, &MoxController::txAboutToBegin, this, [this, mox] {
+                keyChanged(true, listenerForKey(mox->currentKeyer(), mox->isManualMox()));
+            });
+            connect(mox, &MoxController::txAboutToEnd, this, [this] { keyChanged(false, std::nullopt); });
         }
         connect(m_radio, &RadioModel::sliceAdded, this, &RecordingService::onSliceAdded);
         connect(m_radio, &RadioModel::sliceRemoved, this, &RecordingService::onSliceRemoved);
@@ -96,6 +113,7 @@ RecordingService::RecordingService(RadioModel* radio, QObject* parent)
 
 RecordingService::~RecordingService()
 {
+    m_onAir->end();
     stopAll();
 
     // No drain may still pull from here, and nothing on the audio thread
@@ -744,12 +762,14 @@ std::optional<PlaybackState> RecordingService::playback(const ListenerId& who) c
         return std::nullopt;
     }
     const Listener& l = it.value();
+    const bool onAir = l.channel >= 0
+        && m_playChannels[static_cast<size_t>(l.channel)].route.load(std::memory_order_seq_cst) == kRouteOnAir;
     return PlaybackState{who,
                          l.recordingId,
                          l.player ? l.player->positionMs() : l.positionMs,
                          l.player ? l.player->lengthMs() : l.lengthMs,
                          l.playing,
-                         false};
+                         onAir};
 }
 
 int RecordingService::pullPlayback(const ListenerId& who, float* mono48k, int frames) noexcept
@@ -831,6 +851,89 @@ void RecordingService::setListenerSpeakerSlot(const ListenerId& who, int playbac
     }
 }
 
+// ---- On the air.
+
+std::optional<ListenerId> RecordingService::listenerForKey(const KeyerIdentity& keyer, bool tune)
+{
+    if (tune || keyer.program || keyer.tunerPress || keyer.source == PttMode::Manual
+        || keyer.source == PttMode::Cw) {
+        return std::nullopt;
+    }
+    if (keyer.isStation()) {
+        return QString::fromLatin1(kLocalListener);
+    }
+    if (keyer.deviceId.isEmpty()) {
+        return std::nullopt;
+    }
+    return QString::fromLatin1(keyer.deviceId);
+}
+
+void RecordingService::keyChanged(bool on, const std::optional<ListenerId>& keyer)
+{
+    if (!on) {
+        m_onAir->end();
+        return;
+    }
+    // V6: only the keying device's own playback goes out.
+    if (keyer.has_value() && m_onAir->active() == OnAirSource::Kind::None) {
+        m_onAir->beginPlayback(*keyer);
+    }
+}
+
+int RecordingService::beginOnAir(const ListenerId& who)
+{
+    const auto it = m_listeners.constFind(who);
+    if (it == m_listeners.cend() || !it->playing || !it->player || it->channel < 0) {
+        return -1;
+    }
+    PlaybackChannel& ch = m_playChannels[static_cast<size_t>(it->channel)];
+    ch.route.store(kRouteOnAir, std::memory_order_seq_cst);
+    // A speaker pull that started before the flag may still be reading:
+    // once it is out, the transmitter is the only reader.
+    waitForPulls();
+    emit playbackChanged(who);
+    return it->channel;
+}
+
+void RecordingService::endOnAir(int channel)
+{
+    if (channel < 0 || channel >= kMaxPlaybackListeners) {
+        return;
+    }
+    PlaybackChannel& ch = m_playChannels[static_cast<size_t>(channel)];
+    ch.route.store(kRouteSpeaker, std::memory_order_seq_cst);
+    if (ch.bound.load(std::memory_order_seq_cst)) {
+        emit playbackChanged(ch.listener);
+    }
+}
+
+int RecordingService::pullOnAir(int channel, float* mono48k, int frames) noexcept
+{
+    int n = -1;
+    if (channel >= 0 && channel < kMaxPlaybackListeners && !m_playClosed.load(std::memory_order_seq_cst)) {
+        m_pullsInFlight.fetch_add(1, std::memory_order_seq_cst);
+        if (!m_playClosed.load(std::memory_order_seq_cst)) {
+            PlaybackChannel& ch = m_playChannels[static_cast<size_t>(channel)];
+            if (ch.bound.load(std::memory_order_seq_cst)
+                && ch.route.load(std::memory_order_seq_cst) == kRouteOnAir) {
+                RecordingPlayer* player = ch.player.load(std::memory_order_seq_cst);
+                // A recording taken to its end has nothing left to send: the
+                // microphone takes over from this block (V5).
+                if (player != nullptr && !player->finished()) {
+                    n = player->pull(mono48k, frames);
+                }
+            }
+        }
+        m_pullsInFlight.fetch_sub(1, std::memory_order_seq_cst);
+    }
+    return n;
+}
+
+MicProfileManager* RecordingService::micProfiles() const
+{
+    return m_radio ? m_radio->micProfileManager() : nullptr;
+}
+
 void RecordingService::startPlayer(const ListenerId& who, Listener& l, qint64 fromMs)
 {
     dropPlayer(l);
@@ -873,6 +976,10 @@ void RecordingService::endListener(const ListenerId& who)
     if (it == m_listeners.end()) {
         return;
     }
+    // Its recording stops going out first; the radio stays keyed.
+    if (m_onAir->playbackListener() == who) {
+        m_onAir->end();
+    }
     dropPlayer(it.value());
     PlaybackChannel& ch = m_playChannels[static_cast<size_t>(it->channel)];
     ch.player.store(nullptr, std::memory_order_seq_cst);
@@ -914,6 +1021,10 @@ void RecordingService::onPlaybackEnded(const ListenerId& who, quint64 token)
         return;
     }
     Listener& l = it.value();
+    // V5: it ended on the air; the microphone already has the key.
+    if (m_onAir->playbackListener() == who) {
+        m_onAir->end();
+    }
     dropPlayer(l);
     l.positionMs = l.lengthMs;
     l.playing = false;

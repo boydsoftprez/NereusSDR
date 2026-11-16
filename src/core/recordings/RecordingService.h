@@ -9,11 +9,16 @@
 // 2026-11-15  J.J. Boyd / KG4VCF; the player: one playback per listener,
 //             decoded on the worker, pulled by the audio thread (spec 6.1
 //             Player, 6.3, V6). AI tooling: Anthropic Claude Code.
+// 2026-11-15  J.J. Boyd / KG4VCF; on the air: keying from a listener that
+//             plays sends its playback in place of its microphone, through
+//             the on-air source (spec 3, 6.1, 6.3, V5, V6, A6). AI tooling:
+//             Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
 #include "core/audio/PlaybackFeed.h"
 #include "core/recordings/AudioFileWriter.h"
+#include "core/recordings/OnAirSource.h"
 #include "core/recordings/QuietRule.h"
 #include "core/recordings/RecordingPlayer.h"
 #include "core/recordings/RecordingSettings.h"
@@ -41,8 +46,10 @@ namespace NereusSDR {
 
 class AudioEngine;
 class ContactRecorder;
+class MicProfileManager;
 class RadioModel;
 class RecordingStore;
+struct KeyerIdentity;
 
 enum class RecordState { Idle, Armed, Recording };
 enum class KeptReason { StoppedHere, StoppedOnDevice, StoppedQuiet, DiskFull, KeptAsWav };
@@ -145,6 +152,29 @@ public:
     // PlaybackFeed, the DSP thread: the playback of whoever is bound to the
     // slot, while it is routed to the speakers.
     int pullSpeaker(int playbackSlotId, float* mono48k, int frames) noexcept override;
+
+    // ---- On the air (spec 3, 6.1, 6.3, V5, V6): keying from a listener
+    // while it plays sends its playback in place of its microphone, from
+    // where it is, until the key ends or the recording does. Playing alone
+    // never keys.
+    OnAirSource* onAirSource() const { return m_onAir.get(); }
+    // Whose playback a key may send: the station's own key is the window
+    // that runs the radio ("local"), a remote device's key is its device id.
+    // A program's key (TCI, CAT), TUNE and CW send none.
+    static std::optional<ListenerId> listenerForKey(const KeyerIdentity& keyer, bool tune);
+    // The radio keyed for `keyer` (on), or unkeyed. Followed from
+    // MoxController (txAboutToBegin, txAboutToEnd, moxChanged).
+    void keyChanged(bool on, const std::optional<ListenerId>& keyer);
+    // OnAirSource's. beginOnAir takes who's playback off its speakers and
+    // returns its channel, or -1 when who plays nothing; endOnAir gives it
+    // back to them. pullOnAir (audio thread): as pullPlayback for that
+    // channel, or -1 once there is no recording left to send.
+    int beginOnAir(const ListenerId& who);
+    void endOnAir(int channel);
+    int pullOnAir(int channel, float* mono48k, int frames) noexcept;
+    // The microphone profiles whose switch re-sends the transmit
+    // processing (null without a radio).
+    MicProfileManager* micProfiles() const;
 
     // ---- Test seams.
     using Clock = std::function<qint64()>;
@@ -296,6 +326,8 @@ private:
     mutable std::atomic<int> m_pullsInFlight{0};
     quint64 m_nextPlayToken = 1;
     QTimer* m_quietTimer = nullptr;
+    // Last, so it goes first: its end() still reaches the channels above.
+    std::unique_ptr<OnAirSource> m_onAir;
 };
 
 }  // namespace NereusSDR

@@ -19,6 +19,10 @@
 //                 reader, asking for the slice's last eight contact
 //                 recordings. AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 10: the ON AIR
+//                 look, the playing label and Play's ring in red while the
+//                 recording goes out. AI-assisted implementation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "gui/recordings/FlagRecordPlay.h"
@@ -73,6 +77,11 @@ constexpr auto kRecordRed = "#ff453a";
 constexpr auto kArmedRing = "#ff6b62";
 constexpr auto kArmedRim = "#7a2c2e";
 constexpr auto kPlayBlue = "#3a9cff";
+// On the air (recording-together mockup): the playing label's ink, rim and
+// fill, and the ON AIR badge.
+constexpr auto kOnAirInk = "#ffd0cc";
+constexpr auto kOnAirFill = "rgba(90,20,16,240)";
+constexpr auto kOnAirName = "#ffffff";
 
 // A disabled button's glyph: the resting ink at the mockup's 0.38 opacity
 // (the sheet draws a disabled button like an enabled one).
@@ -145,6 +154,15 @@ QString labelSheet(const char* ink, const char* rim, bool mono)
                "  color: %2; padding: 0 7px; font-size: 11px; font-weight: 600; %3 }")
         .arg(QLatin1String(rim), QLatin1String(ink),
              mono ? QStringLiteral("font-family: 'Menlo', 'Consolas', monospace;") : QString());
+}
+
+QString onAirLabelSheet()
+{
+    return QStringLiteral(
+               "QLabel { background: %1; border: 1px solid %2; border-radius: 9px;"
+               "  color: %3; padding: 0 7px; font-size: 11px; font-weight: 600;"
+               "  font-family: 'Menlo', 'Consolas', monospace; }")
+        .arg(QLatin1String(kOnAirFill), QLatin1String(kRecordRed), QLatin1String(kOnAirInk));
 }
 
 const char* kKeptSheet =
@@ -400,6 +418,15 @@ bool FlagRecordPlay::isPlaying() const
     return playback.has_value() && playback->playing;
 }
 
+bool FlagRecordPlay::isOnAir() const
+{
+    if (!m_access) {
+        return false;
+    }
+    const std::optional<PlaybackState> playback = m_access->playback();
+    return playback.has_value() && playback->playing && playback->onAir;
+}
+
 QList<RecordingEntry> FlagRecordPlay::recentRecordings() const
 {
     QList<RecordingEntry> out;
@@ -473,7 +500,7 @@ QString FlagRecordPlay::playLabelText() const
     if (!playLabelParts(&name, &times)) {
         return {};
     }
-    return name + QStringLiteral("  ") + times;
+    return (isOnAir() ? QStringLiteral("ON AIR  ") : QString()) + name + QStringLiteral("  ") + times;
 }
 
 QString FlagRecordPlay::keptReasonText(const QJsonObject& kept, int quietMinutes, bool coreHere)
@@ -701,6 +728,12 @@ void FlagRecordPlay::applyPlayLook()
         b->setToolTip(why);
         b->setIcon(glyphIcon(Glyph::Triangle, disabledInk()));
         b->setAccessibleName(QStringLiteral("Play"));
+    } else if (playing && isOnAir()) {
+        // On the air: the ring and the glyph in red.
+        b->setToolTip(QStringLiteral("Stop playing"));
+        b->setIcon(glyphIcon(Glyph::Square, QColor(QLatin1String(kRecordRed))));
+        b->setAccessibleName(QStringLiteral("Stop playing"));
+        sheet = rimmedSheet(kRecordRed);
     } else if (playing) {
         b->setToolTip(QStringLiteral("Stop playing"));
         b->setIcon(glyphIcon(Glyph::Square, QColor(QLatin1String(kPlayBlue))));
@@ -754,13 +787,26 @@ void FlagRecordPlay::placeLabels()
         QString html;
         QString name;
         QString times;
+        const bool onAir = isOnAir();
         if (playLabelParts(&name, &times)) {
             // The recording's name in the window's own font, the times in
-            // the label's monospace.
-            html = QStringLiteral("<span style=\"font-family:'%1'; color:#dcdce1;\">%2</span>&nbsp;&nbsp;%3")
-                       .arg(QApplication::font().family().toHtmlEscaped(),
-                            name.toHtmlEscaped().replace(QStringLiteral("  "), QStringLiteral("&nbsp;&nbsp;")),
-                            times.toHtmlEscaped());
+            // the label's monospace. On the air: the ON AIR badge first, the
+            // name in white.
+            const QString badge = onAir
+                ? QStringLiteral("<span style=\"font-family:'%1'; font-weight:800; background-color:%2;"
+                                 " color:#ffffff;\">&nbsp;ON AIR&nbsp;</span>&nbsp;&nbsp;")
+                      .arg(QApplication::font().family().toHtmlEscaped(), QLatin1String(kRecordRed))
+                : QString();
+            html = badge
+                + QStringLiteral("<span style=\"font-family:'%1'; color:%2;\">%3</span>&nbsp;&nbsp;%4")
+                      .arg(QApplication::font().family().toHtmlEscaped(),
+                           QLatin1String(onAir ? kOnAirName : "#dcdce1"),
+                           name.toHtmlEscaped().replace(QStringLiteral("  "), QStringLiteral("&nbsp;&nbsp;")),
+                           times.toHtmlEscaped());
+        }
+        const QString sheet = onAir ? onAirLabelSheet() : labelSheet("#8cc4ff", "#24507e", true);
+        if (m_playLabel->styleSheet() != sheet) {
+            m_playLabel->setStyleSheet(sheet);
         }
         place(m_playLabel.data(), m_playButton.data(), html);
     }

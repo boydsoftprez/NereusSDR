@@ -6,6 +6,9 @@
 //   2026-11-15 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 5.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 10: the five on-air
+//                 switches in the settings. AI-assisted implementation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/RecordingsFacade.h"
@@ -288,7 +291,12 @@ QJsonObject RecordingsFacade::settingsJson(const RecordingSettings& settings)
         {QStringLiteral("quietMinutes"), settings.quietMinutes},
         {QStringLiteral("format"),
          settings.format == AudioFileFormat::Wav ? QStringLiteral("wav") : QStringLiteral("mp3")},
-        {QStringLiteral("disk"), QDir::toNativeSeparators(settings.disk)}};
+        {QStringLiteral("disk"), QDir::toNativeSeparators(settings.disk)},
+        {QStringLiteral("onAirUseTxEq"), settings.onAirUseTxEq},
+        {QStringLiteral("onAirUseCompressor"), settings.onAirUseCompressor},
+        {QStringLiteral("onAirUseLeveler"), settings.onAirUseLeveler},
+        {QStringLiteral("onAirUseCfc"), settings.onAirUseCfc},
+        {QStringLiteral("onAirUsePhaseRotator"), settings.onAirUsePhaseRotator}};
 }
 
 bool RecordingsFacade::applySettingsChange(const QJsonObject& changed,
@@ -319,6 +327,16 @@ bool RecordingsFacade::applySettingsChange(const QJsonObject& changed,
             flag = &next.autoStartOnTransmit;
         } else if (name == QLatin1String("autoStop")) {
             flag = &next.autoStopWhenQuiet;
+        } else if (name == QLatin1String("onAirUseTxEq")) {
+            flag = &next.onAirUseTxEq;
+        } else if (name == QLatin1String("onAirUseCompressor")) {
+            flag = &next.onAirUseCompressor;
+        } else if (name == QLatin1String("onAirUseLeveler")) {
+            flag = &next.onAirUseLeveler;
+        } else if (name == QLatin1String("onAirUseCfc")) {
+            flag = &next.onAirUseCfc;
+        } else if (name == QLatin1String("onAirUsePhaseRotator")) {
+            flag = &next.onAirUsePhaseRotator;
         }
         if (flag != nullptr) {
             if (!value.isBool()) {

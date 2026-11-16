@@ -12071,6 +12071,13 @@ nereus_add_test(tst_recording_contact CORE_ONLY)
 # (src/core/recordings/RecordingPlayer.cpp, RecordingService.cpp,
 # src/core/audio/MasterMixer.cpp).
 nereus_add_test(tst_recording_player CORE_ONLY)
+# A recording on the air: keying while it plays sends it from where it is,
+# another device's key sends its own microphone, the end hands over to the
+# microphone within one block, and the five processing switches act on the
+# TX channel and come back from TransmitModel (src/core/recordings/
+# OnAirSource.cpp, RecordingService.cpp, src/core/TxWorkerThread.cpp).
+nereus_add_test(tst_recording_on_air CORE_ONLY)
+target_compile_definitions(tst_recording_on_air PRIVATE NEREUS_BUILD_TESTS)
 
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)

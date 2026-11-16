@@ -319,6 +319,10 @@
 //                pose Setup > Cores > Recordings against a fake recordings access, as the approved
 //                recording-settings mockup's two Cores do.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 10: flag-recplay--onair, Slice A's
+//                recording on the air (the playing label red with ON AIR, Play's ring red), as
+//                the recording-together mockup shows it. AI-assisted implementation via
+//                Anthropic Claude Code.
 
 #include "models/MainPowerMeter.h"
 #include "models/AmplifierModel.h"
@@ -8560,7 +8564,7 @@ void addFoldStateCrops(SceneContext& ctx, QVector<CropRect>& crops, double dpr)
 // The window's own recordings access has no Core behind it, so a fake one
 // takes its place on Slice A's flag; it starts nothing and keys nothing.
 
-enum class RecPlayPose { Idle, Recording, RecordingMyVoice, Armed, Playing, Kept, Menu, OlderCore };
+enum class RecPlayPose { Idle, Recording, RecordingMyVoice, Armed, Playing, OnAir, Kept, Menu, OlderCore };
 
 QVector<PanPose> recPlayPoses()
 {
@@ -8634,9 +8638,9 @@ FlagRecordPlay* poseRecPlay(SceneContext& ctx, RecPlayPose pose)
     const QString folder = QDir::homePath() + QStringLiteral("/Music/NereusSDR Recordings");
     access->setDocument(FakeRecordingsAccess::document(
         {FakeRecordingsAccess::slice(slice, state, elapsed, myVoice)}, 1, folder));
-    if (pose == RecPlayPose::Playing) {
+    if (pose == RecPlayPose::Playing || pose == RecPlayPose::OnAir) {
         access->setPlayback(PlaybackState{QStringLiteral("local"), QStringLiteral("rec-1"), 12000, 312000, true,
-                                          false});
+                                          pose == RecPlayPose::OnAir});
     }
     if (pose == RecPlayPose::OlderCore) {
         access->setState(RecordingsAccess::State::NeedsNewerCore);
@@ -10936,6 +10940,7 @@ QVector<Scene> fixedScenes()
              {"recording-myvoice", RecPlayPose::RecordingMyVoice},
              {"armed", RecPlayPose::Armed},
              {"playing", RecPlayPose::Playing},
+             {"onair", RecPlayPose::OnAir},
              {"kept", RecPlayPose::Kept},
              {"menu", RecPlayPose::Menu},
              {"older-core", RecPlayPose::OlderCore}}) {

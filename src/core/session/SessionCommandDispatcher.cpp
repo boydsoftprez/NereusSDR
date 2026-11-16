@@ -6,6 +6,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-15: Recording plan Task 10: recordings.setSettings takes the five
+//               on-air switches (recordingsVersion 2).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-15: Recording plan Task 7: recordings.list takes slice, kind and
 //               reader; the answer names the reader.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -961,7 +964,11 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
          {optionalArg("keepMyVoice", kBool), optionalArg("sidesApart", kBool),
           optionalArg("autoStart", kBool), optionalArg("autoStop", kBool),
           optionalArg("quietMinutes", kInt), optionalArg("format", kUtf8),
-          optionalArg("disk", kUtf8)},
+          optionalArg("disk", kUtf8),
+          // Recording plan Task 10 (recordingsVersion 2): the on-air switches.
+          optionalArg("onAirUseTxEq", kBool), optionalArg("onAirUseCompressor", kBool),
+          optionalArg("onAirUseLeveler", kBool), optionalArg("onAirUseCfc", kBool),
+          optionalArg("onAirUsePhaseRotator", kBool)},
          "recordingsVersion", 1, kRadioIdentitySessionProtocolMinor},
         {"paProfile.setUseMax", {arg("band", kInt), arg("on", kBool)}, "paProfileVersion", 1,
          kRadioIdentitySessionProtocolMinor},

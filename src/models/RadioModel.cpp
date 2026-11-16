@@ -20,6 +20,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-15 — Recording plan Task 10: the TX worker pulls the recording
+//                 service's on-air source, and lets go of it before the
+//                 service goes. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-11-15 — Recording plan Task 5: the `recordings` facade and the
 //                 recordings access by role. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
@@ -5691,6 +5695,11 @@ RadioModel::~RadioModel()
     // Recording plan Task 5: the facade stops following it first.
     if (m_recordingsFacade != nullptr) {
         m_recordingsFacade->bind(nullptr);
+    }
+    // Recording plan Task 10: no transmit block may still read its on-air
+    // source.
+    if (m_txWorker) {
+        m_txWorker->setOnAirSource(nullptr);
     }
     m_recordingService.reset();
     // The band stack writes its last change while the model is whole.
@@ -22994,6 +23003,11 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
                 // which outlives the worker.
                 m_txWorker->setRemoteMicFeed(m_remoteMicFeed.get());
                 m_txWorker->setRemoteRadioMicActive(m_remoteRadioMicActive);
+                // Recording plan Task 10: a recording on the air, pulled
+                // first in each block (the service outlives the worker).
+                if (m_recordingService) {
+                    m_txWorker->setOnAirSource(m_recordingService->onAirSource());
+                }
                 // R-R3-39: the TX channel stays on this thread. Its setters
                 // post their WDSP calls to the transmit lane (applied even
                 // while no mic block arrives); the worker only runs the

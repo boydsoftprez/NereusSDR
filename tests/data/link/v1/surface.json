@@ -602,7 +602,7 @@
         {
             "kind": "i64",
             "name": "recordingsVersion",
-            "value": 1
+            "value": 2
         },
         {
             "kind": "i64",
@@ -1756,6 +1756,31 @@
                 {
                     "kind": "utf8",
                     "name": "disk",
+                    "optional": true
+                },
+                {
+                    "kind": "bool",
+                    "name": "onAirUseTxEq",
+                    "optional": true
+                },
+                {
+                    "kind": "bool",
+                    "name": "onAirUseCompressor",
+                    "optional": true
+                },
+                {
+                    "kind": "bool",
+                    "name": "onAirUseLeveler",
+                    "optional": true
+                },
+                {
+                    "kind": "bool",
+                    "name": "onAirUseCfc",
+                    "optional": true
+                },
+                {
+                    "kind": "bool",
+                    "name": "onAirUsePhaseRotator",
                     "optional": true
                 }
             ],

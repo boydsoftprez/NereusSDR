@@ -6,13 +6,13 @@
 // src/core/session/RecordingsFacade.h  (NereusSDR)
 // =================================================================
 //
-// The mirrored `recordings` object (recordingsVersion 1): the Core's
+// The mirrored `recordings` object (recordingsVersion 2): the Core's
 // recordings as one document, so every device shows every slice's Record
 // state, the last recording kept, the index and the recording settings.
 // Design: docs/architecture/2026-11-15-recording-voice-keyer-dsr-design.md,
 // section 6.9.
 //
-//   json      { "version": 1,
+//   json      { "version": 2,
 //               "slices":   [ { "slice", "state" (idle, armed, recording),
 //                               "startUtc", "startedBy", "elapsedMs",
 //                               "myVoice" } ],
@@ -24,7 +24,10 @@
 //               "settings": { "keepMyVoice", "sidesApart", "autoStart",
 //                             "autoStop", "quietMinutes", "format" (mp3, wav),
 //                             "disk", "disks": [ { "root", "name", "free",
-//                             "total", "sd", "own" } ] } }
+//                             "total", "sd", "own" } ],
+//                             "onAirUseTxEq", "onAirUseCompressor",
+//                             "onAirUseLeveler", "onAirUseCfc",
+//                             "onAirUsePhaseRotator" } }
 //             `kept.seq` moves by one for each recording kept; 0 means none
 //             yet. `index.revision` moves by one each time the list of
 //             recordings changes (kept, renamed, deleted). `elapsedMs` is the
@@ -42,6 +45,10 @@
 //   2026-11-15 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 5.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 10: version 2, a
+//                 recording on the air, and the five on-air switches in the
+//                 settings. AI-assisted implementation via Anthropic Claude
+//                 Code.
 // =================================================================
 
 #include <QByteArray>
@@ -70,8 +77,10 @@ class NEREUS_CORE_EXPORT RecordingsFacade final : public QObject {
     Q_PROPERTY(quint32 revision READ revision NOTIFY changed)
 
 public:
-    /// The recordingsVersion this Core offers.
-    static constexpr int kVersion = 1;
+    /// The recordingsVersion this Core offers. 2: a recording goes on the
+    /// air (recordings.playback onAir) and the settings carry the five
+    /// on-air switches.
+    static constexpr int kVersion = 2;
     /// How often the running times are rebuilt while a slice records.
     static constexpr int kElapsedRefreshMs = 1000;
     /// recordings.list sends at most this many entries at once.
@@ -112,7 +121,8 @@ public:
     static QJsonObject settingsJson(const RecordingSettings& settings);
     /// Applies a recordings.setSettings change (the document's settings
     /// names, any of keepMyVoice, sidesApart, autoStart, autoStop,
-    /// quietMinutes, format, disk) to `settings`. False, with the refusal in
+    /// quietMinutes, format, disk, onAirUseTxEq, onAirUseCompressor,
+    /// onAirUseLeveler, onAirUseCfc, onAirUsePhaseRotator) to `settings`. False, with the refusal in
     /// plain words, when a name, a value or its type is not one of them.
     /// `volumes` are the disks a `disk` may name; the Core's own disk is
     /// stored as "".

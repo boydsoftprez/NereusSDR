@@ -1323,7 +1323,7 @@ table.
 | `stationRoundtableVersion` | 2 |
 | `nnrLoadWarningVersion` | 1 |
 | `bandStackVersion` | 1 |
-| `recordingsVersion` | 1 |
+| `recordingsVersion` | 2 |
 | `txSsbModMonitorVersion` | 1 |
 
 <!-- /surface -->
@@ -1651,8 +1651,14 @@ When a feature is off, its version is 0:
   `recordings` 1, on a Core that runs its own radio, after `bandStackVersion`
   (or after the last entry before it when that is absent) and before
   `txSsbModMonitorVersion`. At 1 the Core sends `recordings` (read-only,
-  section 7.1) and takes the `recordings.*` verbs (section 9). The session
-  protocol minor did not change. A client on a Core that sends no entry shows
+  section 7.1) and takes the `recordings.*` verbs (section 9). At 2 a
+  recording goes on the air: keying from a device while its recording plays
+  sends that recording in place of its microphone, from where it is playing,
+  and its `recordings.playback` `onAir` is true while it goes out; the
+  document's `settings` add the five on-air switches, which
+  `recordings.setSettings` takes. A peer that declared `recordings` 1 is sent
+  2 and needs nothing new to use it. The session protocol minor did not
+  change. A client on a Core that sends no entry shows
   its recording controls greyed with "This Core needs an update for
   recordings." and sends nothing.
 - `radeStatusVersion` (RADE on the phone's VFO flag): optional, sent only
@@ -3804,10 +3810,10 @@ destroyed during the session.
 
 Notes on the keys:
 
-- **`recordings`** (`RecordingsFacade`, `recordingsVersion` 1). The Core's
+- **`recordings`** (`RecordingsFacade`, `recordingsVersion` 2). The Core's
   recordings, read-only (a write is refused; the `recordings.*` verbs change
   them), sent only to a peer at agreed minor 11 that declared `recordings` 1.
-  `json` is the document: `version` 1, `slices` (one per open slice: `slice`,
+  `json` is the document: `version` 2, `slices` (one per open slice: `slice`,
   `state` `idle`, `armed` or `recording`, `startUtc`, `startedBy` with "" for
   the Core's own window, `elapsedMs`, `myVoice`), `kept` (the last recording
   kept: `seq`, moving by one for each and 0 for none yet, `slice`, `id`,
@@ -3816,7 +3822,12 @@ Notes on the keys:
   each time the list changes, `count`, `usedBytes`, `freeBytes`, `folder`)
   and `settings` (`keepMyVoice`, `sidesApart`, `autoStart`, `autoStop`,
   `quietMinutes`, `format` `mp3` or `wav`, `disk` with "" for the Core's own,
-  and `disks`: `root`, `name`, `free`, `total`, `sd`, `own`). While a slice
+  `disks`: `root`, `name`, `free`, `total`, `sd`, `own`, and from version 2
+  the on-air switches `onAirUseTxEq`, `onAirUseCompressor`, `onAirUseLeveler`,
+  `onAirUseCfc`, `onAirUsePhaseRotator`, each false by default: while a
+  recording goes on the air the TX EQ, compressor, leveler, CFC and phase
+  rotator are off unless their switch is on, and return to the transmit
+  settings when it stops going out). While a slice
   records, `elapsedMs` is rebuilt once a second. `revision` moves by one each
   time `json` changes. The recordings themselves are not in it: a client asks
   with `recordings.list`.
@@ -6603,7 +6614,7 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `recordings.rename` | `id` utf8, `name` utf8 | `recordingsVersion` | 1 | 11 |
 | `recordings.delete` | `ids` utf8 | `recordingsVersion` | 1 | 11 |
 | `recordings.export` | `id` utf8, `offset` i64 | `recordingsVersion` | 1 | 11 |
-| `recordings.setSettings` | `keepMyVoice` bool (optional), `sidesApart` bool (optional), `autoStart` bool (optional), `autoStop` bool (optional), `quietMinutes` i64 (optional), `format` utf8 (optional), `disk` utf8 (optional) | `recordingsVersion` | 1 | 11 |
+| `recordings.setSettings` | `keepMyVoice` bool (optional), `sidesApart` bool (optional), `autoStart` bool (optional), `autoStop` bool (optional), `quietMinutes` i64 (optional), `format` utf8 (optional), `disk` utf8 (optional), `onAirUseTxEq` bool (optional), `onAirUseCompressor` bool (optional), `onAirUseLeveler` bool (optional), `onAirUseCfc` bool (optional), `onAirUsePhaseRotator` bool (optional) | `recordingsVersion` | 1 | 11 |
 | `paProfile.setUseMax` | `band` i64, `on` bool | `paProfileVersion` | 1 | 11 |
 | `configureRfKit` | `host` utf8, `port` i64 | `remoteRfKitControlVersion` | 2 | 11 |
 | `disconnectRfKit` | none | `remoteRfKitControlVersion` | 2 | 11 |
@@ -7036,8 +7047,10 @@ These command groups need a sentence beyond the table:
   requesting device's own playback, heard in its own speakers only; the Core
   sends that device's sessions, and no other, a `command.result` with verb
   `recordings.playback`, id 0, and `values` `id` ("" once it stops),
-  `positionMs`, `lengthMs`, `playing`, `onAir` each time it changes. A play
-  refused after its answer arrives as a `recordings.play` result with id 0.
+  `positionMs`, `lengthMs`, `playing`, `onAir` each time it changes;
+  `onAir` (version 2) is true while that device's key sends the recording on
+  the air, and the position moves on while it does. A play refused after its
+  answer arrives as a `recordings.play` result with id 0.
   `recordings.rename` takes `id` and `name`, `recordings.delete` takes `ids`,
   a JSON array as text (an id another device deleted first is skipped),
   `recordings.export` answers with `id`, `offset`, `size` (the whole file)

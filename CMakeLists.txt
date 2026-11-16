@@ -1156,6 +1156,8 @@ set(CORE_SOURCES
     src/core/recordings/ContactRecorder.cpp
     src/core/recordings/RecordingService.cpp
     src/core/recordings/RecordingPlayer.cpp
+    # A recording on the air: the transmitter's input while it goes out.
+    src/core/recordings/OnAirSource.cpp
     src/core/RadeChannel.cpp
     src/core/RadeV2Feature.cpp
     src/core/RadeRxWorker.cpp

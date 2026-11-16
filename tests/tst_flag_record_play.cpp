@@ -27,6 +27,8 @@
 //   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 7: the flag's list
 //                 request is its own slice's last eight contact recordings.
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 10: the ON AIR
+//                 look. AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QAction>
@@ -254,6 +256,23 @@ private slots:
         QCOMPARE(f.play()->toolTip(), QStringLiteral("Stop playing"));
         QCOMPARE(f.rp->playLabelText(), QStringLiteral("7.236.400 LSB  K4ABC  0:12 / 3:25"));
         QVERIFY(f.rp->playLabelForTest()->isVisible());
+        QVERIFY(!f.rp->isOnAir());
+        QVERIFY(!f.rp->playLabelForTest()->text().contains(QStringLiteral("ON AIR")));
+
+        // Recording plan Task 10: keyed while it plays, it goes on the air.
+        const QString blueRing = f.play()->styleSheet();
+        f.access.setPlayback(PlaybackState{QStringLiteral("local"), QStringLiteral("a2"), 12000, 205000, true, true});
+        QVERIFY(f.rp->isOnAir());
+        QCOMPARE(f.rp->playLabelText(), QStringLiteral("ON AIR  7.236.400 LSB  K4ABC  0:12 / 3:25"));
+        QVERIFY(f.rp->playLabelForTest()->text().contains(QStringLiteral("ON AIR")));
+        QVERIFY(f.rp->playLabelForTest()->styleSheet().contains(QStringLiteral("#ff453a")));
+        QVERIFY(f.play()->styleSheet().contains(QStringLiteral("#ff453a")));
+        QVERIFY(f.play()->isChecked());
+        // Unkeyed: blue again, and still playing.
+        f.access.setPlayback(PlaybackState{QStringLiteral("local"), QStringLiteral("a2"), 15000, 205000, true, false});
+        QVERIFY(!f.rp->isOnAir());
+        QCOMPARE(f.play()->styleSheet(), blueRing);
+        QVERIFY(!f.rp->playLabelForTest()->styleSheet().contains(QStringLiteral("#ff453a")));
 
         f.access.calls.clear();
         f.play()->click();
