@@ -315,6 +315,9 @@
 //                and recordings-window--all, --filtered and --delete-confirm the Recordings
 //                window, against a fake recordings access, as the approved recordings-panel and
 //                recordings-window mockups do.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 8: recordings-setup--ssd and --sd-card
+//                pose Setup > Cores > Recordings against a fake recordings access, as the approved
+//                recording-settings mockup's two Cores do.
 //                AI-assisted implementation via Anthropic Claude Code.
 
 #include "models/MainPowerMeter.h"
@@ -455,6 +458,7 @@
 #include "gui/setup/AppearanceSetupPages.h"
 #include "gui/setup/HardwarePage.h"
 #include "gui/setup/KnobsSetupPage.h"
+#include "gui/setup/RecordingsSetupPage.h"
 #include "gui/setup/TciLogWindow.h"
 #include "gui/widgets/FilterPolicyDialog.h"
 #include "gui/widgets/FilterPresetEditDialog.h"
@@ -8933,6 +8937,9 @@ void sceneRecordingsWindow(SceneContext& ctx, const QString& name, RecordingsWin
     ctx.notes.append(QStringLiteral("Delete 3... in the Recordings window: the confirm"));
 }
 
+// Recording plan Task 8: defined beside the Setup scenes' helpers below.
+void sceneRecordingsSetup(SceneContext& ctx, const QString& name, bool sdCard);
+
 void sceneFlagFoldTwoBand(SceneContext& ctx, const QString& name)
 {
     runWindowScene(ctx, twoBandPoses(), 0, {}, [](SceneContext& c) {
@@ -10956,6 +10963,14 @@ QVector<Scene> fixedScenes()
         scenes.append({name, QStringLiteral("2v"), true,
                        [name, p](SceneContext& ctx) { sceneRecordingsWindow(ctx, name, p); }, true});
     }
+    // ---- Recording plan Task 8: Setup > Cores > Recordings ----
+    for (const auto& [suffix, sd] : std::initializer_list<std::pair<const char*, bool>>{{"ssd", false},
+                                                                                     {"sd-card", true}}) {
+        const QString name = QStringLiteral("recordings-setup--") + QLatin1String(suffix);
+        const bool sdCard = sd;
+        scenes.append({name, QStringLiteral("2v"), true,
+                       [name, sdCard](SceneContext& ctx) { sceneRecordingsSetup(ctx, name, sdCard); }, true});
+    }
     // ---- Longpath instruments as container content (switch on) ----
     scenes.append({QStringLiteral("instruments-sheet"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) { sceneInstrumentsSheet(ctx); }, true});
@@ -12250,6 +12265,65 @@ QSize growSetupToFit(SceneContext& ctx, SetupDialog* d, const QString& where)
 }
 
 } // namespace
+
+// ---- Recording plan Task 8: Setup > Cores > Recordings ----
+// The page against a fake recordings access, as the approved
+// recording-settings mockup's two Cores: one with its own SSD and a USB SSD,
+// and a Pi with only an SD card (the note that the card is fine).
+void sceneRecordingsSetup(SceneContext& ctx, const QString& name, bool sdCard)
+{
+    ctx.provenance = provProposed();
+    SetupDialog* first = openSetupDialog(ctx.window);
+    const int index = first != nullptr ? first->pageLabelsForTest().indexOf(QStringLiteral("Recordings")) : -1;
+    if (index < 0) {
+        ctx.failure = QStringLiteral("no Recordings page in Setup");
+        return;
+    }
+    SetupDialog* d = openSetupPageScene(ctx, index);
+    if (d == nullptr) {
+        return;
+    }
+    auto* page = d->findChild<RecordingsSetupPage*>();
+    if (page == nullptr) {
+        ctx.failure = QStringLiteral("the Recordings page was not built");
+        return;
+    }
+    const qint64 gb = qint64(1000) * 1000 * 1000;
+    const auto disk = [](const QString& root, const QString& diskName, qint64 free, bool own, bool sd) {
+        return QJsonObject{{QStringLiteral("root"), root}, {QStringLiteral("name"), diskName},
+                           {QStringLiteral("free"), free}, {QStringLiteral("total"), free * 2},
+                           {QStringLiteral("sd"), sd},     {QStringLiteral("own"), own}};
+    };
+    const QJsonArray disks = sdCard
+        ? QJsonArray{disk(QStringLiteral("/"), QStringLiteral("SD card"), 58 * gb, true, true)}
+        : QJsonArray{disk(QStringLiteral("/"), QStringLiteral("SSD"), 412 * gb, true, false),
+                     disk(QStringLiteral("/media/t7"), QStringLiteral("USB disk: Samsung T7 SSD"), 931 * gb, false,
+                          false)};
+    QJsonObject settings{{QStringLiteral("keepMyVoice"), true},  {QStringLiteral("sidesApart"), false},
+                         {QStringLiteral("autoStart"), false},   {QStringLiteral("autoStop"), true},
+                         {QStringLiteral("quietMinutes"), 2},    {QStringLiteral("format"), QStringLiteral("mp3")},
+                         {QStringLiteral("disk"), QString()},    {QStringLiteral("disks"), disks}};
+    auto* access = new FakeRecordingsAccess(ctx.window);
+    QJsonObject doc = FakeRecordingsAccess::document({}, 1, QString(), settings);
+    QJsonObject index0 = doc.value(QStringLiteral("index")).toObject();
+    index0.insert(QStringLiteral("count"), 12);
+    index0.insert(QStringLiteral("usedBytes"), qint64(1400) * 1000 * 1000);
+    index0.insert(QStringLiteral("freeBytes"), (sdCard ? 58 : 412) * gb);
+    doc.insert(QStringLiteral("index"), index0);
+    access->setDocument(doc);
+    page->setAccess(access);
+    pump(kTabSettleMs);
+    ctx.notes.append(QStringLiteral("Setup > Cores > Recordings on a fake recordings access (no Core), %1")
+                         .arg(sdCard ? QStringLiteral("a Pi with only an SD card")
+                                     : QStringLiteral("a Core with an SSD and a USB SSD")));
+    captureDialog(ctx, d, name);
+    // The page's foot: Playing back and its five switches.
+    if (auto* scroll = page->findChild<QScrollArea*>()) {
+        scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum());
+        pump(kTabSettleMs);
+        captureDialog(ctx, d, name + QStringLiteral("--bottom"));
+    }
+}
 
 QVector<Scene> setupPageScenes(MainWindow* window)
 {

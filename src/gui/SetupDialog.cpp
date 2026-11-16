@@ -8,6 +8,9 @@
 // behaviour rules consulted while implementing visibility wiring.
 //
 // Modification history (NereusSDR):
+//   2026-11-15 - Cores > Recordings (RecordingsSetupPage, Core scope),
+//                recording plan Task 8. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 //   2026-10-24 - General > Filters (GeneralFiltersPage, Core scope), Thetis's
 //                tpFilters tab with its "Limit filter edges to sidebands"
 //                box. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
@@ -243,6 +246,7 @@
 #include "setup/ThisCorePage.h"
 #include "setup/CoresSetupPage.h"
 #include "setup/CoreAudioSetupPage.h"
+#include "setup/RecordingsSetupPage.h"
 #include "gui/RemoteMediaController.h"
 #include "gui/RemoteTelemetryController.h"
 #include "setup/HardwareDdcRoutingPage.h"
@@ -1870,6 +1874,16 @@ void SetupDialog::buildTree()
     registerPage(cores, "Audio with the Core", SetupScope::ThisComputer, [this]() -> QWidget* {
         auto* page = new CoreAudioSetupPage(m_coreAudioMedia, m_coreAudioTelemetry);
         page->setContext(m_coreAudioContext);
+        return page;
+    });
+
+    // Recording plan Task 8: the Core's recording settings (spec 6.5),
+    // through the model's recordings access. Core: every device shares
+    // them and this window stores none of them.
+    registerPage(cores, "Recordings", SetupScope::Core, [this]() -> QWidget* {
+        auto* page = new RecordingsSetupPage(m_model ? m_model->recordings() : nullptr);
+        connect(page, &RecordingsSetupPage::recordingsWindowRequested,
+                this, &SetupDialog::recordingsWindowRequested);
         return page;
     });
 

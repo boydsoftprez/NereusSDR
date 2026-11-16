@@ -1693,6 +1693,8 @@ nereus_add_test(tst_vfo_tooltip_coverage)
 nereus_add_test(tst_flag_record_play)
 # Recording plan Task 7: the Recordings panel and the Recordings window.
 nereus_add_test(tst_recordings_panel_window)
+# Recording plan Task 8: Setup > Cores > Recordings.
+nereus_add_test(tst_recordings_setup_page)
 
 # Regression test for issue #73 — VfoWidget frequency-entry parser
 nereus_add_test(tst_vfo_frequency_parser)

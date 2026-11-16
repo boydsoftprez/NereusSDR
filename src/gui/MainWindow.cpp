@@ -1185,6 +1185,9 @@
 //   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 7: the Recordings applet (Containers >
 //                Applets, hidden at first) and the Recordings window, opened by All recordings...
 //                on every flag and in the panel. AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 8: Recording settings... on every flag
+//                and Setup's Recordings › open Setup > Cores > Recordings and the Recordings
+//                window. AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -6619,6 +6622,9 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     auto* recordPlay = new FlagRecordPlay(newFlag, m_radioModel->recordings(), sliceIndex, newFlag);
     // Recording plan Task 7: All recordings... opens the Recordings window.
     connect(recordPlay, &FlagRecordPlay::allRecordingsRequested, this, &MainWindow::openRecordingsWindow);
+    // Recording plan Task 8: Recording settings... opens Setup > Cores > Recordings.
+    connect(recordPlay, &FlagRecordPlay::recordingSettingsRequested, this,
+            [this] { openSetupAtPage(QStringLiteral("Recordings")); });
     // A flag can die with its pan while its entry remains: the map never holds a
     // dead flag. m_vfoFlagLifetime goes before the map and before the children,
     // so this never runs on the map once it is gone (see ~MainWindow's toasts).
@@ -18942,6 +18948,9 @@ void MainWindow::wireSetupDialog(SetupDialog* dialog)
         connect(dialog, &SetupDialog::tgxlAntennaLabelChanged,
                 m_tunerApplet, &TunerApplet::onAntennaLabelChanged);
     }
+    // Recording plan Task 8: Setup > Cores > Recordings' Recordings ›.
+    connect(dialog, &SetupDialog::recordingsWindowRequested, this,
+            [this] { openRecordingsWindow(QString()); });
     // Task 3.6: CPU meter rate live-apply.
     connect(dialog, &SetupDialog::cpuMeterRateChanged,
             this,   &MainWindow::setCpuTimerIntervalHz);

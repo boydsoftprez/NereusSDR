@@ -2369,6 +2369,8 @@ set(GUI_SOURCES
     src/gui/setup/CoresSetupPage.cpp
     src/gui/setup/RfKitPage.cpp
     src/gui/setup/RotorSetupPage.cpp
+    # Recording plan Task 8: Setup > Cores > Recordings.
+    src/gui/setup/RecordingsSetupPage.cpp
     src/gui/setup/TciLogWindow.cpp
     src/gui/setup/HotKeySetupPages.cpp
     src/gui/setup/KeyboardMapWidget.cpp

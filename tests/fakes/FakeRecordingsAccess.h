@@ -19,6 +19,10 @@
 //   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 7: list readers,
 //                 the slice and kind filters and appliesChanges.
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 8: `settingsSent`
+//                 keeps each setSettings change; `version` is the Core's
+//                 recordingsVersion. AI-assisted implementation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include <QHash>
@@ -51,6 +55,8 @@ public:
     QList<RecordingEntry> entries;   // the Core's whole index, newest first
     bool coreHere = true;
     bool appliesChanges = false;   // rename and remove change `entries`
+    QList<QJsonObject> settingsSent;   // each setSettings change, in order
+    int version = 1;                   // the Core's recordingsVersion when it has one
 
     QStringList verbs() const
     {
@@ -108,7 +114,7 @@ public:
     }
 
     State state() const override { return m_state; }
-    int coreVersion() const override { return m_state == State::NeedsNewerCore ? 0 : 1; }
+    int coreVersion() const override { return m_state == State::NeedsNewerCore ? 0 : version; }
     QString unavailableReason(int needsVersion = 1) const override
     {
         if (m_state == State::NotConnected) {
@@ -176,7 +182,11 @@ public:
     {
         calls.append({QStringLiteral("download"), -1, id + QLatin1Char('>') + toPath});
     }
-    void setSettings(const QJsonObject&) override { calls.append({QStringLiteral("setSettings")}); }
+    void setSettings(const QJsonObject& changed) override
+    {
+        calls.append({QStringLiteral("setSettings")});
+        settingsSent.append(changed);
+    }
     bool coreIsOnThisComputer() const override { return coreHere; }
 
 private:
