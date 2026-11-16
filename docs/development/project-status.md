@@ -14,16 +14,16 @@ remote transmit recovery, frequency-first Roundtable and signal units,
 receiver and container state, and phone display fixes. NNR retains the
 selected model and offers an operator choice on a measured warning. The phone
 also labels **Previous band** and recognizes the Core's empty default-pan
-identity for Max Bin. Phone 2026.10.1 build 9645 is in TestFlight testing;
-its version is independent of the desktop release. The
+identity for Max Bin. Phone 2026.11.1 build 10066 was uploaded to App Store
+Connect on 2026-11-09 (PR 773 set its version to match the desktop release). The
 [release summary](../MASTER-PLAN.md) records the scope and deferred work.
 
 ### In 2026.11.1, since 2026.11.0
 
 Tagged `v2026.11.1` at `9014aead0` (2026-11-08). The release PR, 767, merged as
 `d87e023c0`; PR 770 then fixed the Windows and Linux ARM release builds, and the
-tag moved to its merge. The GitHub release stays a draft until J.J. Boyd
-publishes it.
+tag moved to its merge. J.J. Boyd published the GitHub release on 2026-11-09,
+and the website (PR 772) went live with it the same day.
 [CHANGELOG.md](../../CHANGELOG.md) under `[2026.11.1]` has the operator wording.
 
 | Work | PRs | Verification so far |
@@ -65,10 +65,29 @@ PR 749's exports reach no production connection across a DLL, and its certificat
 key seam has no production caller, so Windows and Core behavior stay as they were.
 The Windows signal fix still needs a Windows test run; PR 749 names it.
 
-### Open, not in 2026.11.1
+### On main since 2026.11.1
 
-Open pull requests left out of 2026.11.1: 753 (Cinnamon file
-choosers), 754 (container dialog when adding a meter).
+Nothing an operator would notice has merged since the tag, so `CHANGELOG.md` has
+no new entry yet. On main: PR 771 (manual gaps: CWX menu, G2E microphone group,
+release record), PR 772 (website for 2026.11.1), PR 773 (phone app version
+2026.11.1) and PR 792 (three whole-window tests fitted to the hosted Linux
+runner and two MediaNotReady test cases; tests only).
+
+### Open, headed for the next release
+
+- Brian Sutton (W4KZO): 775 Intel Mac waterfall, 776 speaker dropouts when
+  moving windows, 779 S-Meter dial that scales and a clear container
+  background, 780 Roundtable reading size, 781 SSB Mod Monitor OVER line,
+  783 RX Attenuator caption. 793 to 796 are corrected copies of 775, 776, 779
+  and 783.
+- 786 receive leveler (RXL), Brian Sutton's feature, being reworked on
+  `claude/lucid-sutherland-ee1dfb` with a new engine.
+- 753 Cinnamon file choosers on Linux source builds, 754 container dialog when
+  adding a meter on Linux.
+- 787 to 791 iPhone heat: waterfall timeline, meter readings, band drawing,
+  Modes tab and Roundtable churn.
+- 797 recordings, voice keyer and Digital Spectrum Recorder (draft, in
+  progress; not yet decided for this release).
 
 The remaining text is an archived reference copied from the earlier agent
 context. Its phase scheduling, release status and class inventories can be
