@@ -188,9 +188,13 @@ struct BandView: UIViewRepresentable {
             guard let view else {
                 return
             }
-            // Behind another tab the band cannot be seen: nothing is drawn.
+            // Behind another tab the band cannot be seen: the view's own
+            // draw, at its deferred time, keeps up without drawing
+            // (``drawBand(in:)``). Kept up here, inside the model's change,
+            // the waiting frame would go in before its extras came, and the
+            // extras would be lost.
             guard onScreen else {
-                keepUpWhileHidden(view)
+                view.setNeedsDisplay()
                 return
             }
             if model.pacingLines, let link {

@@ -1,6 +1,7 @@
 // NereusSDR for iOS: what the band keeps between draws never changes what it draws
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
-
+// 2026-11-15: J.J. Boyd (KG4VCF), AI-assisted via Claude Code (Opus 5.5):
+//   each draw through a kept renderer must match a brand-new renderer's draw byte for byte.
 import CoreGraphics
 import Foundation
 import NereusMedia
