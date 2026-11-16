@@ -369,6 +369,11 @@
 //                                    QtTest's message cap cannot hide a
 //                                    FAIL. AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-11-15  J.J. Boyd (KG4VCF)  The two MediaNotReady supersession
+//                                    cases forge the Core's first enabled
+//                                    answer, holding back one the Core
+//                                    sent off itself under load.
+//                                    AI-assisted via Anthropic Claude Code.
 #include <QTest>
 #include <QApplication>
 #include <QMetaMethod>
@@ -12965,7 +12970,11 @@ private slots:
         PacedRemoteAudio audio(h);
         remoteMedia.holdAudioRestartForTest(true);
         h.forgeReplacesFirstContext = true;
+        // The Core's first enabled answer is the one forged off; an answer it
+        // sends off itself (MediaNotReady while its own media peer is not yet
+        // ready, as under load) is held back until it sends the enabled one.
         h.connectSession(std::nullopt, [&](const QJsonObject& real) {
+            if (!real.value(QStringLiteral("enabled")).toBool()) { return QJsonObject(); }
             enabledContext = real;
             return mediaNotReadyContext(real);
         });
@@ -12975,6 +12984,7 @@ private slots:
         QVERIFY(remoteMedia.audioRestartPendingForTest());
         QCOMPARE(requests, 1);
         QVERIFY(!enabledContext.isEmpty());
+        QVERIFY(enabledContext.value(QStringLiteral("enabled")).toBool());
         const QString connectionId = remoteMedia.mediaConnectionId();
         const qint64 revision = enabledContext.value(QStringLiteral("revision")).toInteger();
         const qint64 generation = enabledContext.value(QStringLiteral("generation")).toInteger() + 1;
@@ -13026,12 +13036,19 @@ private slots:
         });
         PacedRemoteAudio audio(h);
         h.forgeReplacesFirstContext = true;
+        // Hosted Linux CI, 2026-11-15: under load the Core can answer the
+        // first request MediaNotReady itself (its own media peer not yet
+        // ready), and replaying that answer is no enabled context. Such an
+        // answer is held back until the Core sends its first enabled one,
+        // which is the one forged off and replayed.
         h.connectSession(std::nullopt, [&](const QJsonObject& real) {
+            if (!real.value(QStringLiteral("enabled")).toBool()) { return QJsonObject(); }
             enabledContext = real;
             return mediaNotReadyContext(real);
         });
         const auto outboundRequests = observeEnabledAudioRequests(h.clientLink, this);
         QTRY_VERIFY_WITH_TIMEOUT(superseded, h.kMediaConnectionWaitMs);
+        QVERIFY(enabledContext.value(QStringLiteral("enabled")).toBool());
         QVERIFY(remoteMedia.acceptedAudioContext()->enabled);
         QCOMPARE(remoteMedia.acceptedAudioContext()->revision,
                  quint32(enabledContext.value(QStringLiteral("revision")).toInteger()));

@@ -45,6 +45,12 @@
 // Core is transmitting.
 //
 // Modification history (NereusSDR):
+//   2026-11-15: a forge that returns an empty object holds that real
+//               context back and stays armed for the next one, so a test
+//               can wait for the Core's first enabled answer before forging
+//               (hosted Linux CI: under load the Core may first answer
+//               MediaNotReady itself). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-27: Expose the client link for synchronous outbound test
 //               observation. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-27: forgeReplacesFirstContext: the forged first audio context
@@ -130,7 +136,9 @@ namespace NereusSDR::Test {
 // production test hook. With a hello minor set on both ends, a current Core
 // and a current GUI each believe the other speaks that minor. A one-shot
 // forge puts a forged copy of the next audio context on the wire just
-// ahead of the real one.
+// ahead of the real one. A forge that returns an empty object passes on that
+// context: the real one is held back, nothing goes on the wire, and the forge
+// waits for the next audio context.
 class RewritingTransport final : public LoopbackTransport {
 public:
     using Forge = std::function<QJsonObject(const QJsonObject& real)>;
@@ -197,9 +205,15 @@ public:
             if (forgeNextAudioContext && message.kind == SessionMessageKind::MediaControl
                 && message.mediaPayload.value(QStringLiteral("op"))
                     == QLatin1String("audio-context")) {
+                Forge forge = std::exchange(forgeNextAudioContext, {});
                 SessionMessage forged = message;
-                forged.mediaPayload = std::exchange(forgeNextAudioContext, {})(
-                    message.mediaPayload);
+                forged.mediaPayload = forge(message.mediaPayload);
+                if (forged.mediaPayload.isEmpty()) {
+                    // Not this one: held back, and the forge waits for the next.
+                    forgeNextAudioContext = std::move(forge);
+                    ++heldBackContexts;
+                    return;
+                }
                 ++forgedContexts;
                 LoopbackTransport::sendText(SessionMessages::encode(forged));
                 // The forged copy stands for the real one, which is not sent.
@@ -211,6 +225,8 @@ public:
 
     int rewrittenHellos = 0;
     int forgedContexts = 0;
+    // Real audio contexts a forge passed on and held back (an empty forge).
+    int heldBackContexts = 0;
     int hiddenAudioProfiles = 0;
     Forge forgeNextAudioContext;
     // The forged copy goes on the wire in place of the real context.
