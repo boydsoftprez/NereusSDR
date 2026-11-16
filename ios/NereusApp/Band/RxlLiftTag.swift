@@ -6,6 +6,8 @@
 // 2026-11-15: the readings live apart from the flag's entry, whole dB at
 // most four times a second, and only the tag watches them (JJ: mind the
 // phone's CPU). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-15: VoiceOver says "signal" where it said "station", as the
+// desktop's words now do. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -115,9 +117,9 @@ struct RxlLiftTag: View {
     /// What VoiceOver says.
     static func spoken(_ dB: Double) -> String {
         let value = whole(dB)
-        return value > 0 ? "RXL turning this station up \(value) dB"
-            : value < 0 ? "RXL turning this station down \(-value) dB"
-            : "RXL leaving this station's level as it is"
+        return value > 0 ? "RXL turning this signal up \(value) dB"
+            : value < 0 ? "RXL turning this signal down \(-value) dB"
+            : "RXL leaving this signal's level as it is"
     }
 
     static func ink(_ dB: Double) -> Color {

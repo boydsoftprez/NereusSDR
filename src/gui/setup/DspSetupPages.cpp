@@ -12,6 +12,9 @@
 //               place of pause hold, new ranges, and the live gain read
 //               from the slice instead of the receive channel.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-15: RX Leveler wording the user-text checks accept: "voice" or
+//               "signal" where it said "station" (that word is kept for one
+//               meaning), "Gain now: off" for the dash. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-09-27: Match NR2/NR4 controls and defaults to Thetis v2.10.3.15.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //               (R-IOS-06, R-IOS-27).
@@ -552,7 +555,7 @@ void AgcAlcSetupPage::rebuildForActiveSlice()
     m_rxLevelerMode->addItems({"Off", "Auto", "Custom"});
     m_rxLevelerMode->setCurrentIndex(static_cast<int>(slice->rxLevelerMode()));
     m_rxLevelerMode->setToolTip(QStringLiteral(
-        "Evens out station loudness on a net. Off leaves the audio as it is. "
+        "Evens out how loud each voice is on a net. Off leaves the audio as it is. "
         "Auto uses the speech preset. Custom sets the target, the most it "
         "may lift or cut, and how fast it moves. VAX and TCI always get the "
         "plain audio. Bypassed in CW, FM, and digital modes."));
@@ -565,7 +568,7 @@ void AgcAlcSetupPage::rebuildForActiveSlice()
     m_rxLevelerTarget->setSuffix(" dB");
     m_rxLevelerTarget->setValue(slice->rxLevelerTargetDb());
     m_rxLevelerTarget->setToolTip(QStringLiteral(
-        "Listening target: the speech level every station is moved toward, in dBFS "
+        "Listening target: the speech level every voice is moved toward, in dBFS "
         "before the AF slider. The AF slider stays your volume."));
     addLabeledSpinner(rxLevLay, "Listening target", m_rxLevelerTarget);
 
@@ -576,7 +579,7 @@ void AgcAlcSetupPage::rebuildForActiveSlice()
     m_rxLevelerMaxBoost->setSuffix(" dB");
     m_rxLevelerMaxBoost->setValue(slice->rxLevelerMaxBoostDb());
     m_rxLevelerMaxBoost->setToolTip(QStringLiteral(
-        "Most the leveler may lift a quiet station. It never lifts the noise between overs."));
+        "Most the leveler may lift a quiet voice. It never lifts the noise between overs."));
     addLabeledSpinner(rxLevLay, "Maximum boost", m_rxLevelerMaxBoost);
 
     m_rxLevelerAttack = new QSpinBox;
@@ -586,7 +589,7 @@ void AgcAlcSetupPage::rebuildForActiveSlice()
     m_rxLevelerAttack->setSuffix(" ms");
     m_rxLevelerAttack->setValue(slice->rxLevelerAttackMs());
     m_rxLevelerAttack->setToolTip(QStringLiteral(
-        "How quickly the gain rises when a station is quiet."));
+        "How quickly the gain rises when a voice is quiet."));
     addLabeledSpinner(rxLevLay, "Attack", m_rxLevelerAttack);
 
     m_rxLevelerRelease = new QSpinBox;
@@ -596,7 +599,7 @@ void AgcAlcSetupPage::rebuildForActiveSlice()
     m_rxLevelerRelease->setSuffix(" ms");
     m_rxLevelerRelease->setValue(slice->rxLevelerReleaseMs());
     m_rxLevelerRelease->setToolTip(QStringLiteral(
-        "How quickly the gain lets go when a station is louder, or after a pause."));
+        "How quickly the gain lets go when a voice is louder, or after a pause."));
     addLabeledSpinner(rxLevLay, "Release", m_rxLevelerRelease);
 
     m_rxLevelerMaxCut = new QSpinBox;
@@ -606,14 +609,14 @@ void AgcAlcSetupPage::rebuildForActiveSlice()
     m_rxLevelerMaxCut->setSuffix(" dB");
     m_rxLevelerMaxCut->setValue(slice->rxLevelerMaxCutDb());
     m_rxLevelerMaxCut->setToolTip(QStringLiteral(
-        "Most the leveler may turn a loud station down. 0 never turns a station down."));
+        "Most the leveler may turn a loud voice down. 0 never turns a voice down."));
     addLabeledSpinner(rxLevLay, "Maximum cut", m_rxLevelerMaxCut);
 
-    m_rxLevelerBoostLbl = new QLabel(QStringLiteral("Gain now: —"));
+    m_rxLevelerBoostLbl = new QLabel(QStringLiteral("Gain now: off"));
     m_rxLevelerBoostLbl->setProperty("nereusSetupId", "dsp.agcAlc.rxLevelerBoost");
     m_rxLevelerBoostLbl->setToolTip(QStringLiteral(
         "What the leveler is doing to this receiver right now: lifting (+) or "
-        "turning down (-). It lifts only while the S-meter shows a station "
+        "turning down (-). It lifts only while the S-meter shows a signal "
         "above the noise."));
     rxLevLay->addWidget(m_rxLevelerBoostLbl);
 
@@ -840,7 +843,7 @@ void AgcAlcSetupPage::refreshRxLevelerBoost()
     }
     SliceModel* slice = selectedSlice();
     if (slice == nullptr || slice->rxLevelerMode() == RxLevelerMode::Off) {
-        m_rxLevelerBoostLbl->setText(QStringLiteral("Gain now: —"));
+        m_rxLevelerBoostLbl->setText(QStringLiteral("Gain now: off"));
         return;
     }
     const double dB = slice->rxLevelerGainDb();

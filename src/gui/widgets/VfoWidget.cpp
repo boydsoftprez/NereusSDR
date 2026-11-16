@@ -14,6 +14,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-15 - RXL's words say "voice" or "signal" where they said
+//                "station", which user text keeps for one meaning.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-15 - The RXL tag redraws only when its whole-dB value changes.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-15 - The RXL tag at the right end of the "You control" line:
@@ -2315,7 +2318,7 @@ void VfoWidget::buildDspTab()
 
     m_rxlToggle = makeToggle(QStringLiteral("RXL"));
     m_rxlToggle->setToolTip(QStringLiteral(
-        "RX Leveler: evens station loudness on a net. Left-click turns it on or off. "
+        "RX Leveler: evens out how loud each voice is on a net. Left-click turns it on or off. "
         "Right-click opens mode, listening target and maximum boost. "
         "Separate from the TX Leveler."));
     m_rxlToggle->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -3474,9 +3477,9 @@ void VfoWidget::updateTopLine()
         }
         m_rxlTag->setText(rxlTagText(m_rxlGainDb));
         m_rxlTag->setToolTip(whole > 0
-            ? tr("RXL is turning this station up %1 dB.").arg(whole)
-            : whole < 0 ? tr("RXL is turning this station down %1 dB.").arg(-whole)
-                        : tr("RXL is leaving this station's level as it is."));
+            ? tr("RXL is turning this signal up %1 dB.").arg(whole)
+            : whole < 0 ? tr("RXL is turning this signal down %1 dB.").arg(-whole)
+                        : tr("RXL is leaving this signal's level as it is."));
         m_rxlTag->setAccessibleName(m_rxlTag->toolTip());
     }
     m_rxlTag->setVisible(tagShown);
@@ -3503,7 +3506,7 @@ void VfoWidget::updateRxlToolTip()
         return;
     }
     QString tip = QStringLiteral(
-        "RX Leveler: evens station loudness on a net. Left-click turns it on or off. "
+        "RX Leveler: evens out how loud each voice is on a net. Left-click turns it on or off. "
         "Right-click opens mode, listening target and maximum boost. "
         "Separate from the TX Leveler.");
     if (!RxLeveler::modeAllows(m_currentMode)) {
@@ -5800,7 +5803,7 @@ void VfoWidget::showRxlPopup(const QPoint& globalPos)
 
     const Knob target = addKnob(
         QStringLiteral("Listening target"),
-        QStringLiteral("Speech level every station is moved toward, in dBFS before the AF slider. Used when Mode is Custom."),
+        QStringLiteral("Speech level every voice is moved toward, in dBFS before the AF slider. Used when Mode is Custom."),
         static_cast<int>(RxLeveler::kTargetDbMin),
         static_cast<int>(RxLeveler::kTargetDbMax),
         slice->rxLevelerTargetDb());
