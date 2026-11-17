@@ -29,6 +29,7 @@
 #include "core/DxccColorProvider.h"
 #include "core/DxccWorkedStatus.h"
 #include "gui/widgets/Ft8Wasserfall.h"
+#include "gui/widgets/Ft8DannListe.h"
 #include "core/MoxController.h"
 #include "core/audio/CompositeTxMicRouter.h"
 #include "core/audio/AudioTapRing.h"
@@ -49,6 +50,10 @@
 #include <QColor>
 #include <QTextCharFormat>
 #include <QTextCursor>
+#include <QTextBlock>
+#include <QTextDocument>
+#include <QTextEdit>
+#include <QScrollBar>
 #include <QMouseEvent>
 #include <QProgressBar>
 #include <QPushButton>
@@ -569,6 +574,46 @@ void Ft8Applet::buildUI()
         "QPlainTextEdit { background: %1; color: %2; border: 1px solid %3; }")
         .arg(Style::kInsetBg, Style::kTextPrimary, Style::kInsetBorder));
 
+    // ── „+ Queue" an der Zeile unter der Maus (2026-11-15) ─────────
+    //
+    // Wie bei ZeusSDR jede Fundzeile ihren Knopf „Queue" hat -- nur
+    // erscheint er hier erst, wenn die Maus auf der Zeile steht. Zwanzig
+    // Knoepfe je Fenster waeren zwanzig Dinge, die man nicht braucht,
+    // bis man genau eines braucht. Am Viewport, nicht in einem Layout:
+    // er schwebt ueber der Zeile, die gerade gemeint ist.
+    m_list->viewport()->setMouseTracking(true);
+    m_queuePille = new QPushButton(tr("+ Queue"), m_list->viewport());
+    m_queuePille->setObjectName(QStringLiteral("ft8QueuePille"));
+    m_queuePille->setCursor(Qt::PointingHandCursor);
+    m_queuePille->setToolTip(tr("Call this station after the current QSO"));
+    {
+        QFont f = font();
+        f.setPointSize(Style::kFontCaption);
+        f.setBold(true);
+        m_queuePille->setFont(f);
+    }
+    m_queuePille->setStyleSheet(QStringLiteral(
+        "QPushButton { background: %1; color: %2; border: 1px solid %3;"
+        " border-radius: 7px; padding: 0px 7px; }"
+        "QPushButton:hover { color: %4; border-color: %2; }")
+        .arg(Style::kAmberBg, Style::kAmberText, Style::kAmberBorder,
+             Style::kTextPrimary));
+    m_queuePille->setFixedHeight(15);
+    m_queuePille->hide();
+    connect(m_queuePille, &QPushButton::clicked, this, [this] {
+        const QString zeile = m_pilleZeile;
+        versteckePille();
+        const QString grund = stelleZeileAn(zeile);
+        if (!grund.isEmpty() && m_status) { m_status->setText(grund); }
+    });
+    // Rollt die Liste oder kommt ein neues Fenster herein, steht die
+    // Kapsel an der falschen Zeile. Die naechste Mausbewegung setzt sie
+    // neu.
+    connect(m_list->verticalScrollBar(), &QScrollBar::valueChanged,
+            this, [this] { versteckePille(); });
+    connect(m_list->document(), &QTextDocument::contentsChanged,
+            this, [this] { versteckePille(); });
+
     // Zweite Spalte: „Rx Frequency" wie in WSJT-X. Links alles, rechts
     // nur, was auf der eigenen Stelle liegt oder an mich geht. In
     // einem vollen Band ist die linke Liste nach zwei Durchgaengen
@@ -804,6 +849,38 @@ void Ft8Applet::buildUI()
     arbeit->addWidget(m_arbeitBalken, 2, 0);
     arbeit->setColumnStretch(0, 1);
 
+    // ── „THEN": wer nach diesem QSO drankommt (2026-11-15) ─────────
+    //
+    // Betreiber: „C bauen" -- von drei Entwurfsblaettern das, in dem
+    // die Reihenfolge unter dem laufenden QSO steht. Der Blick bleibt
+    // an einer Stelle: oben mit wem, darunter wer danach. Die
+    // Entscheidungen (umreihen, streichen, vorziehen) trifft
+    // `Ft8Warteschlange`; hier wird nur verbunden.
+    m_dann = new Ft8DannListe(m_arbeit);
+    arbeit->addWidget(m_dann, 3, 0, 1, 2);
+    connect(m_dann, &Ft8DannListe::hoch, this, [this](const QString& wer) {
+        if (m_schlange.ruecke(wer, -1, QDateTime::currentMSecsSinceEpoch())) {
+            meldeStand();
+        }
+    });
+    connect(m_dann, &Ft8DannListe::runter, this, [this](const QString& wer) {
+        if (m_schlange.ruecke(wer, +1, QDateTime::currentMSecsSinceEpoch())) {
+            meldeStand();
+        }
+    });
+    connect(m_dann, &Ft8DannListe::weg, this, [this](const QString& wer) {
+        m_schlange.weiseAb(wer, QDateTime::currentMSecsSinceEpoch());
+        qCInfo(lcFt8Senden).noquote()
+            << "Aus der Schlange gestrichen:" << wer;
+        zeigeFundZahl();
+        meldeStand();
+    });
+    connect(m_dann, &Ft8DannListe::gewaehlt,
+            this, [this](const QString& wer) { dannGewaehlt(wer); });
+    m_dannUhr = new QTimer(this);
+    m_dannUhr->setInterval(1000);
+    connect(m_dannUhr, &QTimer::timeout, this, [this] { zeigeDann(); });
+
     root->addWidget(m_arbeit);
 
     // ── Tx1..Tx6 hinter einem Knopf ─────────────────────
@@ -1032,8 +1109,56 @@ void Ft8Applet::setSlice(SliceModel* slice)
 {
     if (m_slice == slice) { return; }
     m_slice = slice;
+    QObject::disconnect(m_skalaVerbindung);
+    if (m_slice) {
+        m_skalaVerbindung = connect(m_slice.data(), &SliceModel::frequencyChanged,
+                                    this, &Ft8Applet::folgeDerSkala);
+        folgeDerSkala(m_slice->frequency());
+    }
     updateAudioTap();
     updateStatus();
+}
+
+// ── Der Dekoder folgt der Skala (2026-11-15) ─────────────────────────
+//
+// Betreiber nach dem Start um 11:28: „Versuch es noch einmal" -- seit
+// zwei Minuten nach dem Start 0 Funde in jedem Fenster. Die Sitzung
+// davor hatte er um 10:17 mit dem Knopf FT4 auf 14,080 MHz gestellt
+// und bis zuletzt FT4 dekodiert (bis zu 14 Funde je Fenster). Beim
+// Neustart behielt die Flex ihre 14,080 MHz („die Maschine gewinnt"),
+// der Dekoder aber kam -- wie immer -- in FT8 hoch und suchte
+// FT8-Signale auf der FT4-Anrufstelle. Gesagt hat das niemand.
+//
+// Die Knoepfe FT8/FT4 stellen seit dem 2026-10-21 die Skala. Hier die
+// Gegenrichtung: steht die Skala AUF einer Anrufstelle (±500 Hz,
+// dieselbe Tafel), dekodiert der Dekoder deren Verfahren. Daneben --
+// irgendwo im Band -- bleibt es bei der Wahl des Betreibers; das
+// Funkgeraet wird hier nie verstellt. Die Tafel gilt fuer oberes
+// Seitenband, also nicht in DIGL. Und nicht mitten in einer Sendung:
+// der Wechsel aendert die Fensterlaenge.
+void Ft8Applet::folgeDerSkala(double skalaHz)
+{
+    if (!m_slice || m_slice->dspMode() == DSPMode::DIGL || m_sendet) {
+        return;
+    }
+    const qint64 hz = static_cast<qint64>(std::llround(skalaHz));
+    const bool ft4 = DigiFrequenzen::stehtSchonDort(
+        hz, DigiFrequenzen::Digimodus::Ft4);
+    const bool ft8 = DigiFrequenzen::stehtSchonDort(
+        hz, DigiFrequenzen::Digimodus::Ft8);
+    if (ft4 == ft8) { return; }   // keine Anrufstelle: Wahl bleibt
+    const Ft8Decoder::Protocol soll = ft4 ? Ft8Decoder::Protocol::Ft4
+                                          : Ft8Decoder::Protocol::Ft8;
+    if (protocol() == soll) { return; }
+    const QString name = ft4 ? QStringLiteral("FT4") : QStringLiteral("FT8");
+    qCInfo(lcFt8Senden).noquote()
+        << "Skala" << hz << "Hz steht auf der" << name
+        << "-Anrufstelle — der Dekoder folgt";
+    setProtocol(soll);
+    if (m_status) {
+        m_status->setText(tr("dial is on the %1 frequency — decoding %1")
+                              .arg(name));
+    }
 }
 
 void Ft8Applet::updateAudioTap()
@@ -1154,7 +1279,8 @@ void Ft8Applet::fensterZuEnde()
 // einem Platz -- `Ft8Mehrfach` hat eine eigene Schlange, aber die
 // laeuft nur, wenn `mehrfachAn()` an ist.
 
-void Ft8Applet::merkeAnrufFallsNoetig(const QString& nachricht, int snr)
+void Ft8Applet::merkeAnrufFallsNoetig(const QString& nachricht, int snr,
+                                      int tonHz)
 {
     const QString meiner = eigenesRufzeichen();
     if (meiner.isEmpty()) { return; }
@@ -1182,7 +1308,7 @@ void Ft8Applet::merkeAnrufFallsNoetig(const QString& nachricht, int snr)
 
     const qint64 jetzt = QDateTime::currentMSecsSinceEpoch();
     if (m_schlange.merkeAnruf(anrufer, snr,
-                              locatorAusNachricht(nachricht), jetzt)) {
+                              locatorAusNachricht(nachricht), jetzt, tonHz)) {
         qCInfo(lcFt8Senden).noquote()
             << "Anruf gemerkt:" << anrufer << "— wartet als Nummer"
             << m_schlange.wartende(jetzt) << "— aus:" << nachricht;
@@ -1218,10 +1344,26 @@ bool Ft8Applet::beginneNaechstenWartenden()
     // dass genau DIESER Weg eine alte Nummer sendet, und das faellt
     // erst beim Logabgleich auf.
     uebernimmContest();
-    m_ablauf.starteMitAnrufer(w.partner, eigenesRufzeichen(),
-                              eigenerLocator(), w.snr, w.locator);
+    if (w.vonHand) {
+        // Aus der Fundliste angestellt (2026-11-15, „+ Queue"): er hat
+        // MICH nicht gerufen. Also derselbe Anfang wie ein Doppelklick
+        // auf seine Zeile -- mein Ruf mit Locator, nicht ein Rapport an
+        // jemanden, der nie gefragt hat. Nur ohne `m_cqAutomatik`
+        // anzufassen: er ist Teil des Laufs, keine Einzelentscheidung.
+        if (m_houndBetrieb) {
+            m_ablauf.starteAlsHound(w.partner, eigenesRufzeichen(),
+                                    eigenerLocator());
+        } else {
+            m_ablauf.starteAlsAntworter(w.partner, eigenesRufzeichen(),
+                                        eigenerLocator(), w.snr, w.locator);
+        }
+    } else {
+        m_ablauf.starteMitAnrufer(w.partner, eigenesRufzeichen(),
+                                  eigenerLocator(), w.snr, w.locator);
+    }
     qCInfo(lcFt8Senden).noquote()
-        << "Aus der Schlange:" << w.partner << "— noch"
+        << "Aus der Schlange:" << w.partner
+        << (w.vonHand ? "(von Hand)" : "") << "— noch"
         << m_schlange.wartende(jetzt) << "wartend";
     return true;
 }
@@ -1232,6 +1374,171 @@ bool Ft8Applet::rufeNaechstenWartenden()
     if (!beginneNaechstenWartenden()) { return false; }
     ablaufSchritt();
     return true;
+}
+
+// ── „THEN" zeichnen (2026-11-15) ─────────────────────────────────────
+//
+// Aus `meldeStand()` gerufen -- also bei jedem Zustandswechsel des
+// Ablaufs und bei jedem neuen Anruf -- und jede Sekunde vom eigenen
+// Takt, solange jemand wartet: sonst stuende das Alter still, und ein
+// Anruf, der eben verfaellt, saehe frisch aus.
+void Ft8Applet::zeigeDann()
+{
+    if (!m_dann) { return; }
+    const qint64 jetzt = QDateTime::currentMSecsSinceEpoch();
+    QVector<Ft8DannListe::Eintrag> liste;
+    for (const Ft8Warteschlange::Wartend& w : m_schlange.gueltige(jetzt)) {
+        Ft8DannListe::Eintrag e;
+        e.partner = w.partner;
+        e.land    = landFuer(w.partner);
+        e.snr     = w.snr;
+        e.locator = w.locator;
+        e.tonHz   = w.tonHz;
+        e.alterMs = jetzt - w.seitMs;
+        e.vonHand = w.vonHand;
+        liste.append(e);
+    }
+    m_dann->setzeEintraege(liste, m_cqAutomatik);
+    if (m_dannUhr) {
+        if (liste.isEmpty()) {
+            m_dannUhr->stop();
+        } else if (!m_dannUhr->isActive()) {
+            m_dannUhr->start();
+        }
+    }
+}
+
+// Doppelklick auf eine Zeile unter „THEN". Laeuft ein QSO, kommt er
+// als naechster dran -- mitten in ein QSO hineinzuspringen hiesse, den
+// Partner im Stich zu lassen. Sonst sofort, auf demselben Weg wie
+// nach einem fertigen QSO.
+void Ft8Applet::dannGewaehlt(const QString& partner)
+{
+    const qint64 jetzt = QDateTime::currentMSecsSinceEpoch();
+    const bool imQso = m_ablauf.laeuft() && !m_ablauf.partner().isEmpty();
+    m_schlange.nachVorn(partner, jetzt);
+    if (imQso) {
+        if (m_status) {
+            m_status->setText(tr("%1 is next after this QSO").arg(partner));
+        }
+        meldeStand();
+        return;
+    }
+    // Wie ein Doppelklick in der Fundliste (siehe nimmFundAn): der
+    // Ablauf wird auch waehrend einer Sendung gesetzt, und
+    // `ablaufSchritt()` kehrt dann von selbst um.
+    if (beginneNaechstenWartenden()) {
+        ablaufSchritt();
+    }
+    zeigeFundZahl();
+    meldeStand();
+}
+
+QString Ft8Applet::warumNichtAnstellen(const QString& zeile) const
+{
+    const QString meiner = eigenesRufzeichen();
+    if (meiner.isEmpty()) { return tr("set your callsign first"); }
+    if (antwortAuf(zeile, meiner, eigenerLocator()).isEmpty()) {
+        return tr("no callsign to answer in this line");
+    }
+    const QString wer = senderCallsign(nachrichtAusZeile(zeile));
+    if (wer.isEmpty() || wer.compare(meiner, Qt::CaseInsensitive) == 0) {
+        return tr("no callsign to answer in this line");
+    }
+    if (m_ablauf.laeuft()
+        && m_ablauf.partner().compare(wer, Qt::CaseInsensitive) == 0) {
+        return tr("%1 is your QSO right now").arg(wer);
+    }
+    const qint64 jetzt = QDateTime::currentMSecsSinceEpoch();
+    for (const Ft8Warteschlange::Wartend& w : m_schlange.gueltige(jetzt)) {
+        if (w.partner.compare(wer, Qt::CaseInsensitive) == 0) {
+            return tr("%1 is already waiting").arg(wer);
+        }
+    }
+    if (m_schlange.inKarenz(wer, jetzt)) {
+        return tr("%1 was worked a few minutes ago").arg(wer);
+    }
+    return {};
+}
+
+// „+ Queue": eine Fundzeile anstellen. Ruft er MICH, ist er ein
+// Anrufer wie jeder andere (Rapport zuerst); sonst rufe ich ihn, wenn
+// er drankommt.
+QString Ft8Applet::stelleZeileAn(const QString& zeile)
+{
+    const QString grund = warumNichtAnstellen(zeile);
+    if (!grund.isEmpty()) { return grund; }
+
+    const QString nachricht = nachrichtAusZeile(zeile);
+    const QString sauber    = zeile.simplified();
+    const int snr   = sauber.section(QLatin1Char(' '), 1, 1).toInt();
+    bool hzOk = false;
+    const int tonHz = sauber.section(QLatin1Char(' '), 3, 3).toInt(&hzOk);
+    const QString wer = senderCallsign(nachricht);
+    const QStringList f = nachricht.toUpper()
+                              .split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    const bool ruftMich = f.size() >= 2 && f.first() == eigenesRufzeichen();
+
+    const qint64 jetzt = QDateTime::currentMSecsSinceEpoch();
+    if (!m_schlange.stelleAn(wer, snr, locatorAusNachricht(nachricht),
+                             hzOk ? tonHz : -1, jetzt, !ruftMich)) {
+        return tr("%1 could not be queued").arg(wer);
+    }
+    qCInfo(lcFt8Senden).noquote()
+        << "Von Hand angestellt:" << wer << (ruftMich ? "(ruft mich)" : "")
+        << "— aus:" << nachricht;
+    if (m_status) {
+        m_status->setText(tr("%1 queued").arg(wer));
+    }
+    zeigeFundZahl();
+    meldeStand();
+    return {};
+}
+
+// Die Kapsel an die Zeile unter der Maus haengen -- oder weg, wenn
+// sich die Zeile nicht anstellen laesst. Dieselbe Pruefung, die der
+// Klick spaeter noch einmal macht; hier nur, damit sie gar nicht erst
+// an einer Zeile erscheint, bei der sie nichts taete.
+void Ft8Applet::zeigePilleBei(const QPoint& pos)
+{
+    if (!m_list || !m_queuePille) { return; }
+    const QTextCursor c = m_list->cursorForPosition(pos);
+    const QTextBlock b = c.block();
+    if (!b.isValid()) { versteckePille(); return; }
+    // cursorForPosition liefert unter der letzten Zeile noch die letzte
+    // -- die Maus steht dort aber auf keiner Zeile.
+    const QRect r = m_list->cursorRect(QTextCursor(b));
+    if (pos.y() < r.top() || pos.y() > r.bottom()) { versteckePille(); return; }
+    if (b.blockNumber() == m_pilleBlock && m_queuePille->isVisible()) {
+        return;
+    }
+    const QString zeile = b.text();
+    if (!warumNichtAnstellen(zeile).isEmpty()) { versteckePille(); return; }
+
+    m_pilleZeile = zeile;
+    m_pilleBlock = b.blockNumber();
+    m_queuePille->adjustSize();
+    QWidget* vp = m_list->viewport();
+    m_queuePille->move(vp->width() - m_queuePille->width() - 4,
+                       r.center().y() - m_queuePille->height() / 2);
+    m_queuePille->show();
+    m_queuePille->raise();
+
+    // Die Zeile selbst leicht anheben: man soll sehen, WELCHE gemeint
+    // ist, bevor man klickt.
+    QTextEdit::ExtraSelection sel;
+    sel.cursor = QTextCursor(b);
+    sel.format.setBackground(QColor(QString::fromLatin1(Style::kTileActiveBg)));
+    sel.format.setProperty(QTextFormat::FullWidthSelection, true);
+    m_list->setExtraSelections({sel});
+}
+
+void Ft8Applet::versteckePille()
+{
+    if (m_queuePille) { m_queuePille->hide(); }
+    if (m_list && m_pilleBlock >= 0) { m_list->setExtraSelections({}); }
+    m_pilleBlock = -1;
+    m_pilleZeile.clear();
 }
 
 void Ft8Applet::starteCqRuf()
@@ -1832,6 +2139,13 @@ QString Ft8Applet::eigenerLocator()
 
 bool Ft8Applet::eventFilter(QObject* obj, QEvent* ev)
 {
+    if (m_list && obj == m_list->viewport()) {
+        if (ev->type() == QEvent::MouseMove) {
+            zeigePilleBei(static_cast<QMouseEvent*>(ev)->pos());
+        } else if (ev->type() == QEvent::Leave) {
+            versteckePille();
+        }
+    }
     if (m_list && obj == m_list->viewport()
         && ev->type() == QEvent::MouseButtonDblClick) {
         auto* me = static_cast<QMouseEvent*>(ev);
@@ -2549,6 +2863,9 @@ Ft8PlaetzeStand Ft8Applet::baueStand() const
 
 void Ft8Applet::meldeStand()
 {
+    // Dieselbe Stelle fuer beide Ansichten der Schlange: das
+    // Plaetze-Panel bekommt den Stand, die QSO-Karte zeichnet „THEN".
+    zeigeDann();
     emit plaetzeGeaendert(baueStand());
 }
 
@@ -2743,7 +3060,8 @@ void Ft8Applet::onDecoded(const QVector<Longpath::Ft8Decode>& funde,
         } else {
             // Er ruft mich, aber gerade geht es nicht: ein QSO laeuft,
             // oder der Ablauf ruht. Dann merken statt fallen lassen.
-            merkeAnrufFallsNoetig(d.text, snr);
+            merkeAnrufFallsNoetig(d.text, snr,
+                                  static_cast<int>(std::lround(d.freqHz)));
         }
 
         const QString ruf = senderCallsign(d.text);

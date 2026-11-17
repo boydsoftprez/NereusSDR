@@ -411,6 +411,10 @@ constexpr auto kTxKeyText       = "#17130a";
 constexpr auto kTxKeyDimTop     = "#7a5a2c";
 constexpr auto kTxKeyDimBottom  = "#634c24";
 constexpr auto kTxKeyDimBorder  = "#9a763c";
+// Grund der Zeile, die als naechste drankommt (FT8 „THEN", 2026-11-15):
+// ein Hauch Messing auf kPanelBg -- man sieht, wer dran ist, ohne dass
+// die Zeile leuchtet.
+constexpr auto kFt8NaechsterBg  = "#121110";
 
 // Eine Marke IM versenkten Feld, die nur andeuten soll, wo etwas
 // anfaengt und aufhoert — im FT8-Fensterbalken sind das Signalanfang

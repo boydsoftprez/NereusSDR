@@ -951,6 +951,8 @@ set(GUI_SOURCES
     # Wie weit das FT8-Fenster ist, mit den Marken fuer Signalanfang
     # und -ende (Entwurf C, 2026-10-30)
     src/gui/widgets/Ft8Fensterbalken.cpp
+    # „THEN" in der QSO-Karte: wer nach diesem QSO drankommt (2026-11-15)
+    src/gui/widgets/Ft8DannListe.cpp
     src/gui/widgets/DspParamPopup.cpp
     src/gui/widgets/RasterOverlay.cpp
     src/gui/widgets/RasterOverlay.h

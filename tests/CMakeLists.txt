@@ -5986,6 +5986,9 @@ longpath_add_test(tst_ft8_contest_ablauf)
 # Uhr waren gruen und trotzdem unerreichbar; dieser Lauf prueft die
 # Verdrahtung, nicht die Rechnung.
 longpath_add_test(tst_ft8_flaeche)
+# 2026-11-15: „THEN" in der QSO-Karte und „+ Queue" in der Fundliste --
+# die Bedienung der Warteschlange mit echten Maus-Ereignissen.
+longpath_add_test(tst_ft8_anruferliste)
 # Die zweite Spalte „Rx Frequency" neben „Band Activity" (2026-10-21).
 longpath_add_test(tst_ft8_sicht_meine_frequenz)
 longpath_add_test(tst_ft8_wasserfall)

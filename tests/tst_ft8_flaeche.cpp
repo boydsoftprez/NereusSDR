@@ -66,6 +66,43 @@ private:
 
 private slots:
 
+    // ── Der Dekoder folgt der Skala (2026-11-15) ────────────────────
+    //
+    // Gemessen am 15.11.: die Sitzung davor endete in FT4 auf 14,080
+    // MHz, beim Neustart behielt die Flex ihre Frequenz, der Dekoder
+    // kam in FT8 hoch -- 102 Fenster mit 0 Funden. Steht die Skala auf
+    // einer Anrufstelle, gilt deren Verfahren; daneben die Wahl des
+    // Betreibers.
+    void derDekoderFolgtDerSkala()
+    {
+        RadioModel radio;
+        Ft8Applet applet(&radio);
+        const int id = radio.addSlice();
+        SliceModel* slice = radio.sliceById(id);
+        QVERIFY(slice);
+        slice->setDspMode(DSPMode::DIGU);
+        // Schon VOR dem Anschluss auf der FT4-Stelle: so kommt die
+        // Flex nach dem Start herein.
+        slice->setFrequency(14080000.0);
+        QCOMPARE(applet.protocol(), Ft8Decoder::Protocol::Ft8);
+        applet.setSlice(slice);
+        QCOMPARE(applet.protocol(), Ft8Decoder::Protocol::Ft4);
+
+        slice->setFrequency(14074000.0);
+        QCOMPARE(applet.protocol(), Ft8Decoder::Protocol::Ft8);
+        slice->setFrequency(14080300.0);              // Spielraum
+        QCOMPARE(applet.protocol(), Ft8Decoder::Protocol::Ft4);
+        // Irgendwo im Band: die Wahl bleibt, wie sie ist.
+        slice->setFrequency(14100000.0);
+        QCOMPARE(applet.protocol(), Ft8Decoder::Protocol::Ft4);
+        slice->setFrequency(7074000.0);
+        QCOMPARE(applet.protocol(), Ft8Decoder::Protocol::Ft8);
+        // DIGL: die Tafel gilt fuer oberes Seitenband.
+        slice->setDspMode(DSPMode::DIGL);
+        slice->setFrequency(7047500.0);
+        QCOMPARE(applet.protocol(), Ft8Decoder::Protocol::Ft8);
+    }
+
     // ── Die Warteschlange ist auch ANGESCHLOSSEN ────────────────────
     //
     // Nicht „gibt es", sondern „kommt dort an". Genau diese Pruefung

@@ -72,6 +72,7 @@ class QSpinBox;
 
 namespace Longpath { class Ft8Wasserfall; }
 namespace Longpath { class Ft8Fensterbalken; }
+namespace Longpath { class Ft8DannListe; }
 class QProgressBar;
 class QLineEdit;
 class QPushButton;
@@ -103,6 +104,9 @@ public:
     /// Wie beim CW- und RTTY-Dekoder: eine Flaeche, die der jeweils
     /// aktiven Scheibe folgt.
     void setSlice(SliceModel* slice);
+    /// Steht die Skala auf einer FT8- oder FT4-Anrufstelle, folgt der
+    /// Dekoder ihr (2026-11-15). Oeffentlich fuer den Pruefstand.
+    void folgeDerSkala(double skalaHz);
 
     void setProtocol(Ft8Decoder::Protocol p);
     Ft8Decoder::Protocol protocol() const;
@@ -346,7 +350,17 @@ public:
     /// Einheit geprueft, nicht ihr Anschluss -- und genau so lag
     /// Multi Answering monatelang unerreichbar da (2026-10-30).
     const Ft8Warteschlange& schlangeForTest() const { return m_schlange; }
+    Ft8Warteschlange& schlangeForTestSchreibend() { return m_schlange; }
     bool rufeNaechstenWartendenForTest() { return rufeNaechstenWartenden(); }
+    /// „THEN" in der QSO-Karte und die Kapsel „+ Queue" in der
+    /// Fundliste (2026-11-15).
+    Longpath::Ft8DannListe* dannForTest() const { return m_dann; }
+    QPushButton* queuePilleForTest() const { return m_queuePille; }
+    /// Eine Zeile der Fundliste anstellen, wie ein Klick auf „+ Queue".
+    /// Leer heisst angestellt; sonst steht da, warum nicht.
+    QString stelleZeileAnForTest(const QString& zeile) { return stelleZeileAn(zeile); }
+    /// Die Liste neu zeichnen, ohne auf den Sekundentakt zu warten.
+    void zeigeDannForTest() { zeigeDann(); }
     QLineEdit*   textFeldForTest()  const { return m_textFeld; }
 
     // Fuer den Pruefstand.
@@ -601,6 +615,29 @@ private:
     QLabel*  m_arbeitUhr{nullptr};
     Longpath::Ft8Fensterbalken* m_arbeitBalken{nullptr};
 
+    // ── „THEN": die Schlange in der QSO-Karte (2026-11-15) ──────────
+    //
+    // Betreiber nach drei Entwurfsblaettern: „C bauen". Die Schlange
+    // gibt es seit dem 2026-10-30; zu sehen war von ihr nur
+    // „2 waiting" im Kopf der Fundliste.
+    Longpath::Ft8DannListe* m_dann{nullptr};
+    /// frequencyChanged der Scheibe -> folgeDerSkala.
+    QMetaObject::Connection m_skalaVerbindung;
+    /// Laesst das Alter jede Sekunde weiterlaufen -- nur solange
+    /// jemand wartet.
+    QTimer*      m_dannUhr{nullptr};
+    /// „+ Queue" am rechten Rand der Fundzeile unter der Maus.
+    QPushButton* m_queuePille{nullptr};
+    QString      m_pilleZeile;
+    int          m_pilleBlock{-1};
+    void zeigeDann();
+    void zeigePilleBei(const QPoint& posImViewport);
+    void versteckePille();
+    /// Leer heisst: diese Zeile laesst sich anstellen.
+    QString warumNichtAnstellen(const QString& zeile) const;
+    QString stelleZeileAn(const QString& zeile);
+    void dannGewaehlt(const QString& partner);
+
     /// Der Wasserfall nahm ein Viertel der Hoehe und lebt erst, wenn
     /// Ton hereinkommt. Jetzt abschaltbar; die Wahl bleibt erhalten.
     /// Fox-Betrieb: ein Schalter, keine Erkennung. Ob eine Station im
@@ -693,7 +730,8 @@ private:
     bool rufeNaechstenWartenden();
     /// Einen gehoerten Anruf in die Schlange legen, wenn er gerade
     /// nicht bedient werden kann.
-    void merkeAnrufFallsNoetig(const QString& nachricht, int snr);
+    void merkeAnrufFallsNoetig(const QString& nachricht, int snr,
+                               int tonHz = -1);
 
     Ft8Mehrfach  m_mehrfach;
     QSpinBox*    m_plaetzeSpin{nullptr};

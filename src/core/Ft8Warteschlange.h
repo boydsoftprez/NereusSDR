@@ -60,6 +60,9 @@
 // Modification history (Longpath):
 //   2026-10-30 — Original fuer Longpath von Martin Fischer (OE5SOS),
 //                 KI-gestuetzt ueber Anthropic Claude (Cowork).
+//   2026-11-15 — Frequenz je Anruf, von Hand anstellen, umreihen,
+//                 streichen -- fuer die Liste „THEN" in der QSO-Karte.
+//                 KI-gestuetzt ueber Anthropic Claude (Claude Code).
 // =================================================================
 
 #include <QHash>
@@ -76,6 +79,13 @@ public:
         int     snr{0};
         QString locator;
         qint64  seitMs{0};
+        /// Wo er gerufen hat (Tonfrequenz im Durchlass). -1 heisst
+        /// unbekannt -- etwa bei einem Eintrag aus einem Pruefstand.
+        int     tonHz{-1};
+        /// Von Hand aus der Fundliste angestellt (2026-11-15, „+ Queue"):
+        /// er hat MICH nicht gerufen, also rufe ICH IHN -- mit meinem
+        /// Locator, nicht mit einem Rapport.
+        bool    vonHand{false};
     };
 
     /// Wie lange ein Anruf gilt. Wer vor fuenf Minuten gerufen hat,
@@ -92,12 +102,55 @@ public:
     /// ist am ehesten noch da.
     static constexpr int kMaxWartende = 16;
 
+    /// Wie lange ein ✕ gilt. So lange wie ein Anruf haelt: wer
+    /// gestrichen wurde und gleich wieder ruft, stellt sich nicht von
+    /// selbst wieder an (2026-11-15). Sonst stuende er nach fuenfzehn
+    /// Sekunden wieder da, und das ✕ waere eine Geste ohne Folge.
+    static constexpr qint64 kAbweisungMs = kHaltbarkeitMs;
+
     /// Jemand hat mich gerufen. Gibt true, wenn er neu in die
     /// Schlange kam. Ein Rufzeichen, das schon wartet, rutscht nicht
     /// nach vorn -- aber sein Rapport wird aufgefrischt, denn der
     /// neuere ist der richtige.
     bool merkeAnruf(const QString& partner, int snr,
-                    const QString& locator, qint64 jetztMs);
+                    const QString& locator, qint64 jetztMs,
+                    int tonHz = -1);
+
+    // ── Die Hand an der Schlange (2026-11-15) ───────────────────────
+    //
+    // Betreiber: „Ja, Entwurf" -> „C bauen". Bis hierher war die
+    // Schlange nur eine Zahl im Kopf der Liste. Jetzt steht sie in der
+    // QSO-Karte unter „THEN", und dort laesst sie sich umreihen,
+    // streichen und aus der Fundliste fuellen. Alles, was die
+    // Reihenfolge anfasst, raeumt zuerst die Abgelaufenen weg: sonst
+    // rueckte „nach oben" an einem unsichtbaren Eintrag vorbei, und
+    // der Klick taete nichts.
+
+    /// Von Hand anstellen. false, wenn er schon wartet oder gerade
+    /// gearbeitet wurde (Karenz) -- ein Doppel-QSO von Hand ist
+    /// immer noch ein Doppel-QSO. Ein frueheres ✕ hebt es auf.
+    ///
+    /// `vonHand` false: die Zeile war ein Anruf an MICH (er ruft,
+    /// ich antworte mit dem Rapport) -- nur eben einer, den der
+    /// Betreiber vorher gestrichen hatte oder der die Schlange
+    /// verpasst hat.
+    bool stelleAn(const QString& partner, int snr, const QString& locator,
+                  int tonHz, qint64 jetztMs, bool vonHand = true);
+
+    /// Um einen Platz nach vorn (richtung < 0) oder nach hinten
+    /// (richtung > 0). false, wenn es nichts zu ruecken gab.
+    bool ruecke(const QString& partner, int richtung, qint64 jetztMs);
+
+    /// Ganz nach vorn: er ist der naechste.
+    bool nachVorn(const QString& partner, qint64 jetztMs);
+
+    /// ✕: aus der Schlange, und fuer `kAbweisungMs` stellt er sich
+    /// nicht von selbst wieder an.
+    void weiseAb(const QString& partner, qint64 jetztMs);
+    bool abgewiesen(const QString& partner, qint64 jetztMs) const;
+
+    /// Wer gueltig wartet, in der Reihenfolge, in der er drankommt.
+    QVector<Wartend> gueltige(qint64 jetztMs) const;
 
     /// Mit dieser Station ist ein QSO fertig. Sie faellt aus der
     /// Schlange und kommt in die Karenz.
@@ -125,9 +178,13 @@ public:
 
 private:
     static QString schluessel(const QString& ruf) { return ruf.toUpper(); }
+    bool gilt(const Wartend& w, qint64 jetztMs) const;
+    void raeume(qint64 jetztMs);
+    int  stelle(const QString& partner) const;
 
     QVector<Wartend>       m_schlange;
     QHash<QString, qint64> m_gearbeitet;
+    QHash<QString, qint64> m_abgewiesen;
 };
 
 }  // namespace Longpath
