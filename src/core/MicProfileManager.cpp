@@ -955,20 +955,73 @@ void MicProfileManager::writeProfileKeys(const QString& name,
     }
 }
 
-QHash<QString, QVariant> MicProfileManager::readProfileKeys(const QString& name) const
+QHash<QString, QVariant> MicProfileManager::readStoredProfile(const QString& mac,
+                                                             const QString& name)
 {
     QHash<QString, QVariant> out;
-    if (m_mac.isEmpty()) {
+    if (mac.isEmpty() || name.isEmpty()) {
         return out;
     }
     auto& s = AppSettings::instance();
     for (const QString& key : liveKeyList()) {
-        const QString full = profileFieldKey(m_mac, name, key);
+        const QString full = profileFieldKey(mac, name, key);
         if (s.contains(full)) {
             out.insert(key, s.value(full));
         }
     }
     return out;
+}
+
+QHash<QString, QVariant> MicProfileManager::readProfileKeys(const QString& name) const
+{
+    return readStoredProfile(m_mac, name);
+}
+
+QString MicProfileManager::normalizedProfileName(QString name)
+{
+    name = name.trimmed();
+    name.replace(QLatin1Char(','), QLatin1Char('_'));
+    return name;
+}
+
+QHash<QString, QVariant> MicProfileManager::liveProfileValues(const TransmitModel* tx)
+{
+    return captureLiveValues(tx);
+}
+
+bool MicProfileManager::importProfile(const QString& rawName,
+                                      const QHash<QString, QVariant>& values,
+                                      TransmitModel* tx)
+{
+    if (isStationMirror()) {
+        const QString name = normalizedProfileName(rawName);
+        return !name.isEmpty() && m_stationRequester
+            && m_stationRequester(StationRequest::Import, name, values);
+    }
+    if (m_mac.isEmpty()) {
+        return false;
+    }
+    const QString name = normalizedProfileName(rawName);
+    if (name.isEmpty()) {
+        return false;
+    }
+
+    QHash<QString, QVariant> merged = defaultProfileValues();
+    const QStringList& known = liveKeyList();
+    for (auto it = values.constBegin(); it != values.constEnd(); ++it) {
+        if (known.contains(it.key())) {
+            merged.insert(it.key(), it.value().toString());
+        }
+    }
+    writeProfileKeys(name, merged);
+
+    QStringList names = readManifest();
+    if (!names.contains(name)) {
+        names.append(name);
+        writeManifest(names);
+        emit profileListChanged();
+    }
+    return setActiveProfile(name, tx);
 }
 
 void MicProfileManager::removeProfileKeys(const QString& name)
@@ -988,7 +1041,7 @@ bool MicProfileManager::saveProfile(const QString& rawName, const TransmitModel*
         // R-R3-49 (parity Task 3): the Core saves its own transmit settings
         // under this name (txProfile.save), with the same comma rule.
         return !rawName.isEmpty()
-            && m_stationRequester(StationRequest::Save, rawName);
+            && m_stationRequester(StationRequest::Save, rawName, {});
     }
     if (m_mac.isEmpty() || tx == nullptr) {
         return false;
@@ -1027,7 +1080,7 @@ bool MicProfileManager::deleteProfile(const QString& name)
         if (m_stationNames.size() <= 1) {
             return false;
         }
-        m_stationRequester(StationRequest::Delete, name);
+        m_stationRequester(StationRequest::Delete, name, {});
         return true;
     }
     if (m_mac.isEmpty()) {
@@ -1074,7 +1127,7 @@ bool MicProfileManager::setActiveProfile(const QString& name, TransmitModel* tx)
         // R-R3-49 (parity Task 3): the Core applies it (txProfile.select) and
         // reports its active profile back; nothing changes here until then.
         // Not sent, the combos go back to the Core's profile at once.
-        if (name.isEmpty() || !m_stationRequester(StationRequest::Select, name)) {
+        if (name.isEmpty() || !m_stationRequester(StationRequest::Select, name, {})) {
             emit activeProfileChanged(m_stationActive);
             return false;
         }

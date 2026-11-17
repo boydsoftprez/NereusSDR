@@ -8268,6 +8268,17 @@ StationClient::CommandOutcome StationClient::requestTxProfileDelete(const QStrin
                        QStringLiteral("the transmit profile"));
 }
 
+StationClient::CommandOutcome StationClient::requestTxProfileImport(const QString& name,
+                                                                    const QString& keysJson)
+{
+    if (!transmitSettingsAvailable(kTransmitSettingsTxProfileFileVersion)) {
+        return IStationLink::requestTxProfileImport(name, keysJson);
+    }
+    return sendCommand("txProfile.import", -1,
+                       { stringArgument("name", name), stringArgument("keysJson", keysJson) },
+                       QStringLiteral("the transmit profile"));
+}
+
 StationClient::CommandOutcome StationClient::requestRadeResetVocoder()
 {
     if (!transmitSettingsAvailable(3)) {

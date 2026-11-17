@@ -246,13 +246,13 @@ private slots:
     }
 
     // Version 15 is offered to every app; the Core's published profile
-    // reaches only an app that declared cfcProfile 1. (16 since the CW
-    // settings; 15 is within it.)
+    // reaches only an app that declared cfcProfile 1. The advertised
+    // transmitSettingsVersion has moved on; 15 is within it.
     void theProfileReachesADeclaringAppOnly()
     {
         Device plain(m_server.get(), this, {});
         QVERIFY(plain.ready());
-        QCOMPARE(plain.capability("transmitSettingsVersion"), kTransmitSettingsCwVersion);
+        QCOMPARE(plain.capability("transmitSettingsVersion"), kTransmitSettingsTxProfileFileVersion);
         QVERIFY(!plain.transmitValue("cfcProfile").isValid());
         QVERIFY(plain.transmitValue("cfcParaEqData").isValid());
         Device phone(m_server.get(), this, {{"cfcProfile", 1}});

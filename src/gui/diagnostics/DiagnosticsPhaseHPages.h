@@ -124,6 +124,10 @@ public:
     static QByteArray connectedRadioXml(const AppSettings& settings, const QString& mac,
                                         QString* error = nullptr);
 
+signals:
+    // Setup > Audio > TX Profile, where one profile is imported and exported.
+    void txProfilePageRequested();
+
 protected:
     // The native picker and message boxes live at the page boundary so the
     // export transaction can be exercised without a modal desktop dialog.
@@ -158,6 +162,7 @@ private:
     QPushButton* m_exportAllBtn{nullptr};
     QPushButton* m_importAllBtn{nullptr};
     QPushButton* m_exportRadioBtn{nullptr};
+    QPushButton* m_txProfileBtn{nullptr};
     bool         m_stationSettingsAvailable{true};
     QString      m_stationUnavailableReason;
     quint64      m_linkGeneration{0};

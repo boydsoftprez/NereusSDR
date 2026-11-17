@@ -20361,7 +20361,8 @@ SetupDialog* MainWindow::createSetupDialog()
         // transmit pins, pin actions and transmit calibration.
         // And version 11, Transmit > Power's "Disable HF PA".
         // CW transmit (R-CW-03): and version 16, Setup > DSP > CW.
-        for (const int version : {2, 3, 4, 5, 6, 8, 11, kTransmitSettingsCwVersion}) {
+        for (const int version : {2, 3, 4, 5, 6, 8, 11, kTransmitSettingsCwVersion,
+                                   kTransmitSettingsTxProfileFileVersion}) {
             dialog->setTransmitSettingsPermitted(transmitSettingsPermitted(version),
                                                  transmitSettingsReason(version), version);
         }
@@ -21531,6 +21532,10 @@ void MainWindow::applyRemoteRoleGating()
         dialog->setTransmitSettingsPermitted(settingsAt(kTransmitSettingsCwVersion),
                                              settingsReasonAt(kTransmitSettingsCwVersion),
                                              kTransmitSettingsCwVersion);
+        // TX Profile import (transmitSettingsVersion 17).
+        dialog->setTransmitSettingsPermitted(settingsAt(kTransmitSettingsTxProfileFileVersion),
+                                             settingsReasonAt(kTransmitSettingsTxProfileFileVersion),
+                                             kTransmitSettingsTxProfileFileVersion);
         dialog->setStationSettingsAvailable(stationAvailable, stationSettingsReason());
     }
     // Parity Task 19 (B7.2): and the Spot Hub's Core settings and sources.

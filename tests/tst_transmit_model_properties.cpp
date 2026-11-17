@@ -406,8 +406,10 @@ void TstTransmitModelProperties::coreOffersTransmitSettingsVersion4()
     // calibration); 4 is within it.
     Session s(m_securityDir.path(), this);
     QVERIFY(s.connect());
-    QCOMPARE(s.server->buildCapabilities().transmitSettingsVersion, 16);
-    QCOMPARE(s.client->capabilities().transmitSettingsVersion, 16);
+    QCOMPARE(s.server->buildCapabilities().transmitSettingsVersion,
+             kTransmitSettingsTxProfileFileVersion);
+    QCOMPARE(s.client->capabilities().transmitSettingsVersion,
+             kTransmitSettingsTxProfileFileVersion);
     QVERIFY(s.client->transmitSettingsAvailable(4));
     QVERIFY(s.client->transmitSettingsAvailable(7));
     QVERIFY(s.client->transmitSettingsAvailable(8));

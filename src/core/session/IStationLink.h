@@ -776,6 +776,11 @@ public:
     { return { false, transmitSettingsUnavailableReason() }; }
     virtual CommandOutcome requestTxProfileDelete(const QString&)
     { return { false, transmitSettingsUnavailableReason() }; }
+    /// transmitSettingsVersion 17: store the named profile from `keysJson`
+    /// (a JSON object of its settings) and select it. Refused on the air
+    /// the same way select is.
+    virtual CommandOutcome requestTxProfileImport(const QString&, const QString&)
+    { return { false, transmitSettingsUnavailableReason() }; }
     /// R-R3-49 (parity Task 3): the RADE applet's Reset vocoder; the Core
     /// clears its RADE transmit vocoder. Keys nothing. Refused on the air.
     virtual CommandOutcome requestRadeResetVocoder()

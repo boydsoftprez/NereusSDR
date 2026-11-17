@@ -15181,7 +15181,9 @@ int StationServer::transmitSettingsVersion() const
     // cwxRepeatDelayS and cwxMemory1 to cwxMemory8, under the gates of the
     // other transmit settings, each refused out of range with its words
     // (TransmitModel::settingRangeRefusal). None keys the radio.
-    return m_radioModel.isNull() ? 0 : kTransmitSettingsCwVersion;
+    // 17: txProfile.import stores one profile's keys and selects it, as
+    // Setup > Audio > TX Profile's Import does (kTransmitSettingsTxProfileFileVersion).
+    return m_radioModel.isNull() ? 0 : kTransmitSettingsTxProfileFileVersion;
 }
 
 bool StationServer::takesTransmitSettingsOnAir(SessionTransport* transport) const
