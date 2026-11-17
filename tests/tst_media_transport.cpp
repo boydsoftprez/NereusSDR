@@ -416,6 +416,7 @@ private slots:
     void micPacketsReportTheirWaitForTheOwnerThread();
     void aStalledOwnerLeavesTheMicrophoneLineWhole();
     void micLineWarnsOfALongGapFromItsOwnThread();
+    void playbackSinkReceivesWhileTheOwnerIsStalled();
     void micLineTimingTakesAnIdleGapAsTheLineStarting();
     void micLineCarriesLosslessWhenOffered();
     void micSsrcPreconditionsRefuseSilently();
@@ -2931,6 +2932,52 @@ void TestMediaTransport::micLineWarnsOfALongGapFromItsOwnThread()
         QRegularExpression(QStringLiteral("callbackGapMs=(\\d+) ")).match(messages.last());
     QVERIFY2(gap.hasMatch(), qPrintable(messages.last()));
     QVERIFY2(gap.captured(1).toInt() >= 1000, qPrintable(messages.last()));
+}
+
+// Speaker playback off the owner thread: with a sink installed, received
+// audio other than the microphone line is delivered on "NereusPlaybackRx"
+// and is not also reported by rtpReceived(). A stalled owner thread does
+// not hold the packet. With no sink, rtpReceived() still reports it.
+void TestMediaTransport::playbackSinkReceivesWhileTheOwnerIsStalled()
+{
+    LibDataChannelMediaTransport offerer;
+    LibDataChannelMediaTransport answerer;
+    QVERIFY(!answerer.setPlaybackPacketSink([](const QByteArray&, qint64) {}));
+    startPair(offerer, answerer);
+    if (QTest::currentTestFailed()) { return; }
+
+    QSignalSpy rtp(&answerer, &IMediaTransport::rtpReceived);
+    QVERIFY(offerer.sendRtp(rtpPacket(1, 40)));
+    QTRY_COMPARE_WITH_TIMEOUT(rtp.count(), 1, 5000);
+    rtp.clear();
+
+    std::atomic<int> delivered{0};
+    qint64 heldUs = -1;
+    QString threadName;
+    QVERIFY(answerer.setPlaybackPacketSink(
+        [&delivered, &heldUs, &threadName](const QByteArray& packet, qint64 held) {
+            if (packet.size() != 40) { return; }
+            threadName = QThread::currentThread()->objectName();
+            heldUs = held;
+            delivered.fetch_add(1, std::memory_order_release);
+        }));
+
+    QVERIFY(offerer.sendRtp(rtpPacket(2, 40)));
+    // The owner thread (this one) is busy: the 2 ms drain cannot run.
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    QVERIFY2(delivered.load(std::memory_order_acquire) >= 1,
+             "playback lane did not deliver while the owner thread was blocked");
+    QVERIFY2(heldUs >= 0 && heldUs < 150'000,
+             qPrintable(QStringLiteral("held %1 us").arg(heldUs)));
+    QCOMPARE(threadName, QStringLiteral("NereusPlaybackRx"));
+    QCOMPARE(rtp.count(), 0);
+    QTest::qWait(50);
+    QCOMPARE(rtp.count(), 0);
+    qInfo().noquote() << QStringLiteral("owner stall of 150 ms: playback lane held the packet %1 ms")
+                             .arg(static_cast<double>(heldUs) / 1000.0, 0, 'f', 1);
+
+    offerer.stop();
+    answerer.stop();
 }
 
 // TX diagnostics lane: the line's warning, replayed. The phone's 20 ms

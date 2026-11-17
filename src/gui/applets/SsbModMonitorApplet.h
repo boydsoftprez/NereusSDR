@@ -19,6 +19,8 @@
 //   2026-11-04 — Created. Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 //   2026-11-05 - Corrections for review findings.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-14 - The vintage scope marks the OVER threshold on the envelope
+//                scale. Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 // =================================================================
 #pragma once
 
@@ -47,6 +49,7 @@ public:
     explicit SsbModScopeWidget(QWidget* parent = nullptr);
     void setTrace(std::vector<float> pct);
     void setOverThresholdPct(double pct);
+    double overThresholdPct() const { return m_overPct; }
     /// The AM monitor's green screen: 10 columns by 6 rows, with the
     /// envelope drawn across it.
     void setVintage(bool on);
@@ -77,6 +80,8 @@ public:
 
     Source source() const noexcept { return m_source; }
     double overThresholdDbfs() const;
+    void setOverThresholdDbForTest(int db);
+    double scopeOverPercentForTest() const;
 
     void applySnapshotForTest(const SsbModulationAnalyzer::Snapshot& s) { applySnapshot(s); }
     void tickForTest() { tick(); }

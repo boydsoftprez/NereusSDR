@@ -63,6 +63,36 @@ struct RoundtableModelTests {
         #expect(await settle { rt.sourceControlTitle == (title == "Start" ? "Stop" : "Start") })
     }
 
+    /// Every change the model watches reads the whole model again. A
+    /// read that changes nothing must announce nothing, or each one redraws
+    /// every view of the model (the band's Roundtable tags among them).
+    @Test("an update that changes nothing publishes nothing")
+    func unchangedUpdatePublishesNothing() async throws {
+        let (model, station, rt, _) = try await connected()
+        try await station.deliverRoundtable()
+        #expect(await settle { rt.linkState == .live && rt.linkSince == 1_000 })
+        _ = await settle(seconds: 0.5) { false }
+        let status = rt.historyStatus
+        var updates = 0
+        let updated = model.settings.$values.dropFirst().sink { _ in updates += 1 }
+        defer { updated.cancel() }
+        var changes = 0
+        let observation = rt.objectWillChange.sink { changes += 1 }
+        defer { observation.cancel() }
+        // A Core setting Roundtable does not use changes: the model reads
+        // everything again, and nothing of its own has changed.
+        for value in ["1", "2", "3"] {
+            model.settings.apply(.settingsSnapshot(LinkMessage.SettingsSnapshot(properties: [
+                .init(name: "RoundtableModelTests/Unrelated", value: .utf8(value))])))
+        }
+        // The updates reached the settings the model watches.
+        #expect(updates == 3)
+        // Each update's read runs on a later main-actor turn.
+        _ = await settle(seconds: 0.5) { false }
+        #expect(changes == 0)
+        #expect(rt.linkState == .live && rt.historyStatus == status)
+    }
+
     @Test("a refused start keeps the Core's state and words")
     func sourceControlRefusal() async throws {
         let (_, station, rt, _) = try await connected()

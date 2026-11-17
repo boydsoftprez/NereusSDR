@@ -819,6 +819,10 @@ void ContainerWidget::setPopOutShell(bool shell)
     updateTitleBar();
     // Workspace preview: a popped-out object's window has its own resize rule.
     updateChrome();
+    // Only a container that asked for a clear background pays for the restyle.
+    if (m_clearFloatingBackground) {
+        applyFloatingClear();
+    }
 }
 void ContainerWidget::setHeaderMode(HeaderMode mode)
 {
@@ -966,6 +970,9 @@ void ContainerWidget::setContent(QWidget* widget)
             child->installEventFilter(this);
         }
         layout->addWidget(m_content);
+        if (m_clearFloatingBackground) {
+            applyFloatingClear();
+        }
     }
     emit contentChanged(m_content);
 }
@@ -1010,6 +1017,13 @@ void ContainerWidget::updateTitle()
 
 void ContainerWidget::setupBorder()
 {
+    if (floatingClearActive()) {
+        // The window around the meter is clear. The meter paints itself.
+        setAttribute(Qt::WA_StyledBackground, true);
+        setAutoFillBackground(false);
+        setStyleSheet(QStringLiteral("ContainerWidget { background: transparent; border: none; }"));
+        return;
+    }
     // Thetis ucMeter.cs:640-643, extended with highlight outline
     // (Phase 3G-6). When m_highlighted the accent outline overrides the
     // normal border regardless of m_border, so the user always sees
@@ -1069,7 +1083,7 @@ void ContainerWidget::setDockMode(DockMode mode)
     // Never below what the content needs either (JJ, 2026-10-08).
     setMinimumWidth(qMax(kMinContainerWidth, m_contentMinimumWidth));
 
-    if (m_groupHeader) {
+    if (m_groupHeader && !m_clearFloatingBackground) {
         // Workspace preview: a free or floating container covers whatever
         // lies beneath it (VFO flags, the spectrum) with the opaque panel
         // surface over its whole rect, the plate's rounded corners included.
@@ -1079,6 +1093,8 @@ void ContainerWidget::setDockMode(DockMode mode)
         surface.setColor(QPalette::Window, contentBackground(QColor::fromRgba(kLegacyContentBackground)));
         setPalette(surface);
         setAutoFillBackground(covers);
+    } else if (m_clearFloatingBackground) {
+        applyFloatingClear();
     }
 
     if (changed) {
@@ -1194,12 +1210,79 @@ void ContainerWidget::setBackgroundColor(const QColor& color)
     if(!color.isValid() || m_backgroundColor==color) {return;}
     m_backgroundColor=color;
     publishUserBackground();
-    if (m_groupHeader && color.rgba() == kLegacyContentBackground) {
-        // Workspace preview: the default background is the glass plate.
-        m_contentHolder->setStyleSheet(QStringLiteral("background: transparent;"));
+    applyContentBackground();
+}
+
+void ContainerWidget::setClearFloatingBackground(bool clear)
+{
+    // The usual load leaves this off. Restyling every container here made
+    // workspace restore slower, so an unchanged off state does nothing.
+    if (m_clearFloatingBackground == clear) {
+        if (clear) {
+            applyFloatingClear();
+        }
         return;
     }
-    m_contentHolder->setStyleSheet(QStringLiteral("background: %1;").arg(color.name(QColor::HexArgb)));
+    m_clearFloatingBackground = clear;
+    applyFloatingClear();
+}
+
+bool ContainerWidget::floatingClearActive() const
+{
+    return m_clearFloatingBackground;
+}
+
+void ContainerWidget::applyContentBackground()
+{
+    if (!m_contentHolder) {
+        return;
+    }
+    if (floatingClearActive()) {
+        m_contentHolder->setAutoFillBackground(false);
+        // Scoped to this holder. An unscoped rule would paint every child,
+        // including the S-Meter's right-click menu, the same way.
+        m_contentHolder->setObjectName(QStringLiteral("containerContentHolder"));
+        m_contentHolder->setStyleSheet(QStringLiteral(
+            "QWidget#containerContentHolder { background: transparent; }"));
+        return;
+    }
+    if (m_groupHeader && m_backgroundColor.rgba() == kLegacyContentBackground) {
+        // Workspace preview: the default background is the glass plate.
+        m_contentHolder->setObjectName(QStringLiteral("containerContentHolder"));
+        m_contentHolder->setStyleSheet(QStringLiteral(
+            "QWidget#containerContentHolder { background: transparent; }"));
+        return;
+    }
+    m_contentHolder->setObjectName(QStringLiteral("containerContentHolder"));
+    m_contentHolder->setStyleSheet(QStringLiteral(
+        "QWidget#containerContentHolder { background: %1; }").arg(m_backgroundColor.name(QColor::HexArgb)));
+}
+
+void ContainerWidget::applyFloatingClear()
+{
+    const bool clear = floatingClearActive();
+    if (auto* form = qobject_cast<FloatingContainer*>(window())) {
+        // Only a floating window can show the desktop. A docked container
+        // clears its own plate and leaves the main window opaque.
+        form->setClearBackground(clear && (isFloating() || m_popOutShell));
+    }
+    if (m_groupHeader) {
+        // A floating container normally covers what is under it. A clear
+        // background does not.
+        const bool covers = m_dockMode != DockMode::PanelDocked && !clear;
+        QPalette surface = palette();
+        surface.setColor(QPalette::Window, clear ? Qt::transparent
+                                                 : contentBackground(QColor::fromRgba(kLegacyContentBackground)));
+        setPalette(surface);
+        setAutoFillBackground(covers);
+    } else if (clear) {
+        setAutoFillBackground(false);
+    }
+    applyContentBackground();
+    setupBorder();
+    if (auto* host = qobject_cast<ContainerContentHost*>(m_content)) {
+        host->setClearBackground(clear);
+    }
 }
 
 // Before the content holder's stylesheet changes, so the meters it

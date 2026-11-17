@@ -2501,7 +2501,11 @@ import Testing
         #expect(startsAt == [0, 5, 11, 18, 27, 40, 55, 70, 85, 100])
     }
 
-    @Test func aConnectionThatComesUpStartsTheWaitsOver() async throws {
+    // The restart after a peer fails goes through a new task (its drain task
+    // is canceled), which a fixed yield budget can outrun on a slow
+    // computer; wait for it, bounded by the test limit.
+    @Test(.timeLimit(.minutes(1)))
+    func aConnectionThatComesUpStartsTheWaitsOver() async throws {
         let rig = try Rig()
         await rig.open(minor: 11, capabilities: Self.everyFeature)
         // Two tries that never connect: the third waits 1 s.
@@ -2511,8 +2515,9 @@ import Testing
         #expect(rig.recorder.sent("start").count == 3)
         try await rig.connect()
         try rig.peer.become(.failed)
-        await rig.recorder.settle { rig.recorder.sent("start").count == 4 }
-        #expect(rig.recorder.sent("start").count == 4, "restarted at once, not after 2 s")
+        // No timer is advanced here: a restart on the 2 s wait never comes.
+        try #require(await rig.recorder.holds { rig.recorder.sent("start").count == 4 },
+                     "restarted at once, not after 2 s")
     }
 
     @Test func aRestartWaitingIsCalledOffWhenTheSessionEnds() async throws {
