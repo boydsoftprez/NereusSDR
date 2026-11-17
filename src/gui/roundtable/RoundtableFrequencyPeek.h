@@ -8,9 +8,11 @@
 // is on a frequency and how each listener hears them, your own or another, without
 // tuning. Tune slice A here is the one thing in it that moves the radio.
 //
-// It stands on the foot line in your card's spot. A short pan folds everyone
-// not keyed to "Also here", and what still does not fit scrolls by the wheel between
-// the head and the buttons, which stay put.
+// It hangs from the Roundtable strip over the waterfall, lined up with your line
+// (strip design 5), or stands on the divider over the spectrum when the
+// waterfall is too short. Short room folds everyone not keyed to "Also here", and
+// what still does not fit scrolls by the wheel between the head and the buttons,
+// which stay put.
 //
 // A child of the pan, so it follows the pan. It is not a SpectrumOverlayPanel, so
 // it never becomes a tag keep-out, and it never takes the keyboard: the band's
@@ -25,6 +27,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Review fixes: details opened upward line up with their own left
+//               edge (setInspectorSpot's upwardAnchorLeft) and paint opaque.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-16: The details open over the waterfall under the strip, or upward
+//               over the spectrum when the waterfall is short:
+//               setInspectorSpot takes the two areas and the left edge
+//               (placeRoundtableDetails). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-11-04: A fold's list (showFold, setFoldRows, foldRowClicked). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-04: The one inspector: your own frequency, ⋯, the Viewing line with
@@ -61,20 +71,23 @@ public:
     explicit RoundtableFrequencyPeek(QWidget* parent = nullptr);
     ~RoundtableFrequencyPeek() override;
 
-    /// Opens on another frequency, standing on the foot line (D34). While open it
+    /// Opens on another frequency, under the strip (strip design 5). While open it
     /// swaps in place, with no close and reopen. Until refresh(), it shows the
     /// frequency and no readings.
     void showFor(quint64 hz, const QString& family);
     /// The same on your own frequency: no Viewing line and no Your pan row, and Tune
     /// greyed with its reason (D22, D35).
     void showOwn(quint64 hz, const QString& family);
-    /// Lists a fold's frequencies, on the foot line, with only the close box.
+    /// Lists a fold's frequencies, under the strip, with only the close box.
     void showFold(const QVector<RoundtableFoldRow>& rows);
     /// The list's rows in place, no reopen.
     void setFoldRows(const QVector<RoundtableFoldRow>& rows);
-    /// Where the foot-line spot is: see placeRoundtableInspector. `pan` is in the
-    /// parent's coordinates. Moves it only when something here changed.
-    void setInspectorSpot(const QRect& pan, int dialX, const QVector<QRect>& flags, bool flagFlipped);
+    /// Where it may stand: see placeRoundtableDetails. `below` and `above` are in
+    /// the parent's coordinates. Moves it only when something here changed.
+    /// `upwardAnchorLeft` is the left edge when they open upward; none means
+    /// `anchorLeft` there too.
+    void setInspectorSpot(const QRect& below, const QRect& above, int anchorLeft,
+                          std::optional<int> upwardAnchorLeft = std::nullopt);
     /// The active slice, for the offset line and for "already there".
     void setSlice(quint64 hz, const QString& family, const QString& name);
     /// The station's distance and bearing preferences.
@@ -105,6 +118,8 @@ public:
     int scrollForTest() const { return m_scroll; }
     int maxScrollForTest() const;
     int bodyHeightForTest() const { return m_bodyHeight; }
+    /// Standing on the divider over the spectrum, not hanging under the strip.
+    bool upwardForTest() const { return m_upward; }
 
 signals:
     void tuneRequested(quint64 hz);
@@ -132,6 +147,7 @@ private:
     void updateTuneButton();
     void fitToContents();
     void fitList();
+    RoundtableDetailsPlacement placeFor(int height) const;
     void placeHeadButtons(const QRect& wanted);
     void setHoverRow(int row);
 
@@ -143,10 +159,11 @@ private:
     QToolButton* m_close{nullptr};
     QToolButton* m_more{nullptr};
     QPushButton* m_back{nullptr};
-    QRect m_spotPan;
-    int m_spotDialX{0};
-    QVector<QRect> m_spotFlags;
-    bool m_spotFlipped{false};
+    QRect m_spotBelow;
+    QRect m_spotAbove;
+    int m_spotAnchorLeft{0};
+    std::optional<int> m_spotUpwardAnchorLeft;
+    bool m_upward{false};
     RoundtableViewLayout m_layout;
     bool m_fold{false};
     int m_scroll{0};

@@ -11,6 +11,17 @@
 // transmit scene refuses to run if one exists).
 //
 // Modification history (NereusSDR):
+//   2026-11-16: Details opened upward are checked against their own left edge
+//               (past the flag, or the dial's other side) and the flags.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-16: The Roundtable strip: checkRoundtableTags checks the strip
+//               (every tag and your line inside it, off the spectrum and band
+//               plan, none overlapping, the spectrum kept with the strip
+//               hidden, CPU hits as the GPU frame's), checkRoundtableDetails,
+//               and the roundtable-strip-talking, -more, -double, -quiet,
+//               -details and -details-short scenes from a frequency-first
+//               server. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 //   2026-10-26 - container-parity-* round 4: the token picker opens where
 //                 its tool button opens it, below the button or above it.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -396,6 +407,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <tuple>
@@ -523,6 +535,7 @@
 #include "fakes/FakeStationLink.h"
 #include "core/roundtable/RoundtableState.h"
 #include "gui/roundtable/RoundtableFirstRunDialog.h"
+#include "gui/roundtable/RoundtableFrequencyPeek.h"
 #include "gui/roundtable/RoundtablePanel.h"
 #include "gui/roundtable/RoundtableWindow.h"
 #include "models/RoundtableModel.h"
@@ -6982,6 +6995,9 @@ public:
     CommandOutcome requestActiveSlice(int) override { return {}; }
     CommandOutcome requestSliceSampleRate(int, int) override { return {}; }
     bool roundtableAvailable() const override { return true; }
+    // The strip scenes pose a frequency-first server (one line per frequency).
+    bool roundtableFrequencyAvailable() const override { return frequency; }
+    bool frequency = false;
 };
 
 struct WindowRoundtable {
@@ -6990,8 +7006,10 @@ struct WindowRoundtable {
     RadioModel* radio = nullptr;
     RoundtableModel* model = nullptr;
 
-    explicit WindowRoundtable(RadioModel* r) : radio(r), model(r != nullptr ? r->roundtableModel() : nullptr)
+    explicit WindowRoundtable(RadioModel* r, bool frequency = false)
+        : radio(r), model(r != nullptr ? r->roundtableModel() : nullptr)
     {
+        link.frequency = frequency;
         if (model != nullptr) {
             model->detach();
             model->attachStation(&link, &rt.state);
@@ -7043,6 +7061,116 @@ struct WindowRoundtable {
         rt.state.applyStationValue("mentionCounts", QStringLiteral("{\"lsb-7170100\":2}"));
     }
 
+    // The strip scenes (strip design 1 to 8): a frequency-first server. Your
+    // frequency, 7.185 LSB, has one talker, two on top of each other, or
+    // nobody on the band at all; `listeners` hear the turn (you among them,
+    // the rest in order from the table below). The pan also holds three
+    // other frequencies: a talker, a quiet station and a double.
+    enum class StripTalk { Talking, Double, Nobody };
+    void strip(StripTalk talk, int listeners)
+    {
+        rt.live(false);
+        if (model == nullptr) {
+            return;
+        }
+        if (talk == StripTalk::Nobody) {
+            model->applyRooms(QJsonObject{{QStringLiteral("frequencyVersion"), 1},
+                                          {QStringLiteral("rooms"), QJsonArray{}}});
+            return;
+        }
+        constexpr qint64 kDial = 7185000;
+        constexpr qint64 kTurn = 30;
+        const QString home = QStringLiteral("lsb-7184000");
+        const auto station = [](const QString& source, const QString& ref, const QString& call, qint64 hz,
+                                bool keyed) {
+            return QJsonObject{{QStringLiteral("sourceRoom"), source}, {QStringLiteral("ref"), ref},
+                               {QStringLiteral("callsign"), call},     {QStringLiteral("hz"), hz},
+                               {QStringLiteral("family"), QStringLiteral("lsb")},
+                               {QStringLiteral("keyed"), keyed}};
+        };
+        const auto summary = [](const QString& id, const QString& state, const QStringList& talkers,
+                                const QJsonArray& stations) {
+            return QJsonObject{{QStringLiteral("id"), id},
+                               {QStringLiteral("family"), QStringLiteral("lsb")},
+                               {QStringLiteral("state"), state},
+                               {QStringLiteral("talkers"), QJsonArray::fromStringList(talkers)},
+                               {QStringLiteral("stations"), stations}};
+        };
+
+        const bool doubled = talk == StripTalk::Double;
+        QJsonArray talkers{station(home, QStringLiteral("t"), QStringLiteral("W1TLK"), kDial, true)};
+        if (doubled) {
+            talkers.append(station(home, QStringLiteral("u"), QStringLiteral("K4QQ"), kDial + 40, true));
+        }
+        struct Listener {
+            const char* ref;
+            const char* call;
+            double dbm;
+            qint64 ageMs;
+            double km;
+        };
+        static constexpr Listener kListeners[]{
+            {"me", "KG4VCF", -76, 600, -1},   {"r1", "N4RDR", -68, 400, 610},
+            {"r2", "KD8LMN", -80, 1200, 880}, {"r3", "W4ABC", -64, 1500, 210},
+            {"r4", "N3XYZ", -88, 2500, 1040}, {"r5", "K9AWY", -93, 3200, 940},
+            {"r6", "VE3OLD", -97, 4100, 1210}};
+        QJsonArray homeStations = talkers;
+        QJsonArray members = talkers;
+        const int count = std::clamp(listeners, 0, static_cast<int>(std::size(kListeners)));
+        for (int i = 0; i < count; ++i) {
+            const Listener& l = kListeners[i];
+            QJsonObject listener = station(home, QString::fromLatin1(l.ref), QString::fromLatin1(l.call), kDial,
+                                           false);
+            homeStations.append(listener);
+            // The wire marks you on the member alone.
+            listener.insert(QStringLiteral("you"), i == 0);
+            if (l.km >= 0) {
+                listener.insert(QStringLiteral("km"), l.km);
+            }
+            listener.insert(QStringLiteral("reading"),
+                            QJsonObject{{QStringLiteral("turn"), kTurn}, {QStringLiteral("dbm"), l.dbm},
+                                        {QStringLiteral("present"), true},
+                                        {QStringLiteral("t"), kRoundtableNow - l.ageMs}});
+            members.append(listener);
+        }
+
+        const QString talker = QStringLiteral("lsb-7172000");
+        const QString quiet = QStringLiteral("lsb-7178000");
+        const QString pair = QStringLiteral("lsb-7160000");
+        const QJsonArray rooms{
+            summary(home, doubled ? QStringLiteral("doubled") : QStringLiteral("talking"),
+                    doubled ? QStringList{QStringLiteral("W1TLK"), QStringLiteral("K4QQ")}
+                            : QStringList{QStringLiteral("W1TLK")},
+                    homeStations),
+            summary(talker, QStringLiteral("talking"), {QStringLiteral("K4ABC")},
+                    QJsonArray{station(talker, QStringLiteral("a"), QStringLiteral("K4ABC"), 7172000, true),
+                               station(talker, QStringLiteral("b"), QStringLiteral("W6ABC"), 7172000, false),
+                               station(talker, QStringLiteral("c"), QStringLiteral("G0ABC"), 7172000, false)}),
+            summary(quiet, QStringLiteral("quiet"), {},
+                    QJsonArray{station(quiet, QStringLiteral("q"), QStringLiteral("W2QQQ"), 7178000, false),
+                               station(quiet, QStringLiteral("r"), QStringLiteral("N4RRR"), 7178000, false)}),
+            summary(pair, QStringLiteral("doubled"), {QStringLiteral("AA5ABC"), QStringLiteral("K0ABC")},
+                    QJsonArray{station(pair, QStringLiteral("d"), QStringLiteral("AA5ABC"), 7160000, true),
+                               station(pair, QStringLiteral("e"), QStringLiteral("K0ABC"), 7160040, true)})};
+        model->applyRooms(QJsonObject{{QStringLiteral("frequencyVersion"), 1}, {QStringLiteral("rooms"), rooms}});
+
+        const QJsonObject turn{{QStringLiteral("id"), kTurn},
+                               {QStringLiteral("kind"), doubled ? QStringLiteral("doubled") : QStringLiteral("talking")},
+                               {QStringLiteral("hz"), kDial},
+                               {QStringLiteral("sourceRoom"), home},
+                               {QStringLiteral("start"), kRoundtableNow - 42000},
+                               {QStringLiteral("end"), QJsonValue::Null},
+                               {QStringLiteral("talkers"), talkers}};
+        model->applyRoom(QJsonObject{{QStringLiteral("id"), QStringLiteral("lsb-%1").arg(kDial)},
+                                     {QStringLiteral("view"), QStringLiteral("frequency")},
+                                     {QStringLiteral("family"), QStringLiteral("lsb")},
+                                     {QStringLiteral("hz"), kDial},
+                                     {QStringLiteral("members"), members},
+                                     {QStringLiteral("now"), QJsonArray{turn}},
+                                     {QStringLiteral("earlier"), QJsonArray{}},
+                                     {QStringLiteral("messages"), QJsonArray{}}});
+    }
+
     void setLink(RoundtableModel::LinkState state, qint64 since)
     {
         rt.state.applyStationValue("linkSince", since);
@@ -7050,8 +7178,11 @@ struct WindowRoundtable {
     }
 };
 
-// Pan 1's tags: whether each sits clear of the flags and the band plan,
-// and the CPU painter's tags against the GPU frame's, border by border.
+// Pan 1's Roundtable strip (strip design 1 to 4): every tag and your line lie
+// inside the strip, none on the spectrum or its band plan, no tag overlaps
+// another or the line, the strip is kRoundtableStripHeight high, the
+// spectrum keeps its rect with the strip hidden, and the CPU painter's hits
+// match the GPU frame's, border by border.
 void checkRoundtableTags(SceneContext& ctx, const QString& name)
 {
     SpectrumWidget* s = panOne(ctx);
@@ -7061,7 +7192,7 @@ void checkRoundtableTags(SceneContext& ctx, const QString& name)
     }
     // The CPU tags are painted over the pan's own frame with the tags
     // taken off, so both paths blend onto the same backdrop: a dimmed
-    // (translucent) border shows the spectrum through it, which a black
+    // (translucent) border shows the strip through it, which a black
     // backdrop would not.
     const QList<RoundtableTag> shownTags = s->roundtableTags();
     const RoundtableTagDisplay shown = s->roundtableTagDisplay();
@@ -7080,51 +7211,101 @@ void checkRoundtableTags(SceneContext& ctx, const QString& name)
     const QList<SpectrumWidget::RoundtableTagHit> painted = s->roundtableTagHitsForTest();
 
     const QRect spec = s->roundtableTagSpectrumRectForTest();
-    const int bandTop = spec.bottom() + 1 - s->bandPlanStripHeightForTest();
-    QRegion flags = s->receiverFlagRegion();
-    // The pan's toolbar down its left side counts as a flag here.
-    if (auto* toolbar = s->findChild<SpectrumOverlayPanel*>(QString(), Qt::FindDirectChildrenOnly);
-        toolbar != nullptr && toolbar->isVisible()) {
-        flags += toolbar->geometry();
+    const QRect strip = s->roundtableStripRectForTest();
+    const QRect bandPlan(spec.left(), spec.bottom() + 1 - s->bandPlanStripHeightForTest(), spec.width(),
+                         s->bandPlanStripHeightForTest());
+    const bool stripRight = strip.height() == kRoundtableStripHeight;
+    QRect line;
+    for (const auto& hit : painted) {
+        if (hit.kind == SpectrumWidget::RoundtableTagHit::Kind::Card) {
+            line = hit.rect;
+        }
     }
     QJsonArray tags;
+    bool inStrip = true;
     bool clear = true;
+    bool apart = true;
     bool same = drawn.size() == painted.size();
     for (qsizetype i = 0; i < painted.size(); ++i) {
         const auto& hit = painted.at(i);
+        const bool isLine = hit.kind == SpectrumWidget::RoundtableTagHit::Kind::Card;
         const QPoint edge(static_cast<int>(std::lround(hit.rect.center().x() * dpr)),
                           static_cast<int>(std::floor(hit.rect.top() * dpr)));
         const QString cpuColor = QColor(cpu.pixel(edge)).name();
         const QString gpuColor = QColor(gpu.pixel(edge)).name();
-        const bool underFlag = flags.intersects(hit.rect);
-        const bool onBandPlan = hit.rect.bottom() >= bandTop;
-        clear = clear && !underFlag && !onBandPlan;
-        same = same && i < drawn.size() && drawn.at(i).rect == hit.rect && cpuColor == gpuColor;
-        tags.append(QJsonObject{{QStringLiteral("rooms"), QJsonArray::fromStringList(hit.roomIds)},
+        const bool inside = strip.contains(hit.rect);
+        const bool onSpectrum = hit.rect.intersects(spec);
+        const bool onBandPlan = hit.rect.intersects(bandPlan);
+        QStringList overlaps;
+        for (qsizetype j = 0; j < painted.size(); ++j) {
+            if (j != i && painted.at(j).rect.intersects(hit.rect)) {
+                overlaps.append(QString::number(j));
+            }
+        }
+        inStrip = inStrip && inside;
+        clear = clear && !onSpectrum && !onBandPlan;
+        apart = apart && overlaps.isEmpty();
+        same = same && i < drawn.size() && drawn.at(i).rect == hit.rect && drawn.at(i).kind == hit.kind
+            && cpuColor == gpuColor;
+        tags.append(QJsonObject{{QStringLiteral("kind"), isLine ? QStringLiteral("line") : QStringLiteral("tag")},
+                                {QStringLiteral("rooms"), QJsonArray::fromStringList(hit.roomIds)},
                                 {QStringLiteral("folded"), hit.folded},
                                 {QStringLiteral("x"), hit.rect.x()},
                                 {QStringLiteral("y"), hit.rect.y()},
                                 {QStringLiteral("w"), hit.rect.width()},
                                 {QStringLiteral("h"), hit.rect.height()},
-                                {QStringLiteral("under_flag"), underFlag},
+                                {QStringLiteral("in_strip"), inside},
+                                {QStringLiteral("on_spectrum"), onSpectrum},
                                 {QStringLiteral("on_band_plan"), onBandPlan},
+                                {QStringLiteral("overlaps"), QJsonArray::fromStringList(overlaps)},
                                 {QStringLiteral("cpu_border"), cpuColor},
                                 {QStringLiteral("gpu_border"), gpuColor}});
     }
-    ctx.checks.append(QJsonObject{{QStringLiteral("check"), QStringLiteral("roundtable-tags")},
+
+    // The spectrum with the strip hidden: only the waterfall gives up height.
+    s->setRoundtableStripShown(false);
+    const QRect specHidden = s->roundtableTagSpectrumRectForTest();
+    s->setRoundtableStripShown(true);
+    // A fresh pass puts the hits back for the scene's own steps.
+    grabWidget(s);
+    const bool specKept = specHidden == spec;
+
+    const auto rectJson = [](const QRect& r) {
+        return QJsonObject{{QStringLiteral("x"), r.x()}, {QStringLiteral("y"), r.y()},
+                           {QStringLiteral("w"), r.width()}, {QStringLiteral("h"), r.height()}};
+    };
+    ctx.checks.append(QJsonObject{{QStringLiteral("check"), QStringLiteral("roundtable-strip")},
                                   {QStringLiteral("scene"), name},
+                                  {QStringLiteral("strip"), rectJson(strip)},
+                                  {QStringLiteral("spectrum"), rectJson(spec)},
+                                  {QStringLiteral("line"), line.isNull() ? QJsonValue() : QJsonValue(rectJson(line))},
                                   {QStringLiteral("tags"), tags},
-                                  {QStringLiteral("clear_of_flags_and_band_plan"), clear},
+                                  {QStringLiteral("strip_height_right"), stripRight},
+                                  {QStringLiteral("all_in_strip"), inStrip},
+                                  {QStringLiteral("clear_of_spectrum_and_band_plan"), clear},
+                                  {QStringLiteral("none_overlap"), apart},
+                                  {QStringLiteral("spectrum_kept_with_strip_hidden"), specKept},
                                   {QStringLiteral("cpu_matches_gpu"), same}});
-    ctx.notes.append(QStringLiteral("%1: pan 1 drew %2 Roundtable tag(s); clear of the flags and band plan: %3; "
-                                    "CPU tags match the GPU frame's: %4")
-                         .arg(name).arg(painted.size())
+    ctx.notes.append(QStringLiteral("%1: pan 1's strip is %2 px high and drew %3 (line %4); all in the strip: %5; "
+                                    "clear of the spectrum and band plan: %6; none overlap: %7; spectrum kept "
+                                    "with the strip hidden: %8; CPU hits match the GPU frame's: %9")
+                         .arg(name)
+                         .arg(strip.height())
+                         .arg(painted.size())
+                         .arg(line.isNull() ? QStringLiteral("none") : QStringLiteral("drawn"))
+                         .arg(inStrip ? QStringLiteral("yes") : QStringLiteral("no"))
                          .arg(clear ? QStringLiteral("yes") : QStringLiteral("no"))
+                         .arg(apart ? QStringLiteral("yes") : QStringLiteral("no"))
+                         .arg(specKept ? QStringLiteral("yes") : QStringLiteral("no"))
                          .arg(same ? QStringLiteral("yes") : QStringLiteral("no")));
-    if (!same || !clear) {
-        ctx.failure = QStringLiteral("%1: the tags are under a flag or the band plan, or the CPU tags "
-                                     "differ from the GPU frame's: %2")
-                          .arg(name, QString::fromUtf8(QJsonDocument(tags).toJson(QJsonDocument::Compact)));
+    if (!stripRight || !inStrip || !clear || !apart || !specKept || !same) {
+        ctx.failure = QStringLiteral("%1: the strip is %2 px (want %3), or a tag or the line is outside it, on the "
+                                     "spectrum or band plan, overlapping, the spectrum moved with the strip, or the "
+                                     "CPU hits differ from the GPU frame's: %4")
+                          .arg(name)
+                          .arg(strip.height())
+                          .arg(kRoundtableStripHeight)
+                          .arg(QString::fromUtf8(QJsonDocument(tags).toJson(QJsonDocument::Compact)));
     }
 
     // The pan as the GPU path drew it, and the CPU painter's tags alone.
@@ -7137,6 +7318,59 @@ void checkRoundtableTags(SceneContext& ctx, const QString& name)
         img.logicalSize = s->size();
         img.dpr = dpr;
         ctx.images.append(img);
+    }
+}
+
+// Pan 1's details (strip design 5, 6): open from your line, under the strip
+// over the waterfall, or upward over the spectrum when the waterfall has
+// under kRoundtableDetailsMinBelow px of room, clear of the strip. Upward they
+// line up with their own left edge and stand clear of the flags.
+void checkRoundtableDetails(SceneContext& ctx, const QString& name, bool upward)
+{
+    SpectrumWidget* s = panOne(ctx);
+    auto* details = s != nullptr ? s->findChild<RoundtableFrequencyPeek*>() : nullptr;
+    if (details == nullptr || !details->isOpen()) {
+        ctx.failure = QStringLiteral("%1: the details did not open from the line").arg(name);
+        return;
+    }
+    const QRect rect = details->inspectorRect();
+    const QRect strip = s->roundtableStripRectForTest();
+    const QRect line = s->roundtableStripLineForTest().line;
+    const SpectrumWidget::RoundtableInspectorSpot spot = s->roundtableInspectorSpot(0, 0);
+    const QRect area = upward ? spot.above : spot.below;
+    const bool sideRight = details->upwardForTest() == upward;
+    const bool inside = area.contains(rect) && !rect.intersects(strip);
+    const bool topRight = upward || rect.top() == strip.bottom() + 1 + kRoundtableDetailsGap;
+    const bool lined = upward
+        ? rect.left() == spot.upwardAnchorLeft && !s->receiverFlagRegion().intersects(rect)
+        : !line.isNull() && rect.left() == line.left();
+    ctx.checks.append(QJsonObject{{QStringLiteral("check"), QStringLiteral("roundtable-details")},
+                                  {QStringLiteral("scene"), name},
+                                  {QStringLiteral("upward"), details->upwardForTest()},
+                                  {QStringLiteral("room_below"), spot.below.height()},
+                                  {QStringLiteral("x"), rect.x()},
+                                  {QStringLiteral("y"), rect.y()},
+                                  {QStringLiteral("w"), rect.width()},
+                                  {QStringLiteral("h"), rect.height()},
+                                  {QStringLiteral("in_its_area"), inside},
+                                  {QStringLiteral("top_under_strip"), topRight},
+                                  {QStringLiteral("lined_up_with_line"), lined}});
+    ctx.notes.append(QStringLiteral("%1: the details open %2 (%3 px of waterfall), %4 x %5 at %6,%7")
+                         .arg(name, details->upwardForTest() ? QStringLiteral("upward") : QStringLiteral("downward"))
+                         .arg(spot.below.height())
+                         .arg(rect.width())
+                         .arg(rect.height())
+                         .arg(rect.x())
+                         .arg(rect.y()));
+    if (!sideRight || !inside || !topRight || !lined) {
+        ctx.failure = QStringLiteral("%1: the details stand wrong: upward %2 (want %3), inside %4, top %5, "
+                                     "lined up %6")
+                          .arg(name)
+                          .arg(details->upwardForTest())
+                          .arg(upward)
+                          .arg(inside)
+                          .arg(topRight)
+                          .arg(lined);
     }
 }
 
@@ -7450,8 +7684,8 @@ void appendRoundtableScenes(QVector<Scene>& scenes)
         sheet.close();
         AppSettings::instance().remove(QString::fromLatin1(RoundtableFirstRunDialog::kSeenKey));
     }});
-    // Roundtable plan Task 14: the tags along pan 1's foot and slice A's
-    // flag line, live; crowded (folds, one +N list open); offline (the
+    // Roundtable plan Task 14: the tags in pan 1's Roundtable strip and
+    // slice A's flag line, live; crowded (folds, one +N list open); offline (the
     // tags greyed as last known); connecting (no tags).
     const auto tagScene = [&scenes](const QString& name,
                                     const std::function<void(WindowRoundtable&)>& pose,
@@ -7516,6 +7750,102 @@ void appendRoundtableScenes(QVector<Scene>& scenes)
         rt.rt.state.applyStationValue("hidden", true);
         rt.setLink(RoundtableModel::LinkState::Hidden, kRoundtableNow);
     });
+
+    // The strip design's own scenes (strip design 1 to 8), from a
+    // frequency-first server through the same station-attached window feed:
+    // your line beside slice A's dial with the other frequencies' tags; more
+    // listeners than fit ("+N more"); your frequency doubled; Roundtable on
+    // with nobody on the band (an empty strip); and the details opened from
+    // your line, over the waterfall and, with under 140 px of waterfall,
+    // upward. `spectrumFrac` > 0 sets pan 1's split before the freeze (the
+    // default split leaves pan 1 enough waterfall for the details below);
+    // `details`: 0 none, 1 open downward, 2 open upward.
+    using StripTalk = WindowRoundtable::StripTalk;
+    const auto stripScene = [&scenes](const QString& name, StripTalk talk, int listeners, float spectrumFrac,
+                                      int details, const QString& note) {
+        scenes.append({name, QStringLiteral("2v"), false,
+                       [name, talk, listeners, spectrumFrac, details, note](SceneContext& ctx) {
+            onRoundtableClock([&] {
+                WindowRoundtable rt(ctx.model, true);
+                if (rt.model == nullptr) {
+                    ctx.failure = QStringLiteral("the window has no Roundtable model");
+                    return;
+                }
+                float savedFrac = -1.0f;
+                runWindowScene(ctx, twoBandPoses(), 0, [&](SceneContext& c) {
+                    rt.strip(talk, listeners);
+                    SpectrumWidget* s = panOne(c);
+                    if (s != nullptr && spectrumFrac > 0.0f) {
+                        savedFrac = s->spectrumFrac();
+                        s->setSpectrumFrac(spectrumFrac);
+                    }
+                });
+                SpectrumWidget* s = panOne(ctx);
+                const auto restore = [&]() {
+                    if (s == nullptr) {
+                        return;
+                    }
+                    if (auto* open = s->findChild<RoundtableFrequencyPeek*>(); open != nullptr && open->isOpen()) {
+                        open->closePeek();
+                    }
+                    if (savedFrac > 0.0f) {
+                        s->setSpectrumFrac(savedFrac);
+                    }
+                    pump(kTabSettleMs);
+                };
+                if (!ctx.failure.isEmpty() || s == nullptr) {
+                    if (ctx.failure.isEmpty()) {
+                        ctx.failure = QStringLiteral("%1: no pan 1").arg(name);
+                    }
+                    restore();
+                    return;
+                }
+                pump(kFinalSettleMs);
+                if (details > 0) {
+                    // A click on your line, as the operator opens the details.
+                    QRect line;
+                    for (const auto& hit : s->roundtableTagHitsForTest()) {
+                        if (hit.kind == SpectrumWidget::RoundtableTagHit::Kind::Card) {
+                            line = hit.rect;
+                        }
+                    }
+                    if (line.isNull()) {
+                        ctx.failure = QStringLiteral("%1: no line in pan 1's strip to click").arg(name);
+                        restore();
+                        return;
+                    }
+                    sendMouse(s, QEvent::MouseButtonPress, line.center(), Qt::LeftButton, Qt::LeftButton);
+                    sendMouse(s, QEvent::MouseButtonRelease, line.center(), Qt::LeftButton, Qt::NoButton);
+                    pump(kFinalSettleMs);
+                }
+                captureWindow(ctx, name);
+                if (details > 0) {
+                    checkRoundtableDetails(ctx, name, details == 2);
+                }
+                const QString failed = ctx.failure;
+                checkRoundtableTags(ctx, name);
+                if (!failed.isEmpty()) {
+                    ctx.failure = failed;
+                }
+                ctx.notes.append(note);
+                restore();
+            });
+        }});
+    };
+    stripScene(QStringLiteral("roundtable-strip-talking"), StripTalk::Talking, 5, 0.0f, 0,
+               QStringLiteral("W1TLK talking on 7.185 LSB with 5 listeners (you among them); other frequencies: "
+                              "K4ABC talking on 7.172, a quiet 7.178 and a double on 7.160"));
+    stripScene(QStringLiteral("roundtable-strip-more"), StripTalk::Talking, 7, 0.0f, 0,
+               QStringLiteral("W1TLK talking on 7.185 LSB with 7 listeners: the line ends in +N more"));
+    stripScene(QStringLiteral("roundtable-strip-double"), StripTalk::Double, 5, 0.0f, 0,
+               QStringLiteral("W1TLK and K4QQ on top of each other on your 7.185 LSB, 5 listening"));
+    stripScene(QStringLiteral("roundtable-strip-quiet"), StripTalk::Nobody, 0, 0.0f, 0,
+               QStringLiteral("Roundtable on with nobody on the band: the strip is empty"));
+    stripScene(QStringLiteral("roundtable-strip-details"), StripTalk::Talking, 5, 0.0f, 1,
+               QStringLiteral("the details opened from your line, hanging over the waterfall under the strip"));
+    stripScene(QStringLiteral("roundtable-strip-details-short"), StripTalk::Talking, 5, 0.80f, 2,
+               QStringLiteral("the details opened from your line with under 140 px of waterfall: they open "
+                              "upward over the spectrum"));
 
     // Slice A's flag line: live in room 7.185 (six there, W1TLK talking),
     // two messages naming you, you transmitting there, offline and

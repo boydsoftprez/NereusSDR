@@ -11,6 +11,15 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: The details get their own left edge for opening upward
+//               (updateRoundtableInspectorSpot). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-11-16: The Roundtable details stand over the waterfall under the
+//               strip, lined up with your line (updateRoundtableInspectorSpot).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-16: Every pan shows the Roundtable strip while Roundtable is on
+//               (refreshRoundtableTags, roundtableStripShownFor). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-06: A pan raises the wideband flag only for a slice this window
 //               controls, not one it only listens to, JJ's decision.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
@@ -8113,6 +8122,9 @@ void MainWindow::refreshRoundtableTags()
         ? RoundtableModel::frequencyContextId(std::llround(active->frequency()), activeFamily) : QString();
     QList<RoundtableTag> tags = roundtableTagsFor(roundtable, sliceIds, activeContext);
     const RoundtableTagDisplay display = roundtableTagDisplayFor(roundtable);
+    // The strip under each pan's frequency scale: there while Roundtable is on,
+    // in a local window and in one attached to a remote Core alike.
+    const bool stripShown = roundtableStripShownFor(roundtable);
     for (auto it = m_vfoWidgetsBySlice.constBegin(); it != m_vfoWidgetsBySlice.constEnd(); ++it) {
         if (it.value()) {
             SliceModel* slice = nullptr;
@@ -8129,8 +8141,9 @@ void MainWindow::refreshRoundtableTags()
             it.value()->setRoundtableLineMenuEnabled(roundtable && roundtable->frequencyAvailable());
         }
     }
-    // The card stands on the pan that hosts the active slice's flag. A legacy
-    // server has no frequency card and keeps its tags (overlay design D21).
+    // Your frequency's line sits in the strip of the pan that hosts the active
+    // slice's flag. A legacy server has no frequency card and keeps its tags
+    // (overlay design D21).
     RoundtableCardModel card;
     if (active && !activeContext.isEmpty() && roundtable && roundtable->frequencyAvailable()) {
         card = roundtableCardModelFor(roundtable, sliceIds, activeContext,
@@ -8139,6 +8152,7 @@ void MainWindow::refreshRoundtableTags()
     for (PanadapterApplet* applet : m_panStack->allApplets()) {
         SpectrumWidget* sw = applet ? applet->spectrumWidget() : nullptr;
         if (sw) {
+            sw->setRoundtableStripShown(stripShown);
             sw->setRoundtableTags(tags, display);
             const bool hosts = active && sw->vfoWidget(active->sliceIndex()) != nullptr;
             sw->setRoundtableCard(hosts ? card : RoundtableCardModel{}, activeContext);
@@ -8347,7 +8361,8 @@ void MainWindow::updateRoundtableInspectorSpot()
     const SliceModel* active = activeSliceForWindow();
     const SpectrumWidget::RoundtableInspectorSpot spot
         = pan->roundtableInspectorSpot(active ? active->sliceIndex() : -1, m_roundtablePeekAnchorHz);
-    m_roundtablePeek->setInspectorSpot(spot.pan, spot.dialX, spot.flags, spot.flagFlipped);
+    // Under the strip over the waterfall, lined up with your line (strip design 5).
+    m_roundtablePeek->setInspectorSpot(spot.below, spot.above, spot.anchorLeft, spot.upwardAnchorLeft);
     pan->setRoundtableInspectorRect(m_roundtablePeek->inspectorRect());
 }
 
