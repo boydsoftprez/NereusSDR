@@ -14,9 +14,9 @@ namespace NereusSDR {
 // own), asking for what tops the slot up to the drain. It must not lock,
 // wait or allocate. Up to `frames` mono 48 kHz samples into `mono48k`;
 // returns how many were the playback (0 when nothing plays there).
-class PlaybackFeed {
+class RecordingPlaybackFeed {
 public:
-    virtual ~PlaybackFeed() = default;
+    virtual ~RecordingPlaybackFeed() = default;
     virtual int pullSpeaker(int playbackSlotId, float* mono48k, int frames) noexcept = 0;
 };
 

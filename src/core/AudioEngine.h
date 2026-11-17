@@ -450,7 +450,7 @@ enum class RemotePlaybackRefusal : int { None = 0, Unavailable = 1, Format = 2 }
 // how you sound on air, and it goes where you want to hear it.
 enum class TxMonitorOutput : int { Speakers = 0, Headphones = 1 };
 
-class PlaybackFeed;
+class RecordingPlaybackFeed;
 
 class MasterMixAudioTap {
 public:
@@ -1089,7 +1089,7 @@ public:
     /// every playback slot it sums up to the drain so the slot's ring never
     /// drops in normal play. nullptr: none. Control thread; returns once no
     /// drain is inside the feed it replaced.
-    void setPlaybackFeed(PlaybackFeed* feed);
+    void setPlaybackFeed(RecordingPlaybackFeed* feed);
     /// Owner mixes taken now; diagnostics and leak checks.
     int ownerMixCount() const;
 
@@ -2337,7 +2337,7 @@ private:
     // Recording player: the playback feed and its gate (setPlaybackFeed),
     // and the DSP thread's scratch for one pull.
     void feedPlaybackSlot(int slotId, int frames);
-    std::atomic<PlaybackFeed*> m_playbackFeed{nullptr};
+    std::atomic<RecordingPlaybackFeed*> m_playbackFeed{nullptr};
     std::atomic<unsigned> m_playbackFeedCalls{0};
     static constexpr int kPlaybackPumpFrames = 256;
     std::array<float, kPlaybackPumpFrames> m_playbackPumpMono{};

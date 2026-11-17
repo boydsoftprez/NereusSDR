@@ -4122,7 +4122,7 @@ void AudioEngine::setOwnerMixPlayback(int slot, bool on)
     m_ownerMixes[static_cast<size_t>(slot)].playback.store(on, std::memory_order_release);
 }
 
-void AudioEngine::setPlaybackFeed(PlaybackFeed* feed)
+void AudioEngine::setPlaybackFeed(RecordingPlaybackFeed* feed)
 {
     m_playbackFeed.store(feed, std::memory_order_seq_cst);
     while (m_playbackFeedCalls.load(std::memory_order_seq_cst) != 0) {
@@ -4135,7 +4135,7 @@ void AudioEngine::setPlaybackFeed(PlaybackFeed* feed)
 void AudioEngine::feedPlaybackSlot(int slotId, int frames)
 {
     m_playbackFeedCalls.fetch_add(1, std::memory_order_seq_cst);
-    PlaybackFeed* const feed = m_playbackFeed.load(std::memory_order_seq_cst);
+    RecordingPlaybackFeed* const feed = m_playbackFeed.load(std::memory_order_seq_cst);
     if (feed != nullptr) {
         int want = frames - m_masterMix.queuedFrames(slotId);
         while (want > 0) {

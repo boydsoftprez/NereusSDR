@@ -135,7 +135,7 @@ struct KeptEvent {
 //
 // A device name of "" is the window or Core that runs the radio itself:
 // stopping from there is StoppedHere; any other name is StoppedOnDevice.
-class NEREUS_CORE_EXPORT RecordingService : public QObject, public PlaybackFeed {
+class NEREUS_CORE_EXPORT RecordingService : public QObject, public RecordingPlaybackFeed {
     Q_OBJECT
 
 public:
@@ -216,12 +216,12 @@ public:
 
     // The speakers that hear a listener's playback, as AudioEngine's
     // playback slot: the radio's AudioEngine pulls each slot it drains from
-    // here (PlaybackFeed). "local" has AudioEngine::kLocalPlaybackSlotId from
+    // here (RecordingPlaybackFeed). "local" has AudioEngine::kLocalPlaybackSlotId from
     // the start; a session's device gets its owner mix's slot from
     // DaemonMediaController, and MasterMixer::kNoPlaybackSlot when it goes.
     static constexpr const char* kLocalListener = "local";
     void setListenerSpeakerSlot(const ListenerId& who, int playbackSlotId);
-    // PlaybackFeed, the DSP thread: the playback of whoever is bound to the
+    // RecordingPlaybackFeed, the DSP thread: the playback of whoever is bound to the
     // slot, while it is routed to the speakers.
     int pullSpeaker(int playbackSlotId, float* mono48k, int frames) noexcept override;
 
