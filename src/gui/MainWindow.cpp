@@ -1346,8 +1346,25 @@ MainWindow::MainWindow(QWidget* parent)
     QTimer::singleShot(0, this, &MainWindow::openConnectionPanelOnLaunch);
     // NACH dem Profil: erst muessen die Panels dort liegen, wo das
     // Profil sie haben will, dann holt das Kombi-Feld seine zurueck.
+    //
+    // 2026-11-17: nur noch, wenn das Startprofil zum Feld SCHWEIGT (eine
+    // Aufnahme von vor dem 2026-11-01, ohne `kombiInhalt`). Traegt es
+    // den Schluessel, hat das Profil das Feld oben schon gefuellt, und
+    // die globale Liste -- der Inhalt des Feldes beim letzten BEENDEN,
+    // gleich in welchem Profil -- hat hier nichts zu sagen. Sonst legte
+    // ein Beenden im Contest-Profil dessen Panels beim naechsten Start
+    // in das Feld von Profil 1.
     QTimer::singleShot(0, this, [this]() {
-        for (KombiApplet* feld : kombiFelder()) { holeKombiInhaltZurueck(feld); }
+        QVariantMap start;
+        if (m_layoutProfiles && !m_layoutProfiles->current().isEmpty()) {
+            start = m_layoutProfiles->snapshot(m_layoutProfiles->current());
+        }
+        if (m_kombiApplet && !start.contains(QStringLiteral("kombiInhalt"))) {
+            holeKombiInhaltZurueck(m_kombiApplet);
+        }
+        if (m_kombiApplet2 && !start.contains(QStringLiteral("kombiInhalt2"))) {
+            holeKombiInhaltZurueck(m_kombiApplet2);
+        }
     });
 
     // Phase 3J-2 + 3R M3: restore each spot client's auto-connect /
@@ -3366,6 +3383,12 @@ QVariantMap MainWindow::blankLayoutState() const
     }
     s.insert(QStringLiteral("visible"), vis);
     s.insert(QStringLiteral("order"), QStringList{});
+    // Das Kombi-Feld ausdruecklich LEER (2026-11-17): ein fehlender
+    // Schluessel hiesse „das Profil schweigt", und dann gaelte die
+    // globale Liste -- ein leeres Profil bekaeme den Feldinhalt des
+    // zuletzt benutzten. Siehe holeKombiInhaltZurueck().
+    s.insert(QStringLiteral("kombiInhalt"), QStringList{});
+    s.insert(QStringLiteral("kombiInhalt2"), QStringList{});
     s.insert(QStringLiteral("containerGeometry"), QVariantMap{});
     // Rotor / Log ist ein QDockWidget, kein Applet -- siehe die eigene
     // Begruendung an der Erfassungsstelle (Profil-Hook, "rotorDockVisible").
@@ -11326,13 +11349,49 @@ void MainWindow::populateDefaultMeter()
                 // Geleert wurde es schon VOR Schritt 1 (siehe dort).
                 // Gefuellt wird es erst jetzt: vorher wuerde Schritt 3
                 // die Panels wieder herausnehmen.
-                if (m_kombiApplet) {
-                    holeKombiInhaltZurueck(
-                        m_kombiApplet, s.value(QStringLiteral("kombiInhalt")).toStringList());
-                }
-                if (m_kombiApplet2) {
-                    holeKombiInhaltZurueck(
-                        m_kombiApplet2, s.value(QStringLiteral("kombiInhalt2")).toStringList());
+                //
+                // ── Ein Panel liegt an EINEM Ort (2026-11-17) ───────
+                //
+                // Betreiber: „Das TX Fenster verschwindet immer bei FT8
+                // nach neustart, aber auch wenn ich ein Profil kurz
+                // aendere und danach wieder auf FT8 zurueckkehre."
+                //
+                // Sein Profil „FT8" fuehrte TX zweimal: als eigenes
+                // Fenster (floatingApplets) UND im Kombi-Feld
+                // (kombiInhalt) -- und das Feld schwebt in FT8 nicht
+                // einmal. Schritt 3 baute das Fenster, diese Stelle
+                // zog TX wieder heraus und in das unsichtbare Feld.
+                // Herleitung und Messung: AppletKeys.h.
+                //
+                // Zwei Aenderungen: was das Profil als eigenes Fenster
+                // fuehrt, kommt nicht ins Feld. Und ein Profil, das den
+                // Schluessel TRAEGT, hat gesprochen -- auch wenn die
+                // Liste leer ist; dann gilt leer, nicht der Rueckfall
+                // auf die globale Liste, ueber den der Widerspruch
+                // ueberhaupt erst ins Profil kam.
+                {
+                    const QStringList schwebend =
+                        s.value(QStringLiteral("floatingApplets")).toMap().keys();
+                    const auto fuelle = [this, &s, &schwebend](KombiApplet* feld,
+                                                              const QString& schluessel) {
+                        if (!feld) { return; }
+                        const bool profilSpricht = s.contains(schluessel);
+                        const QStringList gewuenscht = s.value(schluessel).toStringList();
+                        const QStringList hinein =
+                            AppletKeys::kombiInhaltOhneEigeneFenster(gewuenscht, schwebend);
+                        if (hinein.size() != gewuenscht.size()) {
+                            QStringList draussen;
+                            for (const QString& id : gewuenscht) {
+                                if (!hinein.contains(id)) { draussen << id; }
+                            }
+                            qCInfo(lcConnection).noquote()
+                                << "Kombi: das Profil fuehrt" << draussen.join(QStringLiteral(", "))
+                                << "auch als eigenes Fenster — bleibt Fenster, kommt nicht ins Feld";
+                        }
+                        holeKombiInhaltZurueck(feld, hinein, profilSpricht);
+                    };
+                    fuelle(m_kombiApplet,  QStringLiteral("kombiInhalt"));
+                    fuelle(m_kombiApplet2, QStringLiteral("kombiInhalt2"));
                 }
 
                 // Die Contest-Panels zuletzt, und erst im naechsten
@@ -21968,12 +22027,21 @@ void MainWindow::onConnectionStateChanged()
 //
 // Hier, einmal nach dem Aufbau: die gemerkten Kennungen der Reihe
 // nach hineinlegen. Was es nicht mehr gibt, wird uebergangen.
-void MainWindow::holeKombiInhaltZurueck(KombiApplet* feld, const QStringList& vorgabe)
+void MainWindow::holeKombiInhaltZurueck(KombiApplet* feld, const QStringList& vorgabe,
+                                        bool profilSpricht)
 {
     if (m_shuttingDown || !feld) { return; }
     // Aus dem Profil, wenn eines etwas sagt; sonst aus der gemerkten
     // Liste des Feldes selbst (erster Start nach dem Umbau).
+    //
+    // `profilSpricht` (2026-11-17): das Profil TRAEGT den Schluessel.
+    // Dann ist eine leere Liste eine Ansage („hier liegt nichts im
+    // Feld") und kein Schweigen -- ohne diese Unterscheidung fiel ein
+    // absichtlich leeres Feld auf die globale Liste zurueck und bekam
+    // den Inhalt des zuletzt benutzten Profils. So kam TX in das
+    // Kombi-Feld des FT8-Profils.
     QStringList ids = vorgabe;
+    if (ids.isEmpty() && profilSpricht) { return; }
     if (ids.isEmpty()) {
         const QString liste =
             AppSettings::instance().value(feld->appletId() + QStringLiteral("/Inhalt"),

@@ -1217,7 +1217,11 @@ private:
     void applyDarkTheme();
     void openConnectionPanelOnLaunch();
     /// Was im Kombi-Feld lag, beim Start wieder hineinlegen.
-    void holeKombiInhaltZurueck(class KombiApplet* feld, const QStringList& vorgabe = {});
+    /// `profilSpricht`: das Profil traegt den Schluessel -- dann ist eine
+    /// leere `vorgabe` eine Ansage (Feld leer) und kein Schweigen, und
+    /// der Rueckfall auf die globale Liste entfaellt (2026-11-17).
+    void holeKombiInhaltZurueck(class KombiApplet* feld, const QStringList& vorgabe = {},
+                                bool profilSpricht = false);
     void wireSliceToSpectrum();
 
     /// Re-bind RttyDecoderApplet and the RADE/RttyDecoder availability gate

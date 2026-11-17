@@ -59,6 +59,7 @@
 
 #include <QHash>
 #include <QString>
+#include <QStringList>
 
 namespace Longpath {
 
@@ -82,6 +83,46 @@ AppletWidget* appletFor(const AppletMap& map, const QString& key);
 /// Update kann Widgets nennen, die es nicht mehr gibt, und die sollen
 /// nicht stillschweigend zu etwas anderem werden.
 QString canonical(const AppletMap& map, const QString& key);
+
+// ── Ein Panel liegt an EINEM Ort (2026-11-17) ───────────────────────
+//
+// Betreiber: „Das TX Fenster verschwindet immer bei FT8 nach neustart,
+// aber auch wenn ich ein Profil kurz aendere und danach wieder auf FT8
+// zurueckkehre."
+//
+// Gemessen in seiner Einstellungsdatei vom 17.11.: das Profil „FT8"
+// fuehrt TX ZWEIMAL --
+//
+//     floatingApplets: { Tx: x 0, y 592, 397x253 }   (eigenes Fenster)
+//     kombiInhalt:     [ RotorLog, Tx, Rx ]          (im Kombi-Feld)
+//
+// -- und das Kombi-Feld schwebt in FT8 gar nicht; es steckt in der
+// Spalte, die dort niemand sieht. Beim Anwenden entsteht in Schritt 3
+// das TX-Fenster, und am Ende zieht `holeKombiInhaltZurueck()` TX
+// wieder heraus und in das unsichtbare Feld. Im Protokoll desselben
+// Tages steht es bei JEDEM Wechsel nach FT8: „Kombi: 3 von 3 gemerkten
+// Panels zurueckgeholt", und zwanzig Sekunden spaeter sein Griff
+// danach: `bringAppletToFront("Tx"): "detached" ... hidden=true`.
+//
+// Hineingekommen ist der Widerspruch ueber den Rueckfall auf die
+// GLOBALE Liste (`Kombi/Inhalt`): ein Profil ohne eigenen Eintrag bekam
+// den Inhalt des zuletzt benutzten Feldes -- und die naechste Aufnahme
+// schrieb ihn als den eigenen fest. Seitdem haelt er sich selbst.
+//
+// Die Regel, die das aufloest, ist keine Heuristik: ein Eintrag mit
+// Lage und Groesse ist eine Ansage des Betreibers (er hat das Fenster
+// dorthin gestellt), ein Eintrag in einer Liste ist es nicht. Fuehrt
+// ein Profil ein Panel als eigenes Fenster, kommt es nicht ins Feld.
+//
+// Reine Listenfunktion, wie alles in dieser Datei und aus demselben
+// Grund: am Schreibtisch vollstaendig pruefbar.
+
+/// Was aus `gewuenscht` (der `kombiInhalt`-Liste eines Profils) wirklich
+/// ins Feld kommt: alles, was das Profil nicht zugleich in `schwebend`
+/// (den Schluesseln seiner `floatingApplets`) als eigenes Fenster
+/// fuehrt. Reihenfolge bleibt, Doppelte fallen weg.
+QStringList kombiInhaltOhneEigeneFenster(const QStringList& gewuenscht,
+                                         const QStringList& schwebend);
 
 } // namespace AppletKeys
 } // namespace Longpath

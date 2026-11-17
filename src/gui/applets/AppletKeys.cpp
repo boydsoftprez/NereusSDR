@@ -39,5 +39,18 @@ QString canonical(const AppletMap& map, const QString& key)
     return a ? panelIdFor(map, a) : key;
 }
 
+QStringList kombiInhaltOhneEigeneFenster(const QStringList& gewuenscht,
+                                         const QStringList& schwebend)
+{
+    QStringList bleibt;
+    for (const QString& id : gewuenscht) {
+        if (id.isEmpty()) { continue; }
+        if (schwebend.contains(id)) { continue; }   // eigenes Fenster gewinnt
+        if (bleibt.contains(id)) { continue; }
+        bleibt << id;
+    }
+    return bleibt;
+}
+
 } // namespace AppletKeys
 } // namespace Longpath

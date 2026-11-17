@@ -5616,6 +5616,14 @@ longpath_add_test(tst_profil_loeschen_laesst_andere_stehen)
 target_compile_definitions(tst_profil_loeschen_laesst_andere_stehen PRIVATE
     LONGPATH_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
 list(APPEND _longpath_grosser_schirm tst_profil_loeschen_laesst_andere_stehen)
+# 2026-11-17: das TX-Fenster verschwand in FT8 bei jedem Profilwechsel --
+# sein Profil fuehrte TX doppelt (eigenes Fenster UND Kombi-Feld), und
+# die Kombi-Fuellung zog es am Ende in ein Feld, das dort niemand sieht.
+# Mit seinem echten Profilsatz von diesem Tag.
+longpath_add_test(tst_tx_fenster_bleibt_im_ft8_profil)
+target_compile_definitions(tst_tx_fenster_bleibt_im_ft8_profil PRIVATE
+    LONGPATH_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
+list(APPEND _longpath_grosser_schirm tst_tx_fenster_bleibt_im_ft8_profil)
 # Beide Plus-Knoepfe bieten dasselbe an (2026-11-12, Martin: „beim plus
 # oben oder unten muss alles natürlich erreichbar sein").
 longpath_add_test(tst_beide_plus_gleich)

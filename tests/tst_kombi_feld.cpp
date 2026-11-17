@@ -446,15 +446,28 @@ private slots:
         QVERIFY2(src.contains(QStringLiteral("insert(QStringLiteral(\"kombiInhalt\")")),
                  "das Profil sichert den Inhalt des Feldes nicht — dann ist "
                  "er nach jedem Wechsel falsch");
-        QVERIFY2(src.contains(QStringLiteral("value(QStringLiteral(\"kombiInhalt\")")),
+        // Seit 2026-11-17 fuellt eine kleine Hilfsfunktion beide Felder
+        // (sie braucht den Schluessel zweimal: ob das Profil ihn TRAEGT
+        // und was darin steht). Der Anker ist darum ihr Aufruf, nicht
+        // mehr das nackte value().
+        QVERIFY2(src.contains(QStringLiteral(
+                     "fuelle(m_kombiApplet,  QStringLiteral(\"kombiInhalt\"))")),
                  "das Profil stellt den Inhalt nicht wieder her");
+        // Und was das Profil als eigenes Fenster fuehrt, kommt nicht ins
+        // Feld -- sonst verschwindet es dort (Betreiber 2026-11-17: „Das
+        // TX Fenster verschwindet immer bei FT8"). Das Verhalten selbst
+        // prueft tst_tx_fenster_bleibt_im_ft8_profil am echten Fenster;
+        // hier nur, dass die Regel an dieser Stelle haengt.
+        QVERIFY2(src.contains(QStringLiteral("kombiInhaltOhneEigeneFenster(")),
+                 "die Kombi-Fuellung fragt nicht mehr, was das Profil als "
+                 "eigenes Fenster fuehrt");
         // Und die Reihenfolge: erst die Panels dorthin, wo das Profil
         // sie haben will, DANN das Feld. Umgekehrt nimmt Schritt 3 sie
         // ihm wieder weg.
         const int schritt1 = src.indexOf(QStringLiteral("1/6 Vollbild"));
         const int schritt3 = src.indexOf(QStringLiteral("3/6 Applet-Andocken"));
         const int leeren   = src.indexOf(QStringLiteral("gibAlleFrei()"));
-        const int fuellen  = src.indexOf(QStringLiteral("holeKombiInhaltZurueck(\n"));
+        const int fuellen  = src.indexOf(QStringLiteral("fuelle(m_kombiApplet,"));
         const int fertig   = src.indexOf(QStringLiteral("6/6 fertig"));
         QVERIFY2(schritt1 > 0 && schritt3 > schritt1 && fertig > schritt3,
                  "der Anwenden-Weg sieht anders aus als erwartet");
