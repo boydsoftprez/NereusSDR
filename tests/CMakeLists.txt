@@ -8564,6 +8564,10 @@ nereus_add_test(tst_spectrum_widget_display_signals)
 # and the frequency scale's text size (AetherSDR ports), and that Auto
 # spacing and 10 px text draw what they drew before. Test sandbox.
 nereus_add_test(tst_spectrum_widget_additions)
+# NEREUS_SOURCE_DIR: the test reads src/main.cpp to prove only the window
+# forgets a stored grid text colour equal to the old yellow default.
+target_compile_definitions(tst_spectrum_widget_additions PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 # -- The GPU spectrum trace and its peak hold sit on their grid line with
 #    the band plan shown and with the 1 Hz normalization on, and a new bin

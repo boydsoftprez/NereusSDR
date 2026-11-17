@@ -15,6 +15,9 @@
 //                 the tooltip text taken from it; the widened port check
 //                 found them. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-11-17 - Grid Text Color's default and Reset are the workspace's
+//                 white-grey (Workspace::kTextPrimary), was yellow. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // --- From setup.cs ---
@@ -73,6 +76,7 @@
 #include "gui/SpectrumWidget.h"
 #include "gui/StyleConstants.h"
 #include "gui/UnbuiltFeatures.h"
+#include "gui/styles/WorkspacePalette.h"
 #include "core/AppSettings.h"
 #include "models/RadioModel.h"
 
@@ -248,8 +252,10 @@ void ColorsThemePage::buildUI()
     specForm->addRow(QStringLiteral("H-Grid Color:"), m_hGridColorBtn);
 
     // Grid Text Color — moved from Display → Grid & Scales "Colors" group (G12).
+    // NereusSDR differs here by the maintainer's design choice (2026-11-17):
+    // white-grey by default, was Thetis's yellow.
     m_gridTextColorBtn = makeBtn(specGroup,
-        QColor(255, 255, 0),
+        QColor::fromString(Workspace::kTextPrimary),
         QStringLiteral("DisplayGridTextColor"),
         &SpectrumWidget::setGridTextColor);
     m_gridTextColorBtn->setProperty("nereusSetupId", "appearance.colorsTheme.gridTextColor");
@@ -383,7 +389,8 @@ void ColorsThemePage::resetColorsToDefaultsForTest()
     reset("DisplayGridColor", QColor(255, 255, 255, 40), &SpectrumWidget::setGridColor);
     reset("DisplayGridFineColor", QColor(255, 255, 255, 20), &SpectrumWidget::setGridFineColor);
     reset("DisplayHGridColor", QColor(255, 255, 255, 40), &SpectrumWidget::setHGridColor);
-    reset("DisplayGridTextColor", QColor(255, 255, 0), &SpectrumWidget::setGridTextColor);
+    reset("DisplayGridTextColor", QColor::fromString(Workspace::kTextPrimary),
+          &SpectrumWidget::setGridTextColor);
     reset("DisplayBandEdgeColor", QColor(255, 0, 0), &SpectrumWidget::setBandEdgeColor);
     reset("DisplayRxZeroLineColor", QColor(255, 0, 0), &SpectrumWidget::setRxZeroLineColor);
     reset("DisplayTxZeroLineColor", QColor(255, 184, 0), &SpectrumWidget::setTxZeroLineColor);

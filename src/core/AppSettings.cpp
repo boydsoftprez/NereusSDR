@@ -66,6 +66,9 @@
 //                 ends, so a background save still writing at exit no
 //                 longer leaves the Windows process waiting forever.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-17 - forgetOldDefaultGridTextColor(): a stored grid text
+//                 colour equal to the old yellow default is removed once.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -2236,6 +2239,39 @@ void AppSettings::clearUncalibratedClarityFloors(AppSettings& settings)
     if (removed > 0) {
         qDebug() << "Removed" << removed
                  << "stored per-band noise floor(s) measured before calibration";
+    }
+}
+
+void AppSettings::forgetOldDefaultGridTextColor(AppSettings& settings)
+{
+    const QString markerKey = QStringLiteral("DisplayGridTextColorDefaultReset");
+    if (settings.value(markerKey).toString() == QLatin1String("True")) {
+        return;  // already done: what is stored now is the operator's
+    }
+
+    // The Setup default and every pan's own value, pan 0 included
+    // (PanDisplayKeys: <base>_<N>). The old default was {255, 255, 0},
+    // saved as QColor::name(HexArgb); #ffff00 is the same colour unpadded.
+    static const QRegularExpression colorPattern(
+        QStringLiteral("^DisplayGridTextColor(?:_\\d+)?$"));
+    int removed = 0;
+    const QStringList keys = settings.allKeys();
+    for (const QString& key : keys) {
+        if (!colorPattern.match(key).hasMatch()) {
+            continue;
+        }
+        const QString stored = settings.value(key).toString().trimmed().toLower();
+        if (stored == QLatin1String("#ffffff00") || stored == QLatin1String("#ffff00")) {
+            settings.remove(key);
+            ++removed;
+        }
+    }
+
+    settings.setValue(markerKey, QStringLiteral("True"));
+    settings.save();
+    if (removed > 0) {
+        qDebug() << "Removed" << removed
+                 << "stored grid text colour(s) equal to the old yellow default";
     }
 }
 

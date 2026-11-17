@@ -21,6 +21,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-17 - The default frequency scale height is 16 px (the slim
+//                row). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 //   2026-11-17 - The zoom row stays wholly inside a very short pan. J.J.
 //                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16 - The zoom row stays on the waterfall, under the Roundtable
@@ -4992,10 +4995,10 @@ void SpectrumOverlayPanel::repositionZoomButtons()
     // Place at bottom-left of the waterfall area, above the frequency scale
     // (approximate: leave 32px from bottom for frequency scale bar)
     // Display pill plan Task 4: the bar is as tall as the pan's scale
-    // text needs (28 px at the default size), plus the 4 px this always
-    // left over it.
+    // text needs (16 px at the default size since 2026-11-17, was 28),
+    // plus the 4 px this always left over it.
     static constexpr int kFreqScaleGap     = 4;
-    static constexpr int kFreqScaleDefault = 28;
+    static constexpr int kFreqScaleDefault = 16;
     const auto* pan = qobject_cast<const SpectrumWidget*>(spectrum);
     const int freqScaleH =
         (pan ? pan->freqScaleHeight() : kFreqScaleDefault) + kFreqScaleGap;
