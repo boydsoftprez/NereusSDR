@@ -9,6 +9,9 @@
 // 2026-11-16: The note shows "Nothing was kept at this frequency then." while
 //   the slice plays the past outside what was kept (DsrPanModel.keptNote).
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: A drag in from the right edge over the strip is the band's
+//   edge swipe (spec 11.3), not time (DsrStripEdge). J.J. Boyd (KG4VCF),
+//   AI-assisted via Claude Code.
 
 import CoreGraphics
 import NereusBand
@@ -69,15 +72,41 @@ struct DsrStripPlace: Equatable {
     }
 }
 
+/// The band's edge zone under the strip (spec 11.3): a drag that starts
+/// there and heads in is handed to the band, which opens what the edge is
+/// set to, or moves the band when the edge is Off. Points are the band's.
+struct DsrStripEdge {
+    /// The point is in an edge zone.
+    let inZone: (CGPoint) -> Bool
+    /// A drag from `start`, moved this far, heads in from its edge.
+    let claims: (_ start: CGPoint, _ translation: CGSize) -> Bool
+    let changed: (_ start: CGPoint, _ translation: CGSize, _ location: CGPoint) -> Void
+    let ended: (_ translation: CGSize, _ predicted: CGSize) -> Void
+    let cancelled: () -> Void
+}
+
 /// The strip, the map, LIVE, SAVE, the clock and SAVE's handles, over the
-/// band's drag: a drag on the strip moves the picture, never the band.
+/// band's drag: a drag on the strip moves the picture, never the band,
+/// but for one in from the edge, which is the edge's swipe (`edge`).
 struct DsrStripLayer: View {
     let model: DsrPanModel
     let place: DsrStripPlace
     /// Seconds a waterfall point stands for: the pan's Update period.
     var secondsPerPoint: Double = 0.1
+    /// The band's edge zone; nil leaves every drag on the strip to time.
+    var edge: DsrStripEdge?
     @State private var dragStart: Double?
     @State private var mapFinger: CGFloat?
+    /// What the drag on the strip is: not yet known, time, or the edge's.
+    @State private var stripDrag = StripDrag.undecided
+    /// A drag on the strip is under way; a cancelled one ends here without its onEnded.
+    @GestureState private var stripDragging = false
+
+    private enum StripDrag {
+        case undecided
+        case time
+        case edge
+    }
 
     var body: some View {
         let usable = model.usable
@@ -145,16 +174,54 @@ struct DsrStripLayer: View {
         }
         .frame(width: place.strip.width, height: place.strip.height)
         .contentShape(Rectangle())
-        .gesture(DragGesture(minimumDistance: 2)
+        .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .named(Self.space))
+            .updating($stripDragging) { _, state, _ in
+                state = true
+            }
             .onChanged { value in
+                if stripDrag == .undecided {
+                    // In the edge zone the drag's way is known once it has
+                    // gone as far as the band's own drag needs.
+                    if let edge, edge.inZone(value.startLocation) {
+                        let moved = hypot(value.translation.width, value.translation.height)
+                        guard moved >= TuneGestures.dragThresholdPoints else {
+                            return
+                        }
+                        stripDrag = edge.claims(value.startLocation, value.translation) ? .edge : .time
+                    } else {
+                        stripDrag = .time
+                    }
+                }
+                if stripDrag == .edge {
+                    edge?.changed(value.startLocation, value.translation, value.location)
+                    return
+                }
                 let start = dragStart ?? model.top
                 dragStart = start
                 model.drag(from: start, by: value.translation.height)
             }
-            .onEnded { _ in
-                dragStart = nil
-                model.dragEnded()
+            .onEnded { value in
+                let kind = stripDrag
+                stripDrag = .undecided
+                switch kind {
+                case .edge:
+                    edge?.ended(value.translation, value.predictedEndTranslation)
+                case .time:
+                    dragStart = nil
+                    model.dragEnded()
+                case .undecided:
+                    break
+                }
             })
+        .onChange(of: stripDragging) { _, now in
+            // A drag cancelled before it ended: an edge swipe springs back.
+            if !now, stripDrag != .undecided {
+                if stripDrag == .edge {
+                    edge?.cancelled()
+                }
+                stripDrag = .undecided
+            }
+        }
         .accessibilityElement()
         .accessibilityIdentifier("dsr.strip")
         .accessibilityLabel("Time strip")

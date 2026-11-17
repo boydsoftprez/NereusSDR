@@ -21,6 +21,9 @@
 // 2026-11-16: A tap in the recorder's past plays at the frequency the tap
 // tunes to (on the step), not the raw tapped one. J.J. Boyd (KG4VCF),
 // AI-assisted via Claude Code.
+// 2026-11-16: A drag in from the right edge over the recorder's time strip
+// is the edge's swipe again (or moves the band with the edge Off).
+// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import NereusBand
@@ -436,11 +439,8 @@ struct BandGestureLayer: View {
         .simultaneousGesture(drag(layout: layout, geometry: geometry, entries: entries, placements: placements))
         .onChange(of: dragging) { _, now in
             // A drag cancelled before it ended: its swipe springs back.
-            if !now, dragKind != .undecided {
-                if dragKind == .swipe {
-                    swipes?.cancel(reduceMotion: reduceMotion)
-                }
-                dragKind = .undecided
+            if !now {
+                dragCancelled()
             }
         }
         .overlay(alignment: .topLeading) {
@@ -460,8 +460,11 @@ struct BandGestureLayer: View {
                 }
                 if let dsr {
                     // Over the band's drag: a drag on the strip moves time, never the band.
+                    // A drag in from the right edge stays the band's swipe (spec 11.3).
                     DsrStripLayer(model: dsr, place: dsrPlace,
-                                  secondsPerPoint: Double(band.settings.waterfallPeriodMs) / 1000)
+                                  secondsPerPoint: Double(band.settings.waterfallPeriodMs) / 1000,
+                                  edge: stripEdge(layout: layout, geometry: geometry, entries: entries,
+                                                  placements: placements))
                 }
             }
         }
@@ -719,40 +722,89 @@ struct BandGestureLayer: View {
                 state = true
             }
             .onChanged { value in
-                // While the band menu is open the finger that opened it moves nothing.
-                guard !pinching, !menuOpen || dragger.target != nil else {
-                    return
-                }
-                if dragKind == .undecided {
-                    dragKind = swipeBegins(value, layout: layout) ? .swipe : .band
-                }
-                if dragKind == .swipe {
-                    if let origin = swipes?.drag?.origin {
-                        swipes?.move(SwipeShortcuts.inward(origin, value.translation))
-                    }
-                    return
-                }
-                dragger.changed(from: value.startLocation, translation: value.translation.width,
-                                rise: value.translation.height, geometry: geometry, entries: entries,
-                                placements: placements, band: band, slices: slices, dragToTune: settings.dragToTune,
-                                layout: layout, display: display)
-                // The frequency under the finger, for the cursor readout.
-                band.cursorHz = geometry.hz(forX: Double(value.location.x))
+                dragChanged(start: value.startLocation, translation: value.translation, location: value.location,
+                            layout: layout, geometry: geometry, entries: entries, placements: placements)
             }
             .onEnded { value in
-                let kind = dragKind
-                dragKind = .undecided
-                if kind == .swipe {
-                    if let swipes, let origin = swipes.drag?.origin {
-                        swipes.end(distance: SwipeShortcuts.inward(origin, value.translation),
-                                   predicted: SwipeShortcuts.inward(origin, value.predictedEndTranslation),
-                                   reduceMotion: reduceMotion)
-                    }
-                    return
-                }
-                dragger.ended(slices: slices)
-                band.cursorHz = nil
+                dragEnded(translation: value.translation, predicted: value.predictedEndTranslation)
             }
+    }
+
+    /// The drag so far, from wherever it was seen: the band's own drag, or
+    /// the recorder's strip handing over one that begins at the right edge.
+    private func dragChanged(start: CGPoint, translation: CGSize, location: CGPoint, layout: BandLayout,
+                             geometry: BandGeometry, entries: [BandSlicesModel.Entry], placements: [FlagPlacement]) {
+        // While the band menu is open the finger that opened it moves nothing.
+        guard !pinching, !menuOpen || dragger.target != nil else {
+            return
+        }
+        if dragKind == .undecided {
+            dragKind = swipeBegins(start: start, translation: translation, layout: layout) ? .swipe : .band
+        }
+        if dragKind == .swipe {
+            if let origin = swipes?.drag?.origin {
+                swipes?.move(SwipeShortcuts.inward(origin, translation))
+            }
+            return
+        }
+        dragger.changed(from: start, translation: translation.width,
+                        rise: translation.height, geometry: geometry, entries: entries,
+                        placements: placements, band: band, slices: slices, dragToTune: settings.dragToTune,
+                        layout: layout, display: display)
+        // The frequency under the finger, for the cursor readout.
+        band.cursorHz = geometry.hz(forX: Double(location.x))
+    }
+
+    private func dragEnded(translation: CGSize, predicted: CGSize) {
+        let kind = dragKind
+        dragKind = .undecided
+        if kind == .swipe {
+            if let swipes, let origin = swipes.drag?.origin {
+                swipes.end(distance: SwipeShortcuts.inward(origin, translation),
+                           predicted: SwipeShortcuts.inward(origin, predicted),
+                           reduceMotion: reduceMotion)
+            }
+            return
+        }
+        dragger.ended(slices: slices)
+        band.cursorHz = nil
+    }
+
+    /// A drag cancelled before it ended: its swipe springs back.
+    private func dragCancelled() {
+        if dragKind != .undecided {
+            if dragKind == .swipe {
+                swipes?.cancel(reduceMotion: reduceMotion)
+            }
+            dragKind = .undecided
+        }
+    }
+
+    /// The edge zone under the recorder's strip (spec 11.3): a drag that
+    /// starts there and heads in is the band's, as it would be with no strip
+    /// over it, so the edge opens what it is set to, or with the edge Off
+    /// moves the band. Every other drag on the strip moves time.
+    private func stripEdge(layout: BandLayout, geometry: BandGeometry, entries: [BandSlicesModel.Entry],
+                           placements: [FlagPlacement]) -> DsrStripEdge {
+        let foot = PttButton.frame(bandSize: layout.size, leadingInset: leadingInset).minY
+            - SwipeShortcuts.aboveControls
+        let origin: (CGPoint) -> SwipeOrigin? = { [leadingInset, trailingInset] start in
+            SwipeShortcuts.edgeOrigin(start: start, bandSize: layout.size, zoneFoot: foot,
+                                      leadingInset: leadingInset, trailingInset: trailingInset)
+        }
+        return DsrStripEdge(
+            inZone: { origin($0) != nil },
+            claims: { start, translation in
+                origin(start).map { SwipeShortcuts.claims($0, translation: translation) } ?? false
+            },
+            changed: { start, translation, location in
+                dragChanged(start: start, translation: translation, location: location, layout: layout,
+                            geometry: geometry, entries: entries, placements: placements)
+            },
+            ended: { translation, predicted in
+                dragEnded(translation: translation, predicted: predicted)
+            },
+            cancelled: { dragCancelled() })
     }
 
     /// The band menu is open.
@@ -782,19 +834,19 @@ struct BandGestureLayer: View {
     /// A drag that starts in a live edge zone and heads in begins its
     /// swipe; any other is the band's (spec 11.3: 18 points at each edge,
     /// ending above PTT; Off gives the edge back to the band).
-    private func swipeBegins(_ value: DragGesture.Value, layout: BandLayout) -> Bool {
+    private func swipeBegins(start: CGPoint, translation: CGSize, layout: BandLayout) -> Bool {
         guard let swipes else {
             return false
         }
         let foot = PttButton.frame(bandSize: layout.size, leadingInset: leadingInset).minY
             - SwipeShortcuts.aboveControls
-        guard let origin = SwipeShortcuts.edgeOrigin(start: value.startLocation, bandSize: layout.size,
+        guard let origin = SwipeShortcuts.edgeOrigin(start: start, bandSize: layout.size,
                                                      zoneFoot: foot, leadingInset: leadingInset,
                                                      trailingInset: trailingInset),
-              SwipeShortcuts.claims(origin, translation: value.translation), swipes.begin(origin) else {
+              SwipeShortcuts.claims(origin, translation: translation), swipes.begin(origin) else {
             return false
         }
-        swipes.move(SwipeShortcuts.inward(origin, value.translation))
+        swipes.move(SwipeShortcuts.inward(origin, translation))
         return true
     }
 
