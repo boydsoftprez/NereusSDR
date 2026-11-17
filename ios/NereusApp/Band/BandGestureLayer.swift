@@ -29,6 +29,9 @@
 // 2026-11-17: Screen walk for PR 808, SAVE's panel stops left of the time
 //   strip, so its handles stay free. J.J. Boyd (KG4VCF), AI-assisted via
 //   Claude Code.
+// 2026-11-17: PR 808 design calls, zoom left of the time strip on a
+//   sideways phone; the PAST tag keeps clear of the flags. J.J. Boyd
+//   (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import NereusBand
@@ -95,6 +98,9 @@ struct BandGestureLayer: View {
     var leadingInset: CGFloat = 0
     /// The button column over this band, and whether it is folded; nil when there is none.
     var buttonColumnFolded: Bool?
+    /// A phone held sideways: zoom sits left of the recorder's time strip
+    /// (``DialLayer/zoomOrigin(kind:waterfall:sideways:trailingInset:uprightWidth:besideStrip:)``).
+    var zoomBesideStrip = false
     /// The pan's display, which a drag up or down on the frequency-scale
     /// row (the split) or on the dBm scale moves; nil leaves those places to
     /// pan the band, as everywhere else.
@@ -315,13 +321,16 @@ struct BandGestureLayer: View {
         // The dBm scale's arrows where DbmScaleArrows draws them: sideways, in from the rounded edge.
         let arrows = layout.dbmArrows.offsetBy(dx: -trailingInset, dy: 0)
         let dialKind = tuning == nil ? DialKind.off : settings.dialKind
+        let besideStrip = zoomBesideStrip && dsr != nil
         let zoomAt = DialLayer.zoomOrigin(kind: dialKind, waterfall: layout.waterfall, sideways: sideways,
-                                          trailingInset: trailingInset, uprightWidth: uprightWidth)
+                                          trailingInset: trailingInset, uprightWidth: uprightWidth,
+                                          besideStrip: besideStrip)
         // The band's own controls, which the edge markers keep clear of:
         // zoom and the dial as DialLayer places them (the one list the keyed
         // meters keep clear of too), and PTT.
         let controls = DialLayer.controlFrames(kind: dialKind, waterfall: layout.waterfall, sideways: sideways,
-                                               trailingInset: trailingInset, uprightWidth: uprightWidth)
+                                               trailingInset: trailingInset, uprightWidth: uprightWidth,
+                                               besideStrip: besideStrip)
             + [PttButton.frame(bandSize: layout.size, leadingInset: leadingInset)]
         let edgeRects = EdgeMarkers.rects(shown.edges, spectrumFoot: layout.spectrum.maxY,
                                           bandWidth: geometry.size.width, avoid: rects, sideways: sideways,
@@ -354,7 +363,11 @@ struct BandGestureLayer: View {
             if let dsr {
                 // The past over the waterfall, under everything that takes a touch.
                 DsrPictureLayer(model: dsr, band: band, layout: layout, geometry: geometry, place: dsrPlace,
-                                sliceLetter: slices.active?.slice.letter ?? "A")
+                                sliceLetter: slices.active?.slice.letter ?? "A",
+                                avoid: flagAndTagRects + markerRects
+                                    + (buttonColumnFolded.map { [BandColumnLayout.frame(bandHeight: layout.size.height,
+                                                                                         leadingInset: leadingInset,
+                                                                                         folded: $0)] } ?? []))
             }
             if let txFilterHz {
                 txFilter(txFilterHz, layout: layout, geometry: geometry)

@@ -10,6 +10,8 @@
 //   kept on this device. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-17: Screen walk for PR 808, Record's "Recording 0:03" keeps to one
 //   line on a small phone. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: PR 808 design calls, "This iPad's mic" on an iPad. J.J. Boyd
+//   (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -669,7 +671,7 @@ struct VoiceKeyerPage: View {
             }
             ConnectChrome.Note(text: VoiceKeyerModel.pageNote)
             SpotHubPage.Heading(text: "Record", tag: .core).padding(.top, 4)
-            RecordCard(model: model, enabled: enabled)
+            RecordCard(model: model, enabled: enabled, isPad: settings?.isPad ?? false)
                 .opacity(enabled ? 1 : WorkspacePalette.disabledOpacity)
             SpotHubPage.Heading(text: "Messages", tag: .core).padding(.top, 8)
             SpotHubPage.Card {
@@ -767,6 +769,8 @@ struct VoiceButtonSwitch: View {
 private struct RecordCard: View {
     let model: VoiceKeyerModel
     let enabled: Bool
+    /// On an iPad the mic is the iPad's.
+    var isPad = false
 
     var body: some View {
         let recording = model.recorder.isRecording
@@ -830,14 +834,14 @@ private struct RecordCard: View {
                     .accessibilityIdentifier("voiceKeyer.stop")
                 }
                 HStack(spacing: 8) {
-                    Text("This phone's mic")
+                    Text(isPad ? "This iPad's mic" : "This phone's mic")
                         .font(.system(size: 12))
                         .foregroundStyle(ChromeColours.textDim)
                         .fixedSize()
                     LevelBar(level: Double(model.recorder.level))
                 }
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("This phone's microphone level")
+                .accessibilityLabel(isPad ? "This iPad's microphone level" : "This phone's microphone level")
                 .accessibilityValue("\(Int(model.recorder.level * 100)) percent")
             }
             .padding(.horizontal, 10)

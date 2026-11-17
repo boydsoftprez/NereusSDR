@@ -3,6 +3,9 @@
 // Modification history (NereusSDR):
 // 2026-10-24: Roundtable plan Task 17, the knob drawn at 76 points in the
 // strip under the Roundtable sheet. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: PR 808 design calls, a phone held sideways puts zoom left of
+//   the recorder's time strip. J.J. Boyd (KG4VCF), AI-assisted via Claude
+//   Code.
 
 import NereusBand
 import SwiftUI
@@ -143,11 +146,17 @@ struct DialLayer: View {
 
     /// Where zoom minus and plus sit: at the waterfall's bottom right with no
     /// dial there; above the knob or the wheel upright, and to their left
-    /// sideways, where the waterfall is short.
+    /// sideways, where the waterfall is short. `besideStrip`: a phone held
+    /// sideways with the recorder's time strip on the band; with no dial
+    /// there zoom sits left of the strip and its hours map, so nothing
+    /// covers LIVE, SAVE or the clock (PR 808 screen walk).
     static func zoomOrigin(kind: DialKind, waterfall: CGRect, sideways: Bool, trailingInset: CGFloat = 0,
-                           uprightWidth: CGFloat? = nil) -> CGPoint {
+                           uprightWidth: CGFloat? = nil, besideStrip: Bool = false) -> CGPoint {
         let zoom = ZoomButtons.size
-        let standard = CGPoint(x: waterfall.maxX - ZoomButtons.inset - zoom.width,
+        let right = sideways && besideStrip
+            ? waterfall.maxX - trailingInset - DsrStripPlace.stripWidth - DsrStripPlace.mapWidth
+            : waterfall.maxX
+        let standard = CGPoint(x: right - ZoomButtons.inset - zoom.width,
                                y: waterfall.maxY - ZoomButtons.inset - zoom.height)
         switch kind {
         case .off, .sheetKnob:
@@ -172,9 +181,10 @@ struct DialLayer: View {
     /// and the knob or the thumbwheel when one is chosen (as
     /// ``BandGestureLayer`` places them), which the keyed meters keep clear of.
     static func controlFrames(kind: DialKind, waterfall: CGRect, sideways: Bool, trailingInset: CGFloat = 0,
-                              uprightWidth: CGFloat? = nil) -> [CGRect] {
+                              uprightWidth: CGFloat? = nil, besideStrip: Bool = false) -> [CGRect] {
         let zoom = CGRect(origin: zoomOrigin(kind: kind, waterfall: waterfall, sideways: sideways,
-                                             trailingInset: trailingInset, uprightWidth: uprightWidth),
+                                             trailingInset: trailingInset, uprightWidth: uprightWidth,
+                                             besideStrip: besideStrip),
                           size: ZoomButtons.size)
         switch kind {
         case .waterfallKnob:

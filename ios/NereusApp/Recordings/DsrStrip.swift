@@ -24,6 +24,8 @@
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-17: Screen walk for PR 808, the strip's times are written below
 //   SAVE, never over it. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: PR 808 design calls, the PAST tag moves clear of a flag and
+//   its round buttons. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import CoreGraphics
 import NereusBand
@@ -533,6 +535,12 @@ struct DsrPictureLayer: View {
     let place: DsrStripPlace
     /// The letter of the slice that plays.
     var sliceLetter = "A"
+    /// What the PAST tag keeps clear of: the flags with their round
+    /// buttons, folded tags and the button column (PR 808 screen walk).
+    var avoid: [CGRect] = []
+
+    /// The PAST tag's measured size.
+    @State private var tagSize = CGSize(width: 104, height: 20)
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -604,22 +612,60 @@ struct DsrPictureLayer: View {
 
     private var pastTag: some View {
         let moment = model.playedMoment ?? model.top
+        let place = Self.pastTagPlace(spectrum: layout.spectrum, size: tagSize, avoid: avoid)
         return HStack(spacing: 5) {
             Text(model.client.dsr?.stretch != nil ? "SAVED" : "PAST")
                 .font(.system(size: 10.5, weight: .bold))
                 .tracking(0.6)
                 .foregroundStyle(WorkspacePalette.keyedRim)
-            Text(DsrPanModel.hms(moment))
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(Color(red: 1, green: 0.82, blue: 0.82))
+            if !place.compact {
+                Text(DsrPanModel.hms(moment))
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(Color(red: 1, green: 0.82, blue: 0.82))
+            }
         }
         .padding(.horizontal, 6)
         .frame(height: 20)
         .background(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).fill(Color(red: 58 / 255, green: 13 / 255, blue: 13 / 255)))
         .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).stroke(DsrColours.red))
-        .offset(x: layout.spectrum.minX + 5, y: layout.spectrum.minY + 4)
+        .fixedSize()
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
+            // The full tag's size; the compact one is never measured into it.
+            if !place.compact {
+                tagSize = size
+            }
+        }
+        .offset(place.origin)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("dsr.pastTag")
+    }
+
+    /// The PAST tag without its time: "PAST" alone, where the whole tag has no room.
+    static let compactTagSize = CGSize(width: 44, height: 20)
+
+    /// Where the PAST tag sits (PR 808 screen walk): the spectrum's top
+    /// left, else beside or under whatever covers that (a flag and its round
+    /// buttons); with no room for the whole tag, "PAST" alone in the first
+    /// clear place; the top left again when nothing is clear.
+    static func pastTagPlace(spectrum: CGRect, size: CGSize, avoid: [CGRect]) -> (origin: CGSize, compact: Bool) {
+        let gap: CGFloat = 5
+        let top = spectrum.minY + 4
+        let blocks = avoid.filter { $0.intersects(spectrum) }
+        for (tagSize, compact) in [(size, false), (compactTagSize, true)] {
+            func clear(_ x: CGFloat, _ y: CGFloat) -> Bool {
+                let tag = CGRect(x: x, y: y, width: tagSize.width, height: tagSize.height)
+                return tag.minX >= spectrum.minX && tag.maxX <= spectrum.maxX - gap && tag.maxY <= spectrum.maxY
+                    && !blocks.contains { $0.insetBy(dx: -2, dy: -2).intersects(tag) }
+            }
+            let xs = [spectrum.minX + gap] + blocks.map { $0.minX - gap - tagSize.width }.sorted()
+                + blocks.map { $0.maxX + gap }.sorted()
+            for y in [top] + blocks.map({ $0.maxY + gap }).sorted() {
+                if let x = xs.first(where: { clear($0, y) }) {
+                    return (CGSize(width: x, height: y), compact)
+                }
+            }
+        }
+        return (CGSize(width: spectrum.minX + gap, height: top), false)
     }
 
     /// The past spectrum in the live one's place: the band leaves its live

@@ -35,6 +35,9 @@
 // look-back LIVE over it. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-17: Tools > Voice Keyer's switch takes VOICE off the main screen.
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: PR 808 design calls, on a sideways phone VOICE sits above
+//   PTT and zoom left of the time strip. J.J. Boyd (KG4VCF), AI-assisted
+//   via Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -354,6 +357,7 @@ struct MainScreen: View {
                                    spectrumShare: main.band.shownSpectrumShare, sideways: sideways,
                                    avoid: avoid, movedPtt: movedPtt, heldPtt: heldPtt,
                                    leadingInset: leadingInset, trailingInset: trailingInset, dialKind: dialKind,
+                                   zoomBesideStrip: sideways && !layoutNow.isIPad,
                                    gaugesFoot: { foot in gaugesFoot = foot })
         if let flow {
             overlay.modifier(BandUnderCover(flow: flow) {})
@@ -478,7 +482,18 @@ struct MainScreen: View {
                         // thumbwheel on, its step box sits beside PTT, so VOICE goes above PTT.
                         // Switched off on Tools > Voice Keyer, it is not drawn and PTT and
                         // the step box keep their places, as before VOICE.
-                        VoiceButtonGate(settings: app.phoneSettings) { above in
+                        VoiceButtonGate(settings: app.phoneSettings) { wheelOn in
+                            // A phone held sideways: above PTT too, as with the thumbwheel, so
+                            // nothing sits on zoom or the recorder's strip (PR 808 screen walk),
+                            // unless a flag hangs there (a small phone, whose band is short):
+                            // then beside PTT, where zoom no longer sits.
+                            let aboveRect = CGRect(x: placed.midX - VoiceButton.diameter / 2,
+                                                   y: placed.minY - VoiceButton.gap - VoiceButton.diameter,
+                                                   width: VoiceButton.diameter, height: VoiceButton.diameter)
+                            let flagAbove = (pttFlags?.flagRects ?? []).contains {
+                                $0.offsetBy(dx: 0, dy: pttFlagsTop).intersects(aboveRect)
+                            }
+                            let above = wheelOn || (sideways && !layoutNow.isIPad && !flagAbove)
                             VoiceButton(model: app.voiceKeyer) { voicePanelOpen = true }
                                 .offset(x: placed.minX - pttHome.minX)
                                 .padding(.leading, PttButton.inset + (sideways ? leadingInset : 0)
@@ -1167,7 +1182,9 @@ struct MainScreen: View {
                              onAirSliceId: transmit.radioOnAirSliceId, txZeroLineSliceId: transmit.txZeroLineSliceId,
                              foreign: main.foreign, sideways: sideways,
                              trailingInset: trailingInset, leadingInset: leadingInset,
-                             buttonColumnFolded: buttonColumnFolded, display: controls.display,
+                             buttonColumnFolded: buttonColumnFolded,
+                             zoomBesideStrip: sideways && !layoutNow.isIPad,
+                             display: controls.display,
                              spots: app.spots,
                              readout: main.meterReadout,
                              flagLevel: { [weak sMeter = main.sMeter] in sMeter?.flagLevel(for: $0, reading: $1) },

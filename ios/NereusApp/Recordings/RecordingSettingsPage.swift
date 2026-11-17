@@ -11,6 +11,9 @@
 // 2026-11-17: Screen walk for PR 808, the Disk row of its own: "Disk" at its
 //   width beside a compact menu. J.J. Boyd (KG4VCF), AI-assisted via Claude
 //   Code.
+// 2026-11-17: PR 808 design calls, upright on an iPad the Recordings
+//   panel's switch dims with why. J.J. Boyd (KG4VCF), AI-assisted via
+//   Claude Code.
 
 import Foundation
 import NereusMirror
@@ -516,13 +519,18 @@ struct RecordingSettingsPage: View {
 /// section 3 and 6.8): this iPad's own choice, off by default.
 struct RecordingsAppletSwitch: View {
     @ObservedObject var settings: PhoneSettings
+    @Environment(\.iPadLayout) private var layout
 
     nonisolated static let title = "Recordings panel in the column"
     nonisolated static let detail = "The latest recordings, with play, under the S-meter when the iPad is on its side."
+    /// Upright the iPad has no column, so the switch dims with why (never hidden).
+    nonisolated static let uprightReason = "Upright there is no column. Turn the iPad on its side to see the panel."
 
     var body: some View {
+        let upright = layout == .frontPanel
         SetupPanelSection("On this iPad", tag: .thisPhone) {
-            SetupSwitchRow(title: Self.title, detail: Self.detail, isOn: $settings.recordingsAppletShown,
+            SetupSwitchRow(title: Self.title, detail: upright ? Self.uprightReason : Self.detail,
+                           isOn: $settings.recordingsAppletShown, enabled: !upright,
                            id: "recordingSettings.recordingsPanel")
         }
     }

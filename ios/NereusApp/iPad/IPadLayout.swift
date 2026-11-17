@@ -1,5 +1,9 @@
 // NereusSDR for iOS: which layout the main screen takes: the phone's, the iPad's applet column, or its front panel
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-11-17: PR 808 design calls, the arrangement as an environment value
+//   for pages (the Recordings panel's switch). J.J. Boyd (KG4VCF),
+//   AI-assisted via Claude Code.
 
 import CoreGraphics
 import SwiftUI
@@ -82,4 +86,7 @@ enum IPadLayout: Equatable {
 extension EnvironmentValues {
     /// The height a keyboard has taken from the app's root (``IPadLayout``).
     @Entry var keyboardRoom: CGFloat = 0
+    /// The main screen's arrangement as the app's root reads it, for pages
+    /// that depend on it (the Recordings panel's switch: no column upright).
+    @Entry var iPadLayout: IPadLayout = .phone
 }

@@ -94,7 +94,22 @@ struct DsrShotTests {
         try await shootPan(state, size: shape.pan, type: shape.type, name: "dsr-phone-walk-\(state.rawValue)-\(shape)")
     }
 
-    private func shootPan(_ frame: PanState, size: CGSize, type: DynamicTypeSize, name: String) async throws {
+    /// For a simulator video of the motion (PR 808 screen walk): with
+    /// `NEREUS_MOTION` set (`TEST_RUNNER_NEREUS_MOTION`), the past plays on a
+    /// running clock for eight seconds, the Core answering each spectrum and
+    /// rows ask, then a finger drags the strip for a second and a half.
+    /// Without it the test does nothing.
+    @Test func pastMotion() async throws {
+        guard let wanted = ProcessInfo.processInfo.environment["NEREUS_MOTION"], !wanted.isEmpty else {
+            return
+        }
+        // The small upright phone, so the whole pan fits a small simulator's screen.
+        let small = WalkShape(small: true, sideways: false, larger: false)
+        try await shootPan(.past, size: small.screen, type: .large, name: "dsr-phone-motion", motion: true)
+    }
+
+    private func shootPan(_ frame: PanState, size: CGSize, type: DynamicTypeSize, name: String,
+                          motion: Bool = false) async throws {
         let mirror = MirrorStore(send: { _ in })
         mirror.apply(.hello(LinkMessage.Hello(major: 1, minor: 11, settingsSchema: 0, peer: "nereusd")))
         mirror.apply(.capabilities(LinkMessage.Capabilities(properties: [
@@ -127,7 +142,9 @@ struct DsrShotTests {
         let root = ZStack {
             BandView(model: band)
             BandGestureLayer(band: band, slices: main.slices, settings: settings, tuning: main.tuning,
-                             foreign: main.foreign, flagControls: main.flagControls, dsr: model)
+                             foreign: main.foreign, sideways: size.width > size.height,
+                             zoomBesideStrip: size.width > size.height,
+                             flagControls: main.flagControls, dsr: model)
             // As Pan 1 has it: the strip's LIVE is the only one.
             BandReadouts(band: band, lookBackLive: false)
         }
@@ -197,8 +214,50 @@ struct DsrShotTests {
             model.showNote(try #require(frame.note))
             #expect(model.note == frame.note)
         }
+        if motion {
+            try await playPast(rig, model, geometry: geometry)
+        }
         await ShotWait.laidOut(window)
         try RadeFlagShotTests.write(window, name: name)
+    }
+
+    /// The past playing on a running clock, then a finger on the strip (``pastMotion()``).
+    private func playPast(_ rig: Flag.Rig, _ model: DsrPanModel, geometry: BandGeometry) async throws {
+        let base = model.clock()
+        let start = CACurrentMediaTime()
+        model.clock = { base + (CACurrentMediaTime() - start) }
+        var answered = rig.sent.invokes.count
+        func answerAsks() async {
+            let all = rig.sent.invokes
+            for index in answered..<all.count {
+                let moment = model.playedMoment ?? model.top
+                switch all[index].verb {
+                case "dsr.spectrum":
+                    await Flag.answer(rig, index, values: Self.frames([moment], geometry: geometry))
+                case "dsr.rows":
+                    let count = Int(model.waterfallPoints) + 60
+                    let moments = (0..<count).map { moment + 20 - Double($0) * model.secondsPerPoint }
+                    // Made off the main thread: in a debug build making the rows
+                    // takes long enough to stall the picture the video watches.
+                    let values = await Task.detached { Self.frames(moments, geometry: geometry) }.value
+                    await Flag.answer(rig, index, values: values)
+                default:
+                    break
+                }
+            }
+            answered = all.count
+        }
+        while CACurrentMediaTime() < start + 8 {
+            await answerAsks()
+            try await Task.sleep(for: .milliseconds(8))
+        }
+        let from = model.top
+        for step in 1...90 {
+            model.drag(from: from, by: Double(step) * 2)
+            await answerAsks()
+            try await Task.sleep(for: .milliseconds(16))
+        }
+        try await Task.sleep(for: .milliseconds(500))
     }
 
     /// Letting go plays Slice A from the top (rewind plays on release): the
@@ -234,7 +293,7 @@ struct DsrShotTests {
 
     /// The Core's rows across the band's width: the noise, a few signals
     /// that come and go, and a stretch you transmitted.
-    static func frames(_ moments: [Double], geometry: BandGeometry, rowsLeft: Int = 0,
+    nonisolated static func frames(_ moments: [Double], geometry: BandGeometry, rowsLeft: Int = 0,
                        next: Int64 = 0) -> [LinkMessage.PropertyEntry] {
         let bins = Int(geometry.size.width)
         let hzPerBin = geometry.spanHz / Double(bins)

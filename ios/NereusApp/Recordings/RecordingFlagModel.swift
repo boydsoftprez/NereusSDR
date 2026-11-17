@@ -5,6 +5,9 @@
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-16: The armed ring drops its AUTO caption. J.J. Boyd (KG4VCF),
 //   AI-assisted via Claude Code.
+// 2026-11-17: PR 808 design calls, the playing bar's shorter names (the
+//   mode, then the frequency go first). J.J. Boyd (KG4VCF), AI-assisted
+//   via Claude Code.
 
 import Foundation
 import NereusBand
@@ -70,6 +73,9 @@ final class RecordingFlagModel {
         let positionMs: Int64
         let lengthMs: Int64
         let onAir: Bool
+        /// Shorter names for the bar when `title` does not fit, most kept
+        /// first: the mode goes, then the frequency (the flag shows it).
+        var shorter: [String] = []
 
         /// "0:12 / 3:25 · speaker", or "ON AIR · 0:12 / 3:25" while on the air.
         var detail: String {
@@ -160,7 +166,8 @@ final class RecordingFlagModel {
         }
         let entry = recent.values.lazy.flatMap { $0 }.first { $0.id == playback.id }
         return Bar(title: entry.map(Self.title(of:)) ?? "Recording", positionMs: playback.positionMs,
-                   lengthMs: playback.lengthMs, onAir: playback.onAir)
+                   lengthMs: playback.lengthMs, onAir: playback.onAir,
+                   shorter: entry.map(Self.shorterTitles(of:)) ?? [])
     }
 
     /// The notice under `slice`'s flag. A Kept notice gives way while the
@@ -343,6 +350,17 @@ final class RecordingFlagModel {
             text += " " + entry.call
         }
         return text
+    }
+
+    /// Shorter names for the playing bar, most kept first: without the
+    /// mode ("7.236.400 K4ABC"), then the call alone ("K4ABC"), or the
+    /// frequency alone with no call (PR 808 screen walk).
+    nonisolated static func shorterTitles(of entry: RecordingEntry) -> [String] {
+        let frequency = BandSlice.frequencyText(hz: Double(entry.frequencyHz))
+        guard !entry.call.isEmpty else {
+            return entry.mode.isEmpty ? [] : [frequency]
+        }
+        return (entry.mode.isEmpty ? [] : [frequency + " " + entry.call]) + [entry.call]
     }
 
     /// Why it stopped, in the desktop flag's words.

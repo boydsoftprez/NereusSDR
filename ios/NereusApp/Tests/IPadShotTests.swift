@@ -8,6 +8,8 @@
 // 2026-11-17: Screen walk for PR 808, the Recordings shots without the
 //   column, upright and one text step larger. J.J. Boyd (KG4VCF),
 //   AI-assisted via Claude Code.
+// 2026-11-17: PR 808 design calls, the Recordings panel switch upright and
+//   on its side. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -215,6 +217,14 @@ struct IPadShotTests {
                     RecordingSettingsPage(model: model.recordingSettings, phone: settings)
                 }
             }
+            // The Recordings panel's switch: dimmed with why upright (no column), live on its side.
+            for (shape, size) in [("upright", upright), ("sideways", mockup)] {
+                try await shootPage("ipad-recordings-walk-panel-switch-\(shape)", size: size, tab: .setup) {
+                    ScrollView {
+                        RecordingsAppletSwitch(settings: settings).padding(16)
+                    }
+                }
+            }
             try await shootPage("ipad-recordings-walk-voice-keyer-page", size: mockup) {
                 VStack(spacing: 0) {
                     ConnectChrome.NavBar(title: "Voice Keyer", back: "Tools") {
@@ -284,6 +294,8 @@ struct IPadShotTests {
         }
         .background(ChromeColours.page)
         .environment(\.horizontalSizeClass, .regular)
+        // As the app's root reads it: upright is the front panel, with no column.
+        .environment(\.iPadLayout, IPadLayout.arrangement(horizontal: .regular, size: size))
         .preferredColorScheme(.dark)
         let host = ShotHosting.host(root)
         host.additionalSafeAreaInsets = UIEdgeInsets(top: 24, left: 0, bottom: 20, right: 0)
