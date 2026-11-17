@@ -11,6 +11,10 @@
 // Modification history (Longpath):
 //   2026-08-07 — Created in C++20/Qt6 for NereusSDR, AI-assisted via
 //                 Anthropic Claude (Cowork), operator Martin Fischer.
+//   2026-11-17 — serviceId() / shortName() for QsoUploadQueue (every
+//                 logged contact goes to every configured service),
+//                 AI-assisted via Anthropic Claude Code, operator
+//                 Martin Fischer.
 // =================================================================
 
 #include "models/LogEntry.h"
@@ -43,6 +47,15 @@ public:
 
     // Name for the UI ("QRZ Logbook").
     virtual QString serviceName() const = 0;
+
+    // The word for a status line: "uploaded to QRZ, Wavelog". Short on
+    // purpose — the line under the log button has room for one row.
+    virtual QString shortName() const { return serviceName(); }
+
+    // Stable key the waiting list is filed under (QsoUploadQueue). NOT
+    // the display name: that one may be reworded, and a reworded name
+    // must not orphan the contacts still waiting for this service.
+    virtual QString serviceId() const = 0;
 
     // False when the service has no credentials yet; the UI greys the
     // upload rather than letting it fail on every contact.

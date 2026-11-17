@@ -296,6 +296,7 @@ warren@wpratt.com
 #include "core/sat/SatelliteService.h"
 #include "gui/widgets/BlueMarbleFetcher.h"
 #include "core/CloudlogUploader.h"
+#include "core/QsoUploadQueue.h"
 #include "core/AdifNetworkUploader.h"
 
 #include <QCheckBox>
@@ -11600,6 +11601,22 @@ void MainWindow::populateDefaultMeter()
             m_aufbauBewegung.reset();
         });
 
+        // ── Uploads, die beim letzten Mal nicht durchgingen ──────────
+        //
+        // 2026-11-17: was QRZ oder Wavelog nicht angenommen hat, steht
+        // in der Warteliste (QsoUploadQueue) und wird hier nachgeholt.
+        // Erst nachsehen, OB etwas wartet: die Dienste anzulegen liest
+        // den Schluesselbund, und das soll ein Start ohne Rueckstand
+        // nicht kosten. Ein isolierter Lauf geht nicht von selbst ins
+        // Netz. Verzoegert, damit das Netz steht und der Aufbau fertig
+        // ist.
+        if (AppSettings::darfVonSelbstVerbinden()
+            && QsoUploadQueue::storedCount(QsoUploadQueue::defaultStorePath()) > 0) {
+            QTimer::singleShot(15000, this, [this]() {
+                ensureUploadQueue()->retryPending();
+            });
+        }
+
         // ── Den Schutzrahmen EINMAL nach dem Aufbau anwenden ─────────
         //
         // Betreiber 2026-10-18, am frisch gestarteten Fenster: „Bandwidth
@@ -13782,7 +13799,8 @@ void MainWindow::buildMenuBar()
             toolsMenu->addAction(QStringLiteral("&Logging services..."));
         svcAction->setObjectName(QStringLiteral("actLoggingServices"));
         svcAction->setToolTip(QStringLiteral(
-            "Set up Cloudlog / Wavelog and a local logger such as Log4OM."));
+            "Set up Wavelog / Cloudlog and a local logger such as Log4OM. "
+            "Every logged QSO is sent to each service that is set up."));
         connect(svcAction, &QAction::triggered,
                 this, &MainWindow::openLoggingServicesDialog);
     }
@@ -19059,6 +19077,23 @@ QVector<QsoUploader*> MainWindow::qsoUploaders()
     return {m_qrzUploader, m_cloudlogUploader, m_localLogUploader};
 }
 
+QsoUploadQueue* MainWindow::ensureUploadQueue()
+{
+    if (m_uploadQueue) { return m_uploadQueue; }
+    m_uploadQueue =
+        new QsoUploadQueue(QsoUploadQueue::defaultStorePath(), this);
+    m_uploadQueue->setUploaders(qsoUploaders());
+    // The QRZ tick in the log file. The panel writes it when there is
+    // one (it also has to refresh its logbook window); this covers the
+    // catch-up right after start, before any panel exists.
+    connect(m_uploadQueue, &QsoUploadQueue::uploaded, this,
+            [this](const QString& serviceId, const LogEntry& entry, bool) {
+        if (m_rotorPanel || serviceId != QLatin1String("qrz")) { return; }
+        RotorLogbookPanel::markUploadedInFile(entry);
+    });
+    return m_uploadQueue;
+}
+
 void MainWindow::openLoggingServicesDialog()
 {
     ensureExtraUploaders();
@@ -19073,8 +19108,11 @@ void MainWindow::openLoggingServicesDialog()
 
     AppSettings& s = AppSettings::instance();
 
-    // ── Cloudlog / Wavelog ───────────────────────────────────────────
-    auto* clTitle = new QLabel(QStringLiteral("Cloudlog / Wavelog"), &dlg);
+    // ── Wavelog / Cloudlog ───────────────────────────────────────────
+    // Wavelog first (2026-11-17): it is what the operator runs, and he
+    // has to recognise his service in this heading. The settings keys
+    // keep their Cloudlog names — nothing stored is renamed.
+    auto* clTitle = new QLabel(QStringLiteral("Wavelog / Cloudlog"), &dlg);
     QFont bold = clTitle->font();
     bold.setBold(true);
     clTitle->setFont(bold);
@@ -19088,7 +19126,8 @@ void MainWindow::openLoggingServicesDialog()
 
     auto* keyEdit = new QLineEdit(&dlg);
     keyEdit->setEchoMode(QLineEdit::Password);
-    keyEdit->setPlaceholderText(QStringLiteral("API key with write access"));
+    keyEdit->setPlaceholderText(
+        QStringLiteral("API key with read + write access"));
     keyEdit->setText(CredentialStore::retrieve(
         QStringLiteral("cloudlog.apikey"), QStringLiteral("cloudlog")));
     clForm->addRow(QStringLiteral("API key"), keyEdit);
@@ -19096,7 +19135,7 @@ void MainWindow::openLoggingServicesDialog()
     auto* stationEdit = new QLineEdit(
         m_cloudlogUploader->stationProfileId(), &dlg);
     stationEdit->setPlaceholderText(
-        QStringLiteral("number from Station Profiles"));
+        QStringLiteral("station ID — the number from Station Locations"));
     clForm->addRow(QStringLiteral("Station profile"), stationEdit);
     col->addLayout(clForm);
 
@@ -19173,6 +19212,9 @@ void MainWindow::openLoggingServicesDialog()
     s.setValue(QStringLiteral("LocalLoggerPort"),
                portEdit->text().trimmed().toInt());
     s.setValue(QStringLiteral("LocalLoggerTcp"), tcp);
+
+    // A corrected key or address is the moment for what was waiting.
+    ensureUploadQueue()->retryPending();
 }
 
 void MainWindow::openQrzCredentialsDialog()
@@ -19332,6 +19374,8 @@ void MainWindow::openQrzCredentialsDialog()
         CredentialStore::store(QStringLiteral("qrz.logbookkey"),
                                QStringLiteral("logbook"), keyEdit->text());
         m_qrzUploader->setApiKey(keyEdit->text());
+        // A corrected key is the moment for what was waiting.
+        ensureUploadQueue()->retryPending();
 
         AppSettings::instance().setValue(
             QStringLiteral("QrzAutoLookupWhileTyping"), autoLookup->isChecked());
@@ -19386,10 +19430,11 @@ RotorLogbookPanel* MainWindow::ensureRotorPanel()
         m_rotorDock->setFeatures(QDockWidget::DockWidgetClosable);
         auto* panel = new RotorLogbookPanel(m_radioModel, m_qrzClient,
                                             m_qrzUploader, m_rotorDock);
-        // Live logging still goes to QRZ alone; the extra destinations
-        // are for sending contacts on afterwards from the logbook
-        // window, where the operator can see what is being sent where.
+        // The same services twice: the logbook window's Upload menu
+        // sends by hand, and the queue sends every contact as it is
+        // logged — to all of them, not to QRZ alone (2026-11-17).
         panel->setUploadTargets(qsoUploaders());
+        panel->setUploadQueue(ensureUploadQueue());
         ensureSatellites();
         panel->setSatellites(m_satellites);
         m_rotorPanel = panel;

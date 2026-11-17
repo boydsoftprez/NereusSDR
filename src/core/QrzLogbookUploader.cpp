@@ -13,6 +13,7 @@
 
 #include "QrzLogbookUploader.h"
 
+#include <QCoreApplication>
 #include <QLoggingCategory>
 #include <QNetworkReply>
 #include <QNetworkRequest>
@@ -29,7 +30,7 @@ constexpr int kTimeoutMs = 20000;
 }
 
 QrzLogbookUploader::QrzLogbookUploader(QObject* parent)
-    : QsoUploader(parent) {}
+    : QsoUploader(parent), m_endpoint(QString::fromLatin1(kApi)) {}
 
 QString QrzLogbookUploader::serviceName() const
 {
@@ -63,9 +64,15 @@ void QrzLogbookUploader::upload(const LogEntry& entry)
 
     // POST, not GET: an ADIF record easily exceeds what is sane in a
     // query string, and the key would land in every proxy log.
-    QNetworkRequest req{QUrl(QString::fromLatin1(kApi))};
+    QNetworkRequest req{m_endpoint};
     req.setHeader(QNetworkRequest::ContentTypeHeader,
                   QStringLiteral("application/x-www-form-urlencoded"));
+    // QRZ asks every program to name itself; a generic agent "could be
+    // subject to rate limiting" (QRZ Logbook API guide). Same spelling
+    // as QrzLogbookFetcher, so QRZ sees one program, not two.
+    req.setHeader(QNetworkRequest::UserAgentHeader,
+                  QStringLiteral("Longpath/%1 (+https://www.longpath.at)")
+                      .arg(QCoreApplication::applicationVersion()));
     req.setTransferTimeout(kTimeoutMs);
 
     QNetworkReply* reply =

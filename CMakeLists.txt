@@ -1323,6 +1323,7 @@ set(GUI_SOURCES
     # .cpp has to be listed explicitly or its vtable never gets built.
     src/core/QsoConfirmation.cpp
     src/core/QsoUploader.h
+    src/core/QsoUploadQueue.cpp
     src/models/LogEntry.cpp
     src/gui/applets/KombiApplet.cpp
     src/gui/applets/RxApplet.cpp

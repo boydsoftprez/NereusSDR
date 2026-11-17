@@ -623,6 +623,10 @@ private:
     // written back against the right record instead of against every
     // past contact with the same station.
     QList<int> m_uploadBatch;
+    // The service this batch went to. The uploader objects are shared
+    // with live logging (QsoUploadQueue), which may be sending to
+    // ANOTHER service while a batch runs; that answer is not ours.
+    QPointer<QsoUploader> m_batchTarget;
 };
 
 } // namespace Longpath

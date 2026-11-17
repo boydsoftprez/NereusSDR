@@ -17,6 +17,9 @@
 // Modification history (Longpath):
 //   2026-08-07 — Created in C++20/Qt6 for NereusSDR, AI-assisted via
 //                 Anthropic Claude (Cowork), operator Martin Fischer.
+//   2026-11-17 — Live logging goes to every configured service through
+//                 QsoUploadQueue, not to QRZ alone. AI-assisted via
+//                 Anthropic Claude Code, operator Martin Fischer.
 // =================================================================
 
 #include "core/CallsignInfo.h"
@@ -91,9 +94,20 @@ public:
 
     // Destinations offered by the logbook window's Upload menu. Passed
     // straight through — the panel does not own them and does not use
-    // them itself; live logging still goes to the single uploader given
-    // to the constructor.
+    // them itself; live logging goes through the queue below.
     void setUploadTargets(const QVector<QsoUploader*>& targets);
+
+    // Where a freshly logged contact goes (2026-11-17): every service
+    // that is set up, at once, and what fails waits in the queue. Not
+    // owned — MainWindow keeps it, because catching up after a start
+    // must not depend on this panel having been opened. Without a
+    // queue nothing is uploaded; the contact is logged all the same.
+    void setUploadQueue(class QsoUploadQueue* queue);
+
+    // Note in the log file that this contact reached QRZ. Static half
+    // for the caller that has no panel (catch-up right after start).
+    static bool markUploadedInFile(const LogEntry& sent);
+    void markUploaded(const LogEntry& sent);
 
     /// Satelliten in Sicht: beim Loggen wird der Eintrag mit den
     /// Satelliten gestempelt, die zum QSO-Zeitpunkt ueber dem eigenen
@@ -217,8 +231,6 @@ private:
     void updateCompactness();
     void applyLocators();
     void refreshRecentList();
-    // Note in the log file that this contact reached QRZ.
-    void markUploaded(const QString& call);
     void openLogbookWindow();
     void setStatus(const QString& text, bool warn = false);
 
@@ -314,6 +326,7 @@ private:
     QrzClient*          m_qrz{nullptr};
     class SatelliteService* m_satellites{nullptr};
     QrzLogbookUploader* m_uploader{nullptr};
+    QPointer<class QsoUploadQueue> m_uploadQueue;
 
     RotorDialWidget* m_dial{nullptr};
     GlobeWidget*     m_globe{nullptr};
@@ -377,11 +390,6 @@ private:
     // logged contact when it belongs to the callsign being logged —
     // never a leftover card from the previous station.
     CallsignInfo m_lastInfo;
-
-    // The contact just written, so a later upload result can be
-    // matched to the right record rather than to every past QSO
-    // with the same station.
-    LogEntry m_lastLogged;
 
     // Automatic lookup while typing. The timer debounces; the cache
     // means working a station twice in a contest, or backspacing over

@@ -24,6 +24,13 @@
 // Modification history (Longpath):
 //   2026-08-07 — Created in C++20/Qt6 for NereusSDR, AI-assisted via
 //                 Anthropic Claude (Cowork), operator Martin Fischer.
+//   2026-11-17 — Answers checked against the Wavelog source
+//                 (application/controllers/Api.php::qso, master of
+//                 that day) and Cloudlog's: a duplicate is HTTP 400
+//                 "abort" on Wavelog, "wrong JSON" is HTTP 200, and a
+//                 web page answering 200 is not an API. Named Wavelog
+//                 first. AI-assisted via Anthropic Claude Code,
+//                 operator Martin Fischer.
 // =================================================================
 
 #include "QsoUploader.h"
@@ -51,6 +58,10 @@ public:
     QString stationProfileId() const { return m_stationId; }
 
     QString serviceName() const override;
+    QString shortName() const override { return QStringLiteral("Wavelog"); }
+    // "cloudlog", like the settings keys (CloudlogUrl, cloudlog.apikey):
+    // renaming the storage would orphan what an operator already has.
+    QString serviceId() const override { return QStringLiteral("cloudlog"); }
     bool isConfigured() const override
     {
         return !m_baseUrl.isEmpty() && !m_apiKey.isEmpty()
@@ -69,6 +80,12 @@ public:
         QString message;
     };
     static Result parseResponse(int httpStatus, const QByteArray& body);
+
+    // Wavelog's own line for "this contact is already in the log". The
+    // words "Duplicate for" in it are TRANSLATED by the instance (a
+    // German one says "Doublette zu"), so the fixed frame around them
+    // is what identifies it, not the word.
+    static bool isDuplicateMessage(const QString& message);
 
 private:
     QNetworkAccessManager m_nam;

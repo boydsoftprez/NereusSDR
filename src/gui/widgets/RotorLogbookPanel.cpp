@@ -8,6 +8,11 @@
 // Modification history (Longpath):
 //   2026-08-07 — Created in C++20/Qt6 for NereusSDR, AI-assisted via
 //                 Anthropic Claude (Cowork), operator Martin Fischer.
+//   2026-11-17 — Jedes geloggte QSO geht an ALLE eingerichteten Dienste
+//                 (QRZ, Wavelog, lokaler Logger) ueber QsoUploadQueue;
+//                 die Statuszeile nennt den Dienst, der Vermerk gilt dem
+//                 genauen QSO statt dem zuletzt geloggten. Martin
+//                 Fischer, KI-gestuetzt ueber Anthropic Claude Code.
 //   2026-10-21 — Eine Sonde bleibt offline: ein isolierter Lauf startet
 //                 rotctld nicht von selbst. Martin Fischer,
 //                 KI-gestuetzt ueber Anthropic Claude.
@@ -58,6 +63,7 @@
 #include "core/Maidenhead.h"
 #include "core/QrzClient.h"
 #include "core/QrzLogbookUploader.h"
+#include "core/QsoUploadQueue.h"
 #include "core/Gs232Rotor.h"
 #include "core/RotctldClient.h"
 #include "core/RotctldProcess.h"
@@ -2591,10 +2597,11 @@ bool RotorLogbookPanel::commitEntry(LogEntry e, QWidget* askParent, QString* mes
     // never reads as a lost contact.
     msg = QStringLiteral("Logged %1").arg(e.call);
     if (!e.band.isEmpty()) { msg += QStringLiteral(" on %1").arg(e.band); }
-    if (m_uploader && m_uploader->isConfigured()) {
+    // Every service that is set up, not QRZ alone (2026-11-17). The
+    // queue answers on a later turn of the event loop, so this line is
+    // on screen first and the result replaces it.
+    if (m_uploadQueue && m_uploadQueue->submit(e) > 0) {
         msg += QStringLiteral(" · uploading…");
-        m_lastLogged = e;
-        m_uploader->upload(e);
     }
 
     refreshRecentList();
@@ -2694,35 +2701,42 @@ void RotorLogbookPanel::logExternalQso(const LogEntry& entry)
 
     QString msg = QStringLiteral("Logged %1 from WSJT-X").arg(e.call);
     if (!e.band.isEmpty()) { msg += QStringLiteral(" on %1").arg(e.band); }
-    if (m_uploader && m_uploader->isConfigured()) {
+    // The built-in FT8/FT4 arrives here too (Ft8Applet::qsoFertig), so
+    // this is the line that sends a digital contact out — to every
+    // service that is set up, see commitEntry().
+    if (m_uploadQueue && m_uploadQueue->submit(e) > 0) {
         msg += QStringLiteral(" · uploading…");
-        m_lastLogged = e;
-        m_uploader->upload(e);
     }
     setStatus(msg);
     refreshRecentList();
     emit qsoLogged(e);
 }
 
-void RotorLogbookPanel::markUploaded(const QString& call)
+// What markUploaded records, and what it does not (2026-11-17):
+//
+// The log file has ONE upload note per contact, APP_LONGPATH_QRZUP, and
+// it means what it says — QRZ has it. It is the tick in the logbook's
+// QRZ column. There is no such note per service, and none is added
+// here: what a service still lacks is on QsoUploadQueue's waiting list,
+// which is the only record that needs to exist while an upload is
+// outstanding. So this is called for QRZ's answers only.
+bool RotorLogbookPanel::markUploadedInFile(const LogEntry& sent)
 {
-    // Only the contact just logged, not every past QSO with the same
-    // station. Marking by callsign alone would claim a station's whole
-    // history had been uploaded because one of its contacts was.
-    if (!m_lastLogged.isValid()) { return; }
-    if (Callsigns::normalized(m_lastLogged.call)
-        != Callsigns::normalized(call)) { return; }
+    if (!sent.isValid()) { return false; }
 
+    // This exact contact, not every past QSO with the same station.
+    // Marking by callsign alone would claim a station's whole history
+    // had been uploaded because one of its contacts was.
     QVector<LogEntry> all = AdifLog::read(logbookPath());
     bool changed = false;
     for (LogEntry& e : all) {
-        if (!e.uploadedToQrz && AdifLog::isSameQso(e, m_lastLogged)) {
+        if (!e.uploadedToQrz && AdifLog::isSameQso(e, sent)) {
             e.uploadedToQrz = true;
             changed = true;
             break;
         }
     }
-    if (!changed) { return; }
+    if (!changed) { return false; }
 
     QString err;
     if (!AdifLog::write(logbookPath(), all, &err)) {
@@ -2731,12 +2745,66 @@ void RotorLogbookPanel::markUploaded(const QString& call)
         // consequence is that it gets offered for upload again, where
         // QRZ will call it a duplicate.
         qWarning("Couldn't record the QRZ upload: %s", qPrintable(err));
-    } else if (m_logWindow) {
+        return false;
+    }
+    return true;
+}
+
+void RotorLogbookPanel::markUploaded(const LogEntry& sent)
+{
+    if (markUploadedInFile(sent) && m_logWindow) {
         // Wie beim WSJT-X-QSO: sonst schriebe die naechste Korrektur im
         // Logbuch den Vermerk wieder zurueck.
         m_logWindow->reload();
     }
-    m_lastLogged = LogEntry{};
+}
+
+void RotorLogbookPanel::setUploadQueue(QsoUploadQueue* queue)
+{
+    if (m_uploadQueue == queue) { return; }
+    if (m_uploadQueue) { disconnect(m_uploadQueue, nullptr, this, nullptr); }
+    m_uploadQueue = queue;
+    if (!queue) { return; }
+
+    connect(queue, &QsoUploadQueue::uploaded, this,
+            [this](const QString& serviceId, const LogEntry& entry, bool) {
+        // Record that it got through. Without this the answer is
+        // forgotten at the next restart, and the only safe thing left
+        // is to send everything again.
+        if (serviceId == QLatin1String("qrz")) { markUploaded(entry); }
+    });
+    connect(queue, &QsoUploadQueue::qsoFinished, this,
+            [this](const LogEntry& entry,
+                   const QVector<QsoUploadQueue::Outcome>& outcomes) {
+        bool anyFailed = false;
+        for (const QsoUploadQueue::Outcome& o : outcomes) {
+            if (!o.ok) { anyFailed = true; }
+        }
+        // Names the service: with two of them "upload failed" no longer
+        // says which.
+        setStatus(QsoUploadQueue::statusLine(entry.call, outcomes), anyFailed);
+    });
+    connect(queue, &QsoUploadQueue::backlogSent, this,
+            [this](const QString& service, int sent, int stillWaiting,
+                   const QString& lastError) {
+        const auto contacts = [](int n) {
+            return n == 1 ? QStringLiteral("1 earlier contact")
+                          : QStringLiteral("%1 earlier contacts").arg(n);
+        };
+        if (sent > 0 && stillWaiting == 0) {
+            setStatus(QStringLiteral("%1: %2 uploaded — nothing left waiting")
+                          .arg(service, contacts(sent)));
+        } else if (sent > 0) {
+            setStatus(QStringLiteral("%1: %2 uploaded, %3 still waiting")
+                          .arg(service, contacts(sent)).arg(stillWaiting), true);
+        } else if (stillWaiting > 0) {
+            setStatus(QStringLiteral("%1: %2 still waiting to be uploaded — %3")
+                          .arg(service, contacts(stillWaiting),
+                               lastError.isEmpty() ? QStringLiteral("will retry")
+                                                   : lastError),
+                      true);
+        }
+    });
 }
 
 void RotorLogbookPanel::refreshRecentList()
@@ -3011,27 +3079,7 @@ void RotorLogbookPanel::wireQrz()
         }
     });
 
-    if (m_uploader) {
-        connect(m_uploader, &QsoUploader::uploadFinished, this,
-                [this](const QString& call, bool ok, bool duplicate,
-                       const QString& message) {
-            if (ok) {
-                // Record that it got through. Without this the answer
-                // is forgotten at the next restart, and the only safe
-                // thing left is to send everything again.
-                markUploaded(call);
-            }
-            setStatus(ok
-                ? QStringLiteral("%1 — %2").arg(call,
-                      duplicate ? QStringLiteral("already in your QRZ logbook")
-                                : message)
-                // The contact is in the local file regardless; say so,
-                // or a failed upload reads as a lost QSO.
-                : QStringLiteral("%1 logged locally, QRZ upload failed: %2")
-                      .arg(call, message),
-                !ok);
-        });
-    }
+    // The upload answers no longer arrive here: see setUploadQueue().
 }
 
 void RotorLogbookPanel::applyLocators()

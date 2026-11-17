@@ -23,11 +23,15 @@
 // Modification history (Longpath):
 //   2026-08-07 — Created in C++20/Qt6 for NereusSDR, AI-assisted via
 //                 Anthropic Claude (Cowork), operator Martin Fischer.
+//   2026-11-17 — serviceId()/shortName(); identifiable User-Agent, as
+//                 the QRZ logbook API guide asks for. AI-assisted via
+//                 Anthropic Claude Code, operator Martin Fischer.
 // =================================================================
 
 #include "QsoUploader.h"
 
 #include <QNetworkAccessManager>
+#include <QUrl>
 
 class QNetworkReply;
 
@@ -41,7 +45,14 @@ public:
     void setApiKey(const QString& key);
     QString apiKey() const { return m_apiKey; }
 
+    // Where the record is posted. logbook.qrz.com/api unless a test
+    // bench says otherwise — a bench must never reach the real service
+    // (same arrangement as QrzLogbookFetcher::setEndpointForTest).
+    void setEndpointForTest(const QUrl& url) { m_endpoint = url; }
+
     QString serviceName() const override;
+    QString shortName() const override { return QStringLiteral("QRZ"); }
+    QString serviceId() const override { return QStringLiteral("qrz"); }
     bool isConfigured() const override { return !m_apiKey.isEmpty(); }
     void upload(const LogEntry& entry) override;
 
@@ -59,6 +70,7 @@ public:
 private:
     QNetworkAccessManager m_nam;
     QString m_apiKey;
+    QUrl    m_endpoint;
 };
 
 } // namespace Longpath

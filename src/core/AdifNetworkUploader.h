@@ -46,6 +46,8 @@ public:
     // Shown in the UI beside the result, so nobody reads a UDP "sent"
     // as a confirmation the logger has the contact.
     QString serviceName() const override;
+    QString shortName() const override { return QStringLiteral("local logger"); }
+    QString serviceId() const override { return QStringLiteral("adifnet"); }
     bool isConfigured() const override
     {
         return !m_host.isEmpty() && m_port != 0;

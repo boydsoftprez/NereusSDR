@@ -6195,6 +6195,16 @@ longpath_add_test(tst_kml_export)
 longpath_add_test(tst_cloudlog_uploader)
 target_link_libraries(tst_cloudlog_uploader PRIVATE Qt6::Network)
 
+# -- 2026-11-17: every logged QSO to every configured service, and a
+#    waiting list for what did not get through. The queue alone against
+#    stand-in services (order, persistence, catch-up, a silent service),
+#    then the whole way from logExternalQso — where the built-in FT8
+#    arrives — through the real QRZ and Wavelog uploaders to a server on
+#    127.0.0.1. Neither bench reaches the network. --
+longpath_add_test(tst_qso_upload_queue)
+longpath_add_test(tst_auto_upload_alle_dienste)
+target_link_libraries(tst_auto_upload_alle_dienste PRIVATE Qt6::Network)
+
 # -- Flat map geometry: great-circle sampling and the date-line split
 #    that stops a Pacific path streaking back across the whole map --
 longpath_add_test(tst_flat_map)

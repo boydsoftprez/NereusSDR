@@ -1923,6 +1923,10 @@ void LogbookWindow::onUploadFinished(const QString& call, bool ok,
                                      bool duplicate, const QString& message)
 {
             if (m_pending <= 0) { return; }
+            // Live logging answers on the same objects (2026-11-17: on
+            // all of them, not only QRZ). Without this an FT8 contact
+            // going to Wavelog would be counted into a batch for QRZ.
+            if (m_batchTarget && sender() && sender() != m_batchTarget) { return; }
             --m_pending;
             if (ok) {
                 ++m_okCount;
@@ -2011,6 +2015,7 @@ void LogbookWindow::uploadEntries(const QList<int>& sourceRows,
     m_okCount     = 0;
     m_dupCount    = 0;
     m_uploadBatch = sourceRows;
+    m_batchTarget = target;
     m_failures.clear();
     m_uploadBtn->setEnabled(false);
     m_uploadBtn->setVisible(true);   // der Fortschritt steht in der Leiste

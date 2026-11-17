@@ -1213,6 +1213,11 @@ private:
     // Every configured destination, for the logbook window's Upload
     // menu. Ownership stays here.
     QVector<QsoUploader*> qsoUploaders();
+    // Live logging: every logged contact to every service that is set
+    // up, and a waiting list for what did not get through (2026-11-17).
+    // Here and not in the Rotor/Log panel, because catching up after a
+    // start must not depend on that panel having been opened.
+    class QsoUploadQueue* ensureUploadQueue();
     void buildStatusBar();
     void applyDarkTheme();
     void openConnectionPanelOnLaunch();
@@ -2684,6 +2689,7 @@ private:
     class SatelliteService* m_satellites{nullptr};
     CloudlogUploader*    m_cloudlogUploader{nullptr};
     AdifNetworkUploader* m_localLogUploader{nullptr};
+    class QsoUploadQueue* m_uploadQueue{nullptr};
 
     // Kopfleiste im Zuschnitt der Vorlage und das Plus an ihrem rechten Ende.
     // Das Plus entsteht erst, wenn m_appletVis alle Kategorien kennt —
