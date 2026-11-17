@@ -326,6 +326,47 @@ private slots:
         QCOMPARE(a.empfangenerReport(), -9);
     }
 
+    // ── Ein UNbestaetigter Rapport schliesst nicht ab (2026-11-17) ──
+    //
+    // Ich habe ihm meinen Rapport gegeben und erwarte „R-09". Kommt
+    // stattdessen „-15" ohne R, ist meiner nicht angekommen -- er haelt
+    // mich fuer den Anrufer. Bis heute fuehrte JEDER Rapport hier zum
+    // RR73, und ein Fenster spaeter stand ein QSO im Logbuch, das auf
+    // seiner Seite keines war (am Geraet: JA2FRO, 17 m).
+    void einUnbestaetigterRapportSchliesstNichtAb()
+    {
+        Ft8Ablauf a;
+        a.starteMitAnrufer(QStringLiteral("JA2FRO"), QStringLiteral("OE5SOS"),
+                           QStringLiteral("JN67"), -21,
+                           QStringLiteral("PM84"));
+        QCOMPARE(a.zustand(), Z::SendeReport);
+
+        QVERIFY(a.verarbeite(QStringLiteral("OE5SOS JA2FRO -15"), -24));
+        QCOMPARE(a.zustand(), Z::SendeRReport);
+        QCOMPARE(a.empfangenerReport(), -15);
+        QCOMPARE(a.naechsteNachricht(), QStringLiteral("JA2FRO OE5SOS R-21"));
+
+        // Ein Fenster spaeter ist es NICHT fertig.
+        a.fensterVerstrichen();
+        QVERIFY(a.laeuft());
+
+        // Erst sein RR73 macht es zum QSO; ich schliesse mit 73.
+        QVERIFY(a.verarbeite(QStringLiteral("OE5SOS JA2FRO RR73"), -24));
+        QCOMPARE(a.zustand(), Z::Sende73);
+        a.fensterVerstrichen();
+        QCOMPARE(a.zustand(), Z::Fertig);
+    }
+
+    // Der bestaetigte bleibt, was er war: der kurze Weg zum RR73.
+    void derBestaetigteRapportFuehrtWeiterZumRr73()
+    {
+        Ft8Ablauf a;
+        a.starteMitAnrufer(QStringLiteral("DL1ABC"), QStringLiteral("OE5SOS"),
+                           QStringLiteral("JN67"), -7, QString());
+        QVERIFY(a.verarbeite(QStringLiteral("OE5SOS DL1ABC R-15"), -7));
+        QCOMPARE(a.zustand(), Z::SendeRR73);
+    }
+
     // ── Hound: eine DX-Expedition im Fox-Betrieb rufen ───────
     //
     // Der Ablauf Zug fuer Zug aus WSJT-X' eigener Vorschrift

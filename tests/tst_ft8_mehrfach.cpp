@@ -98,19 +98,31 @@ private slots:
         QCOMPARE(raus[1].toneHz - raus[0].toneHz, 60.0f);
         QCOMPARE(raus[2].toneHz - raus[1].toneHz, 60.0f);
 
-        // Alle drei antworten mit ihrem Rapport -- durcheinander, wie
-        // auf dem Band. Jeder Ablauf nimmt sich das Seine.
-        QCOMPARE(m.verarbeite(QStringLiteral("OE5SOS G0XYZ -05"),  -7), 1);
-        QCOMPARE(m.verarbeite(QStringLiteral("OE5SOS F5QRP -20"), -18), 1);
-        QCOMPARE(m.verarbeite(QStringLiteral("OE5SOS DL1ABC -09"), -12), 1);
+        // Alle drei bestaetigen und geben ihren Rapport -- durcheinander,
+        // wie auf dem Band. Jeder Ablauf nimmt sich das Seine.
+        //
+        // ── Mit „R" davor (2026-11-17) ───────────────────────────────
+        //
+        // Hier standen bis heute UNbestaetigte Rapporte („-05"), und
+        // der Lauf hielt fest, dass darauf RR73 folgt: „ich habe ihm
+        // meinen Rapport gegeben und seinen bekommen -- der Austausch
+        // ist vollstaendig". Das stimmt nur, wenn meiner ANGEKOMMEN
+        // ist, und genau das sagt erst das R. Ohne R hat er meinen Satz
+        // nicht gelesen; ein RR73 darauf schliesst ein QSO ab, das auf
+        // seiner Seite keines ist. Am Geraet stand so JA2FRO im
+        // Logbuch (2026-11-17, 17 m). Der Fall ohne R steht jetzt in
+        // tst_ft8_ablauf (`einUnbestaetigterRapportSchliesstNichtAb`).
+        QCOMPARE(m.verarbeite(QStringLiteral("OE5SOS G0XYZ R-05"),  -7), 1);
+        QCOMPARE(m.verarbeite(QStringLiteral("OE5SOS F5QRP R-20"), -18), 1);
+        QCOMPARE(m.verarbeite(QStringLiteral("OE5SOS DL1ABC R-09"), -12), 1);
 
         // ── Und danach RR73, nicht R-12 (2026-10-30) ─────────
         //
         // Folgt aus dem Einstieg bei Tx2. Ich habe IHM meinen
-        // Rapport gegeben und SEINEN bekommen -- der Austausch ist
-        // vollstaendig, es fehlt nur die Bestaetigung. Ein
-        // bestaetigter Rapport (R-12) waere der Zug des ANTWORTERS,
-        // und das bin ich hier nicht: ich habe CQ gerufen.
+        // Rapport gegeben und SEINEN bestaetigt bekommen -- der
+        // Austausch ist vollstaendig. Ein bestaetigter Rapport (R-12)
+        // waere der Zug des ANTWORTERS, und das bin ich hier nicht:
+        // ich habe CQ gerufen.
         //
         // Der alte Lauf erwartete R-12, weil `nimmAnrufer` bei Tx1
         // einstieg und der Ablauf dadurch eine Rolle zu tief lag.

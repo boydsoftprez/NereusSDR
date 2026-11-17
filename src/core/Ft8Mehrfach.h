@@ -46,6 +46,11 @@
 // Modification history (Longpath):
 //   2026-10-24 — Original fuer Longpath von Martin Fischer (OE5SOS),
 //                 KI-gestuetzt ueber Anthropic Claude.
+//   2026-11-17 — nimmVonHand() und raeumeAuf(); wer aus der Schlange
+//                 nachrueckt, bekommt den Zug, der zu ihm gehoert
+//                 (Rapport fuer den Anrufer, nicht mein Locator).
+//                 Martin Fischer (OE5SOS), KI-gestuetzt ueber Anthropic
+//                 Claude.
 // =================================================================
 
 #include <QString>
@@ -99,6 +104,16 @@ public:
     bool nimmAnrufer(const QString& partner, int snr,
                      const QString& seinLocator = QString());
 
+    /// Eine Station, die MICH nicht gerufen hat, auf einen Platz
+    /// nehmen (2026-11-17): der Doppelklick auf ihr CQ, oder „+ Queue".
+    /// Der Unterschied zu `nimmAnrufer` ist der erste Zug -- hier geht
+    /// mein Ruf mit Locator hinaus, dort gleich der Rapport. Wer nie
+    /// gefragt hat, bekommt keinen Rapport.
+    /// Sonst dieselben Regeln: kein Rufzeichen doppelt, und ist alles
+    /// belegt, stellt er sich an.
+    bool nimmVonHand(const QString& partner, int snr,
+                     const QString& seinLocator = QString());
+
     /// Eine gehoerte Nachricht an ALLE laufenden Ablaeufe reichen.
     /// Jeder prueft selbst, ob sie ihn angeht (`Ft8Ablauf::verarbeite`
     /// uebergeht still, was nicht an ihn gerichtet ist).
@@ -114,6 +129,12 @@ public:
     /// weiter und raeumt danach auf: fertige und abgebrochene Plaetze
     /// werden frei, und aus der Warteschlange rueckt nach.
     void fensterVerstrichen();
+
+    /// Nur aufraeumen, OHNE ein Fenster zu zaehlen (2026-11-17): fertige
+    /// und abgebrochene Plaetze werden frei, die Schlange rueckt nach.
+    /// Fuer den Fall, dass ein QSO zwischen zwei Sendungen zu Ende geht
+    /// -- dann ist kein Fenster vergangen, aber der Platz ist frei.
+    void raeumeAuf();
 
     /// Die fertigen QSOs HERAUSNEHMEN. Jedes wird genau einmal
     /// geliefert — der Aufrufer schreibt es ins Logbuch, und beim
@@ -136,7 +157,15 @@ private:
         QString partner;
         int     snr{0};
         QString locator;
+        /// Von Hand angestellt: er hat mich NICHT gerufen. Entscheidet
+        /// beim Nachruecken ueber den ersten Zug.
+        bool    vonHand{false};
     };
+
+    bool nimm(const QString& partner, int snr, const QString& seinLocator,
+              bool vonHand);
+    static Ft8Ablauf beginne(const Wartend& w, const QString& meinRuf,
+                             const QString& meinLocator);
 
     void rueckeNach();
 

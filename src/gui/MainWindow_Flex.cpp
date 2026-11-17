@@ -1981,6 +1981,30 @@ void MainWindow::verdrahteFlexSenden()
             m_flexSendeGeliefert  = 0;
             m_flexSendeRueckstand = 0;
             m_flexSendeUhr.start();
+
+            // ── Vor JEDEM Tasten die Leistung, die der Betreiber sieht ──
+            //
+            // Am Geraet (2026-11-17): am Regler stand 5, beim Anmelden
+            // ging „senden 5 %" hinaus — und nach dem Wechsel von 17 m
+            // auf 15 m masz die Maschine 35 W nach einer halben Sekunde
+            // (12:30:30), am Vormittag auf demselben Band 72 W
+            // (48,6 dBm, 11:07–11:09). Die Flex fuehrt ihre Leistung je
+            // Band selbst und stellt beim Bandwechsel IHREN Wert
+            // zurueck; unserer ging nur beim Anmelden und bei einer
+            // Reglerbewegung hinaus.
+            //
+            // Ein Regler, der 5 zeigt, waehrend 72 W in eine Stehwelle
+            // von 2,3 gehen, ist die gefaehrlichere Sorte Anzeige. Der
+            // Befehl ist derselbe wie beim Anmelden und kostet nichts,
+            // wenn die Maschine den Wert schon hat. Am Geraet noch
+            // nicht gegengeprueft (Stand 17.11.).
+            {
+                const int prozent = qBound(
+                    0, m_radioModel->transmitModel().power(), 100);
+                m_radioModel->setzeFlexSendeleistung(prozent);
+                qCInfo(lcFlexGui) << "Flex: Leistung vor dem Tasten"
+                                  << prozent << "%";
+            }
             m_flexSelbstGetastet = m_radioModel->flexTasten(true);
             if (m_flexSelbstGetastet && m_flexSendePumpe) {
                 m_flexSendePumpe->start();

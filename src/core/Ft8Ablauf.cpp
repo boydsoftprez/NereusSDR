@@ -465,11 +465,32 @@ bool Ft8Ablauf::verarbeite(const QString& nachricht, int snr)
         }
         case Zustand::SendeReport: {
             // Erwartet: sein bestaetigter Rapport (R-09).
+            //
+            // ── Ein UNbestaetigter Rapport ist kein Schluss (2026-11-17) ─
+            //
+            // Hier stand: jeder Rapport fuehrt zum RR73. Kommt aber
+            // „-15" ohne das R davor, hat er MEINEN Rapport nicht
+            // bekommen -- er haelt mich fuer den Anrufer und gibt mir
+            // seinen. Darauf RR73 zu senden schliesst ein QSO ab, das
+            // auf seiner Seite keines ist, und ein Fenster spaeter
+            // steht es im Logbuch.
+            //
+            // Am Geraet gesehen (2026-11-17, 17 m):
+            //   081815  OE5SOS JA2FRO -15      <- ohne R
+            //   09:18:43 „QSO fertig (Platz): JA2FRO"
+            // JA2FRO hatte nie eine Bestaetigung bekommen.
+            //
+            // Richtig ist der Zug, den auch WSJT-X an dieser Stelle
+            // nimmt: seinen Rapport bestaetigen und den eigenen noch
+            // einmal mitgeben (R-xx). Dann kommt sein RR73, und erst
+            // dann ist es ein QSO.
             const int r = rapportAus(letztes);
             if (r != kKeinReport) {
                 m_reportEmpfangen = r;
                 m_wiederholungen  = 0;
-                m_zustand         = Zustand::SendeRR73;
+                m_zustand         = istBestaetigterRapport(letztes)
+                                        ? Zustand::SendeRR73
+                                        : Zustand::SendeRReport;
                 return true;
             }
             if (Ft8Ablauf::istAbschied(letztes)) {

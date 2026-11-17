@@ -37,6 +37,9 @@
 #include <QSignalSpy>
 #include <QPushButton>
 #include <QSpinBox>
+#include <QTimer>
+#include <QPlainTextEdit>
+#include <QDateTime>
 
 #include "core/Ft8Decoder.h"
 #include "gui/applets/Ft8Applet.h"
@@ -44,6 +47,8 @@
 #include "models/LogEntry.h"
 #include "core/AppSettings.h"
 #include "core/Ft8Tx.h"
+#include "core/MoxController.h"
+#include <QLabel>
 
 using namespace Longpath;
 
@@ -461,6 +466,496 @@ private slots:
                  QStringLiteral("9A6T OE5SOS -06"));
     }
 
+
+    // =================================================================
+    // 2026-11-17 — Die Plaetze AUF SENDUNG
+    // =================================================================
+    //
+    // Alles darueber prueft, was die Plaetze RECHNEN. Was davon wirklich
+    // hinausgeht, pruefte nichts -- und genau dort lag es: die
+    // Nachpruefung kurz vor dem Senden packte bei jeder Sendung den Satz
+    // des einzelnen Ablaufs ueber das fertige Paket.
+    //
+    // Am Geraet (17 m, 3 Plaetze, CQ laeuft), aus dem Sitzungsprotokoll:
+    //   09:15:13  Senden vorbereitet (2 Plaetze):
+    //             US2YW OE5SOS -15@2430 | CQ OE5SOS JN67@2490
+    //   09:15:30  Zug in der Frist gewechselt:
+    //             US2YW OE5SOS -15 | CQ OE5SOS JN67 -> CQ OE5SOS JN67
+    // 27 Sendungen, 27-mal dasselbe. Betreiber: „die automatischen
+    // antworten meines cq call funktionieren irgendwie nicht."
+    //
+    // Darum fragen diese Laeufe die TONQUELLE, was sie gepackt hat --
+    // nachdem der Sendetakt abgelaufen ist, also nach der Nachpruefung.
+
+private:
+    static void stelleEin(int plaetze)
+    {
+        AppSettings::instance().setValue(QStringLiteral("StationCallsign"),
+                                         QStringLiteral("OE5SOS"));
+        AppSettings::instance().setValue(QStringLiteral("User/GridSquare"),
+                                         QStringLiteral("JN67"));
+        AppSettings::instance().setValue(QStringLiteral("Ft8/Plaetze"),
+                                         QString::number(plaetze));
+    }
+
+    static void fund(Ft8Applet& applet, const char* text, double snr)
+    {
+        Ft8Decode d;
+        d.text   = QString::fromLatin1(text);
+        d.snrDb  = snr;
+        d.freqHz = 1500.0;
+        applet.fundForTest(d);
+    }
+
+    /// Den Sendetakt ablaufen lassen, als waere die Fenstergrenze da.
+    /// Danach hat die Nachpruefung entschieden, was hinausgeht.
+    static bool sendetaktAbgelaufen(Ft8Applet& applet)
+    {
+        QTimer* t = applet.sendeTimerForTest();
+        if (!t || !t->isActive()) { return false; }
+        t->stop();
+        t->start(0);
+        return QTest::qWaitFor([t]() { return !t->isActive(); }, 3000);
+    }
+
+    /// Was die Tonquelle gepackt hat: die Saetze, mit „#" getrennt.
+    static QString aufSendung(RadioModel& radio)
+    {
+        return radio.ft8TxSource() ? radio.ft8TxSource()->nachricht()
+                                   : QStringLiteral("(keine Tonquelle)");
+    }
+
+    static QString letzteZeile(Ft8Applet& applet)
+    {
+        const QStringList z = applet.listForTest()->toPlainText()
+                                  .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        return z.isEmpty() ? QString() : z.last();
+    }
+
+private slots:
+
+    // Der Fall vom Geraet, Zug um Zug. Jede Zeile „aufSendung" ist eine,
+    // die vor der Behebung „CQ OE5SOS JN67" lautete.
+    void dieAntwortGehtHinausUndNichtNurDasCq()
+    {
+        stelleEin(3);
+        RadioModel radio;
+        radio.installFt8TxForTest();
+        Ft8Applet applet(&radio);
+        applet.cqVersucheSpinForTest()->setValue(10);
+        QSignalSpy gemeldet(&applet, &Ft8Applet::qsoFertig);
+
+        applet.cqRufenButtonForTest()->click();
+        QVERIFY2(applet.sendetGerade(), "der CQ-Ruf muss eingeplant sein");
+        QVERIFY(sendetaktAbgelaufen(applet));
+        QCOMPARE(aufSendung(radio), QStringLiteral("CQ OE5SOS JN67"));
+        applet.fensterZuEndeForTest();
+        QVERIFY2(applet.sendetGerade(), "das naechste CQ muss eingeplant sein");
+
+        // Er antwortet, waehrend das naechste CQ schon gepackt ist. Die
+        // Antwort geht in DIESEM Fenster hinaus -- und das CQ daneben.
+        fund(applet, "OE5SOS US2YW KN28", -15.0);
+        QCOMPARE(applet.mehrfachForTest().aktive(), 1);
+        QVERIFY(sendetaktAbgelaufen(applet));
+        QCOMPARE(aufSendung(radio),
+                 QStringLiteral("US2YW OE5SOS -15#CQ OE5SOS JN67"));
+        applet.fensterZuEndeForTest();
+
+        // Er bestaetigt. Jetzt ist „US2YW OE5SOS -15 | CQ" gepackt, und
+        // die Nachpruefung muss daraus das RR73 machen -- NICHT das CQ
+        // allein. Das ist die Zeile aus dem Protokoll.
+        fund(applet, "OE5SOS US2YW R-09", -15.0);
+        QVERIFY(sendetaktAbgelaufen(applet));
+        QCOMPARE(aufSendung(radio),
+                 QStringLiteral("US2YW OE5SOS RR73#CQ OE5SOS JN67"));
+        QCOMPARE(gemeldet.count(), 0);      // das RR73 geht eben erst hinaus
+
+        applet.fensterZuEndeForTest();
+        QCOMPARE(gemeldet.count(), 1);
+        QCOMPARE(gemeldet.first().first().value<LogEntry>().call,
+                 QStringLiteral("US2YW"));
+
+        // Und der Lauf geht weiter: wieder CQ, ohne Klick.
+        QVERIFY2(applet.sendetGerade(), "nach dem QSO muss weiter gerufen werden");
+        QVERIFY(sendetaktAbgelaufen(applet));
+        QCOMPARE(aufSendung(radio), QStringLiteral("CQ OE5SOS JN67"));
+
+        applet.stopButtonForTest()->click();
+    }
+
+    // Drei rufen zugleich: alle drei bekommen ihren Rapport in EINEM
+    // Fenster. Am Geraet riefen RA5CW und 9A2KS zusammen achtmal.
+    void dreiAnruferBekommenAlleIhrenRapport()
+    {
+        stelleEin(3);
+        RadioModel radio;
+        radio.installFt8TxForTest();
+        Ft8Applet applet(&radio);
+        applet.cqVersucheSpinForTest()->setValue(10);
+
+        applet.cqRufenButtonForTest()->click();
+        fund(applet, "OE5SOS JA2FRO PM84", -21.0);
+        fund(applet, "OE5SOS RA5CW MO85", -6.0);
+        fund(applet, "OE5SOS 9A2KS JN65", -8.0);
+        QCOMPARE(applet.mehrfachForTest().aktive(), 3);
+
+        QVERIFY(sendetaktAbgelaufen(applet));
+        // Alle Plaetze belegt: das CQ schweigt, die drei gehen hinaus.
+        QCOMPARE(aufSendung(radio),
+                 QStringLiteral("JA2FRO OE5SOS -21#RA5CW OE5SOS -06"
+                                "#9A2KS OE5SOS -08"));
+        applet.stopButtonForTest()->click();
+    }
+
+    // Ein Rapport OHNE „R" heisst: meiner ist nicht angekommen. Darauf
+    // RR73 zu senden schrieb JA2FRO ins Logbuch, der nie eine
+    // Bestaetigung bekommen hatte.
+    void einUnbestaetigterRapportIstKeinQso()
+    {
+        stelleEin(3);
+        RadioModel radio;
+        radio.installFt8TxForTest();
+        Ft8Applet applet(&radio);
+        QSignalSpy gemeldet(&applet, &Ft8Applet::qsoFertig);
+
+        fund(applet, "OE5SOS JA2FRO PM84", -21.0);
+        fund(applet, "OE5SOS JA2FRO -15", -24.0);
+        QCOMPARE(applet.mehrfachForTest().belegung().first().zustand,
+                 Ft8Ablauf::Zustand::SendeRReport);
+
+        QVERIFY(sendetaktAbgelaufen(applet));
+        QCOMPARE(aufSendung(radio), QStringLiteral("JA2FRO OE5SOS R-21"));
+        applet.fensterZuEndeForTest();
+        QCOMPARE(gemeldet.count(), 0);
+
+        // Erst sein RR73 macht es zum QSO.
+        fund(applet, "OE5SOS JA2FRO RR73", -24.0);
+        QVERIFY(sendetaktAbgelaufen(applet));
+        QCOMPARE(aufSendung(radio), QStringLiteral("JA2FRO OE5SOS 73"));
+        applet.fensterZuEndeForTest();
+        QCOMPARE(gemeldet.count(), 1);
+        applet.stopButtonForTest()->click();
+    }
+
+    // Wer sich verabschiedet, ist kein neuer Anrufer -- und wer eben
+    // gearbeitet wurde, wird nicht gleich noch einmal gearbeitet. Am
+    // Geraet stand EY7AD dreimal in zwei Minuten auf einem Platz.
+    void werEbenGearbeitetWurdeBekommtKeinenNeuenPlatz()
+    {
+        stelleEin(3);
+        RadioModel radio;
+        radio.installFt8TxForTest();
+        Ft8Applet applet(&radio);
+        QSignalSpy gemeldet(&applet, &Ft8Applet::qsoFertig);
+
+        fund(applet, "OE5SOS EY7AD MM48", 12.0);
+        fund(applet, "OE5SOS EY7AD R+05", 12.0);
+        applet.fensterZuEndeForTest();          // das RR73 ist draussen
+        QCOMPARE(gemeldet.count(), 1);
+        QCOMPARE(applet.mehrfachForTest().aktive(), 0);
+
+        fund(applet, "OE5SOS EY7AD 73", 12.0);  // sein Abschied
+        QCOMPARE(applet.mehrfachForTest().aktive(), 0);
+        fund(applet, "OE5SOS EY7AD R+05", 12.0);    // er wiederholt
+        QCOMPARE(applet.mehrfachForTest().aktive(), 0);
+        // Und bloss erwaehnt zu sein ist kein Anruf.
+        fund(applet, "K1ABC OE5SOS -10", 3.0);
+        QCOMPARE(applet.mehrfachForTest().aktive(), 0);
+
+        QCOMPARE(gemeldet.count(), 1);
+        applet.stopButtonForTest()->click();
+    }
+
+    // Der Doppelklick mit Plaetzen. Vorher ging er an den einzelnen
+    // Ablauf, der im Mehrfachbetrieb keinen Fund zu sehen bekommt: das
+    // QSO blieb bei „waiting for his report" stehen, und der laufende
+    // CQ-Ruf war weg.
+    void derDoppelklickNimmtEinenPlatzUndDasCqLaeuftWeiter()
+    {
+        stelleEin(3);
+        RadioModel radio;
+        radio.installFt8TxForTest();
+        Ft8Applet applet(&radio);
+        applet.cqVersucheSpinForTest()->setValue(10);
+
+        applet.cqRufenButtonForTest()->click();
+        fund(applet, "CQ DL1ABC JO31", -7.0);
+        const QString zeile = letzteZeile(applet);
+        QVERIFY2(zeile.contains(QStringLiteral("CQ DL1ABC JO31")),
+                 qPrintable(zeile));
+
+        QCOMPARE(applet.nimmFundAn(zeile), QString());
+        QCOMPARE(applet.mehrfachForTest().aktive(), 1);
+        QCOMPARE(applet.mehrfachForTest().belegung().first().zustand,
+                 Ft8Ablauf::Zustand::RufeAn);
+        // Der CQ-Ruf ist NICHT ueberschrieben.
+        QCOMPARE(applet.ablaufForTest().zustand(), Ft8Ablauf::Zustand::RufeCq);
+
+        QVERIFY(sendetaktAbgelaufen(applet));
+        QCOMPARE(aufSendung(radio),
+                 QStringLiteral("DL1ABC OE5SOS JN67#CQ OE5SOS JN67"));
+        applet.fensterZuEndeForTest();
+
+        // Und seine Antwort KOMMT AN -- das war der eigentliche Schaden.
+        fund(applet, "OE5SOS DL1ABC -12", -7.0);
+        QVERIFY(sendetaktAbgelaufen(applet));
+        QCOMPARE(aufSendung(radio),
+                 QStringLiteral("DL1ABC OE5SOS R-07#CQ OE5SOS JN67"));
+
+        // Ein zweiter Doppelklick auf denselben nimmt keinen zweiten Platz.
+        QVERIFY(!applet.nimmFundAn(zeile).isEmpty());
+        QCOMPARE(applet.mehrfachForTest().aktive(), 1);
+        applet.stopButtonForTest()->click();
+    }
+
+    // Wer MICH ruft, bekommt auch auf Doppelklick den Rapport und nicht
+    // meinen Locator. Am Geraet: Doppelklick auf „OE5SOS JA2FRO PM84"
+    // sendete sechsmal „JA2FRO OE5SOS JN67".
+    void derDoppelklickAufEinenAnruferGibtDenRapport()
+    {
+        stelleEin(3);
+        RadioModel radio;
+        radio.installFt8TxForTest();
+        Ft8Applet applet(&radio);
+
+        // Abgewiesen, damit er nicht von selbst auf einen Platz geht --
+        // der Doppelklick ist dann die Entscheidung des Betreibers.
+        applet.schlangeForTestSchreibend().weiseAb(
+            QStringLiteral("JA2FRO"), QDateTime::currentMSecsSinceEpoch());
+        fund(applet, "OE5SOS JA2FRO PM84", -22.0);
+        QCOMPARE(applet.mehrfachForTest().aktive(), 0);
+
+        const QString zeile = letzteZeile(applet);
+        QVERIFY2(zeile.contains(QStringLiteral("OE5SOS JA2FRO PM84")),
+                 qPrintable(zeile));
+        QCOMPARE(applet.nimmFundAn(zeile), QString());
+        QCOMPARE(applet.mehrfachForTest().belegung().first().zustand,
+                 Ft8Ablauf::Zustand::SendeReport);
+        QVERIFY(sendetaktAbgelaufen(applet));
+        QCOMPARE(aufSendung(radio), QStringLiteral("JA2FRO OE5SOS -22"));
+        applet.stopButtonForTest()->click();
+    }
+
+    // War der CQ-Zaehler waehrend eines QSOs abgelaufen, blieb es nach
+    // dem RR73 still. Beim einzelnen Ablauf ruft es danach von selbst
+    // weiter; mit Plaetzen jetzt auch.
+    void nachEinemFertigenQsoZaehltDasCqVonVorn()
+    {
+        stelleEin(3);
+        RadioModel radio;
+        radio.installFt8TxForTest();
+        Ft8Applet applet(&radio);
+        applet.cqVersucheSpinForTest()->setValue(2);
+
+        applet.cqRufenButtonForTest()->click();
+        QVERIFY(sendetaktAbgelaufen(applet));
+        applet.fensterZuEndeForTest();              // Versuch 1 ist um
+
+        fund(applet, "OE5SOS DL1ABC JO31", -7.0);
+        QVERIFY(sendetaktAbgelaufen(applet));
+        applet.fensterZuEndeForTest();              // Versuch 2: CQ zu Ende
+        QVERIFY2(!applet.ablaufForTest().laeuft(),
+                 "die Voraussetzung: der CQ-Ruf ist waehrend des QSOs "
+                 "abgelaufen");
+
+        fund(applet, "OE5SOS DL1ABC R-15", -7.0);
+        QVERIFY(sendetaktAbgelaufen(applet));
+        QCOMPARE(aufSendung(radio), QStringLiteral("DL1ABC OE5SOS RR73"));
+        applet.fensterZuEndeForTest();              // QSO fertig
+
+        QCOMPARE(applet.ablaufForTest().zustand(), Ft8Ablauf::Zustand::RufeCq);
+        QVERIFY2(applet.sendetGerade(), "es muss von selbst weitergehen");
+        QVERIFY(sendetaktAbgelaufen(applet));
+        QCOMPARE(aufSendung(radio), QStringLiteral("CQ OE5SOS JN67"));
+        applet.stopButtonForTest()->click();
+    }
+
+    // Wer warten musste, weil alle Plaetze belegt waren, bekommt beim
+    // Nachruecken DENSELBEN ersten Zug wie einer, der gleich drankam:
+    // den Rapport. Vorher bekam er meinen Locator.
+    void werNachruecktBekommtDenRapport()
+    {
+        Ft8Mehrfach m;
+        m.setEigeneDaten(QStringLiteral("OE5SOS"), QStringLiteral("JN67"));
+        m.setPlaetze(2);
+        QVERIFY(m.nimmAnrufer(QStringLiteral("DL1ABC"), -7));
+        QVERIFY(m.nimmAnrufer(QStringLiteral("SP9XYZ"), -12));
+        QVERIFY(m.nimmAnrufer(QStringLiteral("PD4RJ"), 3));   // wartet
+        QCOMPARE(m.aktive(), 2);
+        QCOMPARE(m.wartende(), 1);
+
+        // DL1ABC verabschiedet sich: der Platz wird frei.
+        QCOMPARE(m.verarbeite(QStringLiteral("OE5SOS DL1ABC RR73"), -7), 1);
+        m.raeumeAuf();
+        QCOMPARE(m.wartende(), 0);
+        QCOMPARE(m.nimmFertige().size(), 1);
+
+        QStringList zuege;
+        for (const Ft8TxSource::Platz& p : m.naechsteNachrichten()) {
+            zuege << p.text;
+        }
+        QVERIFY2(zuege.contains(QStringLiteral("PD4RJ OE5SOS +03")),
+                 qPrintable(zuege.join(QStringLiteral(" | "))));
+    }
+
+    // Von Hand genommen (er hat MICH nicht gerufen): mein Ruf mit
+    // Locator, kein Rapport an jemanden, der nie gefragt hat.
+    void vonHandBeginntMitDemLocator()
+    {
+        Ft8Mehrfach m;
+        m.setEigeneDaten(QStringLiteral("OE5SOS"), QStringLiteral("JN67"));
+        m.setPlaetze(1);
+        QVERIFY(m.nimmVonHand(QStringLiteral("DL1ABC"), -7));
+        QVERIFY(!m.nimmVonHand(QStringLiteral("DL1ABC"), -7));
+        QCOMPARE(m.naechsteNachrichten().first().text,
+                 QStringLiteral("DL1ABC OE5SOS JN67"));
+
+        // Und aus der Schlange genauso.
+        QVERIFY(m.nimmVonHand(QStringLiteral("SP9XYZ"), -12));
+        QCOMPARE(m.wartende(), 1);
+        for (int i = 0; i < Ft8Ablauf::kMaxWiederholungen; ++i) {
+            m.fensterVerstrichen();
+        }
+        QCOMPARE(m.naechsteNachrichten().first().text,
+                 QStringLiteral("SP9XYZ OE5SOS JN67"));
+    }
+
+    // `raeumeAuf` zaehlt KEIN Fenster: sonst gaebe ein Platz, der
+    // zwischen zwei Sendungen nur nachgesehen wird, frueher auf.
+    void aufraeumenZaehltKeinFenster()
+    {
+        Ft8Mehrfach m;
+        m.setEigeneDaten(QStringLiteral("OE5SOS"), QStringLiteral("JN67"));
+        m.setPlaetze(2);
+        QVERIFY(m.nimmAnrufer(QStringLiteral("DL1ABC"), -7));
+        for (int i = 0; i < 3 * Ft8Ablauf::kMaxWiederholungen; ++i) {
+            m.raeumeAuf();
+        }
+        QCOMPARE(m.aktive(), 1);
+    }
+
+    // =================================================================
+    // Was das GERAET verweigert, darf nicht als gesendet dastehen
+    // =================================================================
+    //
+    // Am Geraet (2026-11-17, Flex, 15 m): der Stehwellenriegel brach die
+    // erste Sendung nach 0,5 s und tastete danach gar nicht mehr —
+    // richtig so. Das Fenster schrieb trotzdem alle 30 s „Tx", zeigte
+    // „transmitting" und liess den Ablauf weiterzaehlen. Betreiber:
+    // „da steht zwar, dass gesendet wird, aber es geht keine Leistung
+    // raus!"
+
+private:
+    /// Wie das Hauptfenster am Flex: beim Umlegen der Hardware wird
+    /// `flexTasten(true)` gerufen. Ohne Verbindung sagt es nein — das
+    /// erste der Tore, und das einzige, das ohne Geraet zu erreichen
+    /// ist. Der Weg des Signals ist fuer alle Tore derselbe.
+    static QMetaObject::Connection tasteWieAmFlex(RadioModel& radio)
+    {
+        return QObject::connect(
+            radio.moxController(), &MoxController::hardwareFlipped,
+            &radio, [&radio](bool isTx) {
+                if (isTx) { radio.flexTasten(true); }
+            });
+    }
+
+    static int txZeilen(Ft8Applet& applet)
+    {
+        int n = 0;
+        const QStringList z = applet.listForTest()->toPlainText()
+                                  .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        for (const QString& zeile : z) {
+            if (zeile.contains(QStringLiteral(" Tx "))) { ++n; }
+        }
+        return n;
+    }
+
+private slots:
+
+    void verweigertDasGeraetDasTastenHaeltDerLaufAn()
+    {
+        stelleEin(1);
+        RadioModel radio;
+        radio.installFt8TxForTest();
+        QVERIFY(radio.moxController());
+        tasteWieAmFlex(radio);
+        Ft8Applet applet(&radio);
+        applet.cqVersucheSpinForTest()->setValue(10);
+
+        applet.cqRufenButtonForTest()->click();
+        QVERIFY(applet.sendetGerade());
+        QVERIFY(sendetaktAbgelaufen(applet));
+
+        // Nichts ging hinaus — also steht auch nichts da.
+        QVERIFY2(!applet.sendetGerade(), "das Fenster haelt sich noch fuer sendend");
+        QVERIFY2(!applet.ablaufForTest().laeuft(),
+                 "der Ablauf zaehlt weiter, obwohl nie getastet wurde");
+        QCOMPARE(txZeilen(applet), 0);
+        const QString grund = applet.statusForTest()->text();
+        QVERIFY2(grund.contains(QStringLiteral("not transmitting")),
+                 qPrintable(grund));
+        QVERIFY2(grund.contains(QStringLiteral("no connection")),
+                 qPrintable(grund));
+        // Kein neuer Versuch im naechsten Fenster.
+        QVERIFY(!applet.sendeTimerForTest()->isActive());
+        QTRY_VERIFY(!radio.moxController()->isMox());
+
+        // Und der Grund BLEIBT stehen: der Sekundentakt schrieb sonst
+        // „listening" darueber.
+        QTest::qWait(1300);
+        QCOMPARE(applet.statusForTest()->text(), grund);
+
+        // Ein neuer Ruf raeumt ihn ab.
+        applet.cqRufenButtonForTest()->click();
+        QVERIFY(applet.statusForTest()->text() != grund);
+        applet.stopButtonForTest()->click();
+    }
+
+    void brichtDasGeraetDieSendungHaeltDerLaufAn()
+    {
+        stelleEin(3);
+        RadioModel radio;
+        radio.installFt8TxForTest();
+        Ft8Applet applet(&radio);
+        applet.cqVersucheSpinForTest()->setValue(10);
+
+        applet.cqRufenButtonForTest()->click();
+        fund(applet, "OE5SOS DL1ABC JO31", -7.0);
+        QVERIFY(sendetaktAbgelaufen(applet));
+        // Getastet, die Sendung laeuft.
+        QVERIFY(applet.sendetGerade());
+        QCOMPARE(txZeilen(applet), 1);
+        QCOMPARE(applet.mehrfachForTest().aktive(), 1);
+
+        // Der Riegel greift mitten in der Sendung.
+        emit radio.flexNichtGetastet(QStringLiteral(
+            "SWR 2.52 is above the 2.50 limit on 15m — transmission stopped"));
+        QTRY_VERIFY(!applet.sendetGerade());
+
+        QVERIFY(!applet.ablaufForTest().laeuft());
+        QCOMPARE(applet.mehrfachForTest().aktive(), 0);
+        QVERIFY(!radio.moxController()->isMox());
+        const QString grund = applet.statusForTest()->text();
+        QVERIFY2(grund.contains(QStringLiteral("SWR 2.52")), qPrintable(grund));
+        QTest::qWait(1300);
+        QCOMPARE(applet.statusForTest()->text(), grund);
+    }
+
+    // Wer am Mikrofon spricht oder abstimmt, waehrend FT8 nur zuhoert,
+    // hat mit diesem Fenster nichts zu tun.
+    void eineFremdeSperreLaesstDasFensterInRuhe()
+    {
+        stelleEin(1);
+        RadioModel radio;
+        radio.installFt8TxForTest();
+        Ft8Applet applet(&radio);
+
+        emit radio.flexNichtGetastet(QStringLiteral("SWR 3.00 is above the 2.50 limit"));
+        QTest::qWait(1300);
+        QVERIFY2(!applet.statusForTest()->text().contains(
+                     QStringLiteral("not transmitting")),
+                 qPrintable(applet.statusForTest()->text()));
+    }
 };
 
 QTEST_MAIN(TstFt8MultiAnswering)

@@ -2896,6 +2896,18 @@ signals:
     /// Betreiber am 2026-10-30: „Sollte SWR ueber 2,5 sein, bitte
     /// nicht senden!" Siehe `safety::SwrRiegel`.
     void flexSwrGesperrt(float swr, float grenze);
+    /// Es wurde NICHT getastet, oder eine laufende Sendung wurde
+    /// gebrochen — mit dem Grund in Worten, fuer die Bedienung.
+    ///
+    /// Betreiber am 2026-11-17, 15 m FT8: „da steht zwar, dass gesendet
+    /// wird, aber es geht keine Leistung raus!" Der Stehwellenriegel
+    /// hatte die erste Sendung nach 0,5 s gebrochen und jede weitere
+    /// gar nicht erst getastet; das FT8-Fenster schrieb trotzdem alle
+    /// 30 s eine „Tx"-Zeile. `flexTasten()` gibt false zurueck, aber
+    /// das erfaehrt nur der Aufrufer im Hauptfenster — wer die Sendung
+    /// bestellt hat, hoerte nichts. Darum jedes Tor einzeln, als
+    /// Signal: wer sendet, haengt sich hier an.
+    void flexNichtGetastet(const QString& grund);
     /// Der Abstimmregler ist am Anschlag und kommt trotzdem nicht auf
     /// das Ziel — der Hebel reicht nicht. Mit dem, was wirklich
     /// herauskam, und dem Ziel.

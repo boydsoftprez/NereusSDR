@@ -6,6 +6,9 @@
 // Modification history (Longpath):
 //   2026-10-15 — Original fuer Longpath von Martin Fischer (OE5SOS),
 //                 KI-gestuetzt ueber Anthropic Claude.
+//   2026-11-17 — Mehrere Plaetze: siehe den Eintrag in Ft8Applet.h.
+//                 Martin Fischer (OE5SOS), KI-gestuetzt ueber Anthropic
+//                 Claude.
 // =================================================================
 
 #include "Ft8Applet.h"
@@ -177,6 +180,15 @@ Ft8Applet::Ft8Applet(RadioModel* model, QWidget* parent)
         // Scheibe darf keinen alten sliceIndex im Abgriff hinterlassen,
         // sonst laeuft der naechste Empfaenger, der diesen Index
         // bekommt, hier herein.
+        // Gereiht, nicht direkt: das Signal kommt mitten aus
+        // MoxController::setMox() (hardwareFlipped -> flexTasten), und
+        // `sendenGescheitert` tastet selbst wieder aus. Was im
+        // Augenblick des Tastens verweigert wird, faengt
+        // `sendeNachricht` ohnehin an Ort und Stelle; hier kommt an,
+        // was WAEHREND der Sendung bricht.
+        connect(m_model, &RadioModel::flexNichtGetastet,
+                this, &Ft8Applet::sendenGescheitert,
+                Qt::QueuedConnection);
         connect(m_model, &RadioModel::sliceRemoved, this, [this](int index) {
             if (m_slice && m_slice->sliceIndex() == index) {
                 setSlice(nullptr);
@@ -1066,6 +1078,7 @@ void Ft8Applet::buildUI()
         m_mehrfach.abbrechen();
         m_ablauf.abbrechen();
         m_cqVersucheOffen = 0;
+        m_festerHinweis.clear();
         abbrechen();
         zeigeAblauf();
     });
@@ -1209,13 +1222,36 @@ void Ft8Applet::fensterZuEnde()
     // gedacht ist und mit `m_qsoGemeldet` gegen Doppelmeldung sichert.
     if (mehrfachAn()) {
         m_mehrfach.fensterVerstrichen();
-        for (const Ft8Ablauf& fertig : m_mehrfach.nimmFertige()) {
-            emit qsoFertig(logEintrag(
-                fertig, m_slice ? m_slice->frequency() : 0.0,
-                m_slice && m_slice->dspMode() == DSPMode::DIGL,
-                protocol(), eigenerLocator(), m_sendeTonHz));
+        const int fertig = meldeFertigePlaetze();
+
+        // ── Wer unter „THEN" wartet, bekommt den freien Platz ────────
+        //
+        // Mit Plaetzen landen Anrufer direkt bei `m_mehrfach`; unter
+        // „THEN" steht dann nur, wen der Betreiber von Hand angestellt
+        // hat. Abgearbeitet wird es nach derselben Regel wie beim
+        // einzelnen Ablauf: von selbst nur im Lauf vom CQ-Knopf.
+        if (m_cqAutomatik) {
+            while (!m_mehrfach.istVoll() && beginneNaechstenWartenden()) {}
+        }
+
+        // ── Nach einem fertigen QSO zaehlt der CQ-Ruf von vorn ───────
+        //
+        // Der CQ-Ruf laeuft als eigener Platz mit und zaehlt dabei
+        // seine Versuche herunter -- auch waehrend QSOs laufen. Beim
+        // einzelnen Ablauf faengt er nach jedem fertigen QSO neu an
+        // (`zeigeAblauf`, 2026-10-30: „Der Durchlauf muss automatisch
+        // ablaufen, so schnell wie moeglich ohne mein klicken"). Mit
+        // Plaetzen fehlte das: war der Zaehler waehrend eines QSOs
+        // abgelaufen, blieb es nach dem RR73 still.
+        if (fertig > 0 && m_cqAutomatik) {
             qCInfo(lcFt8Senden).noquote()
-                << "QSO fertig (Platz):" << fertig.partner();
+                << fertig << "QSO(s) auf den Plaetzen fertig — der"
+                   " CQ-Ruf zaehlt von vorn";
+            if (m_mehrfach.aktive() == 0) {
+                starteCqRuf();
+                return;
+            }
+            frischeCqRufAuf();
         }
         if (m_mehrfach.aktive() > 0) {
             // Den CQ-Ruf MITDREHEN, nicht einfrieren: er geht als
@@ -1279,25 +1315,96 @@ void Ft8Applet::fensterZuEnde()
 // einem Platz -- `Ft8Mehrfach` hat eine eigene Schlange, aber die
 // laeuft nur, wenn `mehrfachAn()` an ist.
 
-void Ft8Applet::merkeAnrufFallsNoetig(const QString& nachricht, int snr,
-                                      int tonHz)
+QString Ft8Applet::anruferAus(const QString& nachricht) const
 {
     const QString meiner = eigenesRufzeichen();
-    if (meiner.isEmpty()) { return; }
+    if (meiner.isEmpty()) { return {}; }
 
-    const QStringList f = nachricht.toUpper()
+    const QStringList f = nachricht.simplified().toUpper()
                               .split(QLatin1Char(' '), Qt::SkipEmptyParts);
     // An mich gerichtet heisst: mein Rufzeichen steht VORNE. Steht es
     // weiter hinten, bin ich darin nur erwaehnt (etwa im Schluss eines
     // Fox: „K1ABC RR73; W9XYZ <KH1DX> -17").
-    if (f.size() < 2 || f.first() != meiner) { return; }
+    if (f.size() < 2) { return {}; }
+    // Die spitzen Klammern des Contest-Austauschs gehoeren nicht zum
+    // Rufzeichen -- dieselbe Regel wie in `Ft8Ablauf::anMich`.
+    QString anWen = f.at(0);
+    anWen.remove(QLatin1Char('<')).remove(QLatin1Char('>'));
+    if (anWen != meiner) { return {}; }
 
-    const QString anrufer = f.at(1);
-    if (anrufer.isEmpty() || anrufer == meiner) { return; }
+    QString anrufer = f.at(1);
+    anrufer.remove(QLatin1Char('<')).remove(QLatin1Char('>'));
+    if (anrufer.isEmpty() || anrufer == meiner) { return {}; }
+    // Der Schluss eines Fox an mich („OE5SOS RR73; …") traegt an
+    // zweiter Stelle kein Rufzeichen.
+    if (anrufer.startsWith(QStringLiteral("RR73"))
+        || Ft8Ablauf::istAbschied(anrufer)) {
+        return {};
+    }
 
     // Ein Abschied ist kein Anruf -- dieselbe Regel wie in
     // `Ft8Ablauf::verarbeite`, und darum auch dieselbe Funktion.
-    if (f.size() >= 3 && Ft8Ablauf::istAbschied(f.at(2))) { return; }
+    if (f.size() >= 3 && Ft8Ablauf::istAbschied(f.at(2))) { return {}; }
+    return anrufer;
+}
+
+bool Ft8Applet::nimmAnruferAufPlatz(const QString& nachricht, int snr)
+{
+    const QString anrufer = anruferAus(nachricht);
+    if (anrufer.isEmpty() || m_mehrfach.kennt(anrufer)) { return false; }
+
+    // Dieselben zwei Riegel wie in `Ft8Warteschlange::merkeAnruf`: wer
+    // eben gearbeitet wurde, wird nicht gleich noch einmal gearbeitet,
+    // und wen der Betreiber abgewiesen hat (✕ unter „THEN"), der
+    // bleibt es fuer seine Frist.
+    const qint64 jetzt = QDateTime::currentMSecsSinceEpoch();
+    if (m_schlange.inKarenz(anrufer, jetzt)
+        || m_schlange.abgewiesen(anrufer, jetzt)) {
+        return false;
+    }
+    if (!m_mehrfach.nimmAnrufer(anrufer, snr,
+                                locatorAusNachricht(nachricht))) {
+        return false;
+    }
+    // Stand er von Hand unter „THEN", ist er jetzt dran.
+    m_schlange.vergiss(anrufer);
+    qCInfo(lcFt8Senden).noquote()
+        << "Anruf auf einen Platz genommen:" << anrufer
+        << "—" << m_mehrfach.aktive() << "belegt,"
+        << m_mehrfach.wartende() << "wartend — aus:" << nachricht;
+    return true;
+}
+
+int Ft8Applet::meldeFertigePlaetze()
+{
+    m_mehrfach.raeumeAuf();
+    const qint64 jetzt = QDateTime::currentMSecsSinceEpoch();
+    int zahl = 0;
+    // `nimmFertige` liefert jedes fertige QSO GENAU EINMAL -- darum
+    // geht es von hier direkt ins Logbuch und nicht ueber
+    // `meldeFertigesQso`, das fuer den einzelnen Ablauf gedacht ist
+    // und mit `m_qsoGemeldet` gegen Doppelmeldung sichert.
+    for (const Ft8Ablauf& fertig : m_mehrfach.nimmFertige()) {
+        emit qsoFertig(logEintrag(
+            fertig, m_slice ? m_slice->frequency() : 0.0,
+            m_slice && m_slice->dspMode() == DSPMode::DIGL,
+            protocol(), eigenerLocator(), m_sendeTonHz));
+        // In die Karenz -- derselbe zweite Riegel wie beim einzelnen
+        // Ablauf (`zeigeAblauf`, 2026-10-30, HB9ZHK). Ohne ihn macht
+        // sein naechster Satz an mich ihn wieder zum Anrufer.
+        m_schlange.merkeGearbeitet(fertig.partner(), jetzt);
+        qCInfo(lcFt8Senden).noquote()
+            << "QSO fertig (Platz):" << fertig.partner();
+        ++zahl;
+    }
+    return zahl;
+}
+
+void Ft8Applet::merkeAnrufFallsNoetig(const QString& nachricht, int snr,
+                                      int tonHz)
+{
+    const QString anrufer = anruferAus(nachricht);
+    if (anrufer.isEmpty()) { return; }
 
     // Mein aktueller Partner steht nicht in der Schlange: mit ihm
     // laeuft gerade ein QSO.
@@ -1344,6 +1451,21 @@ bool Ft8Applet::beginneNaechstenWartenden()
     // dass genau DIESER Weg eine alte Nummer sendet, und das faellt
     // erst beim Logabgleich auf.
     uebernimmContest();
+    if (mehrfachAn()) {
+        // Mit Plaetzen ist `m_ablauf` nur der CQ-Ruf -- ein QSO dort
+        // bekaeme keinen einzigen Fund zu sehen (2026-11-17). Also auf
+        // einen Platz, mit dem Zug, der zu ihm gehoert.
+        m_mehrfach.setEigeneDaten(eigenesRufzeichen(), eigenerLocator());
+        const bool genommen = w.vonHand
+            ? m_mehrfach.nimmVonHand(w.partner, w.snr, w.locator)
+            : m_mehrfach.nimmAnrufer(w.partner, w.snr, w.locator);
+        qCInfo(lcFt8Senden).noquote()
+            << "Aus der Schlange auf einen Platz:" << w.partner
+            << (w.vonHand ? "(von Hand)" : "")
+            << (genommen ? "" : "— war schon dabei") << "— noch"
+            << m_schlange.wartende(jetzt) << "wartend";
+        return genommen;
+    }
     if (w.vonHand) {
         // Aus der Fundliste angestellt (2026-11-15, „+ Queue"): er hat
         // MICH nicht gerufen. Also derselbe Anfang wie ein Doppelklick
@@ -1543,6 +1665,13 @@ void Ft8Applet::versteckePille()
 
 void Ft8Applet::starteCqRuf()
 {
+    beginneCqRuf();
+    ablaufSchritt();
+    zeigeKnopfzustand();
+}
+
+void Ft8Applet::beginneCqRuf()
+{
     // ── Nicht in ein laufendes QSO hineinrufen (2026-10-30) ─────
     //
     // Nur beim ANFANG eines Rufs, und nur wenn die Stelle wirklich
@@ -1560,8 +1689,22 @@ void Ft8Applet::starteCqRuf()
     // er fuer sich bis fuenf und brach ab, waehrend hier noch elf
     // Versuche offen standen (gemessen am 2026-10-29, 12:47:12).
     m_ablauf.setzeCqWiederholungen(m_cqVersucheOffen);
-    ablaufSchritt();
-    zeigeKnopfzustand();
+}
+
+// Den CQ-Ruf von vorn zaehlen lassen, OHNE zu senden: nach einem
+// fertigen QSO auf einem Platz. Laufen noch andere Plaetze, bleibt die
+// Tonlage, wo sie ist -- mitten im QSO zu wechseln waere schlimmer als
+// jede belegte Stelle (siehe `beginneCqRuf`).
+void Ft8Applet::frischeCqRufAuf()
+{
+    if (m_mehrfach.aktive() == 0) {
+        beginneCqRuf();
+        return;
+    }
+    uebernimmContest();
+    m_ablauf.starteAlsAnrufer(eigenesRufzeichen(), eigenerLocator());
+    m_cqVersucheOffen = m_cqVersucheSpin ? m_cqVersucheSpin->value() : 1;
+    m_ablauf.setzeCqWiederholungen(m_cqVersucheOffen);
 }
 
 void Ft8Applet::ablaufSchritt()
@@ -1651,6 +1794,26 @@ bool Ft8Applet::sucheFreieStelle(bool nurWennBelegt)
 void Ft8Applet::sendeMehrfach()
 {
     if (m_sendet) { return; }
+    const QVector<Ft8TxSource::Platz> plaetze = mehrfachPlaetze();
+    if (plaetze.isEmpty()) { return; }
+
+    QStringList zeilen;
+    for (const Ft8TxSource::Platz& p : plaetze) { zeilen << p.text; }
+    const QString anzeige = zeilen.join(QStringLiteral(" | "));
+    if (m_textFeld) { m_textFeld->setText(anzeige); }
+    zeigeArbeit();
+    sendeNachricht(anzeige, plaetze);
+}
+
+// ── Was JETZT auf allen Plaetzen hinausginge (2026-11-17) ────────────
+//
+// Aus `sendeMehrfach` herausgezogen, weil es zwei Fragesteller gibt:
+// das Packen gleich nach einer Sendung, und die Nachpruefung kurz vor
+// der naechsten (siehe `sendeNachricht`). Zwischen beiden liegen
+// knapp 13 s und ein ganzes Empfangsfenster -- wer dort nur einmal
+// fragt, sendet den Stand von vorhin.
+QVector<Ft8TxSource::Platz> Ft8Applet::mehrfachPlaetze()
+{
     m_mehrfach.setEigeneDaten(eigenesRufzeichen(), eigenerLocator());
     m_mehrfach.setGrundtonHz(float(m_sendeTonHz));
     QVector<Ft8TxSource::Platz> plaetze = m_mehrfach.naechsteNachrichten();
@@ -1706,14 +1869,7 @@ void Ft8Applet::sendeMehrfach()
         }
     }
 
-    if (plaetze.isEmpty()) { return; }
-
-    QStringList zeilen;
-    for (const Ft8TxSource::Platz& p : plaetze) { zeilen << p.text; }
-    const QString anzeige = zeilen.join(QStringLiteral(" | "));
-    if (m_textFeld) { m_textFeld->setText(anzeige); }
-    zeigeArbeit();
-    sendeNachricht(anzeige, plaetze);
+    return plaetze;
 }
 
 // ── Ein fertiges QSO ins Logbuch ─────────────────────────────────────
@@ -2217,6 +2373,71 @@ QString Ft8Applet::nimmFundAn(const QString& zeile)
             const QString nachricht = nachrichtAusZeile(zeile);
             const QString sauber = zeile.simplified();
             const int snr = sauber.section(QLatin1Char(' '), 1, 1).toInt();
+
+            // ── Mit Plaetzen: auf einen Platz (2026-11-17) ───────────
+            //
+            // Hier ging der Doppelklick IMMER an `m_ablauf`. Mit
+            // Plaetzen ist der aber nur der CQ-Ruf: der Dekodier-Eingang
+            // reicht dort jeden Fund an `m_mehrfach` und keinen an
+            // `m_ablauf`. Das so angefangene QSO sah also nie eine
+            // Antwort -- und der laufende CQ-Ruf war obendrein weg,
+            // weil `starteAlsAntworter` ihn ueberschrieb.
+            //
+            // Am Geraet (2026-11-17): Doppelklick auf
+            //   081645  OE5SOS JA2FRO PM84
+            // sendete sechsmal „JA2FRO OE5SOS JN67", in der Karte stand
+            // „waiting for his report", und sein Rapport (zweimal -15)
+            // kam dort nie an.
+            //
+            // Jetzt: er bekommt einen Platz. Ruft er MICH (wie oben),
+            // mit dem Rapport; sonst mit meinem Ruf und Locator. Der
+            // CQ-Ruf laeuft daneben weiter -- rufen UND abarbeiten ist
+            // der Sinn der Plaetze. Darum bleibt auch `m_cqAutomatik`,
+            // wie es ist.
+            if (mehrfachAn()) {
+                const QString wer = senderCallsign(nachricht);
+                m_mehrfach.setEigeneDaten(eigenesRufzeichen(),
+                                          eigenerLocator());
+                if (m_mehrfach.kennt(wer)) {
+                    if (m_status) {
+                        m_status->setText(
+                            tr("%1 already has a slot").arg(wer));
+                    }
+                    return tr("%1 already has a slot").arg(wer);
+                }
+                const bool ruftMich = !anruferAus(nachricht).isEmpty();
+                const QString loc = locatorAusNachricht(nachricht);
+                const bool genommen = ruftMich
+                    ? m_mehrfach.nimmAnrufer(wer, snr, loc)
+                    : m_mehrfach.nimmVonHand(wer, snr, loc);
+                if (!genommen) {
+                    return tr("no callsign to answer in this line");
+                }
+                m_schlange.vergiss(wer);
+                qCInfo(lcFt8Senden).noquote()
+                    << "Doppelklick: auf einen Platz genommen:" << wer
+                    << (ruftMich ? "(ruft mich — Rapport)"
+                                 : "(mein Ruf mit Locator)");
+                // Im Feld steht, was WIRKLICH hinausgeht -- oben wurde
+                // die Antwort des einfachen Wegs eingesetzt, und die
+                // waere fuer einen Anrufer die falsche Zeile.
+                {
+                    QStringList zeilen;
+                    for (const Ft8TxSource::Platz& pl : mehrfachPlaetze()) {
+                        zeilen << pl.text;
+                    }
+                    if (!zeilen.isEmpty()) {
+                        m_textFeld->setText(
+                            zeilen.join(QStringLiteral(" | ")));
+                    }
+                }
+                ablaufSchritt();
+                zeigeFundZahl();
+                meldeStand();
+                emit fundAngenommen(zeile, wer);
+                return {};
+            }
+
             m_qsoGemeldet = false;
             // Eine Einzelentscheidung: danach nicht von selbst
             // weiter CQ rufen.
@@ -2388,6 +2609,9 @@ void Ft8Applet::sendeNachricht(const QString& text,
                                                  m_periode)
                           + plan.tastenNachMs;
     m_sendet = true;
+    // Ein neuer Versuch: der Grund des letzten Scheiterns ist damit
+    // ueberholt.
+    m_festerHinweis.clear();
     if (m_cqBtn)   { m_cqBtn->setEnabled(false); }
     if (m_stopBtn) { m_stopBtn->setEnabled(true); }
     zeigeKnopfzustand();
@@ -2422,8 +2646,18 @@ void Ft8Applet::sendeNachricht(const QString& text,
     m_sendeTimer->disconnect();
     QString gesendet = sauber;
     const bool ausAblauf = m_ablauf.laeuft();
+    // Was gepackt wurde, als Plaetze -- auch der einzelne Satz, damit
+    // die Nachpruefung unten Gleiches mit Gleichem vergleicht.
+    QVector<Ft8TxSource::Platz> gepackt = plaetze;
+    const bool ausPlaetzen = !plaetze.isEmpty();
+    if (gepackt.isEmpty()) {
+        Ft8TxSource::Platz einer;
+        einer.text   = sauber;
+        einer.toneHz = float(m_sendeTonHz);
+        gepackt.push_back(einer);
+    }
     connect(m_sendeTimer, &QTimer::timeout, this,
-            [this, gesendet, ausAblauf, plan]() mutable {
+            [this, gesendet, ausAblauf, ausPlaetzen, gepackt, plan]() mutable {
         if (!m_sendet || !m_model) { return; }
         Ft8TxSource* q = m_model->ft8TxSource();
         if (!q) {
@@ -2489,7 +2723,94 @@ void Ft8Applet::sendeNachricht(const QString& text,
                    " dieses Fenster statt des naechsten";
         }
 
-        if (ausAblauf && m_ablauf.laeuft()) {
+        // ── Mit mehreren Plaetzen: die PLAETZE nachsehen (2026-11-17) ──
+        //
+        // Die Nachpruefung darunter kennt nur `m_ablauf`. Mit Plaetzen
+        // ist der aber bloss der CQ-Ruf -- und sein Satz ist nie gleich
+        // der Anzeigezeile „A | B | CQ". Also schlug sie bei JEDER
+        // Sendung an und packte den einzelnen Satz ueber das fertige
+        // Paket: die Antworten an die Anrufer gingen nie hinaus.
+        //
+        // Am Geraet gemessen (2026-11-17, 17 m, 3 Plaetze):
+        //   09:15:13  Senden vorbereitet (2 Plaetze):
+        //             US2YW OE5SOS -15@2430 | CQ OE5SOS JN67@2490
+        //   09:15:30  Zug in der Frist gewechselt:
+        //             US2YW OE5SOS -15 | CQ OE5SOS JN67 -> CQ OE5SOS JN67
+        // So bei allen 27 Sendungen dieser Viertelstunde. US2YW, RA5CW
+        // und 9A2KS riefen zusammen elfmal und bekamen nie einen
+        // Rapport; die Plaetze hielten ihre Zuege fuer gesendet und
+        // schrieben zwei QSOs ins Logbuch, die es nie gab. Betreiber:
+        // „die automatischen antworten meines cq call funktionieren
+        // irgendwie nicht."
+        //
+        // Darum hier dieselbe Frage wie beim einzelnen Ablauf, nur an
+        // der richtigen Stelle gestellt: was ginge JETZT auf den
+        // Plaetzen hinaus? Das faengt drei Faelle auf einmal:
+        //   * ein Platz ist in der Frist einen Zug weitergekommen,
+        //   * jemand hat in der Frist zum ersten Mal gerufen (auch
+        //     wenn nur das CQ gepackt war) -- er bekommt DIESES
+        //     Fenster und nicht erst das uebernaechste,
+        //   * ein QSO ist in der Frist zu Ende gegangen.
+        // Nur bei einer Sendung aus dem Lauf: wer „Send" drueckt, will
+        // genau das senden, was dort steht.
+        const bool mehrfachLauf =
+            (ausAblauf || ausPlaetzen) && mehrfachAn()
+            && (ausPlaetzen || m_mehrfach.aktive() > 0);
+        if (mehrfachLauf) {
+            // Erst aufraeumen: was in der Frist fertig wurde, gibt
+            // seinen Platz frei, und aus der Schlange rueckt nach.
+            if (meldeFertigePlaetze() > 0 && m_cqAutomatik) {
+                // Ein QSO ist in der Frist fertig geworden, und der
+                // Lauf kam vom CQ-Knopf: der Ruf zaehlt von vorn und
+                // geht -- wenn ein Platz frei ist -- gleich in diesem
+                // Fenster wieder mit hinaus, nicht erst nach einer
+                // Pause.
+                frischeCqRufAuf();
+            }
+            const QVector<Ft8TxSource::Platz> neu = mehrfachPlaetze();
+            if (neu.isEmpty()) {
+                qCInfo(lcFt8Senden).noquote()
+                    << "Zug verworfen: alle Plaetze sind in der"
+                       " Dekoderfrist fertig geworden, und es laeuft"
+                       " kein CQ";
+                abbrechen();
+                zeigeAblauf();
+                return;
+            }
+            bool gleich = neu.size() == gepackt.size();
+            for (int i = 0; gleich && i < neu.size(); ++i) {
+                gleich = neu.at(i).text == gepackt.at(i).text
+                         && qFuzzyCompare(neu.at(i).toneHz + 1.0f,
+                                          gepackt.at(i).toneHz + 1.0f);
+            }
+            if (!gleich) {
+                if (q->vorbereitenMehrere(neu, protocol())) {
+                    QStringList alt;
+                    for (const Ft8TxSource::Platz& p : gepackt) {
+                        alt << p.text;
+                    }
+                    QStringList jetzt;
+                    QStringList mitTon;
+                    for (const Ft8TxSource::Platz& p : neu) {
+                        jetzt  << p.text;
+                        mitTon << QStringLiteral("%1@%2").arg(p.text)
+                                      .arg(int(p.toneHz));
+                    }
+                    qCInfo(lcFt8Senden).noquote()
+                        << "Plaetze in der Frist neu gepackt:"
+                        << alt.join(QStringLiteral(" | ")) << "->"
+                        << mitTon.join(QStringLiteral(" | "));
+                    gepackt  = neu;
+                    gesendet = jetzt.join(QStringLiteral(" | "));
+                    if (m_textFeld) { m_textFeld->setText(gesendet); }
+                    zeigeArbeit();
+                } else {
+                    qCWarning(lcFt8Senden).noquote()
+                        << "Die neuen Plaetze liessen sich nicht packen"
+                           " — es geht das alte Paket hinaus";
+                }
+            }
+        } else if (ausAblauf && m_ablauf.laeuft()) {
             const QString neu = m_ablauf.naechsteNachricht();
             if (!neu.isEmpty() && neu != gesendet) {
                 if (q->vorbereiten(neu, float(m_sendeTonHz), protocol())) {
@@ -2531,6 +2852,7 @@ void Ft8Applet::sendeNachricht(const QString& text,
         // nichts hinausging. Jetzt bricht der Versuch sofort ab und
         // sagt, woran es lag.
         bool abgelehnt = false;
+        QString geraetSagtNein;
         if (auto* mox = m_model->moxController()) {
             QMetaObject::Connection c = connect(
                 mox, &MoxController::moxRejected, this,
@@ -2540,8 +2862,25 @@ void Ft8Applet::sendeNachricht(const QString& text,
                         m_status->setText(tr("not transmitting: %1").arg(grund));
                     }
                 });
+            // Und was das GERAET verweigert (Stehwelle, Verriegelung,
+            // keine Sendescheibe): das kommt nicht als moxRejected,
+            // sondern aus `flexTasten()` — im selben Aufruf. Nur
+            // merken; gehandelt wird, wenn setMox() zurueck ist.
+            QMetaObject::Connection g = connect(
+                m_model, &RadioModel::flexNichtGetastet, this,
+                [&geraetSagtNein](const QString& grund) {
+                    geraetSagtNein = grund;
+                },
+                Qt::DirectConnection);
             mox->setMox(true);
             disconnect(c);
+            disconnect(g);
+        }
+        if (!geraetSagtNein.isEmpty()) {
+            // Keine „Tx"-Zeile, kein „transmitting": es ging nichts
+            // hinaus.
+            sendenGescheitert(geraetSagtNein);
+            return;
         }
         if (abgelehnt) {
             // abbrechen() setzt den Sendeweg zurueck und macht die
@@ -2592,6 +2931,49 @@ void Ft8Applet::sendeNachricht(const QString& text,
         schluss->start(static_cast<int>(plan.tastdauerMs));
     });
     m_sendeTimer->start(static_cast<int>(wartet));
+}
+
+// ── Das Geraet hat nicht getastet ────────────────────────────────────
+//
+// Am Geraet gemessen (2026-11-17, Flex, 15 m, FT8):
+//   12:30:30.254  MOX an, getastet
+//   12:30:30.772  SENDUNG GEBROCHEN — Stehwelle 2.52 ueber der Grenze 2.5
+//   12:31:00.475  MOX an — nicht getastet, Stehwelle 2.53 ueber 2.50
+//   12:31:30.258  MOX an — nicht getastet …
+//   12:32:00.458  MOX an — nicht getastet …
+// Der Riegel tat, was er soll. Das Fenster aber schrieb zu jeder dieser
+// Zeiten eine „Tx"-Zeile, zeigte „transmitting" und liess den Ablauf
+// weiterzaehlen („calling T77RN — waiting for his report"), als waere
+// der Anruf draussen. Betreiber: „da steht zwar, dass gesendet wird,
+// aber es geht keine Leistung raus!"
+//
+// `moxRejected` weiter unten faengt nur, was der MoxController selbst
+// ablehnt (Bandplan, Betriebsart). Was das GERAET verweigert, kam hier
+// nie an: `flexTasten()` sagt es nur seinem Aufrufer im Hauptfenster.
+//
+// Jetzt haelt der Lauf an, wie bei Stop — ein Ablauf, der Zuege fuer
+// gesendet haelt, die nie hinausgingen, gibt irgendwann auf oder,
+// schlimmer, schreibt ein QSO ins Log, das es nicht gab. Und der Grund
+// bleibt stehen, bis der Betreiber wieder sendet.
+void Ft8Applet::sendenGescheitert(const QString& grund)
+{
+    // Nur die eigene Sendung: wer am Mikrofon spricht oder abstimmt,
+    // waehrend hier nichts laeuft, geht dieses Fenster nichts an.
+    if (!m_sendet) { return; }
+
+    qCWarning(lcFt8Senden).noquote()
+        << "Nicht gesendet:" << grund << "— der Lauf haelt an";
+
+    m_cqAutomatik = false;
+    m_mehrfach.abbrechen();
+    m_ablauf.abbrechen();
+    m_cqVersucheOffen = 0;
+    abbrechen();
+    zeigeAblauf();
+    // NACH zeigeAblauf(): das schreibt selbst in die Statuszeile, und
+    // der Grund stuende sonst keinen Augenblick dort.
+    m_festerHinweis = tr("not transmitting: %1").arg(grund);
+    if (m_status) { m_status->setText(m_festerHinweis); }
 }
 
 void Ft8Applet::abbrechen()
@@ -2663,7 +3045,8 @@ void Ft8Applet::updateStatus()
     // Oben bleibt, WAS zuletzt los war -- im Leerlauf, wie viele Funde
     // die letzte Periode brachte.
     if (!m_ablauf.laeuft() && !m_sendet) {
-        m_status->setText(tr("listening"));
+        m_status->setText(m_festerHinweis.isEmpty() ? tr("listening")
+                                                    : m_festerHinweis);
     }
 
     // Die Arbeitsleiste laeuft mit derselben Uhr: sie zeigt denselben
@@ -3041,19 +3424,16 @@ void Ft8Applet::onDecoded(const QVector<Longpath::Ft8Decode>& funde,
         if (mehrfachAn()) {
             m_mehrfach.setEigeneDaten(eigenesRufzeichen(), eigenerLocator());
             bool bewegt = m_mehrfach.verarbeite(d.text, snr) > 0;
-            const QString anrufer = senderCallsign(d.text);
-            const QString meiner  = eigenesRufzeichen();
-            const bool gehtAnMich =
-                !meiner.isEmpty()
-                && d.text.toUpper()
-                       .split(QLatin1Char(' '), Qt::SkipEmptyParts)
-                       .contains(meiner);
-            if (gehtAnMich && !anrufer.isEmpty()
-                && !m_mehrfach.kennt(anrufer)) {
-                bewegt = m_mehrfach.nimmAnrufer(
-                             anrufer, snr,
-                             locatorAusNachricht(d.text)) || bewegt;
-            }
+            // ── Wer als Anrufer zaehlt (2026-11-17) ──────────────────
+            //
+            // Hier stand: mein Rufzeichen kommt IRGENDWO im Satz vor.
+            // Damit bekam auch der einen neuen Platz, der sich eben
+            // verabschiedet hatte -- sein „73" nach dem fertigen QSO
+            // machte ihn zum Anrufer, und er wurde gleich noch einmal
+            // gearbeitet (am Geraet: EY7AD dreimal in zwei Minuten).
+            // Der einfache Weg hatte die richtige Regel laengst; jetzt
+            // gilt sie fuer beide.
+            if (!bewegt) { bewegt = nimmAnruferAufPlatz(d.text, snr); }
             if (bewegt) { ablaufSchritt(); }
         } else if (m_ablauf.laeuft() && m_ablauf.verarbeite(d.text, snr)) {
             ablaufSchritt();

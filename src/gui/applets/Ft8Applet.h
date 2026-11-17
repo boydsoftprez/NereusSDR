@@ -35,6 +35,11 @@
 //                 vorher, warum es nicht geht; gehoert() meldet jede Station
 //                 mit Locator an die Karte. Martin Fischer (OE5SOS),
 //                 KI-gestuetzt ueber Anthropic Claude (Claude Code).
+//   2026-11-17 — Mehrere Plaetze: die Nachpruefung vor dem Senden packt
+//                 die PLAETZE neu statt sie mit dem einzelnen Ablauf zu
+//                 ueberschreiben; Doppelklick und „THEN" gehen im
+//                 Mehrfachbetrieb auf einen Platz. Martin Fischer
+//                 (OE5SOS), KI-gestuetzt ueber Anthropic Claude.
 // =================================================================
 
 #pragma once
@@ -302,6 +307,11 @@ public:
                         const QVector<Ft8TxSource::Platz>& plaetze);
     void abbrechen();
     bool sendetGerade() const { return m_sendet; }
+
+    /// Das Geraet hat nicht getastet oder die Sendung gebrochen
+    /// (`RadioModel::flexNichtGetastet`). Haelt den Lauf an und sagt,
+    /// woran es lag. Ohne eigene Sendung geschieht nichts.
+    void sendenGescheitert(const QString& grund);
 
     // Fuer den Pruefstand.
     QPushButton* cqButtonForTest()  const { return m_cqBtn; }
@@ -736,7 +746,40 @@ private:
     Ft8Mehrfach  m_mehrfach;
     QSpinBox*    m_plaetzeSpin{nullptr};
     int          m_plaetze{1};
-    bool mehrfachAn() const { return m_plaetze > 1; }
+    /// Mehrere Plaetze (2026-11-17 um zwei Ausnahmen ergaenzt).
+    ///
+    /// Mit Plaetzen ist `m_ablauf` NUR der CQ-Ruf; die QSOs fuehrt
+    /// `m_mehrfach`, und nur dorthin reicht der Dekodier-Eingang die
+    /// Funde. Damit das nie einem QSO den Boden wegzieht:
+    ///   * nie als Hound -- wer eine Expedition ruft, fuehrt EIN QSO,
+    ///     und das lebt in `m_ablauf`;
+    ///   * nicht, solange in `m_ablauf` noch ein QSO steckt (die Zahl
+    ///     der Plaetze wurde mitten im QSO erhoeht). Es laeuft auf dem
+    ///     einfachen Weg zu Ende, danach gelten die Plaetze.
+    bool mehrfachAn() const
+    {
+        if (m_plaetze <= 1 || m_houndBetrieb) { return false; }
+        const bool qsoImEinzelnen =
+            m_ablauf.laeuft()
+            && m_ablauf.zustand() != Ft8Ablauf::Zustand::RufeCq;
+        return !qsoImEinzelnen;
+    }
+    /// Was JETZT auf allen Plaetzen hinausginge: die laufenden QSOs
+    /// und, solange ein Platz frei ist, der CQ-Ruf. Eine Stelle fuer
+    /// das Packen nach einer Sendung UND fuer die Nachpruefung kurz
+    /// vor der naechsten -- beide muessen dasselbe finden.
+    QVector<Ft8TxSource::Platz> mehrfachPlaetze();
+    /// Wer ruft mich in dieser Nachricht? Leer, wenn sie kein Anruf an
+    /// mich ist: mein Rufzeichen steht nicht vorne, oder es ist ein
+    /// Abschied. Eine Regel fuer den einfachen Weg und fuer die Plaetze.
+    QString anruferAus(const QString& nachricht) const;
+    /// Einen Anruf auf einen Platz nehmen, wenn er einer ist und der
+    /// Anrufer weder schon dran noch eben gearbeitet noch abgewiesen
+    /// ist. Gibt true, wenn er neu aufgenommen wurde.
+    bool nimmAnruferAufPlatz(const QString& nachricht, int snr);
+    /// Die fertigen QSOs der Plaetze ins Logbuch und in die Karenz.
+    /// Gibt ihre Zahl.
+    int meldeFertigePlaetze();
     /// Den Stand fuer das Plaetze-Panel bauen und melden.
     Ft8PlaetzeStand baueStand() const;
     void meldeStand();
@@ -770,6 +813,11 @@ private:
     /// ist die Vorgabe und entspricht WSJT-X' „Tx even/1st".
     Ft8Periode   m_periode{Ft8Periode::Gerade};
     bool         m_sendet{false};
+    /// Warum zuletzt NICHT gesendet wurde. Bleibt in der Statuszeile
+    /// stehen, bis wieder gesendet oder Stop gedrueckt wird — sonst
+    /// schriebe der Sekundentakt „listening" darueber, und der Grund
+    /// waere nach einer Sekunde weg (siehe `sendenGescheitert`).
+    QString      m_festerHinweis;
 
     // ── Der QSO-Ablauf (2026-10-16) ──────────────────────────────────
     //
@@ -817,6 +865,12 @@ private:
     /// Einen CQ-Ruf anfangen. Eine Stelle fuer den Knopf UND fuer den
     /// Wiederanlauf nach einem fertigen QSO.
     void starteCqRuf();
+    /// Derselbe Anfang, OHNE zu senden -- fuer den Aufrufer, der schon
+    /// mitten in einem Sendefenster steht und den Zug selbst packt.
+    void beginneCqRuf();
+    /// Nach einem fertigen QSO auf einem Platz: der CQ-Ruf zaehlt von
+    /// vorn. Sendet nicht.
+    void frischeCqRufAuf();
     void meldeFertigesQso();
     void ablaufSchritt();
     void zeigeAblauf();

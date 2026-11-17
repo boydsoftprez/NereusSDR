@@ -7,6 +7,9 @@
 // Modification history (Longpath):
 //   2026-10-24 — Original fuer Longpath von Martin Fischer (OE5SOS),
 //                 KI-gestuetzt ueber Anthropic Claude.
+//   2026-11-17 — nimmVonHand(), raeumeAuf(); das Nachruecken waehlt den
+//                 ersten Zug nach der Herkunft. Martin Fischer (OE5SOS),
+//                 KI-gestuetzt ueber Anthropic Claude.
 // =================================================================
 
 #include "core/Ft8Mehrfach.h"
@@ -56,6 +59,48 @@ int Ft8Mehrfach::aktive() const
 bool Ft8Mehrfach::nimmAnrufer(const QString& partner, int snr,
                               const QString& seinLocator)
 {
+    return nimm(partner, snr, seinLocator, false);
+}
+
+bool Ft8Mehrfach::nimmVonHand(const QString& partner, int snr,
+                              const QString& seinLocator)
+{
+    return nimm(partner, snr, seinLocator, true);
+}
+
+// ── Der erste Zug haengt daran, wer angefangen hat ───────────────────
+//
+// Er hat MICH gerufen: es beginnt bei Tx2, mit dem Rapport.
+// Ich rufe IHN (Doppelklick auf sein CQ, „+ Queue"): es beginnt bei
+// Tx1, mit meinem Locator.
+//
+// An EINER Stelle, weil es zwei Wege auf einen Platz gibt -- sofort
+// und aus der Schlange -- und beide dasselbe tun muessen. Bis zum
+// 2026-11-17 taten sie es nicht: `nimmAnrufer` nahm fuer den freien
+// Platz `starteMitAnrufer`, `rueckeNach` fuer denselben Anrufer aus
+// der Schlange `starteAlsAntworter`. Wer warten musste, bekam also
+// meinen Locator statt seines Rapports und rief weiter.
+Ft8Ablauf Ft8Mehrfach::beginne(const Wartend& w, const QString& meinRuf,
+                               const QString& meinLocator)
+{
+    Ft8Ablauf a;
+    if (w.vonHand) {
+        a.starteAlsAntworter(w.partner, meinRuf, meinLocator,
+                             w.snr, w.locator);
+    } else {
+        // Hier stand bis zum 2026-10-30 `starteAlsAntworter`, mit der
+        // Begruendung, das sei der Einstieg bei Tx2. War es nicht:
+        // jenes setzt `Zustand::RufeAn` (Tx1). Siehe
+        // `Ft8Ablauf::starteMitAnrufer`.
+        a.starteMitAnrufer(w.partner, meinRuf, meinLocator,
+                           w.snr, w.locator);
+    }
+    return a;
+}
+
+bool Ft8Mehrfach::nimm(const QString& partner, int snr,
+                       const QString& seinLocator, bool vonHand)
+{
     const QString p = partner.trimmed().toUpper();
     if (p.isEmpty() || m_meinRuf.isEmpty()) { return false; }
 
@@ -64,21 +109,13 @@ bool Ft8Mehrfach::nimmAnrufer(const QString& partner, int snr,
     // Ende als zwei QSOs.
     if (kennt(p)) { return false; }
 
+    const Wartend w{p, snr, seinLocator.trimmed().toUpper(), vonHand};
     if (aktive() < m_plaetze) {
-        Ft8Ablauf a;
-        // Er hat mich gerufen, also beginnt es bei Tx2 -- mit dem
-        // Rapport, nicht mit meinem Locator.
-        //
-        // Hier stand bis zum 2026-10-30 `starteAlsAntworter`, mit der
-        // Begruendung, das sei der Einstieg bei Tx2. War es nicht:
-        // jenes setzt `Zustand::RufeAn` (Tx1). Siehe
-        // `Ft8Ablauf::starteMitAnrufer`.
-        a.starteMitAnrufer(p, m_meinRuf, m_meinLocator, snr, seinLocator);
-        m_laufend.push_back(a);
+        m_laufend.push_back(beginne(w, m_meinRuf, m_meinLocator));
         return true;
     }
 
-    m_warteschlange.push_back(Wartend{p, snr, seinLocator.trimmed().toUpper()});
+    m_warteschlange.push_back(w);
     return true;
 }
 
@@ -116,6 +153,11 @@ void Ft8Mehrfach::fensterVerstrichen()
         if (a.laeuft()) { a.fensterVerstrichen(); }
     }
 
+    raeumeAuf();
+}
+
+void Ft8Mehrfach::raeumeAuf()
+{
     // Fertige beiseitelegen, Abgebrochene fallen lassen -- beides gibt
     // den Platz frei.
     QVector<Ft8Ablauf> bleibt;
@@ -139,10 +181,7 @@ void Ft8Mehrfach::rueckeNach()
 {
     while (!m_warteschlange.isEmpty() && aktive() < m_plaetze) {
         const Wartend w = m_warteschlange.takeFirst();
-        Ft8Ablauf a;
-        a.starteAlsAntworter(w.partner, m_meinRuf, m_meinLocator,
-                             w.snr, w.locator);
-        m_laufend.push_back(a);
+        m_laufend.push_back(beginne(w, m_meinRuf, m_meinLocator));
     }
 }
 
