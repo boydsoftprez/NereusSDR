@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR logical-object typography; upstream studied, no port.
 // Modification history (NereusSDR):
+//   2026-11-17 - The font feature and axis part of the fit key builds only
+//                with Qt 6.7 or newer, so Ubuntu 24.04 (Qt 6.4) builds. J.J.
+//                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-09 - fitObjectText remembers a fitted font. Meter paints were
 //                 running the search again for every unchanged label, and
 //                 that work sat on the GUI thread ahead of the waterfall.
@@ -103,6 +106,9 @@ inline ObjectTextFitKey objectTextFitKey(const QFont& font, double requested, co
     key.devicePixelRatio = device ? device->devicePixelRatioF() : 1.0;
     key.flags = flags;
     key.text = text;
+    // QFont::Tag, feature tags and variable axes are new in Qt 6.7; the
+    // Ubuntu 24.04 builds use its Qt 6.4, where a font carries neither.
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
     const QList<QFont::Tag> features = font.featureTags();
     const QList<QFont::Tag> axes = font.variableAxisTags();
     if (!features.isEmpty() || !axes.isEmpty()) {
@@ -116,6 +122,7 @@ inline ObjectTextFitKey objectTextFitKey(const QFont& font, double requested, co
         }
         key.extras = parts.join(QLatin1Char(';'));
     }
+#endif
     return key;
 }
 
