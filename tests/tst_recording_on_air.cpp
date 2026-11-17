@@ -25,11 +25,16 @@
 //                gain and mute changes and released to the mic gain at the
 //                end. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                Code.
+//   2026-11-16 - A seek on the air: the test's transmit thread gets a few
+//                blocks per seek, so a loaded machine can no longer let it
+//                run the recording to its end (Linux CI). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 
 #include <QDir>
+#include <QElapsedTimer>
 #include <QLoggingCategory>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -682,25 +687,52 @@ private slots:
         OnAirSource* onAir = svc->onAirSource();
         QCOMPARE(onAir->active(), OnAirSource::Kind::Playback);
 
-        // The transmit worker pulls the whole time the seeks run.
+        // The transmit worker pulls while every seek runs. A real one pulls a
+        // block every 64 frames of air time; this one runs as fast as it can,
+        // so it is given a few blocks per seek. Left free, it would take the
+        // whole recording to its end in a fraction of a second whenever this
+        // thread is held up (a loaded machine), and the end of a recording
+        // rightly hands the air to the microphone (V5): that is not a seek.
+        // With kPullsPerSeek blocks a seek, no player gives out more than a
+        // couple of seeks' blocks (a few hundredths of a second), far short
+        // of the 1.1 s the latest seek (2.9 s of 4 s) leaves.
+        constexpr int kSeeks = 200;
+        constexpr int kPullsPerSeek = 8;
         std::atomic<bool> stop{false};
+        std::atomic<int> budget{0};
         std::atomic<int> pulls{0};
         std::atomic<int> micBlocks{0};
         std::thread transmitter([&] {
             std::vector<float> tx(kBlock);
             while (!stop.load()) {
+                if (budget.load() <= 0) {
+                    std::this_thread::yield();
+                    continue;
+                }
                 if (!onAir->pull(tx.data(), kBlock)) {
                     micBlocks.fetch_add(1);
                 }
                 pulls.fetch_add(1);
+                budget.fetch_sub(1);
             }
         });
-        for (int k = 0; k < 200; ++k) {
+        bool kept = true;
+        for (int k = 0; k < kSeeks && kept; ++k) {
+            // The blocks start going out as the seek begins, and run into
+            // the gap it leaves between two players.
+            budget.store(kPullsPerSeek);
             svc->seek(kLocal, (k % 30) * 100);
+            QElapsedTimer waited;
+            waited.start();
+            while (budget.load() > 0 && waited.elapsed() < 5000) {
+                std::this_thread::yield();
+            }
+            kept = budget.load() <= 0;
         }
-        QTRY_VERIFY(pulls.load() > 200);
         stop.store(true);
         transmitter.join();
+        QVERIFY2(kept, "the transmit thread stopped pulling");
+        QCOMPARE(pulls.load(), kSeeks * kPullsPerSeek);
         QCOMPARE(micBlocks.load(), 0);
         QCOMPARE(onAir->active(), OnAirSource::Kind::Playback);
 
