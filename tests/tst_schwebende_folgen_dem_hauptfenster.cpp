@@ -35,6 +35,10 @@
 //                 des Fensters, den Schirmplatz und die Grundlage des
 //                 Mitziehens mit. Martin Fischer (OE5SOS), KI-gestuetzt
 //                 mit Anthropic Claude Code.
+//   2026-11-17 — Auf den Nachlauf warten statt fest zu schlafen: im
+//                 Aufbau kam er unter Last zu spaet und verdarb die
+//                 Grundlage fuer Fall 2. Martin Fischer (OE5SOS),
+//                 KI-gestuetzt mit Anthropic Claude Code.
 // =================================================================
 
 // no-port-check: Longpath-original test file.
@@ -69,6 +73,53 @@ private:
     // also das Raster, nicht ein Fehler (gemessen: (608,368) statt
     // (600,360)).
     static constexpr int kToleranzPx = kSnapGridPx / 2 + 2;
+
+    // ── Auf den Nachlauf WARTEN, nicht schlafen (2026-11-17) ─────────
+    //
+    // Bis heute wartete jede Stelle fest `kNachlaufMs`. Im CI-Lauf
+    // 43636263627 (Shard Linux 2/4) reichte das im Aufbau nicht: der
+    // Nachlauf nach `hauptfensterStellen()` kam erst, NACHDEM
+    // initTestCase das schwebende Fenster schon selbst verschoben hatte.
+    // Er mass das verschobene Fenster dann gegen den alten, maximierten
+    // Rahmen -- und legte die Grundlage x=0.1667 y=0.1162 h=0.4086,
+    // mit der Fall 2 spaeter 285x269 statt 395x251 rechnete. Lokal
+    // nachgestellt, indem das Warten im Aufbau entfaellt: dieselben
+    // drei Anteile auf vier Stellen.
+    //
+    // Ein ruhender Nachlauf allein genuegt nicht: kommt das
+    // Groessenereignis selbst zu spaet, ruht er, BEVOR ueberhaupt etwas
+    // geschehen ist. Darum wartet das hier, bis das Hauptfenster die
+    // verlangte Groesse (bis aufs Raster) angenommen hat, sein Nachlauf
+    // ruht und die Grundlage des Mitziehens auf dem jetzigen Rahmen
+    // steht. Die feste Zeit davor bleibt als Untergrenze: sie deckt den
+    // Raster-Nachhall (180 ms) ab, der nach dem Nachlauf noch kommt.
+    bool nachlaufFertig(const QSize& verlangt) const
+    {
+        const QRect f = m_mw->frameGeometry();
+        if (verlangt.isValid()
+            && (qAbs(f.width() - verlangt.width()) > kSnapGridPx
+                || qAbs(f.height() - verlangt.height()) > kSnapGridPx)) {
+            return false;
+        }
+        return m_mw->nachlaufRuhtForTest()
+            && m_mw->hauptrahmenBasisForTest() == f;
+    }
+
+    void warteAufNachlauf(const QSize& verlangt = QSize())
+    {
+        QTest::qWait(kNachlaufMs);
+        QTRY_VERIFY2_WITH_TIMEOUT(
+            nachlaufFertig(verlangt),
+            qPrintable(QStringLiteral(
+                "Nachlauf des Hauptfensters kam nicht zur Ruhe: Rahmen "
+                "%1x%2, verlangt %3x%4, Grundlage %5x%6")
+                .arg(m_mw->frameGeometry().width())
+                .arg(m_mw->frameGeometry().height())
+                .arg(verlangt.width()).arg(verlangt.height())
+                .arg(m_mw->hauptrahmenBasisForTest().width())
+                .arg(m_mw->hauptrahmenBasisForTest().height())),
+            5000);
+    }
 
     AppletFloatingWindow* loeseEinApplet()
     {
@@ -127,7 +178,7 @@ private:
             const EigeneBewegung wirSelbst;
             m_abgeloest->move(arbeit.x() + 300, y);
         }
-        QTest::qWait(kNachlaufMs);
+        warteAufNachlauf();
     }
 
     // Das Hauptfenster in eine bekannte, NICHT maximierte Lage bringen
@@ -178,7 +229,7 @@ private:
     {
         if (m_mw->isMaximized() || m_mw->isFullScreen()) { m_mw->showNormal(); }
         m_mw->setGeometry(r);
-        QTest::qWait(kNachlaufMs);
+        warteAufNachlauf(r.size());
     }
 
 private slots:
@@ -216,7 +267,7 @@ private slots:
             const EigeneBewegung wirSelbst;
             m_abgeloest->move(m_mw->frameGeometry().topLeft() + QPoint(256, 160));
         }
-        QTest::qWait(kNachlaufMs);
+        warteAufNachlauf();
         QVERIFY(m_mw->schwebendeMitziehenForTest() == 0);
     }
 
@@ -227,7 +278,7 @@ private slots:
         const QPoint vorher = m_abgeloest->frameGeometry().topLeft();
 
         m_mw->move(m_mw->pos() + QPoint(160, 96));
-        QTest::qWait(kNachlaufMs);
+        warteAufNachlauf();
 
         const QPoint hauptDelta =
             m_mw->frameGeometry().topLeft() - hauptVorher.topLeft();
@@ -252,11 +303,14 @@ private slots:
         // Anteilen, die beim letzten Mitziehen galten, und die bleiben
         // absichtlich stehen, solange das Fenster dort steht, wo wir es
         // hingesetzt haben (2026-11-13, fuer „klein und wieder gross").
-        // Wuchs das Fenster seither nach (Layout nach dem Setzen), sind
-        // das zwei verschiedene Rechnungen und der Fall faellt scheinbar
-        // zufaellig: CI-Lauf 43636263627, Shard Linux 2/4, gemessen
-        // 285x269 statt 395x251 -- mit Anteilen w=0.1984 h=0.4086 statt
-        // der 0.2634/0.3881, die zu 269x189 auf 1021x487 gehoeren.
+        // Stammt diese Grundlage aus einem verdorbenen Durchlauf, sind
+        // das zwei verschiedene Rechnungen: CI-Lauf 43636263627, Shard
+        // Linux 2/4, gemessen 285x269 statt 395x251 -- mit Anteilen
+        // x=0.1667 y=0.1162 w=0.1984 h=0.4086 statt der 0.2634/0.3881,
+        // die zu 269x189 auf 1021x487 gehoeren. Verdorben hatte sie der
+        // zu spaete Nachlauf im Aufbau (siehe warteAufNachlauf()); das
+        // Warten dort ist die Behebung, dieses Vergessen haelt den Fall
+        // davon unabhaengig, was die Faelle davor hinterlassen.
         //
         // Die Wiederverwendung selbst prueft Fall 5
         // (`kleinUndWiederGrossGibtDieAlteLage`). HIER soll frisch
@@ -274,7 +328,7 @@ private slots:
         const QSize innen = m_abgeloest->size();
 
         m_mw->resize(alt.width() + 480, alt.height() + 160);
-        QTest::qWait(kNachlaufMs);
+        warteAufNachlauf(QSize(alt.width() + 480, alt.height() + 160));
 
         const QRect neu = m_mw->frameGeometry();
         const QRect neuA = neu.marginsRemoved(leisten);
@@ -318,7 +372,7 @@ private slots:
         const QSize innen = m_abgeloest->size();
 
         m_mw->resize(alt.width() - 360, alt.height() - 120);
-        QTest::qWait(kNachlaufMs);
+        warteAufNachlauf(QSize(alt.width() - 360, alt.height() - 120));
 
         const QRect neu = m_mw->frameGeometry();
         const QRect neuA = neu.marginsRemoved(leisten);
@@ -356,11 +410,11 @@ private slots:
         QVERIFY2(leisten.top() > 0, "ohne Leiste oben prueft der Fall nichts");
         const QRect alt = m_mw->frameGeometry();
         m_abgeloest->move(alt.x() + 300, alt.y() + leisten.top() + 4);
-        QTest::qWait(kNachlaufMs);
+        warteAufNachlauf();
         m_mw->schwebendeMitziehenForTest();   // Basis = jetzt
 
         m_mw->resize(alt.width() - 200, alt.height() - 160);
-        QTest::qWait(kNachlaufMs);
+        warteAufNachlauf();
 
         const QRect neu = m_mw->frameGeometry();
         QVERIFY2(neu.height() < alt.height(), "das Hauptfenster muss niedriger geworden sein");
@@ -412,7 +466,7 @@ private slots:
         m_mw->schwebendeMitziehenForTest();   // Basis = jetzt
 
         m_mw->resize(hauptInnen.width() - 400, hauptInnen.height() - 100);
-        QTest::qWait(kNachlaufMs);
+        warteAufNachlauf();
         // Vor dem Vergleich sagen, was gemessen wurde: ein Fehlschlag in
         // der CI soll die Zahlen zeigen, nicht nur zwei Breiten.
         qInfo() << "Hauptfenster" << hauptInnen << "->" << m_mw->size()
@@ -424,7 +478,7 @@ private slots:
         QCOMPARE(m_abgeloest->width(), innenVorher.width());   // hing an der Grenze
 
         m_mw->resize(hauptInnen);
-        QTest::qWait(kNachlaufMs);
+        warteAufNachlauf();
         m_abgeloest->setMinimumWidth(minAlt);
 
         const QRect nachher = m_abgeloest->frameGeometry();
@@ -460,7 +514,7 @@ private slots:
         // Platz nach unten: das Hauptfenster darf nicht unter 600 hoch,
         // und die 58 Punkte muessen wirklich ankommen.
         m_mw->resize(1300, 900);
-        QTest::qWait(kNachlaufMs);
+        warteAufNachlauf();
         QVERIFY(m_mw->height() >= 900 - kSnapGridPx);
         // Tief im Fenster, wie das S-Meter des Betreibers: dort wirkt der
         // Sprung am staerksten (rund 30 Punkte). Der Fall verliert
@@ -479,7 +533,7 @@ private slots:
             QCoreApplication::processEvents();
         }
         QVERIFY(m_mw->height() <= innenGross.height() - 58 + kSnapGridPx);
-        QTest::qWait(kNachlaufMs);
+        warteAufNachlauf();
         QCOMPARE(m_abgeloest->frameGeometry().topLeft(), gespeichert.topLeft());
         // Ein frischer Start kennt keine Grundlage vom letzten Mal.
         m_mw->vergissMitziehBasisForTest();
@@ -490,7 +544,7 @@ private slots:
 
         // Und der Sprung auf die alte Hoehe, von aussen.
         m_mw->resize(innenGross);
-        QTest::qWait(kNachlaufMs);
+        warteAufNachlauf();
 
         const QRect nachher = m_abgeloest->frameGeometry();
         qInfo() << "gespeichert" << gespeichert << "nachher" << nachher
@@ -518,7 +572,7 @@ private slots:
     void rasterUnterschiedRechnetNichtsUm()
     {
         m_mw->resize(1300, 900);
-        QTest::qWait(kNachlaufMs);
+        warteAufNachlauf();
         tiefAberSicherStellen(0);
         const QRect jetzt = m_mw->frameGeometry();
         const QRect vorher = m_abgeloest->frameGeometry();
@@ -532,7 +586,7 @@ private slots:
         // Sofort, vor jedem Raster: nichts angefasst.
         QCOMPARE(m_abgeloest->size(), innenVorher);
         QCOMPARE(m_abgeloest->frameGeometry(), vorher);
-        QTest::qWait(kNachlaufMs);
+        warteAufNachlauf();
         QCOMPARE(m_abgeloest->frameGeometry(), vorher);
     }
 
@@ -548,7 +602,7 @@ private slots:
             m_mw->move(m_mw->pos() + QPoint(-93, -41));
             QCoreApplication::processEvents();
         }
-        QTest::qWait(kNachlaufMs);
+        warteAufNachlauf();
         // Das Raster darf es um weniger als eine Rasterweite ruecken,
         // das Mitziehen haette es um rund (93,41) bewegt.
         const QPoint delta = m_abgeloest->frameGeometry().topLeft() - vorher;

@@ -574,6 +574,13 @@ public:
     // der schwebenden Fenster, rechnet die naechste frische Messung
     // gegen einen Rahmen, den sie nie gesehen haben.
     QRect hauptrahmenBasisForTest() const { return m_hauptrahmenBasis; }
+    // Ruht der Nachlauf des Hauptfensters (schutzrahmenNachziehen)? Ein
+    // Pruefstand, der eine feste Zeit wartet, misst sonst unter Last
+    // MITTEN in einen Nachlauf, der zu spaet kommt (2026-11-17).
+    bool nachlaufRuhtForTest() const
+    {
+        return !m_schutzrahmenTimer || !m_schutzrahmenTimer->isActive();
+    }
 
     QString mitziehBasisAlsTextForTest(const QWidget* w) const
     {
