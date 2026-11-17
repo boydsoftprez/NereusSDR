@@ -30,6 +30,12 @@ struct VoiceButton: View {
         CGRect(x: ptt.maxX + gap, y: ptt.midY - diameter / 2, width: diameter, height: diameter)
     }
 
+    /// Where VOICE sits over a PTT at `ptt` when the thumbwheel is on and
+    /// its step box takes the place beside PTT: above it, centred on it.
+    static func frame(abovePtt ptt: CGRect) -> CGRect {
+        CGRect(x: ptt.midX - diameter / 2, y: ptt.minY - gap - diameter, width: diameter, height: diameter)
+    }
+
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.2, paused: model.client.voiceKeyer?.sending == nil)) { timeline in
             face(model.progress(now: timeline.date))

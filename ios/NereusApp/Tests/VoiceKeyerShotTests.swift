@@ -222,6 +222,8 @@ struct VoiceKeyerShotTests {
         let ptt = PttButton.frame(bandSize: PanFrame.size, leadingInset: 0)
         let voice = VoiceButton.frame(besidePtt: ptt)
         #expect(voice.minX == ptt.maxX + VoiceButton.gap && voice.midY == ptt.midY)
+        let above = VoiceButton.frame(abovePtt: ptt)
+        #expect(above.midX == ptt.midX && above.maxY == ptt.minY - VoiceButton.gap)
         await ShotWait.laidOut(window)
         try RadeFlagShotTests.write(window, name: frame.description)
     }

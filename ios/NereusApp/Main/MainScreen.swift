@@ -29,6 +29,8 @@
 // keyer's messages over the pan. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-16: Recording plan Task 19, the iPad column's Recordings panel.
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: VOICE goes above PTT while the thumbwheel's step box is beside it.
+// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -468,12 +470,17 @@ struct MainScreen: View {
                                  : (DialLayer.stripHeight - PttButton.diameter) / 2)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                     if roundtableSheet == nil {
-                        // VOICE beside PTT, centred on it (recording design 6.6).
+                        // VOICE beside PTT, centred on it (recording design 6.6). With the
+                        // thumbwheel on, its step box sits beside PTT, so VOICE goes above PTT.
+                        let above = app.phoneSettings.dialKind == .thumbwheel
                         VoiceButton(model: app.voiceKeyer) { voicePanelOpen = true }
                             .offset(x: placed.minX - pttHome.minX)
                             .padding(.leading, PttButton.inset + (sideways ? leadingInset : 0)
-                                     + PttButton.diameter + VoiceButton.gap)
-                            .padding(.bottom, PttButton.bottomInset + (PttButton.diameter - VoiceButton.diameter) / 2)
+                                     + (above ? (PttButton.diameter - VoiceButton.diameter) / 2
+                                        : PttButton.diameter + VoiceButton.gap))
+                            .padding(.bottom, PttButton.bottomInset
+                                     + (above ? PttButton.diameter + VoiceButton.gap
+                                        : (PttButton.diameter - VoiceButton.diameter) / 2))
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                     }
                 }
