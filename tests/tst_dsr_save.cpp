@@ -27,6 +27,9 @@
 //                 sound only starts with the signal.
 //   2026-11-16 - J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code. Renaming or deleting an opened stretch closes it.
+//   2026-11-17 - J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. The 30 second floor is dragged inside the map, at
+//                 any map height (the 16 px frequency row made it taller).
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -731,8 +734,14 @@ private slots:
         QCOMPARE(map->bracketToUtcMs(), now - 1000);
         QCOMPARE(box->fromUtcMs(), map->bracketFromUtcMs());
         QCOMPARE(box->toUtcMs(), map->bracketToUtcMs());
-        // Never shorter than 30 seconds.
+        // Never shorter than 30 seconds. Moved down first, so the start edge
+        // is dragged to a point on the map well above the end: at the top a
+        // drag past the map stops at its edge, and with three hours on a few
+        // hundred pixels the grab's pixel above the start is more than 30 s.
         r = map->bracketRect();
+        drag(map, QPoint(map->width() / 2, r.center().y()), QPoint(map->width() / 2, r.center().y() + 100));
+        r = map->bracketRect();
+        QVERIFY(r.top() > 60);
         drag(map, QPoint(map->width() / 2, r.bottom() - 2), QPoint(map->width() / 2, r.top() - 50));
         QCOMPARE(map->bracketToUtcMs() - map->bracketFromUtcMs(), DsrHoursMap::kMinBracketMs);
 
