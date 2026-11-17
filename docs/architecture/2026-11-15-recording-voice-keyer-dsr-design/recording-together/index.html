@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recording Together</title>
+<style>
+:root{ --bg:#08080a; --ink:#e8e8ec; --dim:#9a9aa2; }
+@media (prefers-color-scheme: light){ :root:not([data-theme="light"]){ --bg:#08080a; --ink:#e8e8ec; } }
+:root[data-theme="dark"]{ --bg:#08080a; }
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:14px -apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;-webkit-text-size-adjust:100%}
+.top{max-width:1180px;margin:0 auto;padding:12px 16px 4px}
+.top h1{font-size:17px;margin:0 0 6px;font-weight:600}
+.top p{margin:4px 0;color:var(--dim);font-size:13px;line-height:1.4}
+.bar{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 4px;align-items:center}
+.bar button{background:#1c1c1f;color:var(--ink);border:1px solid #333338;border-radius:8px;padding:7px 10px;font:inherit;font-size:13px;cursor:pointer}
+.bar button.on{background:#2b4a75;border-color:#4a76b0}
+.bar button.tx{background:#7a1a14;border-color:#ff453a}
+.bar button:disabled{opacity:.4;cursor:default}
+.bar label{color:var(--dim);font-size:13px;margin-left:4px}
+details{margin:4px 0 8px;color:var(--dim);font-size:13px}
+details summary{cursor:pointer;color:var(--ink)}
+details li{margin:3px 0;line-height:1.35}
+.pair{display:flex;flex-wrap:wrap;gap:18px;justify-content:center;max-width:1180px;margin:8px auto 30px;padding:0 8px}
+.dev h2{font-size:13px;font-weight:600;color:var(--dim);margin:0 0 6px;letter-spacing:.3px}
+.view{position:relative;overflow:hidden;border-radius:10px;border:1px solid #222;background:#000}
+/* ---------- desktop, in the capture's own pixels (2x points) ---------- */
+#dStage{position:absolute;left:0;top:0;width:3024px;height:1738px;transform-origin:0 0}
+#dStage > img{position:absolute;left:0;top:0;width:3024px;height:1738px;display:block;user-select:none;-webkit-user-drag:none}
+#dFreq{position:absolute;left:1336px;top:139px;width:276px;height:54px;background:#0c0c0e;color:#00e5ff;font:700 47px ui-monospace,"SF Mono",Menlo,monospace;letter-spacing:-.5px;text-align:right;line-height:54px}
+.fb{position:absolute;left:1097px;width:40px;height:40px;border-radius:50%;background:#18191e;border:2px solid #2e2f36;color:#c8c8d0;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
+.fb:hover{background:#262830;border-color:#45474f}
+.fb svg{width:20px;height:20px}
+#dRec{top:108px} #dPlay{top:152px} #dMore{top:196px}
+#dMore{font:700 26px -apple-system,sans-serif;line-height:1;padding-bottom:6px}
+#dRec.on{border-color:#ff453a;color:#ff453a}
+#dRec.on svg{animation:rp 1.1s ease-in-out infinite}
+#dRec.armed{border-color:#7a2c2e;color:#ff6b62}
+#dPlay.on{border-color:#3a9cff;color:#3a9cff}
+@keyframes rp{50%{opacity:.35}}
+.pill{position:absolute;right:calc(3024px - 1091px);height:34px;border-radius:17px;padding:0 14px;display:none;align-items:center;gap:8px;white-space:nowrap;font:600 21px ui-monospace,"SF Mono",Menlo,monospace;background:rgba(12,12,14,.94);border:2px solid #333}
+.pill.on{display:flex}
+#dRecP{top:111px;color:#ff8a84;border-color:#7a2a26}
+#dRecP.armed{color:#c9a3a1;border-color:#4a2a28;font-family:-apple-system,sans-serif;font-weight:500}
+#dPlayP{top:155px;color:#8cc4ff;border-color:#24507e}
+#dPlayP b{font:600 21px -apple-system,sans-serif;color:#dcdce1}
+#dPlayP.air{color:#ffd0cc;border-color:#ff453a;background:rgba(90,20,16,.96)}
+#dPlayP.air b{color:#fff}
+#dPlayP i{font:800 18px -apple-system,sans-serif;font-style:normal;letter-spacing:1px;background:#ff453a;color:#fff;border-radius:6px;padding:1px 7px;display:none}
+#dPlayP.air i{display:inline}
+#dPlay.air{border-color:#ff453a;color:#ff453a}
+.note{position:absolute;display:none;z-index:6}
+.note.on{display:flex}
+#dNote{left:1030px;top:350px;width:630px;min-height:58px;border-radius:12px;background:#1b1b1f;border:2px solid #3d3d41;box-shadow:0 12px 34px rgba(0,0,0,.6);align-items:center;gap:14px;padding:8px 10px 8px 18px;font:22px/1.3 -apple-system,sans-serif;color:#dcdce1}
+#dNote .x{flex:1;min-width:0}
+#dNote small{display:block;font-size:19px;color:#8e8e96}
+#dNote button{height:42px;border-radius:9px;border:2px solid #2c2c31;background:#222226;color:#f0f0f2;font:600 20px -apple-system,sans-serif;padding:0 14px;cursor:pointer;flex:none}
+#dNote button.pri{background:#1e3d5f;border-color:#4a7ba8}
+#dTx{position:absolute;left:1538px;top:68px;width:58px;height:38px;border-radius:8px;background:#c4312b;color:#fff;font:700 24px -apple-system,sans-serif;display:none;align-items:center;justify-content:center}
+#dTx.on{display:flex}
+/* ---------- phone, in points ---------- */
+#pStage{position:absolute;left:0;top:0;width:402px;height:874px;transform-origin:0 0}
+#pStage > img.full{position:absolute;left:0;top:0;width:402px;display:block;pointer-events:none}
+#status{position:absolute;left:0;top:107px;width:402px;height:22px;font:13px ui-monospace,"SF Mono",Menlo,monospace;color:#e2e2e2;display:flex;justify-content:space-between;align-items:center;padding:0 9px;background:#000}
+#pb{position:absolute;left:108.13px;width:25.2px;top:130px;height:245px;background:rgba(40,140,170,.28);pointer-events:none}
+#car{position:absolute;left:132.83px;top:130px;height:245px;width:1px;background:rgb(45,170,205);pointer-events:none}
+#btns{position:absolute;left:89.66px;top:130px;width:43.67px;height:152px;display:flex;flex-direction:column;z-index:4}
+.pf{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#5c5c60}
+.pf svg{width:16px;height:16px;flex:none;filter:drop-shadow(0 0 1.5px #000) drop-shadow(0 0 1.5px #000)}
+.pf.on svg{width:13px;height:13px}
+#pRec,#pPlay{cursor:pointer}
+.pf .c{font:600 9px ui-monospace,"SF Mono",Menlo,monospace;margin-top:1px;display:none;line-height:1}
+#pRec.on{color:#ff453a}
+#pRec.on .c{display:block;color:#ff8a84}
+#pRec.on svg{animation:rp 1.1s ease-in-out infinite}
+#pRec.armed{color:#ff6b62}
+#pRec.armed .c{display:block;color:#c9a3a1;font-family:-apple-system,sans-serif;font-weight:600;font-size:8px;letter-spacing:.3px}
+#pPlay.on{color:#3a9cff}
+#pPlay.on .c{display:block;color:#8cc4ff}
+#flag{position:absolute;left:133.66px;top:130px;width:200.33px;height:159.33px;pointer-events:none}
+#flag img{width:200.33px;display:block}
+#pTx{position:absolute;left:337px;top:96px;display:none;height:20px;padding:0 7px;border-radius:5px;background:#c4312b;color:#fff;font:700 12px/20px -apple-system,sans-serif;z-index:5}
+#pTx.on{display:block}
+#pbar{position:absolute;left:133.66px;top:293px;width:200.33px;height:38px;border-radius:9px;background:rgba(18,36,60,.96);border:1px solid #3a7bd5;display:none;align-items:center;gap:6px;padding:0 4px 0 9px;z-index:4}
+#pbar.on{display:flex}
+#pbar .m{flex:1;min-width:0}
+#pbar .m1{font:600 12px -apple-system,sans-serif;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#pbar .m2{white-space:nowrap;overflow:hidden;font:10px ui-monospace,"SF Mono",Menlo,monospace;color:#cfe2ff}
+#pbar button{height:28px;border-radius:7px;border:0;font:600 11.5px -apple-system,sans-serif;padding:0 6px;flex:none;cursor:pointer}
+#pbOld{background:#24466f;color:#cfe2ff}
+#pbStop{background:#fff;color:#1d5fb0}
+#pbar .bar{position:absolute;left:0;bottom:0;height:2px;background:#3a9cff;border-radius:0 0 0 9px}
+#pbar.air{background:rgba(70,16,13,.97);border-color:#ff453a}
+#pbar.air .m2{color:#ffb3ad}
+#pbar.air .bar{background:#ff453a}
+#pbar.air #pbStop{color:#c0392b}
+#pPlay.air{color:#ff453a}
+#pPlay.air .c{color:#ff8a84}
+#pNote{left:12px;top:338px;width:378px;border-radius:14px;background:rgba(36,36,40,.97);border:1px solid #48484e;box-shadow:0 10px 30px rgba(0,0,0,.6);align-items:center;gap:8px;padding:8px 8px 8px 12px;font:13px/1.3 -apple-system,sans-serif;color:#eee}
+#pNote .x{flex:1;min-width:0}
+#pNote small{display:block;font-size:11.5px;color:#a8a8ae}
+#pNote button{height:32px;border-radius:8px;border:0;background:#3a3a40;color:#fff;font:600 13px -apple-system,sans-serif;padding:0 10px;cursor:pointer;flex:none}
+#pNote button.pri{background:#0a84ff}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:rgba(44,44,48,.97);color:#fff;border-radius:12px;padding:10px 14px;font-size:13px;max-width:380px;text-align:center;z-index:90;opacity:0;transition:opacity .2s;pointer-events:none;border:1px solid #444}
+.toast.on{opacity:1}
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>Recording from the desktop and the iPhone together</h1>
+  <p>Both are on the same Core, looking at the same slice A. The recording is made on the Core, so there is only ever one, and both flags show it. Either one can start it and either one can stop it. Playing back is not shared: each plays on its own speaker, and transmitting while one plays sends that recording on the air instead of your mic.</p>
+  <div class="bar">
+    <button id="txD">Transmit from the desktop (MOX)</button>
+    <button id="txP">Transmit from the iPhone (PTT)</button>
+    <button id="autoB">Start by itself when I transmit: off</button>
+    <button id="quietB" disabled>Two quiet minutes pass</button>
+  </div>
+  <details open>
+    <summary>Things to try</summary>
+    <ul>
+      <li>Tap Record on the iPhone's flag. The desktop flag starts blinking at the same moment, with the same time. Stop it from the desktop: both stop, and both say where it went.</li>
+      <li>After it stops, each shows "Kept" with Play. Play on the iPhone plays it on the phone only; the desktop stays quiet unless you play it there too.</li>
+      <li>Turn on "Start by itself when I transmit". Both Record buttons show a hollow red ring: armed, waiting. Click Transmit: recording starts on both by itself. Then click "Two quiet minutes pass": it stops by itself and goes back to waiting.</li>
+      <li>Tapping Record while it is waiting starts a recording at once, as usual.</li>
+      <li>Start a recording playing on one of them, then transmit from that same one: it goes out on the air instead of your mic, and its playing label turns red with ON AIR. Stop transmitting and it carries on in your speaker. On the iPhone, Others picks which recording, so any of them can go out, not only the latest.</li>
+    </ul>
+  </details>
+</div>
+<div class="pair">
+  <div class="dev"><h2>DESKTOP, IN THE SHACK</h2>
+    <div class="view" id="dView"><div id="dStage">
+      <img src="../shared/desk.jpg" alt="NereusSDR desktop window">
+      <div id="dFreq">7.236.400</div>
+      <button class="fb" id="dRec" aria-label="Record"><svg viewBox="0 0 20 20" id="dRecI"></svg></button>
+      <button class="fb" id="dPlay" aria-label="Play"><svg viewBox="0 0 20 20" id="dPlayI"></svg></button>
+      <button class="fb" id="dMore" aria-label="More">&#8943;</button>
+      <div class="pill" id="dRecP"></div>
+      <div class="pill" id="dPlayP"></div>
+      <div class="note" id="dNote"><div class="x" id="dNoteT"></div><button id="dNoteAll">All recordings&hellip;</button><button class="pri" id="dNotePlay">Play</button></div>
+    </div></div>
+  </div>
+  <div class="dev"><h2>IPHONE</h2>
+    <div class="view" id="pView"><div id="pStage">
+      <img class="full" src="phonetop.jpg" alt="NereusSDR on the iPhone">
+      <div id="status"><span>Connected &middot; Control direct</span><span>&darr;1.4 &uarr;0.2</span></div>
+      <div id="pb"></div><div id="car"></div>
+      <div id="btns">
+        <div class="pf"><svg viewBox="0 0 18 18"><rect x="2.5" y="8" width="9" height="7.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M9.5 8V5.5a3 3 0 0 1 6 0V7" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg></div>
+        <div class="pf" id="pRec" role="button" aria-label="Record"><svg viewBox="0 0 18 18" id="pRecI"></svg><span class="c" id="pRecC"></span></div>
+        <div class="pf" id="pPlay" role="button" aria-label="Play"><svg viewBox="0 0 18 18" id="pPlayI"></svg><span class="c" id="pPlayC"></span></div>
+        <div class="pf"><svg viewBox="0 0 18 18"><circle cx="3.5" cy="9" r="1.6" fill="currentColor"/><circle cx="9" cy="9" r="1.6" fill="currentColor"/><circle cx="14.5" cy="9" r="1.6" fill="currentColor"/></svg></div>
+      </div>
+      <div id="flag"><img src="flag.png" alt=""></div>
+      <div id="pbar"><div class="m"><div class="m1" id="pbT"></div><div class="m2" id="pbS"></div></div><button id="pbOld">Others</button><button id="pbStop">Stop</button><div class="bar" id="pbBar"></div></div>
+      <div class="note" id="pNote"><div class="x" id="pNoteT"></div><button class="pri" id="pNotePlay">Play</button></div>
+    </div></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+(() => {
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const pad = n => String(n).padStart(2,'0'); const mm = s => Math.floor(s/60) + ':' + pad(Math.floor(s%60));
+let tt = 0; function toast(m){ const el = $('#toast'); el.textContent = m; el.classList.add('on'); clearTimeout(tt); tt = setTimeout(() => el.classList.remove('on'), 3000); }
+
+/* ---------- sizing ---------- */
+const DC = {x:520, y:40, w:1160, h:500}, PC = {x:0, y:104, w:402, h:306};
+function fit(){
+  const avail = Math.min(document.documentElement.clientWidth - 16, 1180);
+  const two = avail >= 900;
+  const dw = two ? Math.min(660, avail - 420 - 18) : Math.min(avail, 640);
+  const pw = two ? 420 : Math.min(avail, 420);
+  const ds = dw / DC.w, ps = pw / PC.w;
+  $('#dView').style.width = dw + 'px'; $('#dView').style.height = (DC.h*ds) + 'px';
+  $('#dStage').style.transform = 'scale(' + ds + ') translate(' + (-DC.x) + 'px,' + (-DC.y) + 'px)';
+  $('#pView').style.width = pw + 'px'; $('#pView').style.height = (PC.h*ps) + 'px';
+  $('#pStage').style.transform = 'scale(' + ps + ') translate(' + (-PC.x) + 'px,' + (-PC.y) + 'px)';
+}
+addEventListener('resize', fit); fit();
+
+/* ---------- shared state on the Core ---------- */
+const DOT = '<circle cx="10" cy="10" r="6.5" fill="currentColor"/>', RING = '<circle cx="10" cy="10" r="5.6" fill="none" stroke="currentColor" stroke-width="2.4"/>';
+const PDOT = '<circle cx="9" cy="9" r="6" fill="currentColor"/>', PRING = '<circle cx="9" cy="9" r="5.2" fill="none" stroke="currentColor" stroke-width="2.2"/>';
+const PLAY = '<path d="M6 3.5l10 6.5-10 6.5z" fill="currentColor"/>', STOP = '<rect x="4.5" y="4.5" width="11" height="11" rx="1.5" fill="currentColor"/>';
+const PPLAY = '<path d="M5 3l10 6-10 6z" fill="currentColor"/>', PSTOP = '<rect x="4" y="4" width="10" height="10" rx="1.5" fill="currentColor"/>';
+const NAME = '7.236.400 LSB K4ABC';
+let rec = null;            // {t, by:'desktop'|'phone'|'auto', quiet}
+let auto = false, tx = null;   // null, 'd' or 'p': which device is keyed
+let last = {name:'7.236.400 LSB W1XYZ', len:205};
+const play = {d:null, p:null};   // each device plays on its own
+const note = {d:null, p:null};
+
+function render(){
+  // desktop
+  const dr = $('#dRec');
+  dr.classList.toggle('on', !!rec); dr.classList.toggle('armed', !rec && auto);
+  $('#dRecI').innerHTML = !rec && auto ? RING : DOT;
+  const dp = $('#dRecP');
+  dp.classList.toggle('on', !!rec || auto); dp.classList.toggle('armed', !rec && auto);
+  dp.textContent = rec ? '● ' + mm(rec.t) + (tx ? '  + your voice' : '') : 'Waits for you to transmit';
+  $('#dPlay').classList.toggle('on', !!play.d); $('#dPlayI').innerHTML = play.d ? STOP : PLAY;
+  const dAir = !!play.d && tx === 'd', pAir = !!play.p && tx === 'p';
+  $('#dPlayP').classList.toggle('on', !!play.d); $('#dPlayP').classList.toggle('air', dAir); $('#dPlay').classList.toggle('air', dAir);
+  if (play.d) $('#dPlayP').innerHTML = (dAir ? '<i>ON AIR</i> ' : '') + '<b>' + esc(play.d.name) + '</b> ' + mm(play.d.pos) + ' / ' + mm(play.d.len);
+  $('#dNote').classList.toggle('on', !!note.d && !rec);
+  if (note.d) $('#dNoteT').innerHTML = 'Kept: ' + esc(note.d.name) + ', ' + mm(note.d.len) + '<small>' + note.d.why + '</small>';
+  // phone
+  const pr = $('#pRec');
+  pr.classList.toggle('on', !!rec); pr.classList.toggle('armed', !rec && auto);
+  $('#pRecI').innerHTML = !rec && auto ? PRING : PDOT;
+  $('#pRecC').textContent = rec ? mm(rec.t) : auto ? 'AUTO' : '';
+  $('#pPlay').classList.toggle('on', !!play.p); $('#pPlayI').innerHTML = play.p ? PSTOP : PPLAY;
+  $('#pPlayC').textContent = play.p ? mm(play.p.pos) : '';
+  $('#pbar').classList.toggle('on', !!play.p); $('#pbar').classList.toggle('air', pAir); $('#pPlay').classList.toggle('air', pAir);
+  if (play.p){ $('#pbT').textContent = play.p.name; $('#pbS').textContent = (pAir ? 'ON AIR · ' : '') + mm(play.p.pos) + ' / ' + mm(play.p.len) + (pAir ? '' : ' · speaker'); $('#pbBar').style.width = (play.p.pos / play.p.len * 100) + '%'; }
+  $('#pNote').classList.toggle('on', !!note.p && !rec && !play.p);
+  if (note.p) $('#pNoteT').innerHTML = 'Kept in Recordings: ' + esc(note.p.name) + ', ' + mm(note.p.len) + '<small>' + note.p.why + '</small>';
+  // bar
+  $('#txD').classList.toggle('tx', tx === 'd'); $('#txD').textContent = tx === 'd' ? 'Stop transmitting (desktop)' : 'Transmit from the desktop (MOX)'; $('#txD').disabled = tx === 'p';
+  $('#txP').classList.toggle('tx', tx === 'p'); $('#txP').textContent = tx === 'p' ? 'Stop transmitting (iPhone)' : 'Transmit from the iPhone (PTT)'; $('#txP').disabled = tx === 'd';
+  $('#autoB').classList.toggle('on', auto); $('#autoB').textContent = 'Start by itself when I transmit: ' + (auto ? 'on' : 'off');
+  $('#quietB').disabled = !rec || tx;
+}
+const WHO = {desktop:'the desktop', phone:'the iPhone'};
+function start(by){
+  rec = {t:0, by}; note.d = note.p = null; render();
+  if (by === 'auto') toast('You transmitted, so recording started by itself. Both flags show it.');
+  else toast('Started on ' + WHO[by] + '. ' + (by === 'phone' ? 'The desktop' : 'The iPhone') + ' shows it at the same moment.');
+}
+function stop(why){
+  const len = Math.max(1, Math.round(rec.t));
+  last = {name:NAME, len};
+  note.d = {name:NAME, len, why}; note.p = {name:NAME, len, why};
+  rec = null; render();
+  clearTimeout(stop.t); stop.t = setTimeout(() => { note.d = note.p = null; render(); }, 9000);
+}
+function tapRec(dev){
+  if (rec){ stop('Stopped on ' + WHO[dev] + '.'); return; }
+  start(dev);
+}
+function tapPlay(dev){
+  const k = dev === 'desktop' ? 'd' : 'p';
+  if (play[k]){ play[k] = null; render(); return; }
+  play[k] = {name:last.name, len:last.len, pos:0}; note[k] = null; render();
+  toast('Playing on ' + WHO[dev] + '’s speaker only. ' + (dev === 'phone' ? 'The desktop' : 'The iPhone') + ' stays quiet.');
+}
+$('#dRec').onclick = () => tapRec('desktop');
+$('#pRec').onclick = () => tapRec('phone');
+$('#dPlay').onclick = () => tapPlay('desktop');
+$('#pPlay').onclick = () => tapPlay('phone');
+$('#dNotePlay').onclick = () => tapPlay('desktop');
+$('#pNotePlay').onclick = () => tapPlay('phone');
+$('#dNoteAll').onclick = () => toast('Mockup: opens the Recordings window with this one selected.');
+$('#pbStop').onclick = () => { play.p = null; render(); };
+$('#pbOld').onclick = () => toast('Mockup: the last eight, as on the approved phone flag.');
+$('#dMore').onclick = () => toast('The flag’s usual menu.');
+function key(dev){
+  tx = tx === dev ? null : dev;
+  const k = dev, wasAir = !!play[k];
+  if (tx && auto && !rec) start('auto');
+  if (tx && play[k]) toast('On the air: ' + play[k].name + ' goes out instead of your mic, from where it was playing.');
+  else if (tx && rec) toast('Your own voice goes into the recording too.');
+  else if (tx && (play.d || play.p)) toast('Your mic goes out. The recording playing on ' + (play.d ? 'the desktop' : 'the iPhone') + ' stays on that speaker: keying sends only what plays where you key.');
+  else if (!tx && wasAir) toast('Back to receive. The recording keeps playing on your speaker.');
+  render();
+}
+$('#txD').onclick = () => key('d');
+$('#txP').onclick = () => key('p');
+$('#autoB').onclick = () => { auto = !auto; render();
+  toast(auto ? 'Armed on the Core: both flags show a hollow ring. Transmitting starts a recording.' : 'Off. Recording starts only when you tap Record.'); };
+$('#quietB').onclick = () => { if (rec && !tx) stop('Stopped by itself after two quiet minutes.' + (auto ? ' Waiting for your next transmit.' : '')); };
+
+setInterval(() => {
+  if (rec) rec.t += .25;
+  for (const k of ['d','p']) if (play[k]){ play[k].pos += .25; if (play[k].pos >= play[k].len){ play[k] = null; if (tx === k) toast('The recording ended. Still keyed, so your mic takes over.'); } }
+  if (rec || play.d || play.p) render();
+}, 250);
+render();
+})();
+</script>
+</body>
+</html>

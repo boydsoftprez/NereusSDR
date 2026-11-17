@@ -310,13 +310,16 @@ struct RoundtableSheet: View {
                 // messages do not: the view keeps its scroll, seen state and typed name.
                 .id(viewing ? room.id : RoundtableFrequencyView.ownViewId)
         } else if let room {
-            RoundtableRoomView(roundtable: roundtable, room: room, full: detent == .full, keyed: keyed,
-                               keyedSince: PttButton.keyedSince(transmit.ptt),
-                               keyedForSeconds: Int(transmit.keyedForSeconds), tunedHere: tunedHere, stationCallsign: stationCallsign,
-                               ownDbm: slices.entries.first { $0.id == slices.activeSliceId }?.signalDbm,
-                               sliceLetter: activeLetter, draftKept: dialOn && keyed && !draft.isEmpty,
-                               tuneHere: roundtable.readingRoomId == nil ? nil : { tuneHere(room) },
-                               expand: { detent = .full }, compact: compactLandscape)
+            SliceReadingsReader(readings: slices.readings) { readings in
+                RoundtableRoomView(roundtable: roundtable, room: room, full: detent == .full, keyed: keyed,
+                                   keyedSince: PttButton.keyedSince(transmit.ptt),
+                                   keyedForSeconds: Int(transmit.keyedForSeconds), tunedHere: tunedHere, stationCallsign: stationCallsign,
+                                   ownDbm: slices.entries.first { $0.id == slices.activeSliceId }
+                                       .flatMap { readings[$0.id].signalDbm },
+                                   sliceLetter: activeLetter, draftKept: dialOn && keyed && !draft.isEmpty,
+                                   tuneHere: roundtable.readingRoomId == nil ? nil : { tuneHere(room) },
+                                   expand: { detent = .full }, compact: compactLandscape)
+            }
         } else {
             message("Nobody on Roundtable is tuned here.",
                     detail: roundtable.frequencyAvailable ? "Tap a tag on the band to view that frequency."

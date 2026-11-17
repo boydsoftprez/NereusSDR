@@ -56,8 +56,8 @@
     },
     {
       "output": "manual/10-customize.md",
-      "output_sha256": "762000bc06389a1f3f3f85ebf1c645d320ba27ddc42d30bfe3bd4b18781c4ae8",
-      "sha256": "762000bc06389a1f3f3f85ebf1c645d320ba27ddc42d30bfe3bd4b18781c4ae8",
+      "output_sha256": "9ad2a6b21d04d01e3e0df05a9dd83b985df87ad35e56ecafea845e086c220bd5",
+      "sha256": "9ad2a6b21d04d01e3e0df05a9dd83b985df87ad35e56ecafea845e086c220bd5",
       "source": "docs/manual/10-customize.md"
     },
     {
@@ -68,8 +68,8 @@
     },
     {
       "output": "manual/12-reference.md",
-      "output_sha256": "f0947ebf8708024bfd2197a6463ae3b26255fede4fadcceffe80cdea32403471",
-      "sha256": "f0947ebf8708024bfd2197a6463ae3b26255fede4fadcceffe80cdea32403471",
+      "output_sha256": "bb82f4e1187332d633e2594678bec75fd613fe9d41eb3119dbc56c203c7babda",
+      "sha256": "bb82f4e1187332d633e2594678bec75fd613fe9d41eb3119dbc56c203c7babda",
       "source": "docs/manual/12-reference.md"
     },
     {
@@ -486,8 +486,8 @@
     },
     {
       "output": "manual/10-customize.html",
-      "output_sha256": "a7c4d369194ed8198433d7865fded7af4be75a41b1c1762eb094c42483351067",
-      "sha256": "762000bc06389a1f3f3f85ebf1c645d320ba27ddc42d30bfe3bd4b18781c4ae8",
+      "output_sha256": "b7a59c8c62467a1870272206c35a475e48970f191d0e5ce37c3079d940670e7a",
+      "sha256": "9ad2a6b21d04d01e3e0df05a9dd83b985df87ad35e56ecafea845e086c220bd5",
       "source": "docs/manual/10-customize.md"
     },
     {
@@ -498,8 +498,8 @@
     },
     {
       "output": "manual/12-reference.html",
-      "output_sha256": "5ab674bc9e4fd702786db385ff27820db78ee7eef6af2c65a99898d799efbf72",
-      "sha256": "f0947ebf8708024bfd2197a6463ae3b26255fede4fadcceffe80cdea32403471",
+      "output_sha256": "3fae35f2ac27e19716e17855083682355948148081a3d44fdc88361d8153e748",
+      "sha256": "bb82f4e1187332d633e2594678bec75fd613fe9d41eb3119dbc56c203c7babda",
       "source": "docs/manual/12-reference.md"
     },
     {

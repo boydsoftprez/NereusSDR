@@ -11,6 +11,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Any tune of a pan's slice reaches its DsrRewindLink
+//               (sliceTuned): in the past it plays from the top row, or
+//               says nothing was kept at that frequency then. J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-16: Rewind plays on release at the frequency of the pan's slice
+//               (DsrRewindLink::setSliceFrequency), JJ's design change.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-16: The details get their own left edge for opening upward
 //               (updateRoundtableInspectorSpot). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
@@ -1189,6 +1196,21 @@
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-07 - J.J. Boyd (KG4VCF), hot keys: the state feed follows VOX (vox.toggle).
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 6: one FlagRecordPlay per slice flag, fed by
+//                RadioModel::recordings(). AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 7: the Recordings applet (Containers >
+//                Applets, hidden at first) and the Recordings window, opened by All recordings...
+//                on every flag and in the panel. AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 8: Recording settings... on every flag
+//                and Setup's Recordings › open Setup > Cores > Recordings and the Recordings
+//                window. AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 12: the Voice keyer applet (Containers >
+//                Applets, id "VoiceKeyer", hidden at first; DvkApplet stays unbuilt), VOICE in the
+//                TX panel opening it, and both gated with TUNE and MOX. AI-assisted implementation
+//                via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 24: one DsrRewindLink per pan, rewind on
+//                its waterfall for the slice it tunes. AI-assisted implementation via Anthropic
+//                Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -1412,6 +1434,12 @@ warren@wpratt.com
 #include "MainWindow.h"
 #include "TxHeldIndicator.h"
 #include "gui/ScopedChildWidget.h"
+#include "gui/recordings/DsrRewindLink.h"
+#include "gui/recordings/FlagRecordPlay.h"
+#include "gui/recordings/RecordingsPanel.h"
+#include "gui/recordings/RecordingsWindow.h"
+#include "gui/applets/VoiceKeyerApplet.h"
+#include "gui/recordings/LocalMicClipRecorder.h"
 #include "SessionEndSave.h"
 #include "gui/multidevice/DeviceWords.h"
 #include "gui/multidevice/MultiDeviceController.h"
@@ -5425,6 +5453,9 @@ void MainWindow::refreshRemoteDeviceScreens()
     if (m_txApplet) {
         m_txApplet->setTakeTransmitOffered(takeOffered, elsewhere && tx.keyed());
     }
+    if (m_voiceKeyerApplet) {
+        m_voiceKeyerApplet->setTakeTransmitOffered(takeOffered);
+    }
     if (m_panStack) {
         for (PanadapterApplet* applet : m_panStack->allApplets()) {
             if (applet) {
@@ -6614,6 +6645,15 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     VfoWidget* newFlag = sw->addVfoWidget(sliceIndex);
     if (!newFlag) { return nullptr; }
     m_vfoWidgetsBySlice.insert(sliceIndex, newFlag);
+    // Recording plan Task 6: Record and Play on this flag, through the
+    // model's recordings access (the Core here or across the link). Owned by
+    // the flag.
+    auto* recordPlay = new FlagRecordPlay(newFlag, m_radioModel->recordings(), sliceIndex, newFlag);
+    // Recording plan Task 7: All recordings... opens the Recordings window.
+    connect(recordPlay, &FlagRecordPlay::allRecordingsRequested, this, &MainWindow::openRecordingsWindow);
+    // Recording plan Task 8: Recording settings... opens Setup > Cores > Recordings.
+    connect(recordPlay, &FlagRecordPlay::recordingSettingsRequested, this,
+            [this] { openSetupAtPage(QStringLiteral("Recordings")); });
     // A flag can die with its pan while its entry remains: the map never holds a
     // dead flag. m_vfoFlagLifetime goes before the map and before the children,
     // so this never runs on the map once it is gone (see ~MainWindow's toasts).
@@ -9520,6 +9560,40 @@ void MainWindow::wireSpectrumSliceControls(SpectrumWidget* sw,
                 [this](const QString& id, int) { showOwnStreamOnPan(id); });
     }
     refreshStep();
+
+    // Recording plan Task 24: rewind on this pan's waterfall, for the slice
+    // it tunes (resolved on each use, as the handlers below are).
+    if (sw->findChild<DsrRewindLink*>(QStringLiteral("DsrRewindLink"), Qt::FindDirectChildrenOnly) == nullptr) {
+        auto* rewind = new DsrRewindLink(sw, [this, panId]() {
+            const SliceModel* s = m_shuttingDown ? nullptr : sliceForPan(panId);
+            return s != nullptr ? s->sliceIndex() : -1;
+        }, sw);
+        // Rewind plays on release at the frequency the slice is on.
+        rewind->setSliceFrequency([this, panId]() {
+            const SliceModel* s = m_shuttingDown ? nullptr : sliceForPan(panId);
+            return s != nullptr ? s->frequency() : 0.0;
+        });
+        rewind->setAccess(m_radioModel->recordings());
+        // Any tune of the pan's slice (its flag, the VFO knob, a typed
+        // frequency, a click): in the past it plays from the top row, or,
+        // playing, says when nothing was kept at the new frequency then.
+        const QPointer<DsrRewindLink> link(rewind);
+        const auto watchTune = [this, sw, panId, link](int sliceId) {
+            if (m_shuttingDown || !m_radioModel) { return; }
+            if (SliceModel* slice = m_radioModel->sliceById(sliceId)) {
+                connect(slice, &SliceModel::frequencyChanged, sw,
+                        [this, panId, link, slice](double) {
+                    if (link && !m_shuttingDown && sliceForPan(panId) == slice) {
+                        link->sliceTuned();
+                    }
+                });
+            }
+        };
+        for (SliceModel* slice : m_radioModel->slices()) {
+            if (slice) { watchTune(slice->sliceIndex()); }
+        }
+        connect(m_radioModel, &RadioModel::sliceAdded, sw, watchTune);
+    }
 
     // Click on the spectrum tunes this pan's slice.
     connect(sw, &SpectrumWidget::frequencyClicked, this,
@@ -14213,6 +14287,43 @@ void MainWindow::populateDefaultMeter()
         }
     }
 
+    // Recording plan Task 7 (design section 3, Recordings panel): the six
+    // latest recordings on the Core, for quick listening. All recordings...
+    // opens the Recordings window. Its red row names the slice's frequency
+    // and mode.
+    m_recordingsApplet = new RecordingsPanel(m_radioModel, m_radioModel->recordings(), nullptr);
+    panel->addApplet(m_recordingsApplet);
+    connect(m_recordingsApplet, &RecordingsPanel::allRecordingsRequested, this,
+            &MainWindow::openRecordingsWindow);
+    m_recordingsApplet->setSliceTextSource([this](int sliceId) {
+        SliceModel* slice = m_radioModel ? m_radioModel->sliceById(sliceId) : nullptr;
+        if (slice == nullptr) {
+            return QString();
+        }
+        return recordingFrequencyText(static_cast<qint64>(std::llround(slice->frequency()))) + QLatin1Char(' ')
+            + SliceModel::modeName(slice->dspMode());
+    });
+
+    // Recording plan Task 12 (design section 3, Voice keyer panel; 6.6):
+    // M1 to M8 on the Core, recorded from this computer's microphone before
+    // any processing. It replaces the unbuilt DvkApplet. VOICE in the TX
+    // panel opens it; Take transmit goes the TX panel's way.
+    m_voiceKeyerApplet = new VoiceKeyerApplet(m_radioModel, m_radioModel->recordings(), nullptr);
+    panel->addApplet(m_voiceKeyerApplet);
+    // This computer's own microphone, which the transmitter reads (the
+    // engine's clip tap copies it; a remote window's microphone too).
+    m_voiceKeyerApplet->setMicSourceFactory([this]() {
+        return MicClipSource::forAudioEngine(m_radioModel ? m_radioModel->localAudioDevices() : nullptr);
+    });
+    if (m_txApplet) {
+        connect(m_voiceKeyerApplet, &VoiceKeyerApplet::takeTransmitRequested, m_txApplet,
+                &TxApplet::takeTransmitRequested);
+        connect(m_txApplet, &TxApplet::voiceKeyerPanelRequested, this, &MainWindow::showVoiceKeyerPanel);
+        connect(m_txApplet, &TxApplet::voiceRefused, this, [this](const QString& words) {
+            showToast(words, ToastSeverity::Warning, 4000);
+        });
+    }
+
     // ── Applet visibility controller (Containers > Applets + ☰ menus) ──
     // NereusSDR-original. Backs the show/hide menu surfaces.
     //
@@ -14257,6 +14368,8 @@ void MainWindow::populateDefaultMeter()
     m_appletsById[QStringLiteral("RfKit")]      = m_rfKitApplet;
     m_appletsById[QStringLiteral("Cat")]        = m_catApplet;
     m_appletsById[QStringLiteral("Cwx")]        = m_cwxApplet;
+    m_appletsById[QStringLiteral("Recordings")] = m_recordingsApplet;
+    m_appletsById[QStringLiteral("VoiceKeyer")] = m_voiceKeyerApplet;
 #ifdef HAVE_WEBSOCKETS
     if (m_tciApplet) {
         m_appletsById[QStringLiteral("Tci")]        = m_tciApplet;
@@ -14329,6 +14442,14 @@ void MainWindow::populateDefaultMeter()
         });
     m_appletVis->registerApplet(QStringLiteral("RfKit"),
                                 QStringLiteral("RF-Kit RF2K-S"), true);
+    // Recording plan Task 7: placed hidden, one tick away under
+    // Containers > Applets.
+    m_appletVis->registerApplet(QStringLiteral("Recordings"),
+                                QStringLiteral("Recordings"),   false);
+    // Recording plan Task 12: placed hidden, one tick away under
+    // Containers > Applets, and opened by VOICE's "Voice keyer panel ›".
+    m_appletVis->registerApplet(QStringLiteral("VoiceKeyer"),
+                                QStringLiteral("Voice keyer"),  false);
 #ifdef HAVE_WEBSOCKETS
     if (m_tciApplet) {
         m_appletVis->registerApplet(QStringLiteral("Tci"),
@@ -18921,6 +19042,9 @@ void MainWindow::wireSetupDialog(SetupDialog* dialog)
         connect(dialog, &SetupDialog::tgxlAntennaLabelChanged,
                 m_tunerApplet, &TunerApplet::onAntennaLabelChanged);
     }
+    // Recording plan Task 8: Setup > Cores > Recordings' Recordings ›.
+    connect(dialog, &SetupDialog::recordingsWindowRequested, this,
+            [this] { openRecordingsWindow(QString()); });
     // Task 3.6: CPU meter rate live-apply.
     connect(dialog, &SetupDialog::cpuMeterRateChanged,
             this,   &MainWindow::setCpuTimerIntervalHz);
@@ -19845,6 +19969,31 @@ void MainWindow::resizeEvent(QResizeEvent* event)
 
 // CW transmit (R-CW-44): shows or hides the CWX applet, where the operator
 // can reach its header when shown.
+// Recording plan Task 12: VOICE's "Voice keyer panel ›" (n 0) or an empty
+// message (n 1 to 8, Record lit for it).
+void MainWindow::showVoiceKeyerPanel(int n)
+{
+    if (m_appletVis == nullptr || m_voiceKeyerApplet == nullptr) { return; }
+    m_appletVis->setVisible(QStringLiteral("VoiceKeyer"), true);
+    if (m_containerManager) {
+        m_containerManager->bringAppletOnScreen(
+            ContainerContentRegistry::appletTypeForVisibilityId(QStringLiteral("VoiceKeyer")));
+    }
+    if (n > 0) {
+        m_voiceKeyerApplet->armRecord(n);
+    }
+    QPointer<QWidget> applet(m_voiceKeyerApplet);
+    QTimer::singleShot(0, this, [applet]() {
+        if (applet.isNull()) { return; }
+        for (QWidget* w = applet->parentWidget(); w != nullptr; w = w->parentWidget()) {
+            if (auto* area = qobject_cast<QScrollArea*>(w)) {
+                area->ensureWidgetVisible(applet, 0, 0);
+                return;
+            }
+        }
+    });
+}
+
 void MainWindow::showCwxApplet(bool shown)
 {
     if (m_appletVis == nullptr) { return; }
@@ -21259,6 +21408,10 @@ void MainWindow::applyRemoteRoleGating()
     TxEqDialog::setSettingsPermitted(processingPermitted, processingReason);
     if (m_txApplet) {
         m_txApplet->setTransmitPermitted(transmitPermitted, transmitReason);
+        // Recording plan Task 12: the voice keyer's sends, as TUNE and MOX.
+        if (m_voiceKeyerApplet) {
+            m_voiceKeyerApplet->setTransmitPermitted(transmitPermitted, transmitReason);
+        }
         m_txApplet->setVoxPermitted(voxLine, voxReason);
         m_txApplet->setTransmitSettingsPermitted(settingsPermitted, settingsReason);
         m_txApplet->setTransmitChainSettingsPermitted(chainPermitted, chainReason);
@@ -21711,6 +21864,15 @@ void MainWindow::showSupportDialog()
 //   psform.Focus();
 //
 // NereusSDR mirrors via raise()+activateWindow() instead of Focus().
+void MainWindow::openRecordingsWindow(const QString& recordingId)
+{
+    if (m_shuttingDown || !m_radioModel) {
+        return;
+    }
+    RecordingsWindow* window = RecordingsWindow::showFor(m_radioModel->recordings(), this);
+    window->selectRecording(recordingId);
+}
+
 void MainWindow::openPureSignalDialog()
 {
     if (!m_psForm) {

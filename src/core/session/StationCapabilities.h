@@ -59,6 +59,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-15: Recording plan Task 5: recordingsVersion, for a peer that declared recordings.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05: Band stack plan Task 4: bandStackVersion, for a peer that declared bandStack.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05: Hot keys (R-HK-13), remote dot and dash: remoteCwVersion 3.
@@ -973,6 +975,13 @@ struct StationCapabilities {
     /// minor 11 whose hello declared `bandStack` 1. 0 (absent): band buttons
     /// work through slice.selectBand as they did.
     int bandStackVersion = 0;
+    /// Recording plan Task 5: 1 means the Core mirrors its recordings (slice
+    /// states, the last kept recording, the index and the settings) as the
+    /// read-only `recordings` object and takes the recordings.* verbs. Sent
+    /// after bandStackVersion and before txSsbModMonitorVersion, only to a
+    /// peer at minor 11 whose hello declared `recordings` 1, on a Core that
+    /// runs its own radio. 0 (absent): the recording controls are disabled.
+    int recordingsVersion = 0;
     int psAlgorithmVersion = 0;
     int propertyResultVersion = 0;
     int dspAssetVersion = 0;

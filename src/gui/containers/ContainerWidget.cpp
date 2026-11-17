@@ -157,6 +157,10 @@
 //   2026-10-26 - Task 36: the VFO display's frequency requests name their
 //                 slice and go to MainWindow directly (no relay here).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-16 - A drag claims Escape (ShortcutOverride), so the hot keys
+//                 leave it to cancel the drag. Recording plan Task 13 fix
+//                 round. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 /*  ucMeter.cs
@@ -1479,7 +1483,13 @@ void ContainerWidget::leaveEvent(QEvent* event)
 bool ContainerWidget::eventFilter(QObject* watched, QEvent* event)
 {
     // Workspace preview: Escape cancels a drag or an edge drag; nothing of
-    // it is kept.
+    // it is kept. While one runs Escape is claimed, so no window-wide key
+    // takes it first (KeyboardRouter asks with ShortcutOverride).
+    if (m_groupHeader && (m_edgePressed || m_dragging) && event->type() == QEvent::ShortcutOverride
+        && static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape) {
+        event->accept();
+        return true;
+    }
     if (m_groupHeader && (m_edgePressed || m_dragging) && event->type() == QEvent::KeyPress
         && static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape) {
         if (m_edgePressed) {

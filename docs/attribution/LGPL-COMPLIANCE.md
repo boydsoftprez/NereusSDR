@@ -26,6 +26,16 @@ this via:
    libspecbleach at the pinned commit is available from the upstream
    repo at the SHA documented in `third_party/libspecbleach/README.md`.
 
+NereusSDR also links one LGPL library dynamically: **LAME** (libmp3lame,
+LGPL-2.0-or-later, used under LGPL-2.1), the Core's MP3 encoder for
+recordings. It is never linked statically: the build asks for the shared
+library by name, ships it beside the program where the platform has no
+system copy (`libmp3lame-0.dll` on Windows, the Homebrew dylib inside the
+macOS app), and NereusSDR does not change it, so a user can replace it
+with a modified LAME of the same interface (LGPL-2.1 section 6(b)).
+Details: `docs/attribution/LAME-PROVENANCE.md`,
+`packaging/third-party-licenses/lame.txt`.
+
 No other dependencies in NereusSDR carry LGPL obligations at this time.
 
 ## Library details
@@ -45,3 +55,4 @@ No other dependencies in NereusSDR carry LGPL obligations at this time.
 | Date | Change |
 |------|--------|
 | 2026-04-23 | Created — added libspecbleach (Task 6, Phase 3G-RX Epic C-1) |
+| 2026-11-15 | Added LAME, linked dynamically for MP3 recordings |

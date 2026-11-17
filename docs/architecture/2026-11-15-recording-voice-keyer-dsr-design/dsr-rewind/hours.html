@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Digital Spectrum Recorder</title>
+<style>
+:root { color-scheme: dark; --app: #08080a; --panel: #0c0c0e; --border: #2c2c31; --text: #dcdce1; --dim: #a6a6ac; --blue: #264e78; --blue-b: #4a7ba8; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--app); color: var(--text); font: 13px/1.4 system-ui, -apple-system, sans-serif; }
+header { padding: 16px 20px 4px; }
+h1 { margin: 0 0 4px; font: 700 21px/1.2 system-ui, sans-serif; }
+.note { color: var(--dim); margin: 0; max-width: 1180px; }
+.bar { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; padding: 10px 20px; }
+.chips { display: inline-flex; gap: 4px; align-items: center; }
+.chips span { color: var(--dim); margin-right: 4px; }
+.chip { height: 24px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--border); background: #1b1b1f; color: #e8e8ec; font: 600 12px/22px system-ui; cursor: pointer; }
+.chip.on { background: var(--blue); border-color: var(--blue-b); color: #fff; }
+.chip .pick { margin-left: 6px; padding: 0 5px; border-radius: 3px; background: #1f3b5c; font-size: 10px; }
+.hear { display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 12px; border-radius: 6px; background: var(--panel); border: 1px solid var(--border); min-width: 470px; }
+.hear .k { color: var(--dim); }
+.hear .v { font-weight: 600; }
+.hear.past { border-color: #a03030; }
+.hear.past .v { color: #ff8a8a; }
+.wrap { padding: 0 20px 30px; }
+.stage-box { position: relative; width: 100%; overflow-x: auto; overflow-y: hidden; border: 1px solid var(--border); -webkit-overflow-scrolling: touch; }
+#sizer { position: relative; }
+#strip, #stripLive, #ov, #tl, #bracket, #saveBtn { touch-action: none; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --app: #08080a; } }
+:root[data-theme="dark"] { --app: #08080a; }
+@media (max-width: 700px) { header, .bar { padding-left: 16px; padding-right: 16px; } .wrap { padding: 0 16px 24px; } .hear { min-width: 0; width: 100%; font-size: 12px; } h1 { font-size: 18px; } }
+.stage { position: absolute; left: 0; top: 0; width: 1512px; height: 869px; transform-origin: 0 0; background: url(clean.jpg) 0 0 / 1512px 869px no-repeat; user-select: none; }
+.stage > * { position: absolute; }
+#wf { left: 0; top: 359px; width: 1141px; height: 443px; cursor: crosshair; }
+.shade { width: 16px; }
+.shade.spec { top: 30px; height: 281px; background: rgba(0, 48, 58, .375); border-left: 1px solid #01a0bf; pointer-events: none; }
+.shade.wf { top: 359px; height: 443px; background: rgba(0, 150, 180, .10); border-left: 1px solid rgba(1, 160, 191, .7); pointer-events: none; }
+.carrier { top: 30px; width: 1px; height: 772px; background: #04a4c4; pointer-events: none; }
+.tri { width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 6px solid #00d4ff; top: 100px; }
+#flag { top: 30px; width: 252px; height: 135px; background: url(flag.png) 0 0 / 252px 135px; }
+#lock { top: 32px; width: 19px; height: 20px; background: url(lock.png) 0 0 / 19px 20px; }
+#flag .freq { position: absolute; left: 100px; top: 40px; width: 140px; height: 26px; background: #0c0c0e; color: #00e5ff; font: 700 24.5px/26px Menlo, ui-monospace, monospace; text-align: right; letter-spacing: -.2px; }
+#flag .who { position: absolute; left: 4px; top: 21px; width: 240px; height: 16px; white-space: nowrap; background: #0c0c0e; color: #dcdce1; font: 500 11.5px/16px system-ui, sans-serif; padding-left: 2px; }
+#flag .who.past { color: #ff6b6b; font-weight: 700; letter-spacing: .02em; }
+#pastTag { left: 84px; top: 36px; padding: 1px 7px; border-radius: 3px; background: #c02020; color: #fff; font: 700 10px/15px system-ui; letter-spacing: .06em; display: none; }
+/* Time strip in its rewound form, as SpectrumWidget::drawTimeScale draws it. */
+#strip { left: 1107px; top: 359px; width: 72px; height: 443px; background: rgba(10, 10, 24, .86); border-left: 1px solid #304050; display: none; cursor: ns-resize; overflow: hidden; }
+#stripLive { left: 1141px; top: 359px; width: 38px; height: 443px; cursor: ns-resize; }
+#strip .t { position: absolute; right: 4px; font: 9.5px/1 system-ui, sans-serif; color: #80a0b0; transform: translateY(-50%); cursor: pointer; padding: 2px 0; }
+#strip .t:hover { color: #fff; text-decoration: underline; }
+#strip .tick { position: absolute; left: 0; width: 4px; height: 1px; background: #507080; }
+#live { left: 1144px; top: 333px; width: 32px; height: 16px; border-radius: 3px; border: 1px solid #405060; background: #454545; color: #b0b0b0; font: 700 9.5px/14px system-ui, sans-serif; text-align: center; cursor: pointer; }
+#live.past { left: 1137px; top: 332px; width: 40px; height: 20px; line-height: 18px; background: #c02020; color: #fff; }
+/* Way 1: an overview of every kept hour, standing beside the time strip. */
+#ov { left: 1063px; top: 381px; width: 44px; height: 421px; display: none; cursor: pointer; border-left: 1px solid #304050; }
+/* Way 2: a timeline along the foot of the waterfall. */
+#tl { left: 0; top: 770px; width: 1107px; height: 32px; display: none; cursor: pointer; }
+#drawing { left: 0; top: 359px; width: 1107px; height: 443px; display: none; background: rgba(5, 5, 12, .72); color: #c8d8e8; font: 600 13px/443px system-ui; text-align: center; pointer-events: none; }
+#goto { display: none; z-index: 5; padding: 6px; background: #1b1b1f; border: 1px solid #3d3d41; border-radius: 4px; box-shadow: 0 10px 28px -8px #000; font: 12px system-ui; color: #e8e8ec; white-space: nowrap; }
+#goto input { width: 74px; height: 22px; margin: 0 4px; border-radius: 4px; border: 1px solid #3d3d41; background: #040406; color: #fff; font: 600 12px/20px Menlo, monospace; text-align: center; }
+#goto button { height: 22px; padding: 0 9px; border-radius: 5px; border: 1px solid #4a7ba8; background: #264e78; color: #fff; font: 700 11.5px system-ui; cursor: pointer; }
+#saveBtn { left: 1063px; top: 361px; width: 44px; height: 18px; border-radius: 4px; border: 1px solid #405060; background: #1b1b1f; color: #e8e8ec; font: 700 9.5px/16px system-ui; text-align: center; cursor: pointer; display: none; padding: 0; }
+#saveBtn.on { background: #264e78; border-color: #4a7ba8; color: #fff; }
+#bracket { left: 1063px; width: 44px; display: none; background: rgba(255, 210, 90, .22); border: 2px solid #ffd25a; border-radius: 2px; cursor: move; z-index: 3; }
+#bracket i { position: absolute; left: -2px; right: -2px; height: 7px; cursor: ns-resize; }
+#bracket i.a { bottom: -4px; } #bracket i.b { top: -4px; }
+#saveBox { left: 812px; width: 244px; display: none; z-index: 4; padding: 8px; background: #1b1b1f; border: 1px solid #3d3d41; border-radius: 4px; box-shadow: 0 10px 28px -8px #000; font: 12px/1.35 system-ui; color: #e8e8ec; }
+#saveBox .h { font-weight: 700; margin-bottom: 2px; }
+#saveBox .d { color: #a6a6ac; margin-bottom: 7px; }
+#saveBox button { display: block; width: 100%; height: 24px; margin-top: 4px; border-radius: 6px; border: 1px solid #2c2c31; background: #1f1f24; color: #f0f0f2; font: 700 11.5px system-ui; cursor: pointer; }
+#saveBox button.pri { background: #264e78; border-color: #4a7ba8; color: #fff; }
+.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 7px 12px; background: #1b1b1f; border: 1px solid #3d3d41; border-radius: 4px; font-size: 12.5px; opacity: 0; transition: opacity .15s; pointer-events: none; z-index: 9; }
+.toast.on { opacity: 1; }
+.legend { color: var(--dim); font-size: 12px; padding: 8px 0 0; max-width: 1180px; }
+.legend b { color: var(--text); font-weight: 600; }
+.sw { display: inline-block; width: 46px; height: 9px; vertical-align: 0; border-radius: 2px; background: linear-gradient(90deg, #0f1c30, #2a5d9e, #d8b04a, #ff8040); margin: 0 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Digital Spectrum Recorder: getting around hours</h1>
+  <p class="note">The Digital Spectrum Recorder on the Core keeps 3½ hours here (10 GB at this pan width). Pull the time strip up a little to go back, as you do today, and a map of every kept hour appears, shaded by how busy the band was. Click or drag on it to jump anywhere. Click any clock time on the strip to type a time. Past the 20 minutes this window holds, the Core redraws the waterfall first, which takes a moment. Click a signal to play it; red LIVE comes back to the present. On a phone, turn it sideways; the picture scrolls left and right.</p>
+</header>
+<div class="bar">
+  <div class="hear" id="hear"><span class="k">Slice A is playing</span><span class="v" id="hearV">Live · 7.185.000 LSB</span></div>
+  <div class="chips" id="wayChips" style="display:none"><button class="chip on" data-way="side">side</button><button class="chip" data-way="foot">foot</button></div>
+  <span class="note" style="margin:0">Rewound, press <b>SAVE</b> at the top of the map: a yellow bracket marks the stretch. Drag its ends or the whole bracket on the map, then save.</span>
+</div>
+<div class="wrap">
+  <div class="stage-box" id="box"><div id="sizer"><div class="stage" id="stage">
+    <canvas id="wf"></canvas>
+    <div class="shade spec" id="shS"></div>
+    <div class="shade wf" id="shW"></div>
+    <div class="carrier" id="car"></div>
+    <div class="tri" id="tri"></div>
+    <div id="lock"></div>
+    <div id="flag"><div class="who" id="who">You control</div><div class="freq" id="fq">7.185.000</div></div>
+    <div id="pastTag" title="The spectrum shows the moment you are hearing">PAST</div>
+    <div id="drawing">Core is drawing 13:05 from the kept signal…</div>
+    <div id="stripLive" title="Pull up to go back in time"></div>
+    <div id="strip" title="Pull up to go further back, down to come forward. Click a time to type one."></div>
+    <canvas id="ov" title="Every kept hour, brighter where the band was busy. Click or drag to jump."></canvas>
+    <button id="saveBtn" title="Save a stretch to Recordings before it is overwritten">SAVE</button>
+    <div id="bracket"><i class="b"></i><i class="a"></i></div>
+    <div id="saveBox"><div class="h" id="sbH"></div><div class="d" id="sbD"></div>
+      <button class="pri" id="sbPan">Save stretch (whole pan)</button><button id="sbMp3">Save sound only (MP3)</button><button id="sbCancel">Cancel</button></div>
+    <canvas id="tl" title="Every kept hour, brighter where the band was busy. Click or drag to jump."></canvas>
+    <button id="live" title="Back to live sound on the frequency you were on">LIVE</button>
+    <div id="goto">Go to <input id="gotoIn" maxlength="8"> UTC <button id="gotoGo">Go</button></div>
+  </div></div></div>
+  <p class="legend"><b>Shading on the map:</b> dark where the band was quiet <span class="sw"></span> bright where it was busy. The white mark is where you are. The busy patch around 13:05 is a net.</p>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+(function () {
+  var PX_PER_S = 33.3, WF_H = 443, WF_W = 1141, PICT_S = 1200;   // a window's own picture: 20 min
+  var KEEP_S = 3.5 * 3600;                                       // kept on the Core's disk
+  var LIVE_HZ = 7185000, PX_PER_HZ = 5789 / 1e6, CAR_LIVE_X = 570.5;
+  var NOW0 = Date.UTC(2026, 10, 14, 14, 32, 10);
+  var TRACE_RIGHT = [419.6, 491.4, 568.5, 646.4, 748.4];
+  var t0 = performance.now();
+  function now() { return NOW0 + (performance.now() - t0); }
+  var st = { way: 'side', past: false, hz: LIVE_HZ, playT: 0, playAt: 0, drawingUntil: 0 };
+  var img = new Image(); img.src = 'wf.jpg';
+  var cv = document.getElementById('wf'), cx = cv.getContext('2d');
+  cv.width = WF_W * 2; cv.height = WF_H * 2;
+
+  // How busy the band was, one value per minute, oldest first. A net around 13:05, quiet early on.
+  var ACT = [];
+  (function () {
+    var seed = 7; function rnd() { seed = (seed * 16807) % 2147483647; return seed / 2147483647; }
+    var n = Math.ceil(KEEP_S / 60), start = NOW0 / 1000 - KEEP_S;
+    for (var i = 0; i < n; i++) {
+      var t = start + i * 60, h = new Date(t * 1000).getUTCHours() + new Date(t * 1000).getUTCMinutes() / 60;
+      var v = 0.18 + 0.25 * (h - 11) / 3.5 + rnd() * 0.22;
+      if (h > 13.0 && h < 13.45) { v = 0.75 + rnd() * 0.25; }
+      if (h > 11.6 && h < 11.75) { v = 0.6 + rnd() * 0.2; }
+      ACT.push(Math.max(0, Math.min(1, v)));
+    }
+  })();
+  function heat(v) {
+    var stops = [[15, 28, 48], [42, 93, 158], [216, 176, 74], [255, 128, 64]];
+    var p = v * 3, i = Math.min(2, Math.floor(p)), f = p - i, a = stops[i], b = stops[i + 1];
+    return 'rgb(' + Math.round(a[0] + (b[0] - a[0]) * f) + ',' + Math.round(a[1] + (b[1] - a[1]) * f) + ',' + Math.round(a[2] + (b[2] - a[2]) * f) + ')';
+  }
+
+  function hzToX(hz) { return CAR_LIVE_X + (hz - LIVE_HZ) * PX_PER_HZ; }
+  function xToHz(x) { return LIVE_HZ + (x - CAR_LIVE_X) / PX_PER_HZ; }
+  function fmtHz(hz) { var k = Math.round(hz / 10) * 10; var s = (k / 1e6).toFixed(5); return s.slice(0, 5) + '.' + s.slice(5) + '0'; }
+  function clock(ms) { return new Date(ms).toISOString().slice(11, 19); }
+  function hm(ms) { return new Date(ms).toISOString().slice(11, 16); }
+  function ago(sec) { sec = Math.max(0, Math.round(sec)); var h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s).padStart(2, '0'); }
+  var tt; function say(t) { var e = document.getElementById('toast'); e.textContent = t; e.classList.add('on'); clearTimeout(tt); tt = setTimeout(function () { e.classList.remove('on'); }, 3200); }
+
+  // The waterfall moves with the sound: its top row is the moment slice A plays.
+  function topTime() { return st.past ? st.playT + (performance.now() - st.playAt) : now(); }
+  function jumpTo(t, why) {
+    var oldest = now() - KEEP_S * 1000;
+    t = Math.max(oldest + 15000, Math.min(now() - 1000, t));
+    var wasFar = st.past && (now() - topTime()) / 1000 > PICT_S;
+    st.past = true; st.playT = t; st.playAt = performance.now();
+    var age = (now() - t) / 1000;
+    if (age > PICT_S && !(wasFar && why === 'drag')) {
+      st.drawingUntil = performance.now() + 700;
+      document.getElementById('drawing').textContent = 'Digital Spectrum Recorder: drawing ' + hm(t) + '…';
+    }
+    lastKey = '';
+  }
+  // Marking a stretch to save: a bracket on the map of kept hours.
+  var MB_PER_MIN = 46, MP3_MB_PER_MIN = 0.96;
+  function tToY(t) { var oldest = now() - KEEP_S * 1000; return 381 + (1 - (t - oldest) / (KEEP_S * 1000)) * 421; }
+  function yToT(y) { var oldest = now() - KEEP_S * 1000; return oldest + (1 - Math.max(0, Math.min(421, y - 381)) / 421) * KEEP_S * 1000; }
+  function drawMark() {
+    var br = document.getElementById('bracket'), box = document.getElementById('saveBox');
+    if (!st.mark || !st.past) { br.style.display = box.style.display = 'none'; return; }
+    var yb = tToY(st.mark.b), ya = tToY(st.mark.a);
+    br.style.display = 'block'; br.style.top = (yb - 2) + 'px'; br.style.height = Math.max(6, ya - yb + 4) + 'px';
+    var mins = (st.mark.b - st.mark.a) / 60000;
+    document.getElementById('sbH').textContent = 'Save ' + hm(st.mark.a) + ' to ' + hm(st.mark.b) + ' UTC';
+    document.getElementById('sbD').textContent = Math.max(1, Math.round(mins)) + ' min \u00b7 whole pan about ' + (mins * MB_PER_MIN >= 1000 ? (mins * MB_PER_MIN / 1000).toFixed(1) + ' GB' : Math.round(mins * MB_PER_MIN) + ' MB') + ', sound only about ' + Math.max(1, Math.round(mins * MP3_MB_PER_MIN)) + ' MB';
+    box.style.display = 'block'; box.style.top = Math.max(362, Math.min(690, (ya + yb) / 2 - 55)) + 'px';
+  }
+  document.getElementById('saveBtn').addEventListener('click', function () {
+    if (st.mark) { st.mark = null; return; }
+    var t = topTime(), b = Math.min(now() - 1000, t + 10 * 60000);
+    st.mark = { a: b - 10 * 60000, b: b };
+  });
+  var markDrag = null;
+  document.getElementById('bracket').addEventListener('pointerdown', function (e) {
+    e.preventDefault(); e.stopPropagation();
+    var part = e.target.classList.contains('a') ? 'a' : e.target.classList.contains('b') ? 'b' : 'both';
+    markDrag = { part: part, y: stagePt(e).y, a: st.mark.a, b: st.mark.b };
+  });
+  window.addEventListener('pointermove', function (e) {
+    if (!markDrag) { return; }
+    var dt = (yToT(stagePt(e).y) - yToT(markDrag.y)), oldest = now() - KEEP_S * 1000, newest = now() - 1000;
+    if (markDrag.part === 'a') { st.mark.a = Math.max(oldest, Math.min(st.mark.b - 30000, markDrag.a + dt)); }
+    else if (markDrag.part === 'b') { st.mark.b = Math.min(newest, Math.max(st.mark.a + 30000, markDrag.b + dt)); }
+    else { var len = markDrag.b - markDrag.a, a = Math.max(oldest, Math.min(newest - len, markDrag.a + dt)); st.mark.a = a; st.mark.b = a + len; }
+  });
+  window.addEventListener('pointerup', function () { markDrag = null; });
+  function saved(kind) {
+    var m = st.mark, mins = Math.round((m.b - m.a) / 60000);
+    say(kind === 'pan' ? 'Saved to Recordings: ' + hm(m.a) + ' UTC, ' + mins + ' min, whole pan around 7.185. Plays back like rewind.'
+                       : 'Saved to Recordings: ' + hm(m.a) + ' UTC, ' + mins + ' min, ' + fmtHz(st.hz) + ' LSB as MP3');
+    st.mark = null;
+  }
+  document.getElementById('sbPan').addEventListener('click', function () { saved('pan'); });
+  document.getElementById('sbMp3').addEventListener('click', function () { saved('mp3'); });
+  document.getElementById('sbCancel').addEventListener('click', function () { st.mark = null; });
+  function goLive(quiet) { st.mark = null; st.past = false; st.hz = LIVE_HZ; lastKey = ''; hideGoto(); if (!quiet) { say('Live again: slice A is back on 7.185.000 LSB'); } }
+
+  function draw() {
+    var top = topTime(), drawing = performance.now() < st.drawingUntil;
+    if (img.complete && img.naturalWidth) {
+      var off = ((top / 1000) * PX_PER_S * 2) % (WF_H * 2);
+      cx.drawImage(img, 0, off, WF_W * 2, WF_H * 2);
+      cx.drawImage(img, 0, off - WF_H * 2, WF_W * 2, WF_H * 2);
+    }
+    document.getElementById('drawing').style.display = drawing ? 'block' : 'none';
+    var x = hzToX(st.hz);
+    document.getElementById('shS').style.left = document.getElementById('shW').style.left = (x - 16) + 'px';
+    document.getElementById('car').style.left = x + 'px';
+    document.getElementById('tri').style.left = (x - 4) + 'px';
+    document.getElementById('flag').style.left = (x + 1) + 'px';
+    document.getElementById('lock').style.left = (x - 21) + 'px';
+    document.getElementById('fq').textContent = fmtHz(st.hz);
+    var who = document.getElementById('who'), hear = document.getElementById('hear'), hv = document.getElementById('hearV');
+    document.getElementById('live').className = st.past ? 'past' : '';
+    document.getElementById('strip').style.display = st.past ? 'block' : 'none';
+    document.getElementById('pastTag').style.display = st.past ? 'block' : 'none';
+    document.getElementById('ov').style.display = st.past && st.way === 'side' ? 'block' : 'none';
+    document.getElementById('tl').style.display = st.past && st.way === 'foot' ? 'block' : 'none';
+    var sb = document.getElementById('saveBtn'); sb.style.display = st.past ? 'block' : 'none'; sb.className = st.mark ? 'on' : '';
+    drawMark();
+    if (st.past) {
+      var behind = (now() - top) / 1000;
+      who.className = 'who past'; who.textContent = 'PLAYING ' + ago(behind) + ' AGO';
+      hear.className = 'hear past'; hv.textContent = clock(top) + ' UTC, ' + ago(behind) + ' ago · ' + fmtHz(st.hz) + ' LSB';
+      drawStrip(top); drawMap(top);
+    } else {
+      who.className = 'who'; who.textContent = 'You control';
+      hear.className = 'hear'; hv.textContent = 'Live · ' + fmtHz(st.hz) + ' LSB';
+    }
+    requestAnimationFrame(draw);
+  }
+  var lastKey = '';
+  function drawStrip(top) {
+    var key = Math.floor(top / 1000) + '|' + st.way;
+    if (key === lastKey) { return; }
+    lastKey = key;
+    var h = '', first = Math.ceil(top / 5000) * 5000;
+    for (var tm = first; ; tm -= 5000) {
+      var y = (top - tm) / 1000 * PX_PER_S + 4;
+      if (y > WF_H - 5) { break; }
+      if (y < 0) { continue; }
+      h += '<div class="tick" style="top:' + y + 'px"></div><div class="t" data-t="' + tm + '" style="top:' + y + 'px">' + clock(tm) + '</div>';
+    }
+    document.getElementById('strip').innerHTML = h;
+  }
+  function mapGeom(c) { return c.id === 'ov' ? { w: 44, h: 421, vertical: true } : { w: 1107, h: 32, vertical: false }; }
+  function drawMap(top) {
+    var c = document.getElementById(st.way === 'side' ? 'ov' : 'tl'), g = mapGeom(c);
+    if (c.width !== g.w * 2) { c.width = g.w * 2; c.height = g.h * 2; }
+    var k = c.getContext('2d'); k.setTransform(2, 0, 0, 2, 0, 0);
+    k.fillStyle = 'rgba(8,8,18,.94)'; k.fillRect(0, 0, g.w, g.h);
+    var n = ACT.length, oldest = now() - KEEP_S * 1000;
+    // Heat: newest at the top (side) or at the right (foot), as the waterfall and a timeline read.
+    for (var i = 0; i < n; i++) {
+      k.fillStyle = heat(ACT[i]);
+      if (g.vertical) { var y0 = g.h - (i + 1) / n * g.h; k.fillRect(2, y0, 12, g.h / n + 0.6); }
+      else { var x0 = i / n * g.w; k.fillRect(x0, 3, g.w / n + 0.6, 12); }
+    }
+    // This window's own 20 minutes (no wait) as a thin bracket.
+    var own = PICT_S / KEEP_S;
+    k.fillStyle = 'rgba(120,160,190,.55)';
+    if (g.vertical) { k.fillRect(0, 0, 1.5, own * g.h); } else { k.fillRect(g.w - own * g.w, 0, own * g.w, 1.5); }
+    // Hour marks.
+    k.font = '600 9px system-ui, sans-serif'; k.fillStyle = '#80a0b0'; k.strokeStyle = '#507080';
+    for (var hr = Math.ceil(oldest / 3600000) * 3600000; hr < now(); hr += 1800000) {
+      var f = (hr - oldest) / (KEEP_S * 1000), full = hr % 3600000 === 0;
+      if (g.vertical) { var y = g.h - f * g.h; k.beginPath(); k.moveTo(14, y); k.lineTo(full ? 20 : 17, y); k.stroke(); if (full) { k.fillText(hm(hr), 20, y + 3); } }
+      else { var x = f * g.w; k.beginPath(); k.moveTo(x, 15); k.lineTo(x, full ? 21 : 18); k.stroke(); if (full) { k.fillText(hm(hr), x - 12, 30); } }
+    }
+    if (!g.vertical) { k.fillText('now', g.w - 22, 30); k.fillText(hm(oldest), 2, 30); }
+    // Where you are.
+    var fy = (top - oldest) / (KEEP_S * 1000);
+    k.fillStyle = '#fff';
+    if (g.vertical) { var py = g.h - fy * g.h; k.fillRect(0, py - 1, g.w, 2); k.beginPath(); k.moveTo(g.w, py - 5); k.lineTo(g.w - 6, py); k.lineTo(g.w, py + 5); k.fill(); }
+    else { var px = fy * g.w; k.fillRect(px - 1, 0, 2, 17); k.beginPath(); k.moveTo(px - 5, 0); k.lineTo(px, 6); k.lineTo(px + 5, 0); k.fill(); }
+  }
+  function mapTime(c, e) {
+    var p = stagePt(e), g = mapGeom(c), oldest = now() - KEEP_S * 1000, f;
+    if (g.vertical) { f = 1 - (p.y - 381) / g.h; } else { f = p.x / g.w; }
+    return oldest + Math.max(0, Math.min(1, f)) * KEEP_S * 1000;
+  }
+  var mapDrag = null;
+  ['ov', 'tl'].forEach(function (id) {
+    var c = document.getElementById(id);
+    c.addEventListener('pointerdown', function (e) { e.preventDefault(); mapDrag = c; hideGoto(); jumpTo(mapTime(c, e), 'click'); });
+  });
+
+  function stagePt(e) { var r = document.getElementById('stage').getBoundingClientRect(); var k = r.width / 1512; return { x: (e.clientX - r.left) / k, y: (e.clientY - r.top) / k }; }
+  // Pull the time strip up to go back (today: full strip height = the window's 20 minutes).
+  var drag = null;
+  function startDrag(e) { if (e.target.closest('.t')) { return; } e.preventDefault(); hideGoto(); drag = { y: stagePt(e).y, age: st.past ? (now() - topTime()) / 1000 : 0 }; }
+  document.getElementById('strip').addEventListener('pointerdown', startDrag);
+  document.getElementById('stripLive').addEventListener('pointerdown', startDrag);
+  window.addEventListener('pointermove', function (e) {
+    if (mapDrag) { jumpTo(mapTime(mapDrag, e), 'drag'); return; }
+    if (!drag) { return; }
+    var age = Math.max(0, Math.min(KEEP_S, drag.age + (drag.y - stagePt(e).y) / WF_H * PICT_S));
+    if (age < 0.5) { goLive(true); return; }
+    jumpTo(now() - age * 1000, 'drag');
+  });
+  window.addEventListener('pointerup', function () { drag = null; mapDrag = null; });
+
+  // Click a signal: slice A tunes to it and plays from that row's moment.
+  cv.addEventListener('click', function (e) {
+    var p = stagePt(e), x = p.x, best = null;
+    TRACE_RIGHT.forEach(function (r) { if (x >= r - 22 && x <= r + 8 && (best === null || Math.abs(r - 8 - x) < Math.abs(best - 8 - x))) { best = r; } });
+    var hz = Math.round(xToHz(best !== null ? best + 2 : x) / 100) * 100;
+    st.hz = hz;
+    if (!st.past) { say('Live: slice A tuned to ' + fmtHz(hz) + '. Pull the time strip up to go back.'); return; }
+    var t = topTime() - (p.y - 359) / PX_PER_S * 1000;
+    st.playT = t; st.playAt = performance.now(); lastKey = '';
+    say('Slice A plays ' + fmtHz(hz) + ' from ' + clock(t) + ' UTC');
+  });
+
+  // Click a clock time on the strip to type one.
+  var gotoBox = document.getElementById('goto'), gotoIn = document.getElementById('gotoIn');
+  function hideGoto() { gotoBox.style.display = 'none'; }
+  document.getElementById('strip').addEventListener('click', function (e) {
+    var l = e.target.closest('.t'); if (!l) { return; }
+    var p = stagePt(e);
+    gotoIn.value = hm(+l.getAttribute('data-t'));
+    gotoBox.style.left = '900px'; gotoBox.style.top = (Math.min(760, p.y - 14)) + 'px'; gotoBox.style.display = 'block';
+    gotoIn.focus(); gotoIn.select();
+  });
+  function doGoto() {
+    var m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(gotoIn.value.trim());
+    if (!m) { say('Type a time like 13:05'); return; }
+    var d = new Date(now()); d.setUTCHours(+m[1], +m[2], +(m[3] || 0), 0);
+    var t = d.getTime(); if (t > now()) { t -= 86400000; }
+    if (now() - t > KEEP_S * 1000) { say('The Core keeps back to ' + hm(now() - KEEP_S * 1000) + ' UTC'); return; }
+    hideGoto(); jumpTo(t, 'goto'); say('Jumped to ' + hm(t) + ' UTC');
+  }
+  document.getElementById('gotoGo').addEventListener('click', doGoto);
+  gotoIn.addEventListener('keydown', function (e) { if (e.key === 'Enter') { doGoto(); } if (e.key === 'Escape') { hideGoto(); } });
+
+  document.getElementById('live').addEventListener('click', function () { if (st.past) { goLive(false); } });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && st.past && gotoBox.style.display !== 'block') { goLive(false); } });
+  document.getElementById('wayChips').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-way]'); if (!b) { return; }
+    st.way = b.getAttribute('data-way'); lastKey = '';
+    document.querySelectorAll('#wayChips .chip').forEach(function (c) { c.classList.toggle('on', c === b); });
+  });
+  // On a phone the picture stays big enough to touch and scrolls sideways, starting at the right where the strip and map are.
+  var fitted = false;
+  function fit() {
+    var b = document.getElementById('box'), k = Math.max(b.clientWidth / 1512, b.clientWidth < 1000 ? 0.62 : 0);
+    document.getElementById('stage').style.transform = 'scale(' + k + ')';
+    var z = document.getElementById('sizer'); z.style.width = (1512 * k) + 'px'; z.style.height = (869 * k) + 'px';
+    if (!fitted) { b.scrollLeft = Math.max(0, 1182 * k - b.clientWidth); fitted = true; }
+  }
+  window.addEventListener('resize', fit); fit();
+  requestAnimationFrame(draw);
+})();
+</script>
+</body>
+</html>

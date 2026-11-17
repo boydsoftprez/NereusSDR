@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Desktop Voice Button</title>
+<style>
+:root{ --bg:#08080a; --ink:#e8e8ec; --dim:#9a9aa2; --blue:#0a84ff; --red:#ff453a; }
+@media (prefers-color-scheme: light){ :root:not([data-theme="dark"]){ --bg:#08080a; --ink:#e8e8ec; } }
+:root[data-theme="dark"]{ --bg:#08080a; }
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:14px -apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;-webkit-text-size-adjust:100%}
+.top{max-width:1100px;margin:0 auto;padding:12px 16px 4px}
+.top h1{font-size:17px;margin:0 0 6px;font-weight:600}
+.top p{margin:4px 0;color:var(--dim);font-size:13px;line-height:1.4}
+.bar{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 4px;align-items:center}
+.bar button,.bar select{background:#1c1c1f;color:var(--ink);border:1px solid #333338;border-radius:8px;padding:7px 10px;font:inherit;font-size:13px}
+.bar button.on{background:#2b4a75;border-color:#4a76b0}
+.bar label{color:var(--dim);font-size:13px;margin-left:4px}
+details{margin:4px 0 8px;color:var(--dim);font-size:13px}
+details summary{cursor:pointer;color:var(--ink)}
+details li{margin:3px 0;line-height:1.35}
+.view{position:relative;overflow:hidden;margin:6px auto 24px;border-radius:10px;border:1px solid #222;background:#000}
+#stage{position:absolute;left:0;top:0;width:3024px;height:1738px;transform-origin:0 0}
+#stage img{position:absolute;left:0;top:0;width:3024px;height:1738px;display:block;user-select:none;-webkit-user-drag:none}
+/* everything below is in the capture's own pixels (2x the app's points) */
+#row{position:absolute;left:2366px;top:1243px;width:627px;height:54px;background:#0c0c0e;display:flex;gap:6px;padding:6px}
+.qb{flex:1;position:relative;overflow:hidden;border-radius:9px;border:2px solid #2c2c31;border-top-color:#38383e;background:linear-gradient(#212126,#151518);color:#dcdce1;font:700 25px -apple-system,"Helvetica Neue",Arial,sans-serif;letter-spacing:.5px;display:flex;align-items:center;justify-content:center;gap:9px;cursor:pointer;padding:0}
+.qb:hover{border-color:#4a4a52}
+.qb svg{width:26px;height:20px;flex:none}
+#vBtn .fill{position:absolute;left:0;top:0;bottom:0;background:rgba(255,69,58,.35);width:0}
+#vBtn.air{background:linear-gradient(#7a1a14,#5a1410);border-color:#ff453a;color:#fff}
+#vBtn.wait{background:linear-gradient(#4a1612,#3a1212);border-color:#c0392b;color:#ffd0cc}
+#vBtn.open{border-color:#4a76b0}
+#vBtn.off{opacity:.45}
+#vBtn span{position:relative}
+#pop{position:absolute;left:2366px;width:627px;bottom:calc(1738px - 1236px);background:#16161a;border:2px solid #3a3a42;border-radius:14px;padding:16px 16px 14px;display:none;box-shadow:0 12px 40px rgba(0,0,0,.7);z-index:5}
+#pop.on{display:block}
+#pop .hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+#pop .hd b{font:700 24px -apple-system,sans-serif;letter-spacing:1.5px;color:#cfcfd4}
+#pop .hd button{background:none;border:0;color:#4aa3ff;font:24px -apple-system,sans-serif;cursor:pointer;padding:0}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.t{position:relative;overflow:hidden;height:74px;border-radius:10px;border:2px solid #2c2c31;border-top-color:#38383e;background:linear-gradient(#212126,#151518);color:#e8e8ec;text-align:left;padding:8px 12px;cursor:pointer;font:inherit}
+.t:hover{border-color:#4a4a52}
+.t .n{display:block;font:700 18px -apple-system,sans-serif;color:#8e8e96}
+.t .a{display:block;font:600 24px -apple-system,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;padding-right:4px}
+.t .d{position:absolute;right:12px;top:9px;font:18px ui-monospace,"SF Mono",Menlo,monospace;color:#8e8e96}
+.t.blank{background:#111114;border-style:dashed}
+.t.blank .a{color:#5e5e64;font-weight:400}
+.t.sending{background:linear-gradient(#7a1a14,#5a1410);border-color:#ff453a}
+.t.sending .n,.t.sending .d{color:#ffd0cc}
+.t .prog{position:absolute;left:0;bottom:0;height:5px;background:#ff453a}
+.t.off{opacity:.42}
+#pop .rp{display:flex;align-items:center;justify-content:space-between;margin-top:14px;padding-top:12px;border-top:2px solid #2a2a30}
+#pop .rp .x{font:22px -apple-system,sans-serif;color:#dcdce1}
+#pop .rp .x small{display:block;font-size:18px;color:#8e8e96;margin-top:2px}
+.tog{width:76px;height:44px;border-radius:22px;background:#3a3a40;border:0;position:relative;cursor:pointer}
+.tog::after{content:"";position:absolute;left:4px;top:4px;width:36px;height:36px;border-radius:50%;background:#fff;transition:left .15s}
+.tog.on{background:#30a14e}
+.tog.on::after{left:36px}
+#pop .refuse{display:none;margin-top:12px;padding:12px 14px;border-radius:10px;background:#2a2410;border:2px solid #6a5a18;color:#e8d9a0;font:20px -apple-system,sans-serif;line-height:1.35}
+#pop .refuse button{margin-top:10px;width:100%;height:50px;border-radius:9px;border:0;background:#e8c02a;color:#111;font:700 22px -apple-system,sans-serif;cursor:pointer}
+#pop .foot{margin-top:10px;font:18px -apple-system,sans-serif;color:#8e8e96;line-height:1.35}
+#tip{position:absolute;left:2366px;top:1306px;width:627px;background:#26262b;border:2px solid #444;border-radius:8px;padding:8px 12px;font:20px -apple-system,sans-serif;color:#ddd;display:none;z-index:6}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:rgba(44,44,48,.97);color:#fff;border-radius:12px;padding:10px 14px;font-size:13px;max-width:340px;text-align:center;z-index:90;opacity:0;transition:opacity .2s;pointer-events:none;border:1px solid #444}
+.toast.on{opacity:1}
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>VOICE beside TUNE and MOX on the desktop</h1>
+  <p>Built on a real capture of the desktop. The TX panel's TUNE and MOX row gains a third button, VOICE, that opens your eight messages, like the VOICE button beside PTT on the phone.</p>
+  <div class="bar">
+    <button data-z="tx" class="on">Close up on the TX panel</button>
+    <button data-z="full">Whole window</button>
+    <label>Transmit:</label>
+    <select id="txw"><option value="here">With this computer</option><option value="phone">With the iPhone</option></select>
+  </div>
+  <details>
+    <summary>Things to try</summary>
+    <ul>
+      <li>Click VOICE: your eight messages open just above it. Click one to send it on the air. The box closes, VOICE turns red, shows the message, and fills from left to right as it plays.</li>
+      <li>Click the red VOICE, press Escape, or click MOX to stop. At the end it goes back to receive by itself.</li>
+      <li>Turn on Repeat in the box: between sends VOICE counts down the seconds to the next one.</li>
+      <li>An empty message, or "Voice keyer panel", opens the full voice keyer panel where you record, import and rename.</li>
+      <li>Set Transmit to "With the iPhone": VOICE dims and the box offers Take transmit.</li>
+    </ul>
+  </details>
+</div>
+<div class="view" id="view">
+  <div id="stage">
+    <img src="../shared/desk.jpg" alt="NereusSDR desktop window">
+    <div id="row">
+      <button class="qb" id="tBtn">TUNE</button>
+      <button class="qb" id="mBtn">MOX</button>
+      <button class="qb" id="vBtn" aria-label="Voice keyer"><div class="fill" id="vFill"></div><svg viewBox="0 0 26 20"><g stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="3" y1="8" x2="3" y2="12"/><line x1="8" y1="4" x2="8" y2="16"/><line x1="13" y1="1.5" x2="13" y2="18.5"/><line x1="18" y1="5" x2="18" y2="15"/><line x1="23" y1="8" x2="23" y2="12"/></g></svg><span id="vLab">VOICE</span></button>
+    </div>
+    <div id="pop">
+      <div class="hd"><b>VOICE KEYER</b><button id="openPanel">Voice keyer panel ›</button></div>
+      <div class="grid" id="grid"></div>
+      <div class="refuse" id="refuse">Transmit is with the iPhone. Take it to send a message from this computer.<button id="take">Take transmit</button></div>
+      <div class="rp"><div class="x">Repeat the message<small id="rs">Off</small></div><button class="tog" id="rpt" aria-label="Repeat"></button></div>
+      <div class="foot">Click a message to send it. Escape, MOX or the red VOICE stops it.</div>
+    </div>
+    <div id="tip"></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+(() => {
+const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const pad = n => String(n).padStart(2,'0'); const mm = s => Math.floor(s/60) + ':' + pad(Math.floor(s%60));
+let tt = 0; function toast(m){ const el = $('#toast'); el.textContent = m; el.classList.add('on'); clearTimeout(tt); tt = setTimeout(() => el.classList.remove('on'), 2600); }
+
+/* ---------- view: close up or whole window ---------- */
+let zoom = 'tx';
+const CROP = {x:2230, y:690, w:794, h:700};
+function fit(){
+  const view = $('#view'), vw = Math.min(document.documentElement.clientWidth - 16, 1100);
+  view.style.width = vw + 'px';
+  if (zoom === 'full'){ const s = vw / 3024; view.style.height = (1738*s) + 'px'; $('#stage').style.transform = 'scale(' + s + ')'; }
+  else { const w = Math.min(CROP.w, 3024 - CROP.x), s = vw / w; view.style.height = (CROP.h*s) + 'px';
+    $('#stage').style.transform = 'scale(' + s + ') translate(' + (-CROP.x) + 'px,' + (-CROP.y) + 'px)'; }
+}
+$$('[data-z]').forEach(b => b.onclick = () => { zoom = b.dataset.z; $$('[data-z]').forEach(x => x.classList.toggle('on', x === b)); fit(); });
+addEventListener('resize', fit); fit();
+
+/* ---------- voice keyer ---------- */
+const VK = [{n:'CQ contest', len:5}, {n:'CQ CQ de KG4VCF', len:6}, {n:'QRZ?', len:1.5}, {n:'Thanks, 59, 73', len:4}, null, null, null, null];
+let send = null, rpt = false, delay = 5, txHere = true, open = false;
+function render(){
+  const b = $('#vBtn');
+  b.classList.toggle('air', !!(send && !send.wait)); b.classList.toggle('wait', !!(send && send.wait));
+  b.classList.toggle('open', open && !send); b.classList.toggle('off', !txHere && !send);
+  if (send){ const m = VK[send.i];
+    $('#vLab').textContent = send.wait ? 'M' + (send.i+1) + ' again in ' + Math.ceil(send.wait) + ' s' : 'M' + (send.i+1) + '  ' + mm(send.pos);
+    $('#vFill').style.width = send.wait ? '0' : (send.pos / m.len * 100) + '%'; b.setAttribute('aria-label', 'Stop the voice keyer'); }
+  else { $('#vLab').textContent = 'VOICE'; $('#vFill').style.width = '0'; b.setAttribute('aria-label', 'Voice keyer'); }
+  const g = $('#grid'); g.innerHTML = '';
+  VK.forEach((m, i) => {
+    const t = document.createElement('button'); const sending = send && send.i === i;
+    t.className = 't' + (m ? '' : ' blank') + (sending ? ' sending' : '') + (!txHere && m ? ' off' : '');
+    t.innerHTML = '<span class="n">M' + (i+1) + '</span><span class="a">' + (m ? esc(m.n) : 'Empty') + '</span><span class="d">' + (m ? mm(m.len) : '') + '</span>' +
+      (sending && !send.wait ? '<span class="prog" style="width:' + (send.pos/m.len*100) + '%"></span>' : '');
+    t.onclick = () => {
+      if (!m){ closePop(); toast('Mockup: would open the voice keyer panel with M' + (i+1) + ' ready to record or import.'); return; }
+      if (!txHere){ toast('Transmit is with the iPhone. Take transmit to send.'); return; }
+      send = {i, pos:0, wait:0}; closePop(); render();
+    };
+    g.appendChild(t);
+  });
+  $('#refuse').style.display = txHere ? 'none' : 'block';
+  $('#rpt').classList.toggle('on', rpt);
+  $('#rs').textContent = rpt ? 'Sends again every ' + delay + ' s until you stop it' : 'Off';
+  $('#pop').classList.toggle('on', open);
+}
+function closePop(){ open = false; render(); }
+function stop(msg){ send = null; render(); if (msg) toast(msg); }
+$('#vBtn').onclick = e => { e.stopPropagation(); if (send){ stop('Stopped. Back to receive.'); return; } open = !open; render(); };
+$('#pop').onclick = e => e.stopPropagation();
+document.addEventListener('click', () => { if (open) closePop(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape'){ if (send) stop('Escape stopped the message. Back to receive.'); else if (open) closePop(); } });
+$('#mBtn').onclick = e => { e.stopPropagation(); if (send) stop('MOX stopped the message. Back to receive.'); else toast('MOX is not part of this mockup.'); };
+$('#tBtn').onclick = e => { e.stopPropagation(); toast('TUNE is not part of this mockup.'); };
+$('#openPanel').onclick = () => { closePop(); toast('Mockup: would open the voice keyer panel in the right column (approved earlier).'); };
+$('#rpt').onclick = () => { rpt = !rpt; render(); };
+$('#take').onclick = () => { txHere = true; $('#txw').value = 'here'; render(); toast('Transmit is now with this computer.'); };
+$('#txw').onchange = e => { txHere = e.target.value === 'here'; if (!txHere) send = null; render(); };
+$('#vBtn').onmouseenter = () => { const t = $('#tip'); t.textContent = send ? 'Click to stop the message (or press Escape)' : 'Voice keyer: send one of your eight recorded messages'; t.style.display = 'block'; };
+$('#vBtn').onmouseleave = () => { $('#tip').style.display = 'none'; };
+let last = performance.now();
+setInterval(() => {
+  const n = performance.now(), dt = (n - last)/1000; last = n;
+  if (!send) return;
+  const m = VK[send.i];
+  if (send.wait){ send.wait -= dt; if (send.wait <= 0){ send.wait = 0; send.pos = 0; } }
+  else { send.pos += dt; if (send.pos >= m.len){ if (rpt){ send.wait = delay; send.pos = m.len; } else { send = null; toast('Sent. Back to receive.'); } } }
+  render();
+}, 200);
+render();
+})();
+</script>
+</body>
+</html>

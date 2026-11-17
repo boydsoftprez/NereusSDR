@@ -6,6 +6,20 @@
 // read, tied to this app's session. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-25: Roundtable plan Task 18, the Panadapter tab's swipes, shared
 // by the tab bar and the band. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan Task 16, the recordings client wired to this phone's
+//   device id and PTT, fed the session's events. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan Task 17, Tools > Recordings and Setup > Recording
+//   settings, kept while the tabs are rebuilt. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan Task 18, the voice keyer: Tools > Voice Keyer, VOICE,
+//   and PTT stopping this phone's message. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan Task 19, the iPad's Recordings panel, kept while the
+//   screens are rebuilt. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan Task 28, the Digital Spectrum Recorder on Pan 1
+//   and its Setup page. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Rewind plays on release at the active slice's frequency
+//   (DsrPanModel.activeSliceHz). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Every tune of the active slice reaches the recorder
+//   (DsrPanModel.sliceTuned). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -81,6 +95,40 @@ final class AppModel: ObservableObject {
     let longSession: SessionController
     /// The Core's record streams: its spots and its spot sources' consoles.
     let records: RecordStreamClient
+    /// The Core's recordings and voice keyer (the recording design of
+    /// 2026-11-15). Its voice messages keep this phone's PTT keepalives
+    /// going while the Core sends this phone's message.
+    let recordings: RecordingsClient
+    /// Each flag's Record and Play, the playing bar and the Kept notice.
+    lazy var recordingFlag: RecordingFlagModel = {
+        let model = RecordingFlagModel(client: recordings)
+        model.showRefusal = { [weak slices = main.slices] text in slices?.showReason(text) }
+        return model
+    }()
+    /// Tools > Recordings; kept here, since the Tools tab is rebuilt on every tab switch.
+    lazy var recordingsList = RecordingsListModel(client: recordings)
+    /// The iPad's Recordings panel in the applet column; kept here, as the list is.
+    lazy var recordingsApplet = RecordingsAppletModel(client: recordings)
+    /// Setup > Recording settings.
+    lazy var recordingSettings = RecordingSettingsModel(client: recordings)
+    /// The Digital Spectrum Recorder on Pan 1: its time strip, hours map,
+    /// LIVE, SAVE and the past picture, on Pan 1's display and active slice.
+    lazy var dsr: DsrPanModel = {
+        let model = DsrPanModel(client: recordings)
+        Self.wireDsr(model, subscriber: main.subscriber, slices: main.slices, band: main.band)
+        return model
+    }()
+    /// Setup > Digital Spectrum Recorder.
+    lazy var dsrSettings = DsrSetupModel(client: recordings)
+    /// The voice keyer: Tools > Voice Keyer and VOICE beside PTT, with this
+    /// phone's microphone for recording a message.
+    lazy var voiceKeyer: VoiceKeyerModel = {
+        let model = VoiceKeyerModel(client: recordings,
+                                    recorder: PhoneMicClipRecorder(access: SystemMicrophoneAccess()))
+        model.showRefusal = { [weak slices = main.slices] text in slices?.showReason(text) }
+        Self.wireVoiceKeyer(model, transmit: main.transmit)
+        return model
+    }()
     /// The Core's spots on the band and Spot Hub.
     let spots: SpotsModel
     /// FreeDV Reporter as the Core runs it; kept here, since the Tools tab is rebuilt on every tab switch.
@@ -322,6 +370,7 @@ final class AppModel: ObservableObject {
         longSession = SessionController(settings: phoneSettings, subscriber: main.subscriber, band: main.band,
                                         transmit: main.transmit, sources: sessionSources)
         records = RecordStreamClient(mirror: mirror, commands: commands)
+        recordings = Self.recordingsClient(mirror: mirror, commands: commands, transmit: main.transmit)
         // The TX panel's AM Mod Monitor (D102), on the Core's record streams.
         main.modMonitor = ModMonitorModel(mirror: mirror, commands: commands, records: records, settings: settings,
                                           slices: main.slices, phone: phoneSettings)
@@ -393,6 +442,8 @@ final class AppModel: ObservableObject {
         main.displayPillSource = displayPill
         wireTransmitAudio()
         wireDialHaptics()
+        // PTT stops this phone's voice message (recording design 6.6); the voice keyer is made on first use.
+        main.transmit.voiceMessageStop = { [weak self] in self?.voiceKeyer.pttTapped() ?? false }
     }
 
     /// The dial's haptics follow Setup, Navigation's two switches, now and
@@ -1193,6 +1244,62 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// The recordings client as the app wires it: the voice keyer's
+    /// sender is this phone by the device id the transmit model knows,
+    /// and while the Core sends this phone's voice message the PTT keeps
+    /// its keepalives going, so the Core's watchdog does not cut the
+    /// message (the Task 15 kit's rule).
+    static func recordingsClient(mirror: MirrorStore, commands: CommandClient,
+                                 transmit: TransmitModel) -> RecordingsClient {
+        let ptt = transmit.controller
+        return RecordingsClient(mirror: mirror, commands: commands,
+                                thisDeviceId: { [weak transmit] in transmit?.thisDeviceId },
+                                voiceMessageSending: { sending in await ptt.setVoiceMessageSending(sending) })
+    }
+
+    /// The voice keyer as the app wires it: its messages dim while this
+    /// phone may not transmit, with the Core's words and fix, and PTT
+    /// stops this phone's message instead of keying.
+    static func wireVoiceKeyer(_ model: VoiceKeyerModel, transmit: TransmitModel) {
+        model.heldFeed = transmit.$permitted.combineLatest(transmit.$permission)
+            .sink { [weak model] permitted, permission in
+                model?.held = permitted ? nil
+                    : (permission ?? TxRefusalInfo(reason: TransmitModel.noRemoteTransmitText))
+            }
+        transmit.voiceMessageStop = { [weak model] in model?.pttTapped() ?? false }
+    }
+
+    /// The recorder on a pan as the app wires it: the past is drawn with
+    /// the display the Core accepted for the pan, the active slice is the
+    /// one that rewinds, and the band's own minutes come first.
+    static func wireDsr(_ model: DsrPanModel, subscriber: BandSubscriber, slices: BandSlicesModel, band: BandModel) {
+        model.panView = { [weak subscriber] in
+            guard let shown = subscriber?.acceptedDisplay?.subscription else {
+                return nil
+            }
+            return DsrPanView(fftSize: shown.fftSize, windowType: shown.windowType,
+                              centreHz: Int64(shown.centreHz.rounded()), spanHz: Int64(shown.spanHz.rounded()),
+                              pixels: shown.pixels)
+        }
+        model.activeSlice = { [weak slices] in slices?.activeSliceId }
+        model.activeSliceHz = { [weak slices] in slices?.active?.slice.frequencyHz }
+        // Every tune of the active slice, however made: in the past it plays
+        // from the picture's top. The publishers send the new values before
+        // the model holds them, so the values are passed on.
+        model.tunedFeed = slices.$entries.combineLatest(slices.$activeSliceId)
+            .compactMap { entries, id -> (Int, Double)? in
+                guard let id, let entry = entries.first(where: { $0.id == id }) else {
+                    return nil
+                }
+                return (id, entry.slice.frequencyHz)
+            }
+            .sink { [weak model] tuned in
+                model?.sliceTuned(slice: tuned.0, hz: tuned.1)
+            }
+        model.ownSeconds = { [weak band] in band?.mostLookBackSeconds ?? 0 }
+        model.lookBack = { [weak band] seconds in band?.lookBack(seconds: seconds) }
+    }
+
     /// The Core's transmit state, which ``expectedTransmitSilence()`` reads.
     nonisolated static let transmitStateKey = "txState"
 
@@ -1216,6 +1323,7 @@ final class AppModel: ObservableObject {
         // After the mirror, which holds the capabilities the streams need.
         records.handle(event)
         devices.handle(event)
+        recordings.handle(event)
         // Media control already holds an unchanged value; it acts only on a change.
         let silence = expectedTransmitSilence()
         if silence != lanes.sentTransmitSilence {
@@ -1246,6 +1354,7 @@ final class AppModel: ObservableObject {
         // After the mirror, which holds the capabilities the streams need.
         records.handle(event)
         devices.handle(event)
+        recordings.handle(event)
         let silence = expectedTransmitSilence()
         lanes.sentTransmitSilence = silence
         _ = await media.setExpectedAudioSilenceDuringTransmit(silence, owner: owner)

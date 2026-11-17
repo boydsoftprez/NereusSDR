@@ -56,8 +56,7 @@ struct RadeFlagShotTests {
         let slice = BandSlice(id: 0, frequencyHz: 7_236_400, filterLowHz: -2_350, filterHighHz: -650,
                               colour: "#00D0FF", lowerSideband: true, txSlice: true)
         return BandSlicesModel.Entry(slice: slice, rxAntenna: "ANT1", txAntenna: "ANT1", modeLabel: "RADE-L",
-                                     panKey: nil, signalDbm: -73, signalPeakDbm: nil, signalAverageDbm: nil,
-                                     stepHz: 100, sampleRateHz: 192_000, locked: false, muted: false, band: nil,
+                                     panKey: nil, stepHz: 100, sampleRateHz: 192_000, locked: false, muted: false, band: nil,
                                      mode: 13,
                                      rade: RadeReception(callsign: shot.callsign, snrDb: shot.snr, synced: shot.synced,
                                                          offsetHz: shot.offset, reason: shot.reason))
@@ -69,7 +68,8 @@ struct RadeFlagShotTests {
         let heights = Heights()
         let entry = Self.entry(shot)
         let window = try BandFlagShotTests.window(size: size)
-        let root = VfoFlagView(entry: entry, meter: BandFlagShotTests.catalogue()?.meters.sMeter,
+        let readings = BandSlicesModel.Readings([entry.id: BandSlicesModel.Reading(signalDbm: -73)])
+        let root = VfoFlagView(entry: entry, readings: readings, meter: BandFlagShotTests.catalogue()?.meters.sMeter,
                                heightChanged: { heights.byId[0] = $0 })
             .environment(\.dynamicTypeSize, shot.large ? Self.largeType : .large)
             .padding(20)

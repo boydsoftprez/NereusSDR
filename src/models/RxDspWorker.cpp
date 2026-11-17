@@ -64,6 +64,12 @@
 //                 stream binding reaches this worker inside the geometry
 //                 barrier, and the guard is a safety net. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-16 - Rewind sound (recording plan Task 22): the one switch on
+//                 the receive path. In the stream fan-out a rewound slice's
+//                 demodulator takes its block from its replay
+//                 (takeReplayBlock) instead of the stream's I/Q, and never
+//                 spends the stream's blanker pass. NereusSDR-original.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -180,6 +186,7 @@ warren@wpratt.com
 #include "core/RadeRxWorker.h"
 #include "core/audio/RealtimeAudioPriority.h"
 #include "core/platform/ThreadPlacement.h"
+#include "core/recordings/dsr/DsrReplay.h"
 
 #include <algorithm>
 #include <chrono>
@@ -1220,6 +1227,24 @@ void RxDspWorker::processIqBatch(int receiverIndex,
                     continue;
                 }
 
+                // ── Rewind sound (recording plan Task 22): THE SWITCH ──
+                // The one place the recording design changes what reaches
+                // a demodulator. A rewound slice takes this block from its
+                // replay (the past, read from the Digital Spectrum
+                // Recorder's ring file) and blanks its own copy with its
+                // own settings; the stream's I/Q, and the stream's single
+                // blanker pass, stay for the slices that play it live.
+                if (takeReplayBlock(sliceIdx, inSize)) {
+                    noteSliceInput(sliceIdx, m_replayI.constData(),
+                                   m_replayQ.constData(), inSize);
+                    processSliceChunk(sliceIdx, m_replayI.data(),
+                                      m_replayQ.data(), inSize, outSize,
+                                      false);
+                    continue;
+                }
+
+                noteSliceInput(sliceIdx, acc.i.constData(),
+                               acc.q.constData(), inSize);
                 if (processSliceChunk(sliceIdx, acc.i.data(), acc.q.data(),
                                       inSize, outSize, streamBlankerClaimed)) {
                     streamBlankerClaimed = true;
@@ -1228,10 +1253,18 @@ void RxDspWorker::processIqBatch(int receiverIndex,
         } else {
             // No engines wired (unit tests): still honour the fan-out
             // contract so the signal sequence stays observable, exactly
-            // as chunkDrained already fires without engines.
+            // as chunkDrained already fires without engines. The rewind
+            // switch is taken here too, so its input is observable.
             for (int sliceIdx : slices) {
                 if (fedFromDiversityMix(sliceIdx)) {
                     continue;
+                }
+                if (takeReplayBlock(sliceIdx, inSize)) {
+                    noteSliceInput(sliceIdx, m_replayI.constData(),
+                                   m_replayQ.constData(), inSize);
+                } else {
+                    noteSliceInput(sliceIdx, acc.i.constData(),
+                                   acc.q.constData(), inSize);
                 }
                 emit sliceProcessed(sliceIdx, inSize);
             }
@@ -1317,6 +1350,74 @@ void RxDspWorker::processIqBatch(int receiverIndex,
     }
 
     emit batchProcessed();
+}
+
+// ── Rewind sound (recording plan Task 22, NereusSDR-original) ───────────
+void RxDspWorker::setSliceReplay(int sliceIdx, DsrReplay* replay)
+{
+    if (sliceIdx < 0 || sliceIdx >= kMaxReplaySlices) {
+        return;
+    }
+    DsrReplay* const old = m_sliceReplays[static_cast<size_t>(sliceIdx)]
+                               .exchange(replay, std::memory_order_seq_cst);
+    if ((old == nullptr) != (replay == nullptr)) {
+        m_replaySliceCount.fetch_add(replay != nullptr ? 1 : -1,
+                                     std::memory_order_seq_cst);
+    }
+    // The DSP thread may still be inside the old replay's pull, which
+    // copies at most one block; once it is out it can no longer see it.
+    if (old != nullptr && old != replay) {
+        while (m_replayPullsInFlight.load(std::memory_order_seq_cst) != 0) {
+            std::this_thread::yield();
+        }
+    }
+}
+
+DsrReplay* RxDspWorker::sliceReplay(int sliceIdx) const
+{
+    if (sliceIdx < 0 || sliceIdx >= kMaxReplaySlices) {
+        return nullptr;
+    }
+    return m_sliceReplays[static_cast<size_t>(sliceIdx)].load(std::memory_order_acquire);
+}
+
+bool RxDspWorker::takeReplayBlock(int sliceIdx, int inSize)
+{
+    if (m_replaySliceCount.load(std::memory_order_acquire) == 0
+        || sliceIdx < 0 || sliceIdx >= kMaxReplaySlices || inSize <= 0) {
+        return false;
+    }
+    if (m_sliceReplays[static_cast<size_t>(sliceIdx)].load(std::memory_order_acquire) == nullptr) {
+        return false;
+    }
+    if (m_replayI.size() < inSize) {
+        // First rewound block at this size: grown once, like the slice
+        // output scratch.
+        m_replayI.resize(inSize);
+        m_replayQ.resize(inSize);
+    }
+    m_replayPullsInFlight.fetch_add(1, std::memory_order_seq_cst);
+    bool fed = false;
+    if (DsrReplay* replay = m_sliceReplays[static_cast<size_t>(sliceIdx)]
+                                .load(std::memory_order_seq_cst)) {
+        fed = replay->pull(m_replayI.data(), m_replayQ.data(), inSize);
+    }
+    m_replayPullsInFlight.fetch_sub(1, std::memory_order_seq_cst);
+    return fed;
+}
+
+void RxDspWorker::noteSliceInput(int sliceIdx, const float* i, const float* q, int samples)
+{
+#ifdef NEREUS_BUILD_TESTS
+    if (m_sliceInputHookForTest) {
+        m_sliceInputHookForTest(sliceIdx, i, q, samples);
+    }
+#else
+    Q_UNUSED(sliceIdx);
+    Q_UNUSED(i);
+    Q_UNUSED(q);
+    Q_UNUSED(samples);
+#endif
 }
 
 bool RxDspWorker::processSliceChunk(int sliceIdx, float* inI, float* inQ,

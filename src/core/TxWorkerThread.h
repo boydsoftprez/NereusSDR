@@ -10,6 +10,9 @@
 // =================================================================
 //
 // Modification history (NereusSDR):
+//   2026-11-15 - Recording plan Task 10 by J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code: setOnAirSource, the on-air input
+//                 checked first in each block (a recording on the air).
 //   2026-09-28 - RADE end-of-over callsigns by J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code: radeAudioDrained,
 //                 armRadeAudioDrainedNotice and clearRadeAudio, so the
@@ -64,6 +67,7 @@
 namespace NereusSDR {
 
 class AudioEngine;
+class OnAirSource;
 class RadeChannel;
 class RemoteMicFeed;
 class TxChannel;
@@ -175,6 +179,14 @@ public:
     void setRemoteMicFeed(RemoteMicFeed* feed);
     void setRemoteRadioMicActive(bool active)
     { m_remoteRadioMicActive.store(active, std::memory_order_release); }
+
+    /// Recording plan Task 10: the on-air source (RecordingService's),
+    /// pulled first in every block. While it gives audio (a recording on
+    /// the air) that audio is the transmit input in place of TCI and every
+    /// microphone; in the RADE path it is what the encoder hears. While it
+    /// gives none nothing changes. Null clears, and returns only once the
+    /// worker is out of the old source, so it may be destroyed after.
+    void setOnAirSource(OnAirSource* source);
 
     /// Start the worker.  Internally calls QThread::start().  Idempotent.
     void startPump();
@@ -499,6 +511,11 @@ private:
     std::atomic<bool> m_remoteRadioMicActive{false};
     std::atomic<RemoteMicFeed*> m_remoteMicFeed{nullptr};
     std::vector<float> m_remoteMicBuf;
+
+    // Recording plan Task 10: the on-air source and one block of it.
+    std::atomic<OnAirSource*> m_onAirSource{nullptr};
+    std::atomic<int> m_onAirPullsInFlight{0};
+    std::vector<float> m_onAirBuf;
 
     // Anti-VOX run gate (3M-3a-iv).  Mirrors the most-recent
     // setAntiVoxRun(bool) call.  Read with acquire in

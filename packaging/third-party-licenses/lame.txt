@@ -1,0 +1,41 @@
+LAME (libmp3lame), the MP3 encoder for recordings on the Core
+
+Copyright (c) 1999 Mark Taylor, and the LAME developers
+(https://lame.sourceforge.io/)
+
+The LAME header NereusSDR compiles (include/lame/lame.h) carries:
+
+    This library is free software; you can redistribute it and/or
+    modify it under the terms of the GNU Library General Public
+    License as published by the Free Software Foundation; either
+    version 2 of the License, or (at your option) any later version.
+
+    This library is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+    Library General Public License for more details.
+
+LAME is licensed under the GNU Library General Public License, version 2
+or (at your option) any later version. NereusSDR uses it under version
+2.1 of the GNU Lesser General Public License, the later version, whose
+full text ships alongside this notice as `LGPLv2.1.txt`.
+
+NereusSDR links LAME as a separate shared library and does not change its code:
+libmp3lame.so.0 from the system package on Linux (libmp3lame0), the
+Homebrew lame dylib on macOS (on Intel Macs, LAME 3.100 built from its
+source tarball and bundled in the app; its code is unchanged, and as in
+Homebrew's build the undefined name lame_init_old is left out of
+include/libmp3lame.sym, the library's export list), and libmp3lame-0.dll
+on Windows, LAME 3.100 built from the same source tarball with the MSYS2
+MinGW toolchain and shipped beside the program; its code is unchanged, it
+is configured without LAME's decoder, and the names that leaves undefined
+(lame_init_old and the hip_* and lame_decode* decoder functions) are left
+out of include/libmp3lame.sym. A
+user may replace that library with a modified build of LAME with the
+same interface. NereusSDR uses LAME's encoder only; MP3 files are decoded
+with minimp3 (`minimp3.txt`).
+
+LAME source:                https://lame.sourceforge.io/download.php
+                            https://sourceforge.net/projects/lame/files/lame/
+NereusSDR LAME provenance:  docs/attribution/LAME-PROVENANCE.md
+Source offer:               SOURCE-OFFER.txt

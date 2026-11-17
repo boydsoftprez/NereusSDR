@@ -21,6 +21,16 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: The microphone clip tap (recording plan Task 12):
+//               setTxMicClipTap / drainTxMicClipTap, a copy of what
+//               pullTxMic hands the transmitter, for recording a voice
+//               keyer message on this computer. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-11-15: Recording player (spec 6.1, 6.3): a playback slot in the
+//               mixer for the local output and for each owner mix, and
+//               setOwnerMixPlayback, the owner mix's route to its own;
+//               setPlaybackFeed, which each drain tops the slots up from.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-27: Add approved remote CW hold/activity integration for
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-17 : makeBus() sets a stream event sink before the open;
@@ -362,6 +372,7 @@
 #include "audio/IAudioStreamHost.h"
 #include "audio/MasterMixer.h"
 #include "audio/VaxChannelMixer.h"
+#include "core/recordings/SpscFloatRing.h"
 #include "audio/SpeakerFormatConverter.h"
 
 #if defined(Q_OS_LINUX)
@@ -438,6 +449,8 @@ enum class RemotePlaybackRefusal : int { None = 0, Unavailable = 1, Format = 2 }
 // beside the MON button. Independent of the receivers' own routes: MON is
 // how you sound on air, and it goes where you want to hear it.
 enum class TxMonitorOutput : int { Speakers = 0, Headphones = 1 };
+
+class RecordingPlaybackFeed;
 
 class MasterMixAudioTap {
 public:
@@ -1062,6 +1075,21 @@ public:
     /// Any thread; the audio thread reads it at the next drain.
     void setOwnerMixMonitor(int slot, MasterMixer::OwnerMonitor monitor);
     MasterMixer::OwnerMonitor ownerMixMonitor(int slot) const;
+    /// Recording player (spec 6.1, 6.3): the mixer's playback slots. The
+    /// local output's speakers sum carries kLocalPlaybackSlotId; an owner
+    /// mix's speakers sum carries ownerPlaybackSlotId(slot) while
+    /// setOwnerMixPlayback(slot, true) (off after acquire and release).
+    /// Each is in no other sum. Any thread; the audio thread reads it at
+    /// the next drain.
+    static constexpr int kLocalPlaybackSlotId = -3;
+    static constexpr int ownerPlaybackSlotId(int ownerMixSlot) { return -4 - ownerMixSlot; }
+    void setOwnerMixPlayback(int slot, bool on);
+    bool ownerMixPlayback(int slot) const;
+    /// Where each drain pulls playback from (RecordingService), topping
+    /// every playback slot it sums up to the drain so the slot's ring never
+    /// drops in normal play. nullptr: none. Control thread; returns once no
+    /// drain is inside the feed it replaced.
+    void setPlaybackFeed(RecordingPlaybackFeed* feed);
     /// Owner mixes taken now; diagnostics and leak checks.
     int ownerMixCount() const;
 
@@ -1347,6 +1375,19 @@ public:
     // Plan: 3M-1b E.1 (initial introduction); 3M-1c TX pump architecture
     // redesign (removal of accumulator side effects).
     int pullTxMic(float* dst, int n);
+
+    // Recording plan Task 12: the microphone clip tap. While it is on,
+    // pullTxMic also copies each block it returns (the microphone before
+    // any processing or gain) into a lock-free ring, and returns as
+    // before: the tap takes nothing from the transmitter. Copies that do
+    // not fit are dropped. One reader at a time, on the owner thread:
+    // turning it on empties the ring, drainTxMicClipTap takes what waits,
+    // txMicClipTapRateHz is the rate of what it holds.
+    static constexpr int kTxMicClipTapFloats = 1 << 16;   // about 1.4 s at 48 kHz
+    void setTxMicClipTap(bool on);
+    bool txMicClipTapOn() const { return m_txMicClipTapOn.load(std::memory_order_acquire); }
+    int drainTxMicClipTap(float* dst, int n);
+    int txMicClipTapRateHz() const { return m_txMicClipTapRateHz.load(std::memory_order_acquire); }
 
     // Pull VAX-TX audio samples from the VAX TX shared-memory bus.
     //
@@ -2135,6 +2176,8 @@ private:
         MixTapGate headphones;
         // Task 32: MasterMixer::OwnerMonitor, as an int for the atomic.
         std::atomic<int> monitor{0};
+        // Recording player: this owner's playback slot reaches its speakers.
+        std::atomic<bool> playback{false};
         // Slice control plan Task 6: the slices this owner listens to, and
         // its level for each (0 when muted).
         std::atomic<quint32> listenMask{0};
@@ -2234,6 +2277,10 @@ private:
     // micSource=PC via setMicSourceLocked, and the resulting
     // micSourceChanged emit lands here as true.
     std::atomic<bool> m_micSourceWantsPc{false};
+    // Recording plan Task 12: the microphone clip tap (setTxMicClipTap).
+    SpscFloatRing m_txMicClipTap{kTxMicClipTapFloats};
+    std::atomic<bool> m_txMicClipTapOn{false};
+    std::atomic<int> m_txMicClipTapRateHz{48000};
 
     // Phase VAX-TX (eager-borg-d64bed, 2026-05-06) — VAX mic override gate.
     // Written by onMicSourceChangedVax() on the main thread (slot wired by
@@ -2286,6 +2333,15 @@ private:
     static constexpr int kTxMonitorPumpFrames = 256;
     std::array<float, kTxMonitorPumpFrames> m_txMonitorPumpMono{};
     std::array<float, kTxMonitorPumpFrames * 2> m_txMonitorPumpStereo{};
+
+    // Recording player: the playback feed and its gate (setPlaybackFeed),
+    // and the DSP thread's scratch for one pull.
+    void feedPlaybackSlot(int slotId, int frames);
+    std::atomic<RecordingPlaybackFeed*> m_playbackFeed{nullptr};
+    std::atomic<unsigned> m_playbackFeedCalls{0};
+    static constexpr int kPlaybackPumpFrames = 256;
+    std::array<float, kPlaybackPumpFrames> m_playbackPumpMono{};
+    std::array<float, kPlaybackPumpFrames * 2> m_playbackPumpStereo{};
     // CW transmit (R-CW-39): the computer sidetone (setCwSidetoneRun).
     // Configured in the constructor at the mix rate; rendered on the DSP
     // thread in drainMixes. The scratch is sized with the mix scratch

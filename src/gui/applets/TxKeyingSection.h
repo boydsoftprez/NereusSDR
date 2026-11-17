@@ -14,6 +14,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16 - VOICE, the third button in the TUNE / MOX row (the voice
+//                 keyer, recording plan Task 12; VoiceButton drives it).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - The row's parts (SectionParts), which a container copy
 //                 hides and orders from its entry config. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -124,6 +127,9 @@ public:
 
     QPushButton* tuneButton() const { return m_tuneBtn; }
     QPushButton* moxButton() const { return m_moxBtn; }
+    // Recording plan Task 12: VOICE, the voice keyer's button, after MOX.
+    // VoiceButton gives it its look and its box.
+    QPushButton* voiceButton() const { return m_voiceBtn; }
     QPushButton* takeTransmitButton() const { return m_takeTransmitBtn; }
     QLabel*      holderLabel() const { return m_holderLabel; }
     QList<QPushButton*> transmitSliceButtons() const { return m_txSliceButtons; }
@@ -159,6 +165,7 @@ private:
 
     QPushButton* m_tuneBtn = nullptr;
     QPushButton* m_moxBtn = nullptr;
+    QPushButton* m_voiceBtn = nullptr;
     QLabel*      m_holderLabel = nullptr;
     QPushButton* m_takeTransmitBtn = nullptr;
 

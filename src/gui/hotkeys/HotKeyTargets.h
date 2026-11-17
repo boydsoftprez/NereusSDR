@@ -2,6 +2,8 @@
 // Modification history (NereusSDR):
 //   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 2.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 13: runVoiceMessage.
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 // What the hot key dispatcher calls. The real implementation reaches the same
 // model and window entry points as the on-screen controls; tests use a fake.
@@ -46,6 +48,8 @@ public:
     virtual bool keyHold(bool down) = 0;                               // true if the press was admitted
     virtual void runTransmitAction(const QString& id) = 0;             // tx.mox, tx.tune, tx.twotone
     virtual void runCwMessage(const QString& id) = 0;                  // cw.msgN, cw.stop
+    // voice.msgN, voice.stop, msg.N. A target with no voice keyer does nothing.
+    virtual void runVoiceMessage(const QString& /*id*/) {}
     virtual void setCwKeyDown(const QString& id, bool down) = 0;       // cw.dot, cw.dash, cw.straight
     virtual void toast(const QString& text) = 0;
     virtual qint64 nowMs() const = 0;

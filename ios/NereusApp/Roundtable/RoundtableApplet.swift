@@ -12,12 +12,17 @@
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-11-03: The applet's frequency view and Widen's list (overlay design D24, D28, D29).
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-16: Recording plan Task 19, the optional Recordings panel, under the
+//   S-Meter.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import SwiftUI
 
 /// The applets in the iPad's column, top to bottom.
 enum AppletKind: String, CaseIterable, Equatable {
     case sMeter
+    /// The Recordings panel: only while this iPad turns it on (``AppletOrder/order(roundtableAt:recordings:)``).
+    case recordings
     case roundtable
     case bandStack
     case rx
@@ -40,6 +45,18 @@ enum AppletOrder {
     static func order(roundtableAt position: Int) -> [AppletKind] {
         var kinds: [AppletKind] = [.sMeter, .bandStack, .rx, .tx]
         kinds.insert(.roundtable, at: clamped(position))
+        return kinds
+    }
+
+    /// The column's applets with Roundtable at `position` and, when
+    /// `recordings`, the Recordings panel right under the S-Meter (the iPad
+    /// mockup), pushing the rest down. Roundtable's position counts
+    /// without it, so turning the panel on or off never moves Roundtable.
+    static func order(roundtableAt position: Int, recordings: Bool) -> [AppletKind] {
+        var kinds = order(roundtableAt: position)
+        if recordings, let meter = kinds.firstIndex(of: .sMeter) {
+            kinds.insert(.recordings, at: meter + 1)
+        }
         return kinds
     }
 }
@@ -243,17 +260,19 @@ struct RoundtableAppletRoom: View {
                     RoundtableFirstRunNote(hidden: roundtable.hidden) { firstRunNoteSeen = true }
                 }
                 if let room = roundtable.room {
-                    RoundtableRoomView(roundtable: roundtable, room: room, full: true, keyed: keyed,
-                                       keyedSince: PttButton.keyedSince(transmit.ptt),
-                                       keyedForSeconds: Int(transmit.keyedForSeconds),
-                                       tunedHere: roundtable.tunedToShownRoom,
-                                       stationCallsign: stationCallsign,
-                                       ownDbm: slices.active?.signalDbm,
-                                       sliceLetter: slices.active?.slice.letter ?? "A",
-                                       tuneHere: roundtable.readingRoomId == nil ? nil : { tuneHere(room) },
-                                       narrow: narrow, embedded: embedding,
-                                       frequencyHead: frequencyFirst ? frequencyHead(room) : nil,
-                                       viewing: roundtable.isViewing)
+                    SliceReadingsReader(readings: slices.readings) { readings in
+                        RoundtableRoomView(roundtable: roundtable, room: room, full: true, keyed: keyed,
+                                           keyedSince: PttButton.keyedSince(transmit.ptt),
+                                           keyedForSeconds: Int(transmit.keyedForSeconds),
+                                           tunedHere: roundtable.tunedToShownRoom,
+                                           stationCallsign: stationCallsign,
+                                           ownDbm: slices.active.flatMap { readings[$0.id].signalDbm },
+                                           sliceLetter: slices.active?.slice.letter ?? "A",
+                                           tuneHere: roundtable.readingRoomId == nil ? nil : { tuneHere(room) },
+                                           narrow: narrow, embedded: embedding,
+                                           frequencyHead: frequencyFirst ? frequencyHead(room) : nil,
+                                           viewing: roundtable.isViewing)
+                    }
                 } else {
                     note("Nobody on Roundtable is tuned here.",
                          detail: roundtable.frequencyAvailable ? "Tap a tag on the band to view that frequency."

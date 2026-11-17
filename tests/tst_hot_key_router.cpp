@@ -8,6 +8,15 @@
 //                read-only notice that, offscreen, becomes the active
 //                window; ready() fails at once if the layout is read-only.
 //                AI-assisted via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 13: the fake records
+//                runVoiceMessage. AI-assisted via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), Task 13 fix round: a key the focused
+//                widget or a drag claims is its own; F2 on the spectrum is
+//                Message 2. AI-assisted via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), init() keeps the shared window's saved
+//                layout across the profile clear, so its store does not refuse
+//                a save and toast over the case's windows. AI-assisted via
+//                Anthropic Claude Code.
 // no-port-check: NereusSDR-original test.
 // The keyboard router on a real offscreen window: which keys act where
 // (design section 6), repeats, releases, failsafes and the off switch.
@@ -70,7 +79,9 @@
 #include "gui/applets/CwxApplet.h"
 #include "gui/containers/ArrangeHoldFilter.h"
 #include "gui/containers/ContainerManager.h"
+#include "gui/containers/ContainerWidget.h"
 #include "gui/containers/ContainerWorkspaceStore.h"
+#include "gui/containers/WorkspaceHeader.h"
 #include "gui/containers/FloatingContainer.h"
 #include "gui/containers/FreeCanvasSurface.h"
 #include "gui/hotkeys/HotKeyDispatcher.h"
@@ -133,6 +144,45 @@ QWidget* keyTarget()
 
 using NereusSDR::Test::activateAndWait;
 using NereusSDR::Test::waitActive;
+
+// A focused widget that claims one key, as a panel with keys of its own does.
+class ClaimsKey : public QWidget {
+public:
+    ClaimsKey(int key, QWidget* parent) : QWidget(parent), m_key(key)
+    {
+        setFocusPolicy(Qt::StrongFocus);
+        resize(40, 20);
+    }
+
+protected:
+    bool event(QEvent* event) override
+    {
+        if (event->type() == QEvent::ShortcutOverride && static_cast<QKeyEvent*>(event)->key() == m_key) {
+            event->accept();
+            return true;
+        }
+        return QWidget::event(event);
+    }
+
+private:
+    int m_key;
+};
+
+void mouse(QWidget* target, QEvent::Type type, const QPoint& global)
+{
+    const Qt::MouseButton button = type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton;
+    const Qt::MouseButtons held = type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton;
+    QMouseEvent event(type, target->mapFromGlobal(global), global, button, held, Qt::NoModifier);
+    QApplication::sendEvent(target, &event);
+}
+
+void settleLayout()
+{
+    for (int pass = 0; pass < 6; ++pass) {
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+        QCoreApplication::processEvents(QEventLoop::AllEvents);
+    }
+}
 
 // Counts the key presses a widget actually receives, after the application filters.
 class KeySeen : public QObject {
@@ -198,6 +248,7 @@ public:
     }
     void runTransmitAction(const QString& id) override { ran.append(id); }
     void runCwMessage(const QString& id) override { ran.append(id); }
+    void runVoiceMessage(const QString& id) override { ran.append(id); }
     void setCwKeyDown(const QString& id, bool isDown) override
     {
         cwKeys.append({id, isDown});
@@ -510,6 +561,77 @@ private slots:
     }
 
     // ---- Who wins inside the window ----
+
+    // F1 to F8 are window-wide: with the spectrum focused, F2 is Message 2.
+    void f2WithTheSpectrumFocusedSendsMessage2()
+    {
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
+        Rig rig(&w.window);
+        auto* const spectrum = w.window.findChild<SpectrumWidget*>();
+        QVERIFY(spectrum != nullptr);
+        spectrum->setFocusPolicy(Qt::ClickFocus);
+        spectrum->setFocus(Qt::MouseFocusReason);
+        QCOMPARE(QApplication::focusWidget(), spectrum);
+        tap(spectrum, Qt::Key_F2);
+        QCOMPARE(rig.targets.ran, QStringList{QStringLiteral("msg.2")});
+    }
+
+    // A focused widget that claims a key (it accepts ShortcutOverride, Qt's
+    // way of keeping a key from the window's shortcuts) keeps it.
+    void aKeyTheFocusedWidgetClaimsIsItsOwn()
+    {
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
+        Rig rig(&w.window);
+        auto* const claimer = w.added(new ClaimsKey(Qt::Key_F2, &w.window));
+        claimer->show();
+        claimer->setFocus(Qt::MouseFocusReason);
+        KeySeen seen(claimer);
+        tap(claimer, Qt::Key_F2);
+        QVERIFY(rig.targets.ran.isEmpty());
+        QCOMPARE(seen.presses, 1);
+        // A key it does not claim is still the window's.
+        tap(claimer, Qt::Key_F3);
+        QCOMPARE(rig.targets.ran, QStringList{QStringLiteral("msg.3")});
+        QCOMPARE(seen.presses, 1);
+    }
+
+    // A container drag claims Escape: it cancels the drag and stops nothing.
+    void escapeDuringAContainerDragCancelsTheDrag()
+    {
+        WorkspacePreview::setEnabledForTest(true);
+        const auto restore = qScopeGuard([] { WorkspacePreview::setEnabledForTest(false); });
+        m_bench.reset();  // one MainWindow at a time
+        Bench w;
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
+        ContainerManager* const manager = w.window.containerManager();
+        QVERIFY(manager != nullptr);
+        manager->setArrangeMode(true);
+        settleLayout();
+        ContainerWidget* source = nullptr;
+        for (ContainerWidget* const c : manager->allContainers()) {
+            if (c->workspaceHeader() != nullptr && c->workspaceHeader()->isVisible()) {
+                source = c;
+                break;
+            }
+        }
+        QVERIFY(source != nullptr);
+        QWidget* const header = source->workspaceHeader();
+        const QPoint grab = header->mapToGlobal(QPoint(header->width() / 2, header->height() / 2));
+        mouse(header, QEvent::MouseButtonPress, grab);
+        mouse(header, QEvent::MouseMove, grab + QPoint(0, 30));
+        mouse(header, QEvent::MouseMove, grab + QPoint(0, 80));
+        QVERIFY(manager->containerDragActive());
+
+        Rig rig(&w.window);
+        tap(&w.window, Qt::Key_Escape);
+        settleLayout();
+        QVERIFY(!manager->containerDragActive());
+        QVERIFY(rig.targets.ran.isEmpty());
+        mouse(header, QEvent::MouseButtonRelease, grab);
+        manager->setArrangeMode(false);
+    }
 
     void textWidgetsKeepEveryKey_data()
     {

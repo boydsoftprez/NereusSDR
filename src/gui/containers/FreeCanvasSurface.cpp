@@ -32,6 +32,9 @@
 //                 placement, leaving the view 1 px off and the minimum with
 //                 it, differently each launch. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-11-16 - A gesture claims Escape (ShortcutOverride), so the hot keys
+//                 leave it to cancel the gesture. Recording plan Task 13 fix
+//                 round. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "FreeCanvasSurface.h"
 #include "WorkspaceHeader.h"
 #include "gui/styles/WorkspacePreview.h"
@@ -277,6 +280,11 @@ bool FreeCanvasSurface::eventFilter(QObject* watched,QEvent* event) {
         emit entryContextMenuRequested(id,static_cast<QContextMenuEvent*>(event)->globalPos());return true;
     }
     if(event->type()==QEvent::FocusIn || event->type()==QEvent::Enter) {updateReveal(id);}
+    // A gesture under way claims Escape, so no window-wide key takes it first
+    // (KeyboardRouter asks with ShortcutOverride).
+    if(event->type()==QEvent::ShortcutOverride && static_cast<QKeyEvent*>(event)->key()==Qt::Key_Escape && !m_active.isEmpty()) {
+        event->accept();return true;
+    }
     if(event->type()==QEvent::KeyPress) {
         auto* key=static_cast<QKeyEvent*>(event);
         if(key->key()==Qt::Key_Escape && !m_active.isEmpty()) {finishGesture(true);return true;}

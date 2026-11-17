@@ -1079,6 +1079,48 @@ import Testing
         #expect(await rig.core.sent.isEmpty)
     }
 
+    /// The voice keyer keys the radio as this device while it sends this
+    /// device's message: the keepalive runs meanwhile, or the Core's
+    /// watchdog holds it at 400 ms and cuts it at 3 s, and stops with it.
+    @Test func thisDevicesVoiceMessageKeepsTheKeepaliveGoing() async {
+        let rig = Rig()
+        await rig.connected()
+        await rig.ptt.setVoiceMessageSending(true)
+        #expect(await rig.ptt.snapshot.keepaliveRunning)
+        #expect(await rig.ptt.snapshot.voiceMessageSending)
+        // Not the microphone: the Core sends the message.
+        #expect(await rig.ptt.snapshot.microphoneWanted == false)
+        await rig.clock.advance(by: 300)
+        #expect(await rig.core.keepaliveSequences == [1, 2, 3])
+        #expect(await rig.core.keepaliveEpochs == Array(repeating: PttController.unansweredEpoch, count: 3))
+        await rig.ptt.setVoiceMessageSending(false)
+        await rig.clock.advance(by: 500)
+        #expect(await rig.core.keepalives.count == 3)
+        #expect(await rig.ptt.snapshot.keepaliveRunning == false)
+        // It keys nothing and releases nothing.
+        #expect(await rig.core.sent.isEmpty)
+    }
+
+    /// The link going ends it here; the next session's document says again.
+    @Test func aVoiceMessageEndsWithTheLink() async {
+        let rig = Rig()
+        await rig.connected()
+        await rig.ptt.setVoiceMessageSending(true)
+        await rig.clock.advance(by: 100)
+        await rig.ptt.linkChanged(up: false)
+        #expect(await rig.ptt.snapshot.keepaliveRunning == false)
+        await rig.ptt.linkChanged(up: true)
+        await rig.clock.advance(by: 300)
+        #expect(await rig.core.keepalives.count == 1)
+        // A document that arrives before the link is up counts once it is.
+        await rig.ptt.linkChanged(up: false)
+        await rig.ptt.setVoiceMessageSending(true)
+        #expect(await rig.ptt.snapshot.keepaliveRunning == false)
+        await rig.ptt.linkChanged(up: true)
+        #expect(await rig.ptt.snapshot.keepaliveRunning)
+        await rig.ptt.setVoiceMessageSending(false)
+    }
+
     // MARK: The Core's stops
 
     @Test func aTimeOutStopEndsTheKeyWithoutAnUnkeyAndSaysWhy() async {
