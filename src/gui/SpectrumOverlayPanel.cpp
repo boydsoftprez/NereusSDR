@@ -21,6 +21,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-17 - The zoom row stays wholly inside a very short pan. J.J.
+//                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16 - The zoom row stays on the waterfall, under the Roundtable
 //                strip, and follows the waterfall top as the split or the
 //                strip changes (SpectrumWidget::waterfallTopChanged). J.J.
@@ -5006,6 +5008,9 @@ void SpectrumOverlayPanel::repositionZoomButtons()
     if (pan) {
         y = std::max(y, pan->waterfallTop() + kMargin);
     }
+    // On a very short pan with the divider pulled low, that can put the row
+    // past the bottom edge: it stays wholly inside the pan.
+    y = std::max(0, std::min(y, spectrum->height() - m_zoomStrip->height()));
     // Task 26: on a short pan the open button column reaches down to the
     // row and the row covered its lower buttons (ATT). Then the row moves to
     // just right of the column at the same height; on a tall pan, or with

@@ -19005,7 +19005,9 @@ void SpectrumWidget::refreshReceiverFlagRegion()
         // the tag child draws. The flag event filter separately invalidates
         // static marker geometry as needed.
         if (m_roundtableTagDisplay != RoundtableTagDisplay::Hidden
-            && (!m_roundtableTags.isEmpty() || m_roundtableCard.kind != RoundtableCardModel::Kind::Quiet)) {
+            && (!m_roundtableTags.isEmpty() || m_roundtableCard.kind != RoundtableCardModel::Kind::Quiet
+                || !m_roundtableCard.note.isEmpty())) {
+            // A quiet line with only a link note moves aside for a flag too.
             refreshRoundtableTagLayer();
         }
     }
