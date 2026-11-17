@@ -32,12 +32,14 @@ struct SetupRenderingTests {
     func tree() {
         let categories = SetupTree.categories
         #expect(categories.map(\.title) == ["Devices", "General", "Audio", "Display", "Transmit", "CAT & Network",
-                                            "Diagnostics", "About this app"])
-        #expect(categories.map(\.tag) == [.core, .both, .both, .both, .both, .both, .both, .thisPhone])
+                                            "Diagnostics", "Digital Spectrum Recorder", "Recording settings",
+                                            "About this app"])
+        #expect(categories.map(\.tag) == [.core, .both, .both, .both, .both, .both, .both, .core, .core, .thisPhone])
         #expect(categories.map(\.summary) == ["Paired phones and computers \u{00B7} Add a device",
                                               "Navigation \u{00B7} Battery and sessions \u{00B7} Band Stack", "On this phone",
                                               "On this phone", "PTT buttons", "Rotor \u{00B7} Data use", "Logs",
-                                              "Build · Credits · Licenses"])
+                                              "Rewind the pan \u{00B7} Disk and size",
+                                              "The Record button, file type and names", "Build · Credits · Licenses"])
         // Nothing the phone leaves off (spec section 5.2 item 7), and no page the Core would describe.
         let titles = categories.flatMap { $0.pages.map(\.title) }
         for gone in ["Keyboard", "Skins", "Collapsible Display", "Remote Access", "Hardware Config", "PA Gain",
@@ -46,6 +48,8 @@ struct SetupRenderingTests {
         }
         #expect(Set(categories.flatMap { $0.pages.compactMap(\.page) }) == Set(SetupTree.Page.allCases))
         #expect(SetupTree.route(to: .devices) == [.page(.devices)])
+        #expect(SetupTree.route(to: .recordingSettings) == [.page(.recordingSettings)])
+        #expect(SetupTree.route(to: .dsrSettings) == [.page(.dsrSettings)])
         #expect(SetupTree.route(to: .displayOnThisPhone) == [.category("Display"), .page(.displayOnThisPhone)])
         #expect(SetupTree.route(to: .pttButtons) == [.category("Transmit"), .page(.pttButtons)])
         #expect(SetupTab.note(coreName: "KG4VCF/shack")

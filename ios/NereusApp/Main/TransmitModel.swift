@@ -18,6 +18,9 @@
 //             desktop. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-28: CW v2 lease, heartbeat and retirement integration.
 //   J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-11-16: Recording plan Task 18, PTT tapped while the Core's voice
+//   keyer sends this phone's message stops the message and keys nothing.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -824,11 +827,22 @@ final class TransmitModel: ObservableObject {
     var keyObserver: ((String) -> Void)?
     #endif
 
+    /// While the Core's voice keyer sends this phone's message (or waits
+    /// to repeat it), the PTT's tap stops it and keys nothing: true when
+    /// it did (recording design section 6.6, "tap it or PTT to stop").
+    /// Set by the app to its voice keyer.
+    var voiceMessageStop: (() -> Bool)?
+
     /// The PTT, and the TX panel's MOX.
     func tapPtt() {
         #if DEBUG
         keyObserver?("tap")
         #endif
+        if !ptt.transmitting, voiceMessageStop?() == true {
+            // The message stops; nothing is sent to key.
+            heldNote = nil
+            return
+        }
         guard offered else {
             heldNote = Self.noRemoteTransmitText
             return

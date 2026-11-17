@@ -3,6 +3,8 @@
 // no-port-check: NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex, 2026-10-28.
 // 2026-10-28: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
 //   separate ordinary nearest capture cells from explicit lifecycle gaps.
+// 2026-11-15: J.J. Boyd (KG4VCF), AI-assisted via Claude Code:
+//   find the nearest row by halving rather than walking from the newest.
 
 import Foundation
 
@@ -38,14 +40,28 @@ public struct WaterfallTimeAxis: Equatable, Sendable {
 
     public func nearestAge(at time: Double, history: WaterfallHistory) -> Int? {
         guard history.hasPresentationTimeline, time.isFinite, history.count > 0 else { return nil }
-        var age = 0
-        while age + 1 < history.count {
-            guard let newer = history.presentationTime(age: age), let older = history.presentationTime(age: age + 1),
-                  older <= newer else { break }
-            if time >= older + (newer - older) / 2 { break }
-            age += 1
+        return Self.nearestAgeByHalving(at: time, history: history)
+    }
+
+    /// The first age whose row is nearest `time`: the first whose midpoint
+    /// with the row older than it is at or before `time`, or the oldest.
+    /// With a timeline every time is known and strictly older down the
+    /// rows, so the midpoints fall with age and the first is found by
+    /// halving, the same age a walk row by row from the newest stops at.
+    /// Looking back 8,192 rows takes 13 steps, not 8,192.
+    private static func nearestAgeByHalving(at time: Double, history: WaterfallHistory) -> Int {
+        var low = 0
+        var high = history.count - 1
+        while low < high {
+            let middle = low + (high - low) / 2
+            if let newer = history.presentationTime(age: middle), let older = history.presentationTime(age: middle + 1),
+               time >= older + (newer - older) / 2 {
+                high = middle
+            } else {
+                low = middle + 1
+            }
         }
-        return age
+        return low
     }
 
     private func valid(age: Int, at time: Double, history: WaterfallHistory) -> Bool {
@@ -80,9 +96,14 @@ public struct WaterfallTimeAxis: Equatable, Sendable {
             for y in rows.indices { rows[y] = y < history.count ? UInt32(y) : Self.blank }
             return
         }
+        // The top row's age by halving (far back while looking back), then
+        // on down the rows, whose ages only grow.
         var age = 0
         for y in rows.indices {
             let time = topTime - (Double(y) + 0.5) / scale * secondsPerPoint
+            if y == 0, time.isFinite, history.count > 0 {
+                age = Self.nearestAgeByHalving(at: time, history: history)
+            }
             while age + 1 < history.count {
                 guard let newer = history.presentationTime(age: age), let older = history.presentationTime(age: age + 1),
                       older <= newer else { break }

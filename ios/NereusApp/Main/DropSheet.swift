@@ -94,6 +94,11 @@ struct DropSheet<Trailing: View, Content: View>: View {
         // falls through to the band's flags and buttons under it, or to
         // the layer behind that closes the sheet.
         .contentShape(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        // The shape alone is not enough: where no control of the sheet's own
+        // lies under the finger (the title row), a tap still reached the
+        // closing layer behind. A tap the sheet takes, and does nothing with,
+        // keeps it; the sheet's own buttons still get theirs.
+        .simultaneousGesture(TapGesture().onEnded {})
         .accessibilityElement(children: .contain)
         .accessibilityLabel(title)
         .accessibilityIdentifier(accessibilityIdentifier)

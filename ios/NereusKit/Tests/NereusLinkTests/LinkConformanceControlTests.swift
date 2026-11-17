@@ -5,6 +5,8 @@
 // 2026-10-24: Roundtable's thirteen verbs pinned. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-26: CW transmit, the four remote CW verbs pinned.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recordings: the thirty recordings.*, voiceKeyer.* and dsr.* verbs
+//   counted. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import Foundation
 import LinkTestSupport
@@ -123,7 +125,10 @@ import Testing
         // Remote CW adds cw.send, cw.memory, cw.stop and cw.key; hot keys add cw.paddle.
         // The band stack adds its thirteen bandStack.* verbs and the SSB Mod
         // Monitor adds txSsbModMonitor.reset.
-        #expect(commands.count == 208)
+        // Recordings add ten recordings.* verbs (recordingsVersion 1), ten
+        // voiceKeyer.* verbs (3), and eight dsr.* verbs with
+        // recordings.saveSoundOnly and recordings.openStretch (4).
+        #expect(commands.count == 238)
         #expect(Set(commands.compactMap { $0["verb"] as? String }).count == commands.count)
         let expected: [(verb: String, capability: String, version: Int, names: [String], kinds: [String])] = [
             ("diversity.setTarget", "diversityControlVersion", 1,

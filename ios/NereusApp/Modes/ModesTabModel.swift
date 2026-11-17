@@ -5,6 +5,8 @@
 // 2026-11-15: RXL's live gain kept apart from the tab (rxlGain), so a new
 //   gain redraws only its line, not the whole Modes tab (JJ: mind the
 //   phone's CPU). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-15: J.J. Boyd (KG4VCF), AI-assisted via Claude Code (Opus 5.5):
+//   set the preamp reason once per rebuild so an unchanged tab publishes nothing.
 
 import Combine
 import Foundation
@@ -1159,28 +1161,31 @@ final class ModesTabModel: ObservableObject {
         let rx2 = slices.activeSliceId.map { $0 >= 0 && $0 < 63 && (rx2Mask >> Int64($0)) & 1 == 1 } ?? false
         set(\.onRx2Input, rx2)
         let rx2OlderReason = rx2 ? rx2InputOlderCoreReason(stepAtt) : nil
+        // Worked out in full, then set once below: setting it twice in one
+        // pass would tell every view of this tab it changed when it had not.
+        var preampReasonText: String?
         if rx2 {
             let items = board?.rx2PreampItems
             let mode = Self.whole(stepAtt?[FrontEnd.rx2PreampMode])
             if let items, !items.isEmpty {
                 set(\.preamp, items.map { Choice(id: $0.id, label: $0.label, lit: Int64($0.id) == mode) })
-                set(\.preampReason, frontEndReason ?? (mode == nil ? Self.rx2PreampOlderCoreText : nil))
+                preampReasonText = frontEndReason ?? (mode == nil ? Self.rx2PreampOlderCoreText : nil)
             } else if items == nil || rx2OlderReason != nil {
                 // A Core that does not send RX2's list: the first input's
                 // list stays in its place, greyed, with the desktop's reason.
                 set(\.preamp, (board?.preampItems ?? []).map { Choice(id: $0.id, label: $0.label, lit: false) })
-                set(\.preampReason, frontEndReason ?? Self.rx2PreampOlderCoreText)
+                preampReasonText = frontEndReason ?? Self.rx2PreampOlderCoreText
             } else {
                 set(\.preamp, [])
-                set(\.preampReason, frontEndReason ?? board?.rx2AttenuatorReason ?? Self.rx2NoPreampText)
+                preampReasonText = frontEndReason ?? board?.rx2AttenuatorReason ?? Self.rx2NoPreampText
             }
         } else {
             let preampMode = Self.whole(stepAtt?[FrontEnd.preampMode])
             set(\.preamp, (board?.preampItems ?? []).map { Choice(id: $0.id, label: $0.label, lit: Int64($0.id) == preampMode) })
             if let board, board.preampItems.isEmpty {
-                set(\.preampReason, Self.noPreampText)
+                preampReasonText = Self.noPreampText
             } else {
-                set(\.preampReason, frontEndReason)
+                preampReasonText = frontEndReason
             }
         }
         var range = board?.attenuator
@@ -1213,9 +1218,10 @@ final class ModesTabModel: ObservableObject {
             set(\.attenuatorReason, stepOn == false ? Self.attOffText : nil)
         }
         // The desktop shows the preamp choices with the step attenuator off.
-        if preampReason == nil, stepOn == true {
-            set(\.preampReason, Self.preampWithStepAttText)
+        if preampReasonText == nil, stepOn == true {
+            preampReasonText = Self.preampWithStepAttText
         }
+        set(\.preampReason, preampReasonText)
         // The second ADC's preamp and RX bypass on transmit (on the Core's
         // Alex antennas): hidden on a radio without them.
         set(\.rx1PreampPresent, board?.rx1Preamp ?? true)

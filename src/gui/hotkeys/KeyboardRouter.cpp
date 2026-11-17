@@ -4,6 +4,9 @@
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-06 - J.J. Boyd (KG4VCF), first-look fixes: a key already down, the
 //                Linux pairing, menu bar menus. AI-assisted via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 13 fix round: a key the
+//                focused widget claims (it accepts ShortcutOverride) is its own.
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "gui/hotkeys/KeyboardRouter.h"
 
@@ -248,7 +251,8 @@ bool KeyboardRouter::handlePress(QWidget* receiver, QKeyEvent* event)
     }
     const QString id = m_bindings->actionForChord(chord);
     const HotKeyAction* const action = HotKeyActionList::find(id);
-    if (action == nullptr || !windowTakesKeys(receiver) || focusKeeps(event->key())) {
+    if (action == nullptr || !windowTakesKeys(receiver) || focusKeeps(event->key())
+        || widgetClaims(receiver, event)) {
         return false;
     }
 
@@ -296,7 +300,7 @@ bool KeyboardRouter::handlePressOfKeyDown(QWidget* receiver, QKeyEvent* event,
                                           QHash<qint64, QString>::iterator down)
 {
     // Focus can have moved under the held key. Typed text still keeps its keys.
-    if (!windowTakesKeys(receiver) || focusKeeps(event->key())) {
+    if (!windowTakesKeys(receiver) || focusKeeps(event->key()) || widgetClaims(receiver, event)) {
         return false;
     }
     event->accept();
@@ -364,6 +368,32 @@ bool KeyboardRouter::windowTakesKeys(const QWidget* receiver) const
     }
     return active == m_window || qobject_cast<PanFloatingWindow*>(active) != nullptr
         || qobject_cast<FloatingContainer*>(active) != nullptr;
+}
+
+// Qt's own way for a widget to keep a key from the window's shortcuts: it
+// accepts ShortcutOverride for it (Qt docs, QEvent::ShortcutOverride). The
+// focused widget is asked, or the window with nothing focused, and the widget
+// holding the mouse. A widget busy with the key in some state (a drag, a
+// gesture) claims it the same way, through its event filter: application
+// filters see the question too. The window-wide action runs only when nothing
+// claims the key.
+bool KeyboardRouter::widgetClaims(QWidget* receiver, const QKeyEvent* event)
+{
+    QWidget* const focus = QApplication::focusWidget();
+    QWidget* const asked[] = {focus != nullptr ? focus : receiver, QWidget::mouseGrabber()};
+    for (QWidget* const widget : asked) {
+        if (widget == nullptr) {
+            continue;
+        }
+        QKeyEvent question(QEvent::ShortcutOverride, event->key(), event->modifiers(), event->text(),
+                           event->isAutoRepeat(), static_cast<quint16>(event->count()));
+        question.ignore();
+        QCoreApplication::sendEvent(widget, &question);
+        if (question.isAccepted()) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // Design section 6, who wins inside those windows.

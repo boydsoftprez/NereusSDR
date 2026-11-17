@@ -1,4 +1,50 @@
 // Modification history (NereusSDR):
+//   2026-11-16: dsrPlayFromTop is public: any tune of the slice in the past
+//               plays from the top row (DsrRewindLink::sliceTuned). J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-16: Rewind plays on release (JJ's design change): letting go of
+//               the waterfall in the past plays the pan's slice from the
+//               top row at its own frequency (dsrPastPlayWanted); a click
+//               in the past tunes as a live click does; why it cannot play
+//               shows on the waterfall (dsrPlayRefused). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-16: Rewound, the past spectrum is asked for at the display's
+//               frame rate (the paint timer) for the moment playing, not
+//               once a waterfall row at most ten a second;
+//               displayTimerForTest. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-11-16: SAVE above the hours map, its yellow bracket and the save
+//               box (recording plan Task 25). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-11-16: Rewind on the waterfall (recording plan Task 24): the time
+//               strip reaches past this window's own history into rows the
+//               Core draws from the Digital Spectrum Recorder, a click on a
+//               past signal rewinds the slice, PAST on the spectrum, the
+//               hours map, a typed time, the drawing dim and your transmit
+//               rows marked. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
+//   2026-11-16: Review fixes: roundtableStripLaidOut, waterfallTop and
+//               waterfallTopChanged for the zoom row, the details' upward
+//               anchor (RoundtableInspectorSpot::upwardAnchorLeft) and the
+//               line's side cached. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-11-16: The details stand over the waterfall: roundtableInspectorSpot
+//               gives the waterfall, the spectrum and the left edge to line up
+//               with; the divider and your line moving re-place them.
+//               roundtableControlRects is gone. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
+//   2026-11-16: Your frequency's line and the tags move into the Roundtable
+//               strip (roundtableStripLineForTest, SpectrumLayout::
+//               roundtableStripChrome); the card on the spectrum is gone.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-16: The Roundtable strip between the frequency scale and the
+//               waterfall: setRoundtableStripShown, SpectrumLayout::roundtableStrip,
+//               rebuildWaterfallImage. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-11-15: setDetachedIntoOwnWindow: only the Intel detach sends a
+//               right-click to the pan from here, not any parentless
+//               spectrum. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-11-06: BandStackTick and the band stack overlay: ticks, their hit
 //               test, hover and on-air hide (band stack plan Task 11). J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -554,6 +600,7 @@ mw0lge@grange-lane.co.uk
 #include <utility>
 
 #include "core/ConnectionState.h"
+#include "core/recordings/dsr/DsrReplay.h"
 #include "core/WdspTypes.h"  // DSPMode — for TX filter IQ-space mapping (Plan 4 D9)
 #include "core/spectrum/SpectrumDetectorMode.h"
 #include "core/spectrum/ISpectrumSink.h"  // R1 Task 4: also supplies WfColorScheme + AverageMode
@@ -862,6 +909,8 @@ public:
     /// The Core's granted FFT size for this pan, 0 outside a remote window
     /// or before its first context.
     int remoteGrantedFftSize() const { return m_remoteSpectrum ? m_remoteFftSize : 0; }
+    /// The local engine's FFT size (setLocalFftShape), 0 with none.
+    int localFftSize() const { return m_localFftSize; }
     /// The frame rate the Core sends this pan, 0 outside a remote window or
     /// before its first context.
     int remoteFrameRate() const { return m_remoteSpectrum ? m_remoteFps : 0; }
@@ -1728,6 +1777,116 @@ public:
     void   setWaterfallHistoryMs(qint64 ms);
     bool   wfLive() const              { return m_wfLive; }
 
+    // ---- Rewind on the waterfall (recording plan Task 24; design 3
+    // "Rewind sound", "Rewind picture", "Moving through hours", 6.7, A11,
+    // A12). With the Digital Spectrum Recorder in use the time strip
+    // reaches past this window's own history into rows the Core draws
+    // (dsrPastRowsWanted), still 20 minutes per strip height; the picture
+    // dims with "Drawing" until they come. Letting go of the picture in the
+    // past (strip drag, hours map, typed time) plays the pan's slice from
+    // the top row at its own frequency (dsrPastPlayWanted), or moves the
+    // sound there when it already plays (dsrPastSeekWanted). A click in the
+    // past tunes as a live click does; when the slice does not play the
+    // past yet, it then plays from the top row. While rewound the picture
+    // moves with the sound (its top row is the moment heard) and the
+    // spectrum shows the past with PAST. Without it the strip works as
+    // before and the hours map stays disabled with the reason, which the
+    // waterfall shows too.
+    /// The recorder can be used (`reason` empty) or why not; the oldest
+    /// moment it keeps, ms since 1970 UTC.
+    void setDsrRewindAvailable(bool available, const QString& reason, qint64 oldestUtcMs);
+    bool dsrRewindAvailable() const { return m_dsrAvailable; }
+    QString dsrUnavailableReason() const { return m_dsrReason; }
+    /// The slice plays the past from `playedUtcMs`: the top row follows it.
+    /// False stops following and leaves the picture where it is.
+    void setDsrRewound(bool rewound, qint64 playedUtcMs = 0);
+    bool dsrRewound() const { return m_dsrRewound; }
+    /// LIVE stays red after PTT took the slice live, until pressed: it
+    /// still returns to the frequency before rewinding.
+    void setDsrLiveReturnPending(bool pending);
+    bool dsrLiveReturnPending() const { return m_dsrLiveReturnPending; }
+    /// The picture goes live, as LIVE does, without asking for live sound.
+    void returnWaterfallToLive() { setWaterfallLive(true); }
+    /// Past rows from the Core (in chunks; rowsLeft 0 ends the request).
+    void addDsrPastRows(const NereusSDR::DsrPastFrames& rows);
+    /// The Core refused the rows: no more are asked for until the view
+    /// moves, and the reason is shown.
+    void dsrPastRowsRefused(const QString& reason);
+    /// The slice could not play the past (the Core's words, or no slice
+    /// on the pan): the picture stays where it is and the reason shows on
+    /// the waterfall until the picture moves or plays.
+    void dsrPlayRefused(const QString& reason);
+    /// The words the waterfall shows over the past picture, or empty.
+    QString dsrWaterfallReason() const;
+    /// In the past, the slice plays from the top row (dsrPastPlayWanted),
+    /// or while rewound the sound follows there (dsrPastSeekWanted). Live,
+    /// nothing. Letting go of the picture runs it, and so does any tune of
+    /// the slice while the picture is in the past (DsrRewindLink::sliceTuned).
+    void dsrPlayFromTop();
+    /// The past spectrum frame at the moment played (empty clears it).
+    void setDsrPastSpectrum(const NereusSDR::DsrPastFrames& frame);
+    void dsrPastSpectrumRefused();
+    void setDsrHours(const QList<NereusSDR::DsrHour>& hours);
+    /// Moves the picture's top row to `utcMs` (typed time, the hours map)
+    /// and plays from there (dsrPastPlayWanted), or while rewound the sound
+    /// follows (dsrPastSeekWanted).
+    void jumpWaterfallTo(qint64 utcMs);
+    /// The top row's moment and any row's, ms since 1970 UTC.
+    qint64 waterfallTopUtcMs() const { return waterfallUtcMsForAge(m_wfHistoryOffsetRows); }
+    qint64 waterfallUtcMsForAge(int ageRows) const;
+    int waterfallAgeForUtcMs(qint64 utcMs) const;
+    /// "13:05" or "13:05:30" (UTC) as the latest such moment not after
+    /// `nowMs`; empty when it does not read as a time.
+    static std::optional<qint64> parseTypedUtcTime(const QString& text, qint64 nowMs);
+    /// Opens the typed-time box at a strip time, as clicking it does.
+    void openDsrGoto(qint64 utcMs, int y);
+    // Test seams.
+    bool dsrDrawingForTest() const { return m_dsrDrawing; }
+    bool dsrRowsInFlightForTest() const { return m_dsrRowsInFlight; }
+    int dsrCachedRowsForTest() const { return int(m_dsrRows.size()); }
+    QWidget* dsrHoursMapForTest() const;
+    QWidget* dsrGotoBoxForTest() const;
+    // ---- Saving a stretch (recording plan Task 25; design 3 "Saving a
+    // stretch"; mockup hours.html #saveBtn). SAVE sits above the hours map:
+    // it puts up a yellow bracket, 10 minutes by default, and the box with
+    // the stretch's times, length, sizes and the save choices; pressing it
+    // again takes them down. Disabled with the reason whenever the map is.
+    /// The mockup's default bracket and how long a note stays up.
+    static constexpr qint64 kDsrSaveDefaultMs = 10LL * 60LL * 1000LL;
+    static constexpr qint64 kDsrSaveNewestGapMs = 1000;
+    static constexpr int kDsrNoteMs = 4000;
+    /// About how many bytes a millisecond of the whole pan takes on the
+    /// Core, and whether sound only saves as WAV (the Files setting).
+    void setDsrSaveEstimates(double panBytesPerMs, bool soundAsWav);
+    /// Shows `text` for a few seconds where the waterfall writes reasons
+    /// (a save started, or why it was refused).
+    void showDsrNote(const QString& text);
+    QString dsrNoteForTest() const { return m_dsrNote; }
+    QWidget* dsrSaveButtonForTest() const;
+    QWidget* dsrSaveBoxForTest() const;
+    /// Presses SAVE, as a click does.
+    void toggleDsrSaveBracket();
+    const QVector<float>& renderedPixelsForTest() const { return m_renderedPixels; }
+    void setWaterfallHistoryOffsetForTest(int rows)
+    {
+        m_wfHistoryOffsetRows = rows;
+        m_wfLive = rows <= 0;
+        rebuildWaterfallViewport();
+        markOverlayDirty();
+    }
+    bool historyRowTransmitForTest(int ageRows) const { return waterfallRowIsTransmit(ageRows); }
+    QRect waterfallLiveButtonRectForTest() const
+    {
+        return waterfallLiveButtonRect(spectrumLayout().waterfallChrome);
+    }
+    QRect waterfallTimeScaleRectForTest() const
+    {
+        return waterfallTimeScaleRect(spectrumLayout().waterfallChrome);
+    }
+    /// The clock the waterfall's rows and the rewind take their moments
+    /// from, in place of the wall clock (ms since 1970 UTC).
+    void setWaterfallClockForTest(std::function<qint64()> clock) { m_wfClockForTest = std::move(clock); }
+
     // Ported from setup.cs:7801 Display.WaterfallUseRX1SpectrumMinMax.
     void setWfUseSpectrumMinMax(bool on);
     bool wfUseSpectrumMinMax() const { return m_wfUseSpectrumMinMax; }
@@ -2264,6 +2423,8 @@ public:
     void loadSettingsForTest()              { loadSettings(); }
     /// The paint timer's period (setDisplayFps sets it).
     int displayTimerIntervalForTest() const { return m_displayTimer.interval(); }
+    /// The paint timer itself: a test stops it and emits its timeout.
+    QTimer& displayTimerForTest() { return m_displayTimer; }
     /// The MOX tune gate is the property under test; synthesising a press,
     /// a wheel notch and a spot-label hit would test Qt's event delivery
     /// instead. Every emitter routes through requestTune, which is greppable.
@@ -2355,6 +2516,7 @@ public:
 
     // ---- VFO / filter overlay ----
     void setVfoFrequency(double hz);
+    double vfoFrequency() const { return m_vfoHz; }
     void setFilterOffset(int lowHz, int highHz);  // updates filter passband overlay
     /// R-CW-24 (D5): the station CW pitch, cached here so a drawer never
     /// reads settings per frame. In CWU and CWL a passband is drawn from the
@@ -2745,9 +2907,22 @@ public slots:
     /// non-GPU builds.
     void applyNativeWindowIsolationPolicy();
 
+    /// Intel detached spectrum only. The window's Metal layer otherwise
+    /// waits on the panel, and one row a second lands late.
+    void applyIntelDetachedPresentFormat();
+
+    /// Set by PanadapterApplet when it detaches this spectrum into its own
+    /// window (the Intel macOS present path). Only then does a right-click
+    /// elsewhere on the spectrum go to the pan through
+    /// panContextMenuRequested. A spectrum that is merely parentless, as in
+    /// a test, still ignores it.
+    void setDetachedIntoOwnWindow(bool detached) { m_detachedIntoOwnWindow = detached; }
+    bool isDetachedIntoOwnWindow() const { return m_detachedIntoOwnWindow; }
+
 private:
     friend class RemoteMediaController; // Private opt-in display provenance only.
     bool m_shutdownPrepared {false};
+    bool m_detachedIntoOwnWindow {false};
 
 public:
     /// Fraction of the DDC's spectrum discarded at EACH edge when drawing
@@ -2881,20 +3056,20 @@ public:
     }
 
     // ---- Roundtable room tags (Roundtable plan Task 14, design 11.2) ----
-    // One tag per room along the foot of the spectrum, above the band
-    // plan: the state glyph, the talker (or Unknown, Double, Quiet) and
+    // One tag per room in the Roundtable strip under the frequency scale:
+    // the state glyph, the talker (or Unknown, Double, Quiet) and
     // the member count. Crowded tags fold into +N (layoutRoundtableTags).
     // `display` Hidden draws none, Frozen greys them as last known. Display
     // only: a legacy server's tag asks for a tune through roundtableRoomClicked,
     // and a frequency tag asks to be viewed through roundtableReadRequested.
     void setRoundtableTags(const QList<RoundtableTag>& tags, RoundtableTagDisplay display);
-    /// The live card for the active slice's frequency on this pan (overlay
-    /// design D10). A Quiet card draws none. `roomId` is the frequency a click
-    /// on it reads, and the tag it stands in for.
+    /// The active slice's frequency as one line in the strip, beside its dial
+    /// (strip design 3). A Quiet card with no note draws none. `roomId` is the
+    /// frequency a click on it reads, and the tag it stands in for.
     void setRoundtableCard(const RoundtableCardModel& card, const QString& roomId);
     const QList<RoundtableTag>& roundtableTags() const { return m_roundtableTags; }
     RoundtableTagDisplay roundtableTagDisplay() const { return m_roundtableTagDisplay; }
-    /// A drawn card, tag or fold, in this widget's coordinates.
+    /// A drawn line (kind Card), tag or fold, in this widget's coordinates.
     struct RoundtableTagHit {
         enum class Kind { Tag, Card };
         QRect rect;
@@ -2903,9 +3078,11 @@ public:
         Kind kind = Kind::Tag;
         qint64 hz = 0;  // the frequency it speaks for; a fold's first
     };
-    /// How many times the card has been placed: a value-only change places it no
+    /// How many times the line has been placed: a value-only change places it no
     /// more (overlay design D14).
     int roundtableCardPlacementsForTest() const { return m_roundtableCardPlacements; }
+    /// Where the last tag pass drew your frequency's line; null when it drew none.
+    RoundtableStripLinePlacement roundtableStripLineForTest() const { return m_roundtableStripLineDrawn; }
     /// What the last tag pass drew (it is redrawn with the overlay).
     const QList<RoundtableTagHit>& roundtableTagHitsForTest() const { return m_roundtableTagHits; }
     void drawRoundtableTagsForTest(QPainter& p, const QRect& specRect) { drawRoundtableTags(p, specRect); }
@@ -2918,19 +3095,28 @@ public:
     /// wide (overlay design D23): nullopt off the pan, before the first frame and
     /// while transmitting.
     std::optional<double> roundtablePanLevel(quint64 hz, const QString& family) const;
-    /// Where the inspector stands on this pan: see placeRoundtableInspector.
+    /// Where the details may stand on this pan: see placeRoundtableDetails.
+    /// `below` is the waterfall cut clear of its time scale, `above` the spectrum
+    /// to the divider's top edge, `anchorLeft` the left edge to line up
+    /// with: your line's when it is drawn here, else 8 px past the dial on the
+    /// flag's far side.
     struct RoundtableInspectorSpot {
-        QRect pan;
+        QRect below;
+        QRect above;
+        int anchorLeft = 0;
+        /// The left edge when they open upward over the spectrum: past the
+        /// flag's outer edge, else the dial's other side, when 300 px fits
+        /// there; else anchorLeft.
+        int upwardAnchorLeft = 0;
         int dialX = 0;
-        QVector<QRect> flags;
         bool flagFlipped = false;
     };
-    /// By `sliceId`'s flag when it is on this pan, else by this pan's own slice,
-    /// else by `fallbackHz`, the clicked tag (overlay design D37). It needs no card
-    /// or tag pass, so a quiet frequency has one too.
+    /// The dial is `sliceId`'s flag when it is on this pan, else this pan's own
+    /// slice, else `fallbackHz`, the clicked tag (overlay design D37). It needs no
+    /// card, so a quiet frequency has one too.
     RoundtableInspectorSpot roundtableInspectorSpot(int sliceId, qint64 fallbackHz) const;
     /// Where the open inspector is, in this widget's coordinates; null while closed.
-    /// The card is not drawn while it is set and tags keep clear of it (D34, D37). It
+    /// Open on your own frequency, your line in the strip is drawn open. It
     /// touches only the tag child, never the static overlay.
     void setRoundtableInspectorRect(const QRect& rect);
     const QRect& roundtableInspectorRect() const { return m_roundtableInspectorRect; }
@@ -2978,6 +3164,19 @@ public:
     /// The spectrum rectangle the tags are drawn against, and the band
     /// plan strip's height at its foot.
     QRect roundtableTagSpectrumRectForTest() const;
+    /// The Roundtable strip: a kRoundtableStripHeight row between the
+    /// frequency scale and the waterfall, taken from the waterfall's height
+    /// only, so the spectrum keeps its size. Shown while Roundtable is on
+    /// (roundtableStripShownFor). Setting the current value does nothing.
+    void setRoundtableStripShown(bool shown);
+    bool roundtableStripShown() const { return m_roundtableStripShown; }
+    /// Shown and laid out: a waterfall share under kRoundtableStripHeight +
+    /// kRoundtableStripMinWaterfall leaves the strip out while it is shown.
+    bool roundtableStripLaidOut() const { return !spectrumLayout().roundtableStrip.isNull(); }
+    /// The waterfall's top edge, under the strip when it is laid out.
+    int waterfallTop() const { return spectrumLayout().waterfall.top(); }
+    /// The strip's rect, null while it is hidden or not laid out.
+    QRect roundtableStripRectForTest() const;
     int bandPlanStripHeightForTest(const QPaintDevice* device = nullptr) const
     {
         return bandPlanStripHeight(device);
@@ -3266,6 +3465,25 @@ signals:
 
     // Emitted when user clicks on spectrum/waterfall to tune
     void frequencyClicked(double hz);
+    // Rewind on the waterfall (recording plan Task 24).
+    /// Rows the waterfall shows past this window's own history: `rowCount`
+    /// from `toUtcMs` back to `fromUtcMs`.
+    void dsrPastRowsWanted(qint64 fromUtcMs, qint64 toUtcMs, int rowCount);
+    /// The spectrum at the moment played, while rewound.
+    void dsrPastSpectrumWanted(qint64 utcMs);
+    /// The picture was let go of in the past, or a click tuned there: the
+    /// pan's slice plays from `utcMs` at the frequency it is on.
+    void dsrPastPlayWanted(qint64 utcMs);
+    /// While rewound the picture moved (strip drag, hours map, typed time):
+    /// the sound follows to `utcMs`.
+    void dsrPastSeekWanted(qint64 utcMs);
+    /// LIVE was pressed.
+    void dsrLiveRequested();
+    /// The hours map is shown: it wants the kept hours.
+    void dsrHoursWanted();
+    /// A save button in the save box: the bracketed stretch, whole pan or
+    /// slice A's sound only (recording plan Task 25).
+    void dsrSaveStretchWanted(qint64 fromUtcMs, qint64 toUtcMs, bool wholePan);
     // Phase 3J-2 Task E1: emitted when the user clicks a spot label
     // (or selects a spot from a cluster badge popup). spotIndex is the
     // SpotMarker::index that was bound to the clicked label so spot
@@ -3283,8 +3501,11 @@ signals:
     void roundtableTagMenuRequested(const QString& context, QPoint globalPos);
     // The short menu's Messages.
     void roundtableMessagesRequested(const QString& context);
-    // What roundtableInspectorSpot says may have changed: a resize or a flag's move.
+    // What roundtableInspectorSpot says may have changed: a resize, the divider,
+    // the strip shown or hidden, a flag's move or your line moving.
     void roundtableInspectorSpotChanged();
+    // The waterfall's top edge may have moved: the split or the strip changed.
+    void waterfallTopChanged();
     // The card menu's Read reports.
     void roundtableReportsRequested();
     // The card menu's Signal: the shared format key just moved on.
@@ -3430,6 +3651,10 @@ signals:
     void dssRowDividerChanged(int n);
     void threeDSliceDepthChanged(bool on);
 
+    /// The spectrum is its own window, so an ignored right-click no longer
+    /// walks up to the pan applet. The applet opens its menu from this.
+    void panContextMenuRequested(const QPoint& globalPos);
+
 protected:
 #ifdef NEREUS_GPU_SPECTRUM
     void initialize(QRhiCommandBuffer* cb) override;
@@ -3460,6 +3685,12 @@ private:
         QRect frequency;
         QRect waterfall;
         QRect waterfallChrome; // Full width for right-edge history/LIVE controls.
+        // The Roundtable strip, directly under `frequency`, the plot's width;
+        // null while it is hidden.
+        QRect roundtableStrip;
+        // The strip's row across the whole widget, for its background and edge
+        // lines; null while it is hidden.
+        QRect roundtableStripChrome;
     };
     SpectrumLayout spectrumLayout() const;
 
@@ -3650,6 +3881,13 @@ private:
     bool  historyResizeSettling() const;
     void  rebuildWaterfallViewport();
     void  rebuildWaterfallViewport(double centerHz, double bandwidthHz);
+    // Re-creates m_waterfall at the layout's waterfall size and refills it
+    // from the history; nothing when the size is unchanged. resizeEvent and
+    // setRoundtableStripShown share it.
+    void  rebuildWaterfallImage();
+    // The Roundtable strip's background: a dark fill with a line on its top
+    // and bottom rows.
+    void  drawRoundtableStrip(QPainter& p, const QRect& strip);
     void  setWaterfallLive(bool live);
     void  appendHistoryRow(const QRgb* rowData, qint64 timestampMs,
                            bool imdEligible = false, quint64 acceptedOrdinal = 0);
@@ -3660,6 +3898,22 @@ private:
     int   historyRowIndexForAge(int ageRows) const;
     std::optional<qreal> imdEventY(quint64 sequence, qreal glideRows) const;
     QString pausedTimeLabelForAge(int ageRows) const;
+    // Rewind on the waterfall (recording plan Task 24).
+    int   waterfallStripRowsPerHeight(int maxOffset) const;
+    bool  waterfallRowIsTransmit(int ageRows) const;
+    struct DsrPastRow;   // below, with the rewind state
+    const DsrPastRow* dsrRowNear(qint64 utcMs) const;
+    bool  dsrAnswered(qint64 utcMs) const;
+    void  askDsrRows(qint64 fromMs, qint64 toMs, int missing);
+    void  clearDsrRows();
+    void  drawDsrOverlay(QPainter& p, const QRect& specRect, const QRect& wfRect);
+    void  layoutDsrChildren();
+    void  substituteDsrPastTrace();
+    void  askDsrPastSpectrum();
+    qint64 dsrPlayingUtcMs();
+    void  dsrGotoSubmit();
+    void  placeDsrSaveBox();
+    void  takeDownDsrSave();
     void  reprojectWaterfall(double oldCenterHz, double oldBandwidthHz,
                              double newCenterHz, double newBandwidthHz);
     // (clearWaterfallHistory moved to public slots: in sub-epic E task 4 review.)
@@ -3708,8 +3962,9 @@ private:
     //  - Cluster badge popup menu with formatted spot lines.
     void drawSpotMarkers(QPainter& p, const QRect& specRect);
     void showSpotClusterPopup(const SpotCluster& cluster, const QPoint& globalPos);
-    // Roundtable plan Task 14: the room tags, after the spots in both
-    // paint paths, and a click on one (true when it took the click).
+    // Roundtable plan Task 14: your frequency's line and the room tags in
+    // the Roundtable strip (frequencies mapped across `specRect`), after the
+    // spots in both paint paths, and a click on one (true when it took it).
     void drawRoundtableTags(QPainter& p, const QRect& specRect);
     bool roundtableTagClick(const QPoint& pos, const QPoint& globalPos);
 
@@ -3997,6 +4252,65 @@ private:
     bool            m_draggingTimeScale{false};    // gesture flag
     int             m_timeScaleDragStartY{0};      // anchor Y at mousedown
     int             m_timeScaleDragStartOffsetRows{0};
+    bool            m_timeScaleDragMoved{false};
+
+    // ── Rewind on the waterfall (recording plan Task 24) ──────────────────
+    // A row the Core drew from the Digital Spectrum Recorder, kept by its
+    // moment (ms since 1970 UTC): dBm per point over its own stretch.
+    struct DsrPastRow {
+        QVector<float> dbm;
+        double firstHz{0.0};
+        double hzPerPoint{0.0};
+        bool transmit{false};
+    };
+    // The Core's rows are drawn this far either side of a row's moment, in
+    // row periods; a moment asked for and not kept stays black.
+    static constexpr double kDsrRowMatchPeriods = 0.6;
+    // While rewound the rows the picture will scroll into are asked for
+    // this far ahead.
+    static constexpr qint64 kDsrLeadMs = 2000;
+    // "Drawing" dims the picture while at least this share of it waits.
+    static constexpr int kDsrDrawingShareDivisor = 4;
+    // The past spectrum is asked for once a display frame (the paint
+    // timer's period). Asks closer than the period less this share of it
+    // are left out, so a tick a millisecond early never drops a frame.
+    static constexpr int kDsrSpectrumSlackDivisor = 4;
+    // How many of the Core's rows are kept, in picture heights.
+    static constexpr int kDsrCacheHeights = 4;
+    bool            m_dsrAvailable{false};
+    QString         m_dsrReason;
+    qint64          m_dsrOldestUtcMs{0};
+    bool            m_dsrRewound{false};
+    bool            m_dsrLiveReturnPending{false};
+    QMap<qint64, DsrPastRow> m_dsrRows;
+    QList<QPair<qint64, qint64>> m_dsrAnswered;   // stretches asked and answered
+    bool            m_dsrRowsInFlight{false};
+    qint64          m_dsrInFlightFromMs{0};
+    qint64          m_dsrInFlightToMs{0};
+    bool            m_dsrDrawing{false};
+    qint64          m_dsrDrawingAtMs{0};
+    QString         m_dsrRowsRefusal;
+    double          m_dsrCacheSpanHz{0.0};
+    int             m_dsrCacheWidth{0};
+    NereusSDR::DsrPastFrames m_dsrPastTrace;
+    bool            m_dsrSpectrumInFlight{false};
+    qint64          m_dsrSpectrumAskedMs{0};
+    // The picture's top moment, and when it got there: the moment playing
+    // runs on from it until the next row moves the top.
+    qint64          m_dsrTopAnchorUtcMs{0};
+    qint64          m_dsrTopAnchorAtMs{0};
+    QVector<quint8> m_wfHistoryTransmit;           // parallel; 1 = your transmit
+    QPointer<QWidget> m_dsrHoursMap;
+    QPointer<QWidget> m_dsrGoto;
+    QPointer<QWidget> m_dsrSaveButton;
+    QPointer<QWidget> m_dsrSaveBox;
+    double          m_dsrPanBytesPerMs{0.0};
+    bool            m_dsrSoundAsWav{false};
+    QString         m_dsrNote;
+    QString         m_dsrPlayRefusal;   // why the slice could not play the past
+    quint64         m_dsrNoteSerial{0};
+    std::function<qint64()> m_wfClockForTest;
+    qint64 wfNowMs() const;
 
     // Default depth (overridden at runtime by m_waterfallHistoryMs from AppSettings).
     // From AetherSDR SpectrumWidget.h:502 [@0cd4559]
@@ -4726,6 +5040,8 @@ private:
     QVector<SpotCluster> m_spotClusters;
     // Roundtable plan Task 14: the room tags and what the last pass drew.
     QList<RoundtableTag> m_roundtableTags;
+    // The Roundtable strip under the frequency scale (setRoundtableStripShown).
+    bool m_roundtableStripShown = false;
     // The tags as the pan draws them: one per double (roundtableMergeDoubleTags).
     QList<RoundtableTag> m_roundtablePanTags;
     // Tag widths, measured once per tag text and font (measureRoundtableTags).
@@ -4737,19 +5053,21 @@ private:
     RoundtableCardModel m_roundtableCard;
     QString m_roundtableCardRoom;
     QString m_roundtableCardFormat;
-    // Where the card last went, and what decided it (D14).
-    RoundtableCardPlacement m_roundtableCardPlaced;
-    QRect m_roundtableCardPlacedPan;
-    QVector<QRect> m_roundtableCardPlacedControls;
-    QFont m_roundtableCardPlacedFont;
-    int m_roundtableCardPlacedDialX = 0;
-    bool m_roundtableCardPlacedFlipped = false;
-    bool m_roundtableCardPlacedValid = false;
+    // Your frequency's line as last placed, and what it was placed for: the
+    // strip, the dial, the flag's side and the line's font (with the format and
+    // structure, which setRoundtableCard checks).
+    RoundtableStripLinePlacement m_roundtableStripLinePlaced;
+    QRect m_roundtableStripLinePlacedStrip;
+    QFont m_roundtableStripLinePlacedFont;
+    int m_roundtableStripLinePlacedDialX = 0;
+    bool m_roundtableStripLinePlacedFlipped = false;
+    RoundtableStripLineSide m_roundtableStripLinePlacedSide = RoundtableStripLineSide::Either;
+    bool m_roundtableStripLinePlacedValid = false;
+    RoundtableStripLinePlacement m_roundtableStripLineDrawn;
     int m_roundtableCardPlacements = 0;
     QString m_roundtableViewedRoom;
     bool m_roundtableViewedIsFold{false};
     QString m_roundtableSliceName{QStringLiteral("A")};
-    QVector<QRect> roundtableControlRects() const;
     QRect m_roundtableInspectorRect;
     // GPU path: tags paint here, above the spectrum and under the flags.
     // A reading updates this widget only, not the panadapter frame.
@@ -5321,6 +5639,11 @@ private:
     bool m_rhiInitialized{false};
 
     // GPU pipeline init helpers
+    // Intel macOS draws this pan at logical pixels (applySpectrumColorBufferSize).
+    // The overlay and background textures use the same ratio so they land on
+    // that color buffer 1:1. Other platforms follow the widget's device pixels.
+    void applySpectrumColorBufferSize();
+    qreal spectrumColorBufferRatio() const;
     void initWaterfallPipeline();
     void initOverlayPipeline();
     void initSpectrumPipeline();

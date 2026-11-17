@@ -51,6 +51,13 @@
 //   2026-10-25 - streamSlicesForTest, a read-only test seam for the slices
 //                 a stream is fanned out to. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Claude Code.
+//   2026-11-16 - Rewind sound (recording plan Task 22): setSliceReplay, the
+//                 one switch on the receive path. A rewound slice's
+//                 demodulator takes its block from the Digital Spectrum
+//                 Recorder's replay instead of the stream's I/Q; every other
+//                 slice and the stream itself are unchanged.
+//                 NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -121,6 +128,7 @@ namespace NereusSDR {
 class WdspEngine;
 class AudioEngine;
 class Resampler;
+class DsrReplay;
 class RadeRxBridge;
 struct AudioPriorityToken;   // src/core/audio/RealtimeAudioPriority.h
 
@@ -246,7 +254,39 @@ public:
     double sampleRate() const { return m_sampleRate; }
     static constexpr int kMaxSaneExternalDiversityChunk = 65536;
 
+    // ── Rewind sound (recording plan Task 22, NereusSDR-original) ───────
+    //
+    // THE ONE SWITCH ON THE RECEIVE PATH (I/Q -> WDSP -> audio). While a
+    // slice has a replay, each block its demodulator would take from its
+    // stream's I/Q is taken from the replay instead (DsrReplay::pull: past
+    // I/Q the recordings worker read from the ring file). The stream still
+    // accumulates and drains as before, its other slices take its I/Q
+    // unchanged, and the stream's single noise blanker pass is never spent
+    // on the replay. When the replay has played up to the newest second
+    // kept, pull says so and the slice takes the stream's I/Q again, in the
+    // same block. A slice fed from the diversity mix is never switched.
+    //
+    // Any thread (RadioModel, on the main thread). Lock-free for the DSP
+    // thread: one atomic load per slice per block while any slice is
+    // rewound, one atomic load per block otherwise. Returns once the DSP
+    // thread no longer reads the replay this replaces, so the caller may
+    // let it go. The caller keeps `replay` alive while it is set.
+    static constexpr int kMaxReplaySlices = 32;
+    void setSliceReplay(int sliceIdx, DsrReplay* replay);
+    // The slice's replay, or null. Any thread.
+    DsrReplay* sliceReplay(int sliceIdx) const;
+
 #ifdef NEREUS_BUILD_TESTS
+    // Every block a slice's demodulator is handed in the stream fan-out
+    // (the stream's I/Q, or its replay while rewound), before the
+    // demodulator runs. Set before the first batch.
+    using SliceInputHookForTest =
+        void (*)(int sliceIdx, const float* i, const float* q, int samples);
+    void setSliceInputHookForTest(SliceInputHookForTest hook)
+    {
+        m_sliceInputHookForTest = hook;
+    }
+
     // Test-only: sleep this long at the start of every processed (not
     // skipped) batch, to simulate a DSP chain slower than real time.
     void setProcessingDelayUsForTest(int microseconds)
@@ -668,6 +708,25 @@ private:
     // what claims the pass. Engines must be wired.
     bool processSliceChunk(int sliceIdx, float* inI, float* inQ,
                            int inSize, int outSize, bool blankerClaimed);
+
+    // Rewind sound (recording plan Task 22): the switch. Fills
+    // m_replayI / m_replayQ with `inSize` frames of the slice's replay and
+    // returns true, or returns false when the slice is live (no replay, or
+    // its replay has reached the newest second kept). DSP thread only.
+    bool takeReplayBlock(int sliceIdx, int inSize);
+    void noteSliceInput(int sliceIdx, const float* i, const float* q, int samples);
+    std::array<std::atomic<DsrReplay*>, kMaxReplaySlices> m_sliceReplays{};
+    // How many slices have a replay; 0 skips the switch in one load.
+    std::atomic<int> m_replaySliceCount{0};
+    // The DSP thread inside a replay's pull (setSliceReplay waits it out).
+    std::atomic<int> m_replayPullsInFlight{0};
+    // The rewound slice's block. DSP thread only; grown on first use like
+    // the scratch below.
+    QVector<float> m_replayI;
+    QVector<float> m_replayQ;
+#ifdef NEREUS_BUILD_TESTS
+    SliceInputHookForTest m_sliceInputHookForTest{nullptr};
+#endif
 
     // Reusable interleaved stereo scratch handed to AudioEngine::rxBlockReady.
     // Sized to outSize*2 on first use and reused in-place per batch so the

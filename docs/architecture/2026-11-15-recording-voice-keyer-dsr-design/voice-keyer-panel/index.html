@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voice Keyer Shapes</title>
+<style>
+:root {
+  --app: #08080a; --panel: #0c0c0e; --inset: #050507; --border: #2c2c31; --border-sub: #1f1f23;
+  --text: #dcdce1; --dim: #a6a6ac; --scale: #7e7e85; --btn: #1b1b1f; --btn-top: #222226; --btn-hover: #26262b;
+  --blue: #264e78; --blue-b: #4a7ba8; --green: #2f5a40; --green-b: #3f7a55; --green-t: #cfe9d6;
+  --red: #7a2c2e; --red-b: #c25a5c; --red-t: #ffd9d9; --amber: #d8a55f; --amber-b: #6b5426; --live: #4caf6a;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--app); color: var(--text); font: 13px/1.4 system-ui, -apple-system, sans-serif; }
+header { padding: 18px 24px 6px; }
+h1 { margin: 0 0 4px; font: 700 22px/1.2 system-ui, sans-serif; }
+.note { color: var(--dim); max-width: 1100px; margin: 0; }
+.air { margin: 12px 24px 0; display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; max-width: 1340px; }
+.lamp { width: 44px; height: 20px; border-radius: 3px; background: #1b1b1f; color: #6c6c72; font: 700 12px/20px system-ui; text-align: center; }
+.air.is-tx .lamp { background: #c25a5c; color: #fff; }
+.air .what { color: var(--dim); }
+.air.is-tx .what { color: #fff; }
+.air .sp { margin-left: auto; color: var(--scale); font-size: 12px; }
+.cols { display: flex; gap: 22px; padding: 16px 24px 40px; align-items: flex-start; overflow-x: auto; }
+.col { flex: none; }
+.col h2 { margin: 0 0 2px; font: 600 14px/1.3 system-ui, sans-serif; }
+.col p { margin: 0 0 8px; color: var(--dim); font-size: 12px; width: 306px; min-height: 34px; }
+.col.today img { width: 306px; display: block; border: 1px solid var(--border); }
+.rec-badge { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 3px; background: var(--blue); color: #fff; font: 600 10px/16px system-ui; vertical-align: 2px; }
+/* The applet: AppletPanelWidget title bar and the CWX applet's controls. */
+.applet { width: 306px; background: var(--panel); border: 1px solid var(--border); }
+.ahd { display: flex; align-items: center; height: 17px; padding: 0 4px; gap: 6px; font: 600 11px/17px system-ui, sans-serif; letter-spacing: .14em; color: var(--dim); border-bottom: 1px solid var(--border-sub); }
+.ahd .g { letter-spacing: 0; color: #5b5b61; }
+.ahd .ic { margin-left: auto; letter-spacing: 0; color: var(--dim); display: flex; gap: 9px; font-size: 11px; }
+.abody { padding: 4px 4px 5px; display: grid; gap: 4px; }
+.b { height: 21px; border-radius: 6px; border: 1px solid var(--border); background: linear-gradient(var(--btn-top), var(--btn)); color: #f0f0f2; font: 700 11.5px/19px system-ui, sans-serif; cursor: pointer; padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: relative; }
+.b:hover:not(:disabled) { background: var(--btn-hover); }
+.b:disabled { color: #5c5c62; cursor: default; }
+.b.red { background: var(--red); border-color: var(--red-b); color: var(--red-t); }
+.b.green { background: var(--green); border-color: var(--green-b); color: var(--green-t); }
+.b.blue { background: var(--blue); border-color: var(--blue-b); color: #fff; }
+.b.empty { color: #6c6c72; font-weight: 600; }
+.b .prog { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--live); }
+.b.red .prog { background: #ff6b6b; }
+.b.blink { animation: blink 1s steps(1, end) infinite; }
+@keyframes blink { 50% { background: #4a1c1e; } }
+.row { display: flex; gap: 4px; align-items: center; }
+.row > .b { flex: 1; }
+.grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.lbl { color: var(--dim); font-size: 12px; white-space: nowrap; }
+.slider { flex: 1; height: 18px; position: relative; cursor: pointer; }
+.slider::before { content: ''; position: absolute; left: 0; right: 0; top: 7px; height: 4px; border-radius: 2px; background: #1a1a1e; border: 1px solid #26262b; }
+.slider i { position: absolute; top: 1px; width: 14px; height: 16px; margin-left: -7px; border-radius: 7px; background: #1b2a3a; border: 1px solid #5e8db8; }
+.val { width: 38px; height: 20px; border-radius: 4px; background: #040406; border: 1px solid var(--border); text-align: center; font: 600 11.5px/18px system-ui; color: #fff; }
+.lvl { height: 6px; border-radius: 2px; background: var(--inset); border: 1px solid var(--border-sub); overflow: hidden; }
+.lvl i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #4caf6a 0 70%, #d8a55f 70% 90%, #c25a5c 90%); transition: width 90ms linear; }
+.status { font-size: 11.5px; color: var(--dim); min-height: 32px; padding: 0 1px; }
+.status b { color: var(--text); font-weight: 600; }
+/* Shape B: AetherSDR's list. */
+.lrow { display: grid; grid-template-columns: 48px 1fr 40px; gap: 6px; align-items: center; height: 24px; padding: 0 4px; border: 1px solid var(--border-sub); border-radius: 4px; background: #0f0f12; cursor: pointer; position: relative; }
+.lrow.is-sel { border-color: var(--blue-b); background: #12202f; }
+.lrow .k { height: 18px; border-radius: 3px; border: 1px solid var(--border); background: var(--btn); color: #79a8d2; font: 700 9.5px/16px system-ui; text-align: center; }
+.lrow .n { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lrow .n.e { color: #5c5c62; font-style: italic; }
+.lrow .d { text-align: right; font: 11px ui-monospace, Menlo, monospace; color: var(--scale); }
+.lrow .prog { position: absolute; left: 3px; right: 3px; bottom: 1px; height: 2px; }
+.lrow .prog i { display: block; height: 100%; width: 0; background: var(--live); }
+.lrow.is-rec .prog i { background: #ff6b6b; }
+.lrow.is-play .k { background: var(--green); color: #fff; border-color: var(--green-b); }
+.lrow.is-rec .k { background: var(--red); color: #fff; border-color: var(--red-b); }
+/* Shape C: Longpath's rows with their own buttons. */
+.crow { display: grid; grid-template-columns: 30px 1fr 38px 22px 22px 22px; gap: 3px; align-items: center; height: 24px; padding: 0 3px 0 4px; border-left: 2px solid transparent; }
+.crow:nth-child(odd) { background: #0a0a0c; }
+.crow.is-rec { background: var(--inset); border-left-color: var(--red-b); }
+.crow.is-play { border-left-color: var(--live); }
+.crow .k { height: 18px; border-radius: 6px; border: 1px solid var(--amber-b); background: var(--inset); color: var(--amber); font: 700 10px/16px system-ui; text-align: center; }
+.crow .n { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default; }
+.crow .n.e { color: var(--scale); font-style: italic; }
+.crow .d { text-align: right; font: 10.5px ui-monospace, Menlo, monospace; color: var(--scale); }
+.crow .b { height: 20px; padding: 0; font-size: 10px; text-align: center; }
+.menu { position: fixed; z-index: 50; display: none; min-width: 180px; padding: 2px 0; background: #1b1b1f; border: 1px solid #3d3d41; box-shadow: 0 10px 28px -8px #000; font: 12px/1.2 system-ui, sans-serif; }
+.menu button { display: block; width: 100%; padding: 5px 16px; background: none; border: 0; color: #e8e8ec; text-align: left; font: inherit; cursor: pointer; }
+.menu button:hover:not(:disabled) { background: #1e3d5f; }
+.menu button:disabled { color: #6c6c72; }
+.menu .sep { height: 1px; margin: 3px 0; background: #2c2c31; }
+.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 6px 12px; background: #1b1b1f; border: 1px solid #3d3d41; border-radius: 4px; font-size: 12px; opacity: 0; transition: opacity .15s; pointer-events: none; }
+.toast.on { opacity: 1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Voice keyer: three shapes</h1>
+  <p class="note">Interactive. All three panels share the same eight messages, so a message recorded in one shows in the others. Sending a message transmits it, and the radio goes back to receive when it ends. Stop, Escape or PTT stops it. Keys: Ctrl+Shift+F1 to F8 send, Ctrl+Shift+F10 stops. Left: today's unwired panel and the CW memory panel above it, captured from the app.</p>
+</header>
+<div class="air" id="air"><span class="lamp">TX</span><span class="what" id="airWhat">Receiving</span><span class="sp">Slice A · 7.185 LSB</span></div>
+<div class="cols">
+  <div class="col today"><h2>Today</h2><p>CW memories (CWX) and the unwired voice keyer, as the app draws them now.</p><img src="today.png" alt="CWX applet and today's unwired DVK applet"></div>
+  <div class="col"><h2>A · Like the CW memories <span class="rec-badge">my pick</span></h2><p>Message buttons like CWX's M1 to M8. Light Record, then click a message to record into it.</p><div class="applet" id="A"></div></div>
+  <div class="col"><h2>B · A list, like AetherSDR</h2><p>One row per message with its key and length. Buttons along the bottom act on the selected row.</p><div class="applet" id="B"></div></div>
+  <div class="col"><h2>C · Rows with their own buttons, like Longpath</h2><p>Each message has its own record, send and stop. The row being recorded gets a red edge.</p><div class="applet" id="C"></div></div>
+</div>
+<div class="menu" id="menu"></div>
+<div class="toast" id="toast"></div>
+<script>
+(function () {
+  var MSG = [
+    { name: 'CQ', secs: 6.2 }, { name: 'Call', secs: 1.8 }, { name: '59 QTH', secs: 4.4 }, { name: '73', secs: 2.1 },
+    { name: '', secs: 0 }, { name: '', secs: 0 }, { name: '', secs: 0 }, { name: '', secs: 0 }
+  ];
+  var st = { mode: null, idx: -1, t0: 0, armA: false, selB: 0, rpt: false, delay: 5, waitUntil: 0, listen: false };
+  var KEY = function (i) { return '⌃⇧F' + (i + 1); };
+  function label(i) { return MSG[i].name || ('M' + (i + 1)); }
+  function fmt(s) { return s ? s.toFixed(1) + ' s' : '—'; }
+  var toastT;
+  function say(t) { var el = document.getElementById('toast'); el.textContent = t; el.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(function () { el.classList.remove('on'); }, 2600); }
+  function elapsed() { return (Date.now() - st.t0) / 1000; }
+
+  function startSend(i, listen) {
+    if (!MSG[i].secs) { say(label(i) + ' is empty: record it first'); return; }
+    if (st.mode === 'rec') { say('Stop recording first'); return; }
+    st.mode = 'send'; st.idx = i; st.t0 = Date.now(); st.listen = !!listen; st.waitUntil = 0;
+    render();
+  }
+  function startRec(i) {
+    if (st.mode) { stop(true); }
+    st.mode = 'rec'; st.idx = i; st.t0 = Date.now(); st.armA = false;
+    render();
+  }
+  function stop(quiet) {
+    if (st.mode === 'rec') {
+      var s = Math.max(0.6, Math.min(30, elapsed()));
+      MSG[st.idx].secs = Math.round(s * 10) / 10;
+      if (!MSG[st.idx].name) { MSG[st.idx].name = 'M' + (st.idx + 1); }
+      if (!quiet) { say('Saved ' + label(st.idx) + ' (' + fmt(MSG[st.idx].secs) + ')'); }
+    } else if (st.mode === 'send' && !quiet) { say(st.listen ? 'Stopped listening' : 'Stopped; back to receive'); }
+    st.mode = null; st.idx = -1; st.waitUntil = 0; st.listen = false;
+    render();
+  }
+  function tick() {
+    if (st.mode === 'send') {
+      var m = MSG[st.idx];
+      if (elapsed() >= m.secs) {
+        if (st.rpt && !st.listen) { st.mode = 'wait'; st.waitUntil = Date.now() + st.delay * 1000; }
+        else { st.mode = null; st.idx = -1; }
+        render(); return;
+      }
+    } else if (st.mode === 'wait') {
+      if (Date.now() >= st.waitUntil) { st.mode = 'send'; st.t0 = Date.now(); render(); return; }
+    } else if (st.mode === 'rec' && elapsed() >= 30) { stop(); say('30 s is the most a message holds'); return; }
+    live();
+  }
+  setInterval(tick, 100);
+
+  function air() {
+    var a = document.getElementById('air'), w = document.getElementById('airWhat');
+    var tx = st.mode === 'send' && !st.listen;
+    a.classList.toggle('is-tx', tx);
+    if (tx) { w.textContent = 'Transmitting ' + label(st.idx) + ' · ' + elapsed().toFixed(1) + ' / ' + fmt(MSG[st.idx].secs); }
+    else if (st.mode === 'send') { w.textContent = 'Listening to ' + label(st.idx) + ' on your speaker (not on the air)'; }
+    else if (st.mode === 'wait') { w.textContent = 'Receiving · repeat in ' + Math.ceil((st.waitUntil - Date.now()) / 1000) + ' s'; }
+    else if (st.mode === 'rec') { w.textContent = 'Receiving · recording ' + label(st.idx) + ' from the mic, ' + elapsed().toFixed(1) + ' s'; }
+    else { w.textContent = 'Receiving'; }
+  }
+  function frac() { return st.mode === 'send' ? Math.min(1, elapsed() / MSG[st.idx].secs) : st.mode === 'rec' ? Math.min(1, elapsed() / 30) : 0; }
+  function statusText() {
+    if (st.mode === 'rec') { return '<b>Recording ' + label(st.idx) + '</b> · ' + elapsed().toFixed(1) + ' s of 30. Click it again or Stop to finish.'; }
+    if (st.mode === 'send') { return '<b>' + (st.listen ? 'Listening to ' : 'Sending ') + label(st.idx) + '</b> · ' + elapsed().toFixed(1) + ' / ' + fmt(MSG[st.idx].secs); }
+    if (st.mode === 'wait') { return '<b>Repeat</b> · ' + label(st.idx) + ' again in ' + Math.ceil((st.waitUntil - Date.now()) / 1000) + ' s'; }
+    return null;
+  }
+  function live() {
+    air();
+    var f = (frac() * 100).toFixed(1) + '%';
+    document.querySelectorAll('[data-prog="' + st.idx + '"]').forEach(function (p) { p.style.width = f; });
+    document.querySelectorAll('.status').forEach(function (s) { var t = statusText(); if (t) { s.innerHTML = t; } });
+    document.querySelectorAll('.lvl i').forEach(function (l) { l.style.width = st.mode === 'rec' ? (35 + Math.random() * 50) + '%' : '0'; });
+  }
+
+  function head(t) { return '<div class="ahd"><span class="g">⋮⋮</span>' + t + '<span class="ic"><span>↗</span><span>⋯</span><span>×</span></span></div>'; }
+  function rptRow(id) {
+    return '<div class="row"><button class="b' + (st.rpt ? ' green' : '') + '" style="flex:none;width:40px" data-a="rpt" title="Send the message again after the delay, until you stop it">Rpt</button>' +
+      '<div class="slider" data-a="delay" title="Seconds between repeats"><i style="left:' + ((st.delay - 2) / 58 * 100) + '%"></i></div><div class="val">' + st.delay + '</div></div>';
+  }
+  function idleStatus(kind) {
+    if (kind === 'A') { return st.armA ? '<b>Record is on:</b> click the message to record into, then speak.' : 'Click a message to send it. Right-click for Listen, Rename, Load WAV.'; }
+    if (kind === 'B') { return 'Status: Idle'; }
+    return 'Double-click a name to rename it.';
+  }
+
+  function renderA() {
+    var h = head('DVK') + '<div class="abody">';
+    h += '<div class="row"><button class="b' + (st.armA || st.mode === 'rec' ? ' red' : '') + (st.mode === 'rec' ? ' blink' : '') + '" data-a="arm" title="Light this, then click a message to record your voice into it">● Record</button>' +
+      '<button class="b" data-a="stop" title="Stop sending, listening or recording (Ctrl+Shift+F10)">■ Stop</button></div>';
+    h += '<div class="grid4">' + MSG.map(function (m, i) {
+      var on = st.idx === i;
+      var cls = on && st.mode === 'rec' ? ' red' : on && (st.mode === 'send' || st.mode === 'wait') ? ' green' : !m.secs ? ' empty' : '';
+      return '<button class="b' + cls + '" data-msg="' + i + '" title="' + (m.secs ? label(i) + ', ' + fmt(m.secs) + ' (' + KEY(i) + ')' : 'Empty: light Record, then click here') + '">' + label(i) + '<span class="prog" data-prog="' + i + '"></span></button>';
+    }).join('') + '</div>';
+    h += '<div class="lvl" title="Mic level while recording"><i></i></div>' + rptRow('A');
+    h += '<div class="row"><button class="b" data-a="import" title="Load a WAV file into the first empty message (right-click a message to load into that one)">Import WAV…</button></div>';
+    h += '<div class="status">' + (statusText() || idleStatus('A')) + '</div></div>';
+    return h;
+  }
+  function renderB() {
+    var h = head('DVK') + '<div class="abody">';
+    h += MSG.map(function (m, i) {
+      var on = st.idx === i;
+      return '<div class="lrow' + (st.selB === i ? ' is-sel' : '') + (on && st.mode === 'rec' ? ' is-rec' : on && st.mode === 'send' ? ' is-play' : '') + '" data-sel="' + i + '" title="Click to select, double-click to send">' +
+        '<span class="k">' + KEY(i) + '</span><span class="n' + (m.secs ? '' : ' e') + '">' + (m.secs ? label(i) : 'Message ' + (i + 1) + ' — empty') + '</span><span class="d">' + (m.secs ? fmt(m.secs) : 'Empty') + '</span>' +
+        '<span class="prog"><i data-prog="' + i + '"></i></span></div>';
+    }).join('');
+    var sel = st.selB;
+    h += '<div class="row">' +
+      '<button class="b' + (st.mode === 'rec' && st.idx === sel ? ' red blink' : '') + '" data-a="brec">● REC</button>' +
+      '<button class="b" data-a="stop">■ STOP</button>' +
+      '<button class="b' + (st.mode === 'send' && !st.listen && st.idx === sel ? ' green' : '') + '" data-a="bsend" title="Send on the air">▶ SEND</button>' +
+      '<button class="b' + (st.mode === 'send' && st.listen && st.idx === sel ? ' blue' : '') + '" data-a="blisten" title="Listen on your speaker only">◀ LISTEN</button></div>';
+    h += '<div class="lvl"><i></i></div>' + rptRow('B');
+    h += '<div class="status">' + (statusText() || idleStatus('B')) + '</div></div>';
+    return h;
+  }
+  function renderC() {
+    var h = head('DVK') + '<div class="abody" style="gap:0">';
+    h += MSG.map(function (m, i) {
+      var on = st.idx === i;
+      var rec = on && st.mode === 'rec';
+      var other = st.mode === 'rec' && !on;
+      return '<div class="crow' + (rec ? ' is-rec' : on && st.mode === 'send' ? ' is-play' : '') + '"><span class="k">F' + (i + 1) + '</span>' +
+        '<span class="n' + (m.secs ? '' : ' e') + '" data-ren="' + i + '">' + (m.secs ? label(i) : 'Message ' + (i + 1) + ' — empty') + '</span><span class="d">' + (m.secs ? m.secs.toFixed(1) + ' s' : '—') + '</span>' +
+        '<button class="b' + (rec ? ' red' : '') + '" data-crec="' + i + '"' + (other ? ' disabled' : '') + ' title="Record from the mic into this message">' + (rec ? '■' : '●') + '</button>' +
+        '<button class="b' + (on && st.mode === 'send' ? ' green' : '') + '" data-csend="' + i + '"' + (m.secs && !st.mode ? '' : (on && st.mode === 'send' ? '' : ' disabled')) + ' title="Send on the air">►</button>' +
+        '<button class="b" data-a="stop"' + (on && st.mode ? '' : ' disabled') + ' title="Stop">■</button></div>';
+    }).join('');
+    h += '<div style="height:1px;background:#1f1f23;margin:5px 0 4px"></div><div style="display:grid;gap:4px"><div class="lvl"><i></i></div>' + rptRow('C') + '<div class="status">' + (statusText() || idleStatus('C')) + '</div></div></div>';
+    return h;
+  }
+  function render() {
+    document.getElementById('A').innerHTML = renderA();
+    document.getElementById('B').innerHTML = renderB();
+    document.getElementById('C').innerHTML = renderC();
+    live();
+  }
+
+  function msgClickA(i) {
+    if (st.mode === 'rec' && st.idx === i) { stop(); return; }
+    if (st.armA) { startRec(i); return; }
+    if ((st.mode === 'send' || st.mode === 'wait') && st.idx === i) { stop(); return; }
+    startSend(i, false);
+  }
+  document.addEventListener('click', function (e) {
+    hideMenu();
+    var t = e.target.closest('[data-a],[data-msg],[data-sel],[data-crec],[data-csend]');
+    if (!t) { return; }
+    var a = t.getAttribute('data-a');
+    if (t.hasAttribute('data-msg')) { msgClickA(+t.getAttribute('data-msg')); return; }
+    if (t.hasAttribute('data-sel')) { st.selB = +t.getAttribute('data-sel'); render(); return; }
+    if (t.hasAttribute('data-crec')) { var ci = +t.getAttribute('data-crec'); if (st.mode === 'rec' && st.idx === ci) { stop(); } else { startRec(ci); } return; }
+    if (t.hasAttribute('data-csend')) { var si = +t.getAttribute('data-csend'); if (st.mode === 'send' && st.idx === si) { stop(); } else { startSend(si, false); } return; }
+    if (a === 'arm') { if (st.mode === 'rec') { stop(); } else { st.armA = !st.armA; render(); } return; }
+    if (a === 'stop') { stop(); return; }
+    if (a === 'import') { importInto(MSG.findIndex(function (m) { return !m.secs; })); return; }
+    if (a === 'rpt') { st.rpt = !st.rpt; if (!st.rpt && st.mode === 'wait') { stop(true); } render(); return; }
+    if (a === 'delay') { var r = t.getBoundingClientRect(); st.delay = Math.max(2, Math.min(60, Math.round(2 + (e.clientX - r.left) / r.width * 58))); render(); return; }
+    if (a === 'brec') { if (st.mode === 'rec' && st.idx === st.selB) { stop(); } else { startRec(st.selB); } return; }
+    if (a === 'bsend') { startSend(st.selB, false); return; }
+    if (a === 'blisten') { startSend(st.selB, true); return; }
+  });
+  document.addEventListener('dblclick', function (e) {
+    var r = e.target.closest('[data-sel]');
+    if (r) { startSend(+r.getAttribute('data-sel'), false); return; }
+    var n = e.target.closest('[data-ren]');
+    if (n) { rename(+n.getAttribute('data-ren')); }
+  });
+  var FILES = [['contest-cq.wav', 'Contest CQ', 5.3], ['qrz-again.wav', 'QRZ?', 1.4], ['grid.wav', 'Grid', 2.6], ['thanks.wav', 'Thanks', 3.0]], nextFile = 0;
+  function importInto(i) {
+    if (i < 0) { say('All eight messages are full: right-click one and pick Load WAV to replace it'); return; }
+    if (st.mode === 'rec' && st.idx === i) { stop(true); }
+    var f = FILES[nextFile++ % FILES.length];
+    MSG[i] = { name: f[1], secs: f[2] };
+    say('Loaded ' + f[0] + ' into message ' + (i + 1) + ' as “' + f[1] + '” (' + fmt(f[2]) + ')');
+    render();
+  }
+  function rename(i) { var v = prompt('Name for message ' + (i + 1) + ' (CQ, Call, 73 …)', MSG[i].name); if (v !== null) { MSG[i].name = v.trim().slice(0, 12); render(); } }
+  var menu = document.getElementById('menu');
+  function hideMenu() { menu.style.display = 'none'; }
+  document.addEventListener('contextmenu', function (e) {
+    var t = e.target.closest('[data-msg],[data-sel],[data-ren]');
+    if (!t) { return; }
+    e.preventDefault();
+    var i = +(t.getAttribute('data-msg') || t.getAttribute('data-sel') || t.getAttribute('data-ren'));
+    var has = MSG[i].secs > 0;
+    var items = [['Listen on your speaker', has, function () { startSend(i, true); }], ['Record into this message', true, function () { startRec(i); }],
+      ['Rename…', true, function () { rename(i); }], null, ['Load WAV…', true, function () { importInto(i); }], ['Save as WAV…', has, function () { say('Save ' + label(i) + ' as a WAV file'); }], null,
+      ['Clear', has, function () { MSG[i] = { name: '', secs: 0 }; render(); }]];
+    menu.innerHTML = '';
+    items.forEach(function (it) {
+      if (!it) { var s = document.createElement('div'); s.className = 'sep'; menu.appendChild(s); return; }
+      var b = document.createElement('button'); b.textContent = it[0]; b.disabled = !it[1];
+      b.onclick = function (ev) { ev.stopPropagation(); hideMenu(); it[2](); };
+      menu.appendChild(b);
+    });
+    menu.style.left = e.clientX + 'px'; menu.style.top = e.clientY + 'px'; menu.style.display = 'block';
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { hideMenu(); if (st.mode) { stop(); } return; }
+    var m = /^F(\d+)$/.exec(e.key);
+    if (m && e.ctrlKey && e.shiftKey) {
+      e.preventDefault();
+      var n = +m[1];
+      if (n === 10) { stop(); return; }
+      if (n >= 1 && n <= 8) { startSend(n - 1, false); }
+    }
+  });
+  render();
+})();
+</script>
+</body>
+</html>

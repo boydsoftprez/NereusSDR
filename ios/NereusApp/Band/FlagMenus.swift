@@ -95,10 +95,9 @@ struct FlagPopoverLayer: View {
         return wideChip
     }
 
-    /// The more button: the third of the column's round buttons.
+    /// The more button: the last of the column's buttons.
     static func moreButton(column: CGRect, large: Bool) -> CGRect {
-        let size = FlagSideButtons.diameter(large: large)
-        return CGRect(x: column.minX, y: column.minY + 2 * (size + FlagLayout.sideGap), width: size, height: size)
+        FlagLayout.sideButtonRect(FlagLayout.sideButtonCount - 1, column: column)
     }
 
     /// A panel's top: 2 points below the flag and its column.

@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recorder Setup Page</title>
+<style>
+:root { color-scheme: dark; --app: #08080a; --panel: #0c0c0e; --border: #2c2c31; --text: #dcdce1; --dim: #a6a6ac; --blue: #264e78; --blue-b: #4a7ba8; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --app: #08080a; } }
+:root[data-theme="dark"] { --app: #08080a; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--app); color: var(--text); font: 13px/1.4 system-ui, -apple-system, sans-serif; }
+header { padding: 16px 20px 4px; }
+h1 { margin: 0 0 4px; font: 700 21px/1.2 system-ui, sans-serif; }
+.note { color: var(--dim); margin: 0; max-width: 1000px; }
+.bar { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; padding: 10px 20px; }
+.chips { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.chips > span { color: var(--dim); margin-right: 4px; }
+.chip { height: 24px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--border); background: #1b1b1f; color: #e8e8ec; font: 600 12px/22px system-ui; cursor: pointer; }
+.chip.on { background: var(--blue); border-color: var(--blue-b); color: #fff; }
+.chip:disabled { opacity: .45; cursor: default; }
+.wrap { padding: 0 20px 30px; }
+.box { width: 100%; max-width: 1100px; overflow-x: auto; overflow-y: hidden; border: 1px solid var(--border); -webkit-overflow-scrolling: touch; }
+#sizer { position: relative; }
+/* The Setup window: the real tree on the left, the new page on the right. */
+.dlg { position: absolute; left: 0; top: 0; width: 900px; height: 650px; transform-origin: 0 0; background: #08080a; font: 12.7px/1.35 system-ui, -apple-system, sans-serif; color: #dcdce1; overflow: hidden; }
+.tree { position: absolute; left: 0; top: 0; width: 201px; height: 650px; background: url(tree.png) 0 0 / 201px 650px no-repeat; }
+.tree .sel { position: absolute; left: 0; top: 147px; width: 186px; height: 21px; background: #2f5f92; color: #dbe9f8; font: 12.4px/21px system-ui, -apple-system, sans-serif; padding-left: 43px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.page { position: absolute; left: 201px; top: 0; right: 0; bottom: 0; padding: 8px 12px 10px 16.5px; overflow-y: auto; }
+.page h2 { margin: 0 0 14px; font: 700 15.6px/1.5 system-ui, -apple-system, sans-serif; color: #dcdce1; }
+fieldset { margin: 0 0 9px; border: 1px solid #2c2c31; border-radius: 4px; padding: 6px 8px 8px; min-width: 0; }
+legend { padding: 0 6px; margin-left: 6px; font-weight: 700; color: #c4c4ca; }
+p { margin: 0 0 6px; }
+.dim { color: #a6a6ab; }
+.row { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; }
+.row label { white-space: nowrap; }
+.chk { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; }
+.chk input { width: 14px; height: 14px; margin: 0; accent-color: #2f5f92; }
+select { flex: 1; height: 22px; border-radius: 5px; border: 1px solid #38383e; background: #1b1b1f; color: #dcdce1; font: inherit; padding: 0 6px; }
+input[type=range] { flex: 1; accent-color: #4a7ba8; }
+.val { width: 66px; height: 22px; border-radius: 4px; border: 1px solid #38383e; background: #040406; color: #fff; font: 600 12px/20px system-ui; text-align: center; }
+button.q { height: 22px; padding: 0 10px; border-radius: 5px; border: 1px solid #38383e; background: #1b1b1f; color: #e8e8ec; font: inherit; cursor: pointer; }
+button.q:disabled, select:disabled, input:disabled { color: #5c5c62; cursor: default; }
+button.q.danger { border-color: #6b2c2e; color: #ffb4b4; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 4px; margin-right: 6px; vertical-align: 0; background: #4caf6a; }
+.dot.off { background: #5c5c62; }
+.warn { border: 1px solid #a03030; background: #1d0b0c; color: #ffd0d0; border-radius: 4px; padding: 7px 9px; margin: 0 0 8px; }
+.warn b { display: block; color: #ff8a8a; font-size: 13.2px; margin-bottom: 3px; }
+.warn ul { margin: 4px 0 0; padding-left: 18px; }
+.loop { border: 1px solid #38383e; background: #0f0f12; border-radius: 4px; padding: 6px 8px; margin: 0 0 7px; }
+.loop b { color: #fff; }
+.meter { position: relative; height: 10px; border-radius: 3px; background: #040406; border: 1px solid #2c2c31; overflow: hidden; margin: 2px 0 3px; }
+.meter i { display: block; height: 100%; background: #2f5f92; }
+.meter .head { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; box-shadow: 0 0 4px #fff; animation: sweep 9s linear infinite; }
+.meter .eat { position: absolute; top: 0; bottom: 0; width: 7%; background: #c02020; animation: sweep2 9s linear infinite; }
+@keyframes sweep { from { left: 0; } to { left: 100%; } }
+@keyframes sweep2 { from { left: 0; } to { left: 100%; } }
+.key { font-size: 11.5px; color: #a6a6ab; margin: 0 0 6px; }
+.key s { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: -1px; margin: 0 4px 0 0; text-decoration: none; }
+.modal { position: absolute; inset: 0; background: rgba(0, 0, 0, .55); display: none; align-items: center; justify-content: center; }
+.modal .m { width: 360px; background: #1b1b1f; border: 1px solid #3d3d41; border-radius: 6px; padding: 12px; box-shadow: 0 14px 34px -8px #000; }
+.modal .m b { display: block; margin-bottom: 6px; }
+.modal .btns { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; }
+.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 7px 12px; background: #1b1b1f; border: 1px solid #3d3d41; border-radius: 4px; font-size: 12.5px; opacity: 0; transition: opacity .15s; pointer-events: none; z-index: 9; }
+.toast.on { opacity: 1; }
+@media (max-width: 700px) { header, .bar { padding-left: 16px; padding-right: 16px; } .wrap { padding: 0 16px 24px; } h1 { font-size: 18px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Digital Spectrum Recorder: Setup page</h1>
+  <p class="note">The real Setup window, with a new page under Cores. The settings belong to the Core you are connected to, so the desktop and the phone show the same ones. Try the three Cores below, and change the pan width and receivers to see how long 10 GB lasts.</p>
+</header>
+<div class="bar">
+  <div class="chips" id="scen"><span>The Core:</span>
+    <button class="chip on" data-s="ssd">A Core with an SSD</button>
+    <button class="chip" data-s="sd">A Pi with only an SD card</button>
+    <button class="chip" data-s="none">Not connected</button>
+    <button class="chip" id="plug" disabled>Plug a USB SSD into the Pi</button></div>
+  <div class="chips"><span>Try:</span>
+    <select id="rate" style="flex:none;width:auto;height:24px"><option value="192">192 kHz</option><option value="384">384 kHz</option><option value="768">768 kHz</option><option value="1536">1536 kHz</option></select>
+    <select id="rx" style="flex:none;width:auto;height:24px"><option value="1">1 receiver</option><option value="2" selected>2 receivers</option><option value="3">3 receivers</option><option value="4">4 receivers</option></select></div>
+</div>
+<div class="wrap">
+  <div class="box" id="box"><div id="sizer"><div class="dlg" id="dlg">
+    <div class="tree"><div class="sel">Digital Spectrum Recorder</div></div>
+    <div class="page" id="page"></div>
+    <div class="modal" id="modal"><div class="m"><b>Erase what the recorder has kept?</b><span id="mText"></span>
+      <div class="btns"><button class="q" id="mCancel">Cancel</button><button class="q danger" id="mErase">Erase</button></div></div></div>
+  </div></div></div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+(function () {
+  var MB_PER_MIN_192 = 46;      // one receiver at 192 kHz, 16-bit
+  var st = { scen: 'ssd', on: true, disk: 'own', gb: 10, fmt: 'MP3', usb: false, used: 10, rate: 192, rx: 2 };
+  var DISKS = {
+    ssd: [{ id: 'own', name: "The Core's own disk (SSD, 412 GB free)", free: 412 }],
+    sd:  [{ id: 'sd', name: 'SD card (58 GB free): wears out, can’t be used', free: 58, bad: true }]
+  };
+  var USB = { id: 'usb', name: 'USB disk: Samsung T7 SSD (931 GB free)', free: 931 };
+  var tt; function say(t) { var e = document.getElementById('toast'); e.textContent = t; e.classList.add('on'); clearTimeout(tt); tt = setTimeout(function () { e.classList.remove('on'); }, 3000); }
+  function disks() { var d = (DISKS[st.scen] || DISKS.ssd).slice(); if (st.scen === 'sd' && st.usb) { d.push(USB); } return d; }
+  function hours(gb) { var mins = gb * 1000 / (MB_PER_MIN_192 * (st.rate / 192) * st.rx); return mins; }
+  function dur(mins) { if (mins < 60) { return Math.round(mins) + ' min'; } var h = Math.floor(mins / 60), m = Math.round(mins % 60); return h + ' h' + (m ? ' ' + m + ' min' : ''); }
+  function clockAgo(mins) { var d = new Date(Date.UTC(2026, 10, 14, 14, 32) - mins * 60000); return d.toISOString().slice(11, 16); }
+
+  function render() {
+    var none = st.scen === 'none', sd = st.scen === 'sd';
+    var usable = !none && !(sd && st.disk !== 'usb');
+    var on = usable && st.on;
+    var d = disks(), cur = d.filter(function (x) { return x.id === st.disk; })[0] || d[0];
+    var mins = hours(st.gb), used = Math.min(st.used, st.gb);
+    var h = '<h2>Digital Spectrum Recorder</h2>';
+    h += '<fieldset><legend>Recording</legend>';
+    if (none) { h += '<p>No authenticated Core connection in this window. Connect to the Core to change these.</p>'; }
+    h += '<div class="row"><label class="chk"><input type="checkbox" id="on"' + (on ? ' checked' : '') + (usable ? '' : ' disabled') + '> Keep the waterfall and sound so you can rewind</label></div>';
+    h += '<p class="dim"><span class="dot' + (on ? '' : ' off') + '"></span>' + (on ? 'Recording now: ' + st.rx + ' receiver' + (st.rx > 1 ? 's' : '') + ' at ' + st.rate + ' kHz, including your own transmit audio.' : none ? 'Not known: no Core connected.' : sd && st.disk !== 'usb' ? 'Off: this Core has no disk that can take it.' : 'Off. Nothing is being kept.') + '</p>';
+    h += '</fieldset>';
+    h += '<fieldset><legend>Where it is kept</legend>';
+    if (sd && st.disk !== 'usb') {
+      h += '<div class="warn"><b>This Core needs a proper storage device for the recorder</b>This Core runs from an SD card. The Digital Spectrum Recorder writes nonstop, day and night, and that would wear an SD card out in weeks and could take the Core down with it. So the recorder will not write to it.<ul><li>Connect a USB SSD or an NVMe drive to the Core, then choose it under Disk.</li><li>A USB thumb drive is not enough: it wears out the same way an SD card does.</li></ul></div>';
+    }
+    h += '<div class="row"><label>Disk:</label><select id="disk"' + (none ? ' disabled' : '') + '>' + d.map(function (x) { return '<option value="' + x.id + '"' + (x.id === cur.id ? ' selected' : '') + (x.bad ? ' disabled' : '') + '>' + x.name + '</option>'; }).join('') + (sd && !st.usb ? '<option disabled>No USB disk found</option>' : '') + '</select>' + (sd ? '<button class="q" id="scan">Scan again</button>' : '') + '</div>';
+    var maxGb = usable ? Math.max(2, Math.floor(cur.free * 0.9)) : 500;
+    h += '<div class="row"><label>Size limit:</label><input type="range" id="gb" min="2" max="' + Math.min(500, maxGb) + '" step="1" value="' + st.gb + '"' + (usable ? '' : ' disabled') + '><input class="val" id="gbv" value="' + st.gb + ' GB"' + (usable ? '' : ' disabled') + '></div>';
+    if (usable) {
+      h += '<p id="holds">Holds about <b>' + dur(mins) + '</b> with ' + st.rx + ' receiver' + (st.rx > 1 ? 's' : '') + ' at ' + st.rate + ' kHz.</p>';
+      h += '<div class="loop"><b>It is always erasing.</b> The recorder never stops: once it reaches the size you set, every new minute it records erases the oldest minute it has. Whatever size you pick, anything older than that is gone for good. To keep something, save it as a stretch.</div>';
+      var full = on && used >= st.gb - 0.01;
+      h += '<div class="meter"><i style="width:' + (on ? used / st.gb * 100 : 0) + '%"></i>' + (full ? '<span class="eat"></span><span class="head"></span>' : '') + '</div>';
+      if (full) { h += '<p class="key"><s style="background:#fff"></s>recording now &nbsp; <s style="background:#c02020"></s>erased next &nbsp; <s style="background:#2f5f92"></s>kept</p>'; }
+      h += '<p class="dim">' + (!on ? 'In use: nothing.' : full ? 'Full, erasing the oldest as it records. Kept now: ' + clockAgo(mins) + ' to 14:32 UTC.' : 'Filling: ' + used.toFixed(1) + ' GB of ' + st.gb + ' GB. Erasing starts when it is full, in about ' + dur(hours(st.gb - used)) + '.') + ' ' + Math.round(cur.free) + ' GB free on this disk.</p>';
+    } else {
+      h += '<p class="dim">' + (none ? 'Connect to the Core to change these.' : 'Connect a USB SSD or NVMe drive and choose it under Disk to turn the recorder on.') + '</p>';
+    }
+    h += '</fieldset>';
+    h += '<fieldset><legend>Saved stretches</legend><p>Stretches you save are kept apart from this limit and are never overwritten.</p>';
+    h += '<div class="row"><span class="dim" style="flex:1">' + (none ? 'Not known.' : '3 saved, 1.4 GB.') + '</span><button class="q" id="recs"' + (none ? ' disabled' : '') + '>Show recordings</button></div>';
+    h += '<div class="row"><label>Save sound only as:</label><select id="fmt" style="flex:none;width:200px"' + (none ? ' disabled' : '') + '><option' + (st.fmt === 'MP3' ? ' selected' : '') + '>MP3</option><option' + (st.fmt === 'WAV' ? ' selected' : '') + '>WAV</option></select></div>';
+    h += '</fieldset>';
+    h += '<div class="row" style="justify-content:flex-end"><button class="q danger" id="erase"' + (on ? '' : ' disabled') + '>Erase what is kept now…</button></div>';
+    document.getElementById('page').innerHTML = h;
+    bind();
+  }
+  function bind() {
+    var q = function (id) { return document.getElementById(id); };
+    if (q('on')) { q('on').onchange = function () { st.on = this.checked; render(); }; }
+    if (q('disk')) { q('disk').onchange = function () { st.disk = this.value; if (st.disk === 'usb') { st.on = true; st.used = 0; say('The recorder is on, kept on the USB SSD'); } render(); }; }
+    if (q('scan')) { q('scan').onclick = function () { say(st.usb ? 'Found the Samsung T7 SSD' : 'No USB disk found. Plug one in and scan again.'); }; }
+    if (q('gb')) {
+      q('gb').oninput = function () { st.gb = +this.value; q('gbv').value = st.gb + ' GB'; if (q('holds')) { q('holds').innerHTML = 'Holds about <b>' + dur(hours(st.gb)) + '</b> with ' + st.rx + ' receiver' + (st.rx > 1 ? 's' : '') + ' at ' + st.rate + ' kHz.'; } };
+      q('gb').onchange = function () { var y = q('page').scrollTop; render(); q('page').scrollTop = y; };
+    }
+    if (q('gbv')) { q('gbv').onchange = function () { var v = parseInt(this.value, 10); if (v >= 2) { st.gb = Math.min(+q('gb').max, v); } render(); }; }
+    if (q('fmt')) { q('fmt').onchange = function () { st.fmt = this.value; }; }
+    if (q('recs')) { q('recs').onclick = function () { say('Opens the Recordings panel on the Core’s list'); }; }
+    if (q('erase')) { q('erase').onclick = function () { q('mText').textContent = 'This erases ' + Math.min(st.used, st.gb).toFixed(1) + ' GB of kept waterfall and sound. Rewinding starts again from now. Saved stretches stay.'; q('modal').style.display = 'flex'; }; }
+  }
+  document.getElementById('mCancel').onclick = function () { document.getElementById('modal').style.display = 'none'; };
+  document.getElementById('mErase').onclick = function () { document.getElementById('modal').style.display = 'none'; st.used = 0; say('Erased. The recorder keeps going from now.'); render(); };
+  document.getElementById('scen').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-s]');
+    if (e.target.id === 'plug') { st.usb = true; e.target.disabled = true; say('USB SSD plugged in. Pick it under Disk.'); render(); return; }
+    if (!b) { return; }
+    st.scen = b.getAttribute('data-s'); st.usb = false; st.disk = st.scen === 'sd' ? 'sd' : 'own'; st.on = st.scen === 'ssd'; st.used = st.scen === 'ssd' ? 10 : 0; st.gb = 10;
+    document.querySelectorAll('#scen [data-s]').forEach(function (c) { c.classList.toggle('on', c === b); });
+    document.getElementById('plug').disabled = st.scen !== 'sd';
+    render();
+  });
+  document.getElementById('rate').onchange = function () { st.rate = +this.value; render(); };
+  document.getElementById('rx').onchange = function () { st.rx = +this.value; render(); };
+  var fitted = false;
+  function fit() {
+    var b = document.getElementById('box'), k = Math.max(Math.min(b.clientWidth / 900, 1.25), b.clientWidth < 700 ? 0.7 : 0);
+    document.getElementById('dlg').style.transform = 'scale(' + k + ')';
+    var z = document.getElementById('sizer'); z.style.width = (900 * k) + 'px'; z.style.height = (650 * k) + 'px';
+    if (!fitted) { b.scrollLeft = Math.max(0, 201 * k - 8); fitted = true; }
+  }
+  window.addEventListener('resize', fit); fit(); render();
+})();
+</script>
+</body>
+</html>

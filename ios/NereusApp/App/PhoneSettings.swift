@@ -11,6 +11,8 @@
 // 2026-11-15: the flags folded by a tap on their letter, per receiver, as
 // the desktop keeps ReceiverFlag_<n>_Collapsed. J.J. Boyd (KG4VCF),
 // AI-assisted via Claude Code.
+// 2026-11-16: Recording plan Task 19, the iPad's Recordings panel, off by default.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -444,6 +446,15 @@ final class PhoneSettings: ObservableObject {
     }
 
     static let roundtableAppletPositionKey = "applets.roundtablePosition"
+
+    /// The iPad's column holds the Recordings panel (recording design
+    /// section 3 and 6.8). Off until turned on in Setup > Recording settings.
+    var recordingsAppletShown: Bool {
+        get { bool(Self.recordingsAppletShownKey, default: false) }
+        set { setBool(newValue, for: Self.recordingsAppletShownKey) }
+    }
+
+    static let recordingsAppletShownKey = "applets.recordingsShown"
 
     // MARK: The iPad's pans
 

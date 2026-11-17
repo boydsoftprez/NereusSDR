@@ -11,6 +11,19 @@
 // 2026-11-03: Overlay redesign D17, D18 and D20: the card and tags keep off the flags,
 // the side buttons and the dBm scale, and a frequency another flag speaks for has no tag.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-16: Recording plan Task 16, each flag's Record and Play, the playing
+// bar and the Kept notice. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan Task 28, the Digital Spectrum Recorder on Pan 1:
+// the time strip, the hours map, LIVE, SAVE, the past picture and a tap that
+// rewinds. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Rewind plays on release: a tap in the recorder's past tunes as
+// live. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: A tap in the recorder's past plays at the frequency the tap
+// tunes to (on the step), not the raw tapped one. J.J. Boyd (KG4VCF),
+// AI-assisted via Claude Code.
+// 2026-11-16: A drag in from the right edge over the recorder's time strip
+// is the edge's swipe again (or moves the band with the edge Off).
+// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-15: a tap on a flag's letter folds it to its tag, and a tap on
 // that tag opens it again, kept per receiver on this phone. J.J. Boyd
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -91,7 +104,7 @@ struct BandGestureLayer: View {
     var readout: SMeterReadout = .desktopDefaults
     /// Each flag's level, from the S-meter's RX Mode (``FlagMeterChoice``);
     /// nil shows the Core's `signalStrengthDbm` (the flag pictures).
-    var flagLevel: (@MainActor (BandSlicesModel.Entry) -> Double?)?
+    var flagLevel: (@MainActor (BandSlicesModel.Entry, BandSlicesModel.Reading) -> Double?)?
     /// The S-meter's RX Mode, which `flagLevel` follows: the flags' tag.
     var meterRxMode: SMeterRxMode = SMeterSettings.desktopDefaults.rxMode
     /// The Core refused this phone's key until a taken slice's TX button
@@ -133,6 +146,16 @@ struct BandGestureLayer: View {
     var bandStack: BandStackModel?
     /// The radio is on the air, whatever keyed it: the marks wait.
     var radioOnAir = false
+    /// Each full flag's Record and Play, the playing bar and the Kept
+    /// notice (the recording design of 2026-11-15); nil leaves Record and
+    /// Play idle and inert (the flag pictures).
+    var recordings: RecordingFlagModel?
+    /// The playing bar's All recordings… and Recording settings…; nil greys them.
+    var openAllRecordings: (() -> Void)?
+    var openRecordingSettings: (() -> Void)?
+    /// The Digital Spectrum Recorder's strip, map and past picture (Pan 1
+    /// only; the recording design's sections 6.7 and 6.8); nil shows none.
+    var dsr: DsrPanModel?
     @Environment(\.uprightBandWidth) private var uprightWidth
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -177,6 +200,19 @@ struct BandGestureLayer: View {
         .overlay(alignment: .bottom) {
             if let tuning {
                 PadLayer(tuning: tuning)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if let dsr, dsr.saving {
+                // SAVE's panel; the handles on the strip stay free above it.
+                DsrSavePanel(model: dsr, sliceFrequencyHz: slices.entries.first { $0.id == 0 }?.slice.frequencyHz)
+            }
+        }
+        .sheet(isPresented: Binding(get: { dsr?.timeSheetOpen ?? false },
+                                    set: { dsr?.timeSheetOpen = $0 })) {
+            if let dsr {
+                DsrTimeSheet(model: dsr)
+                    .presentationDetents([.height(DsrTimeSheet.height)])
             }
         }
     }
@@ -309,8 +345,15 @@ struct BandGestureLayer: View {
             return BandMenuHit.isEmptyBand(at: point, flags: flagAndTagRects, spots: spotRects, stations: stations,
                                            layout: layout)
         }
+        // The recorder's strip ends above the band's own controls at the waterfall's foot.
+        let dsrPlace = DsrStripPlace(waterfall: layout.waterfall, trailingInset: trailingInset, avoid: controls)
         return ZStack(alignment: .topLeading) {
-            touchSurface(geometry: geometry, emptyBand: emptyBand)
+            touchSurface(layout: layout, geometry: geometry, emptyBand: emptyBand)
+            if let dsr {
+                // The past over the waterfall, under everything that takes a touch.
+                DsrPictureLayer(model: dsr, band: band, layout: layout, geometry: geometry, place: dsrPlace,
+                                sliceLetter: slices.active?.slice.letter ?? "A")
+            }
             if let txFilterHz {
                 txFilter(txFilterHz, layout: layout, geometry: geometry)
             }
@@ -367,6 +410,17 @@ struct BandGestureLayer: View {
             ForEach(ordered, id: \.0.id) { pair in
                 flag(pair.0, pair.1, column: columns[pair.0.id])
             }
+            if let recordings {
+                // Under each full flag: the playing bar and the Kept notice, over the other flags.
+                RecordingFlagLayer(model: recordings,
+                                   flags: ordered.compactMap { entry, placement in
+                                       placement.isFolded ? nil
+                                           : RecordingFlagLayer.Item(slice: entry.id, letter: entry.slice.letter,
+                                                                     flag: placement.rect)
+                                   },
+                                   bandWidth: geometry.size.width, openAll: openAllRecordings,
+                                   openSettings: openRecordingSettings)
+            }
             EdgeMarkers(slices: slices, edges: shown.edges, spectrumFoot: layout.spectrum.maxY,
                         bandWidth: geometry.size.width, avoid: rects, sideways: sideways, large: large,
                         dbmArrows: arrows, controls: controls)
@@ -391,11 +445,8 @@ struct BandGestureLayer: View {
         .simultaneousGesture(drag(layout: layout, geometry: geometry, entries: entries, placements: placements))
         .onChange(of: dragging) { _, now in
             // A drag cancelled before it ended: its swipe springs back.
-            if !now, dragKind != .undecided {
-                if dragKind == .swipe {
-                    swipes?.cancel(reduceMotion: reduceMotion)
-                }
-                dragKind = .undecided
+            if !now {
+                dragCancelled()
             }
         }
         .overlay(alignment: .topLeading) {
@@ -412,6 +463,14 @@ struct BandGestureLayer: View {
                 if let tuning {
                     StepMenuLayer(tuning: tuning, flags: flags, bandWidth: geometry.size.width, large: large,
                                   part: .menu)
+                }
+                if let dsr {
+                    // Over the band's drag: a drag on the strip moves time, never the band.
+                    // A drag in from the right edge stays the band's swipe (spec 11.3).
+                    DsrStripLayer(model: dsr, place: dsrPlace,
+                                  secondsPerPoint: Double(band.settings.waterfallPeriodMs) / 1000,
+                                  edge: stripEdge(layout: layout, geometry: geometry, entries: entries,
+                                                  placements: placements))
                 }
             }
         }
@@ -500,7 +559,7 @@ struct BandGestureLayer: View {
         let id = entry.id
         switch placement {
         case .full:
-            VfoFlagView(entry: entry, meter: band.catalog?.meters.sMeter, readout: readout,
+            VfoFlagView(entry: entry, readings: slices.readings, meter: band.catalog?.meters.sMeter, readout: readout,
                         level: flagLevel, meterSource: FlagMeterChoice(meterRxMode),
                         openPad: tuning.map { tuning in {
                             controls?.close()
@@ -545,10 +604,13 @@ struct BandGestureLayer: View {
                 }
                 .offset(x: rect.minX, y: rect.minY)
             if let column {
+                let recordings = recordings
                 FlagSideButtons(letter: entry.slice.letter, colour: BandColours.slice(entry.slice.colour),
                                 locked: entry.locked, dimmedWords: entry.ownerLine,
                                 showReason: { [weak slices] in slices?.showReason($0) },
                                 moreOpen: (controls?.isOpen(.more(id)) ?? false) && controls?.moreFromWideChip != true,
+                                recording: recordings?.look(slice: id) ?? .idle,
+                                blinks: recordings?.blinks ?? true,
                                 close: {
                                     if let controls {
                                         controls.closeSlice(id)
@@ -562,6 +624,14 @@ struct BandGestureLayer: View {
                                     } else {
                                         slices.setLocked(!entry.locked, sliceId: id)
                                     }
+                                },
+                                record: {
+                                    controls?.close()
+                                    Task { await recordings?.tapRecord(slice: id) }
+                                },
+                                play: {
+                                    controls?.close()
+                                    Task { await recordings?.tapPlay(slice: id) }
                                 },
                                 more: { controls?.toggle(.more(id)) })
                     .offset(x: column.minX, y: column.minY)
@@ -630,12 +700,13 @@ struct BandGestureLayer: View {
 
     /// The band's own surface: the taps and the pinch, and under them the
     /// hold (``BandHoldSurface``), which opens the band menu.
-    private func touchSurface(geometry: BandGeometry, emptyBand: @escaping (CGPoint) -> Bool) -> some View {
+    private func touchSurface(layout: BandLayout, geometry: BandGeometry,
+                              emptyBand: @escaping (CGPoint) -> Bool) -> some View {
         BandHoldSurface(enabled: bandMenu != nil) { point in
             held(at: point, geometry: geometry, emptyBand: emptyBand)
         }
             .contentShape(Rectangle())
-            .gesture(taps(geometry: geometry))
+            .gesture(taps(layout: layout, geometry: geometry))
             .simultaneousGesture(pinch(geometry: geometry), including: settings.pinchToZoom ? .all : .none)
             .accessibilityElement()
             .accessibilityIdentifier("bandSurface")
@@ -667,40 +738,89 @@ struct BandGestureLayer: View {
                 state = true
             }
             .onChanged { value in
-                // While the band menu is open the finger that opened it moves nothing.
-                guard !pinching, !menuOpen || dragger.target != nil else {
-                    return
-                }
-                if dragKind == .undecided {
-                    dragKind = swipeBegins(value, layout: layout) ? .swipe : .band
-                }
-                if dragKind == .swipe {
-                    if let origin = swipes?.drag?.origin {
-                        swipes?.move(SwipeShortcuts.inward(origin, value.translation))
-                    }
-                    return
-                }
-                dragger.changed(from: value.startLocation, translation: value.translation.width,
-                                rise: value.translation.height, geometry: geometry, entries: entries,
-                                placements: placements, band: band, slices: slices, dragToTune: settings.dragToTune,
-                                layout: layout, display: display)
-                // The frequency under the finger, for the cursor readout.
-                band.cursorHz = geometry.hz(forX: Double(value.location.x))
+                dragChanged(start: value.startLocation, translation: value.translation, location: value.location,
+                            layout: layout, geometry: geometry, entries: entries, placements: placements)
             }
             .onEnded { value in
-                let kind = dragKind
-                dragKind = .undecided
-                if kind == .swipe {
-                    if let swipes, let origin = swipes.drag?.origin {
-                        swipes.end(distance: SwipeShortcuts.inward(origin, value.translation),
-                                   predicted: SwipeShortcuts.inward(origin, value.predictedEndTranslation),
-                                   reduceMotion: reduceMotion)
-                    }
-                    return
-                }
-                dragger.ended(slices: slices)
-                band.cursorHz = nil
+                dragEnded(translation: value.translation, predicted: value.predictedEndTranslation)
             }
+    }
+
+    /// The drag so far, from wherever it was seen: the band's own drag, or
+    /// the recorder's strip handing over one that begins at the right edge.
+    private func dragChanged(start: CGPoint, translation: CGSize, location: CGPoint, layout: BandLayout,
+                             geometry: BandGeometry, entries: [BandSlicesModel.Entry], placements: [FlagPlacement]) {
+        // While the band menu is open the finger that opened it moves nothing.
+        guard !pinching, !menuOpen || dragger.target != nil else {
+            return
+        }
+        if dragKind == .undecided {
+            dragKind = swipeBegins(start: start, translation: translation, layout: layout) ? .swipe : .band
+        }
+        if dragKind == .swipe {
+            if let origin = swipes?.drag?.origin {
+                swipes?.move(SwipeShortcuts.inward(origin, translation))
+            }
+            return
+        }
+        dragger.changed(from: start, translation: translation.width,
+                        rise: translation.height, geometry: geometry, entries: entries,
+                        placements: placements, band: band, slices: slices, dragToTune: settings.dragToTune,
+                        layout: layout, display: display)
+        // The frequency under the finger, for the cursor readout.
+        band.cursorHz = geometry.hz(forX: Double(location.x))
+    }
+
+    private func dragEnded(translation: CGSize, predicted: CGSize) {
+        let kind = dragKind
+        dragKind = .undecided
+        if kind == .swipe {
+            if let swipes, let origin = swipes.drag?.origin {
+                swipes.end(distance: SwipeShortcuts.inward(origin, translation),
+                           predicted: SwipeShortcuts.inward(origin, predicted),
+                           reduceMotion: reduceMotion)
+            }
+            return
+        }
+        dragger.ended(slices: slices)
+        band.cursorHz = nil
+    }
+
+    /// A drag cancelled before it ended: its swipe springs back.
+    private func dragCancelled() {
+        if dragKind != .undecided {
+            if dragKind == .swipe {
+                swipes?.cancel(reduceMotion: reduceMotion)
+            }
+            dragKind = .undecided
+        }
+    }
+
+    /// The edge zone under the recorder's strip (spec 11.3): a drag that
+    /// starts there and heads in is the band's, as it would be with no strip
+    /// over it, so the edge opens what it is set to, or with the edge Off
+    /// moves the band. Every other drag on the strip moves time.
+    private func stripEdge(layout: BandLayout, geometry: BandGeometry, entries: [BandSlicesModel.Entry],
+                           placements: [FlagPlacement]) -> DsrStripEdge {
+        let foot = PttButton.frame(bandSize: layout.size, leadingInset: leadingInset).minY
+            - SwipeShortcuts.aboveControls
+        let origin: (CGPoint) -> SwipeOrigin? = { [leadingInset, trailingInset] start in
+            SwipeShortcuts.edgeOrigin(start: start, bandSize: layout.size, zoneFoot: foot,
+                                      leadingInset: leadingInset, trailingInset: trailingInset)
+        }
+        return DsrStripEdge(
+            inZone: { origin($0) != nil },
+            claims: { start, translation in
+                origin(start).map { SwipeShortcuts.claims($0, translation: translation) } ?? false
+            },
+            changed: { start, translation, location in
+                dragChanged(start: start, translation: translation, location: location, layout: layout,
+                            geometry: geometry, entries: entries, placements: placements)
+            },
+            ended: { translation, predicted in
+                dragEnded(translation: translation, predicted: predicted)
+            },
+            cancelled: { dragCancelled() })
     }
 
     /// The band menu is open.
@@ -730,28 +850,34 @@ struct BandGestureLayer: View {
     /// A drag that starts in a live edge zone and heads in begins its
     /// swipe; any other is the band's (spec 11.3: 18 points at each edge,
     /// ending above PTT; Off gives the edge back to the band).
-    private func swipeBegins(_ value: DragGesture.Value, layout: BandLayout) -> Bool {
+    private func swipeBegins(start: CGPoint, translation: CGSize, layout: BandLayout) -> Bool {
         guard let swipes else {
             return false
         }
         let foot = PttButton.frame(bandSize: layout.size, leadingInset: leadingInset).minY
             - SwipeShortcuts.aboveControls
-        guard let origin = SwipeShortcuts.edgeOrigin(start: value.startLocation, bandSize: layout.size,
+        guard let origin = SwipeShortcuts.edgeOrigin(start: start, bandSize: layout.size,
                                                      zoneFoot: foot, leadingInset: leadingInset,
                                                      trailingInset: trailingInset),
-              SwipeShortcuts.claims(origin, translation: value.translation), swipes.begin(origin) else {
+              SwipeShortcuts.claims(origin, translation: translation), swipes.begin(origin) else {
             return false
         }
-        swipes.move(SwipeShortcuts.inward(origin, value.translation))
+        swipes.move(SwipeShortcuts.inward(origin, translation))
         return true
     }
 
     /// A tap tunes at once whenever a double tap would do the same thing;
     /// it waits to rule out a double tap only when the two differ.
-    private func taps(geometry: BandGeometry) -> AnyGesture<Void> {
+    private func taps(layout: BandLayout, geometry: BandGeometry) -> AnyGesture<Void> {
         let action = settings.doubleTapAction
         let single = SpatialTapGesture(count: 1).onEnded { value in
-            tap(atX: value.location.x, geometry: geometry)
+            // In the recorder's past a tap tunes as live, and plays the
+            // active slice from the picture's top when it is not playing
+            // yet, at the frequency the tap tuned it to.
+            let tuned = tap(atX: value.location.x, geometry: geometry)
+            if let dsr, let tuned, layout.waterfall.contains(value.location) {
+                dsr.tapWaterfall(pointsDown: Double(value.location.y - layout.waterfall.minY), hz: tuned)
+            }
         }
         let double = SpatialTapGesture(count: 2).onEnded { value in
             doubleTap(action, atX: value.location.x, geometry: geometry)
@@ -796,21 +922,25 @@ struct BandGestureLayer: View {
                                              spanLimits: spanLimits), byHand: ended)
     }
 
-    private func tap(atX x: CGFloat, geometry: BandGeometry) {
+    /// The frequency the tap tuned the active slice to, nil when it tuned nothing.
+    @discardableResult
+    private func tap(atX x: CGFloat, geometry: BandGeometry) -> Double? {
         // The lift that ends the hold opening the band menu tunes nothing.
         guard !menuOpen else {
-            return
+            return nil
         }
         if foreign.openNote != nil {
             // A touch on the band closes an open note, and tunes nothing.
             foreign.openNote = nil
-            return
+            return nil
         }
         guard settings.tapToTune, let active = slices.active else {
-            return
+            return nil
         }
-        slices.tap(to: TuneGestures.tapped(atX: x, geometry: geometry, snap: settings.snapTapToStep,
-                                           stepHz: snapStep(active)))
+        let hz = TuneGestures.tapped(atX: x, geometry: geometry, snap: settings.snapTapToStep,
+                                     stepHz: snapStep(active))
+        slices.tap(to: hz)
+        return slices.isTunable(active) ? hz : nil
     }
 
     /// Tune writes to the active slice, even with tap-to-tune off; Center

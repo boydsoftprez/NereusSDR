@@ -1,6 +1,12 @@
 // no-port-check: NereusSDR-original tests of the container picker's names
 // and headings.
 // Modification history (NereusSDR):
+//   2026-11-16 - The Voice keyer applet (applet:voice_keyer), recording plan
+//                 Task 12. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-11-15 - The Recordings applet (applet:recordings), recording plan
+//                 Task 7. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-11-06 - Phone / CW sections (phcw.panel) is a panel section.
 //                 Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-26 - Written: every type's picker title and heading, the
@@ -93,6 +99,7 @@ const Expected kExpected[] = {
     {"meter.alc", "ALC bar", kMeters},
     {"meter.customBar", "Custom bar face", kMeters},
     {"sMeter.dial", "S-Meter dial", kMeters},
+    {"sMeter.dialScaled", "S-Meter dial (scales)", kMeters},
     {"BAR", "Bar", kBlocks},
     {"SOLID", "Solid color", kBlocks},
     {"IMAGE", "Image", kBlocks},
@@ -151,6 +158,8 @@ const Expected kExpected[] = {
     {"applet:cat", "CAT", kPanels},
     {"applet:cwx", "CWX", kPanels},
     {"applet:roundtable", "Roundtable", kPanels},
+    {"applet:recordings", "Recordings", kPanels},
+    {"applet:voice_keyer", "Voice keyer", kPanels},
     {"applet:tci", "TCI Server", kPanels},
     {"applet:tci_clients", "TCI Clients", kPanels},
     {"applet:amp", "4O3A Power Genius", kPanels},

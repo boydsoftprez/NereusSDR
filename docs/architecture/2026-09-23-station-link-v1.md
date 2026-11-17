@@ -961,6 +961,14 @@ and the Core takes its `bandStack.*` verbs; a peer that does not sees none
 of them and keeps `slice.selectBand`. The desktop's remote window declares
 it, and the hosting desktop's own session has it.
 
+**`recordings` 1** (design 2026-11-15-recording-voice-keyer-dsr-design.md,
+section 6.9): the client shows and works the Core's recordings. A peer that
+declares it at minor 11 is sent `recordingsVersion` (section 6.3) and the
+read-only `recordings` object, the Core takes its `recordings.*` verbs, and
+the peer's own playback comes back as `recordings.playback` (section 9); a
+peer that does not sees none of them. The desktop's remote window declares
+it.
+
 **`txInhibitReason` 1** (HL2 I/O board fault): the client shows why the
 Core holds transmit off. A peer that declares it at minor 11 is sent
 `txInhibitReasonVersion` (section 6.3) and `radio`'s `txInhibitReason`
@@ -1315,6 +1323,7 @@ table.
 | `stationRoundtableVersion` | 2 |
 | `nnrLoadWarningVersion` | 1 |
 | `bandStackVersion` | 1 |
+| `recordingsVersion` | 4 |
 | `txSsbModMonitorVersion` | 1 |
 
 <!-- /surface -->
@@ -1637,6 +1646,34 @@ When a feature is off, its version is 0:
   did not change. A peer that gets no entry uses `slice.selectBand`; a client
   on a Core that sends no entry shows band stack controls greyed, saying the
   Core needs updating.
+- `recordingsVersion` (design 2026-11-15-recording-voice-keyer-dsr-design.md):
+  optional, sent only at agreed minor 11 to a peer whose hello declared
+  `recordings` 1, on a Core that runs its own radio, after `bandStackVersion`
+  (or after the last entry before it when that is absent) and before
+  `txSsbModMonitorVersion`. At 1 the Core sends `recordings` (read-only,
+  section 7.1) and takes the `recordings.*` verbs (section 9). At 2 a
+  recording goes on the air: keying from a device while its recording plays
+  sends that recording in place of its microphone, from where it is playing,
+  and its `recordings.playback` `onAir` is true while it goes out; the
+  document's `settings` add the five on-air switches, which
+  `recordings.setSettings` takes. A peer that declared `recordings` 1 is sent
+  2 and needs nothing new to use it. At 3 the document adds `voiceKeyer`
+  and the Core takes the `voiceKeyer.*` verbs (section 9): eight voice
+  messages kept on the Core, one of which, sent, keys the radio as the
+  device that asked; a peer that declared `recordings` 1 is sent 3, and a
+  client sends a `voiceKeyer.*` verb only when it was. At 4 the document
+  adds `dsr`, the Digital Spectrum Recorder (every receiver's I/Q kept on
+  the Core's disk in a loop with a size limit), and `recordings.setSettings`
+  takes `dsrEnabled`, `dsrDisk` and `dsrSizeLimitGb`, and the Core takes
+  the `dsr.*` verbs (rewind sound, the past picture and saving a stretch,
+  section 9) with `dsr.rewound`, `dsr.stretch` and `dsr.saving` in the
+  document, and `recordings.saveSoundOnly` and `recordings.openStretch`; a
+  peer that declared
+  `recordings` 1 is sent 4, and a client below 4 leaves its recorder
+  controls visible and greyed with the words below. The session protocol
+  minor did not change. A client on a Core that sends no entry shows
+  its recording controls greyed with "This Core needs an update for
+  recordings." and sends nothing.
 - `radeStatusVersion` (RADE on the phone's VFO flag): optional, sent only
   at agreed minor 11 to a peer whose hello declared `radeStatus` 1, while
   the Core has a radio model, after `paProfileVersion` (or after the
@@ -2563,7 +2600,8 @@ declared `txEqCurve` (section 6.1); `remoteTxVersion` and the three
 own key that declared `coreAddresses`; `adcAttenuatorVersion` only for
 a peer that declared `adcAttenuators`; `paProfileVersion` only for a
 peer that declared `paProfiles` (section 6.1); `bandStackVersion` only for
-a peer that declared `bandStack` (section 6.1); `radeStatusVersion` only
+a peer that declared `bandStack` (section 6.1); `recordingsVersion` only for
+a peer that declared `recordings` (section 6.1); `radeStatusVersion` only
 for a peer that declared `radeStatus`; `txInhibitReasonVersion` only for a
 peer that declared `txInhibitReason` (section 6.1); `paTransmitBandVersion` only for a
 peer that declared `paTransmitBand`; `radeReasonVersion` only for a peer
@@ -2788,8 +2826,9 @@ older window sees only the values it was built for.
 | 118 | `stationRoundtableVersion` | `i64` |
 | 119 | `nnrLoadWarningVersion` | `i64` |
 | 120 | `bandStackVersion` | `i64` |
-| 121 | `txSsbModMonitorVersion` | `i64` |
-| 122 | `coreBuildInfo` | `utf8` |
+| 121 | `recordingsVersion` | `i64` |
+| 122 | `txSsbModMonitorVersion` | `i64` |
+| 123 | `coreBuildInfo` | `utf8` |
 
 <!-- /surface -->
 
@@ -3098,6 +3137,13 @@ resume below 250 ms remains independent of warning presentation.
 | 46 | `coreSpeakerDevices` | `utf8` | outbound |  |
 | 47 | `coreSpeakerState` | `utf8` | outbound |  |
 | 48 | `coreSpeakerDetails` | `utf8` | bidirectional |  |
+
+**RecordingsFacade** (2 properties)
+
+| Ordinal | Property | Wire kind | Direction | Enum values |
+| --- | --- | --- | --- | --- |
+| 0 | `json` | `utf8` | outbound |  |
+| 1 | `revision` | `i64` | outbound |  |
 
 **RfKitModel** (30 properties)
 
@@ -3772,6 +3818,7 @@ destroyed during the session.
 | `catalog` | `StationCatalog` |
 | `paProfiles` | `PaProfilesFacade` |
 | `bandStack` | `BandStackFacade` |
+| `recordings` | `RecordingsFacade` |
 | `setup` | `SetupDescription` |
 | `spotSources` | `SpotSourceHost` |
 | `pan:<i>` | `PanadapterModel` |
@@ -3783,6 +3830,60 @@ destroyed during the session.
 
 Notes on the keys:
 
+- **`recordings`** (`RecordingsFacade`, `recordingsVersion` 4). The Core's
+  recordings, read-only (a write is refused; the `recordings.*` verbs change
+  them), sent only to a peer at agreed minor 11 that declared `recordings` 1.
+  `json` is the document: `version` 4, `slices` (one per open slice: `slice`,
+  `state` `idle`, `armed` or `recording`, `startUtc`, `startedBy` with "" for
+  the Core's own window, `elapsedMs`, `myVoice`), `kept` (the last recording
+  kept: `seq`, moving by one for each and 0 for none yet, `slice`, `id`,
+  `name`, `lengthMs`, `reason` `here`, `device`, `quiet`, `diskFull` or
+  `wav`, and `device`, who stopped it), `index` (`revision`, moving by one
+  each time the list changes, `count`, `usedBytes`, `freeBytes`, `folder`)
+  and `settings` (`keepMyVoice`, `sidesApart`, `autoStart`, `autoStop`,
+  `quietMinutes`, `format` `mp3` or `wav`, `disk` with "" for the Core's own,
+  `disks`: `root`, `name`, `free`, `total`, `sd`, `own`, and from version 2
+  the on-air switches `onAirUseTxEq`, `onAirUseCompressor`, `onAirUseLeveler`,
+  `onAirUseCfc`, `onAirUsePhaseRotator`, each false by default: while a
+  recording goes on the air the TX EQ, compressor, leveler, CFC and phase
+  rotator are off unless their switch is on, and return to the transmit
+  settings when it stops going out), and from version 3 `voiceKeyer`
+  (`slots`, eight of `n` 1 to 8, `name`, `lengthMs`, `empty`; `repeat`;
+  `repeatDelaySec` 1 to 60, 5 by default; `sending`, null unless a message
+  goes out or waits to repeat: `n`, `positionMs`, `lengthMs`, `waitingMs`,
+  counting down between repeats and 0 while it goes out, `by`, the
+  sender's words, "Desktop" for the Core's own window, and `deviceId`, the
+  sender as the link names a device, `station` for the Core's own window),
+  and from version 4 `dsr`, the Digital Spectrum Recorder: `enabled` (true
+  by default), `disk` ("" for the Core's own), `sizeLimitGb` (10 by
+  default, 1 to 100000), `recording` (it writes now, which it does only
+  while the radio streams), `reason` (why it does not although on: "The
+  only disk is an SD card.", "The recorder's disk is an SD card. Choose a
+  USB SSD or NVMe drive.", "The recorder's disk is missing.", "The recorder
+  cannot write to its disk."; "" otherwise), and the loop's figures
+  `sizeLimitBytes`, `usedBytes`, `writePosition` (where the next second
+  goes), `oldestUtcMs` and `newestUtcMs` (ms since 1970 UTC, 0 when nothing
+  is kept), `hoursHeld` (newest less oldest) and `overflows` (blocks the
+  receiver tap dropped because the writer fell behind). The figures move at
+  most every 5 seconds. `rewound` lists the slices playing the past (the
+  `dsr.*` verbs): `slice`, `utcNs` (the moment played when the document
+  was built, ns since 1970 UTC), `frequencyHz` (the slice's frequency) and
+  `liveFrequencyHz` (the frequency LIVE returns it to), and `keptCentreHz`
+  and `keptSpanHz` (what its receiver kept at the moment of the rewind or
+  the last seek, in Hz: a frequency more than half the span from the centre
+  was not kept, and a client says so; absent from an older Core); it
+  changes when a slice is rewound, moved or goes live. `stretch` is the saved whole-pan
+  stretch Slice A plays (`recordings.openStretch`), null when none: `id`,
+  `fromUtcNs` and `toUtcNs`, the moments it keeps. `saving` counts the
+  stretches being saved now. `receivers` are the receivers streaming now,
+  each `receiver` and its `rateHz` (what the recorder keeps, or would keep
+  when on), and `bytesPerHour` the disk bytes they take an hour, so Setup
+  can say how long a size limit holds; they change when a receiver starts,
+  stops or changes rate. While a slice
+  records, or a voice message goes out, the document is rebuilt once a
+  second. `revision` moves by one each
+  time `json` changes. The recordings themselves are not in it: a client asks
+  with `recordings.list`.
 - **`bandStack`** (`BandStackFacade`, `bandStackVersion` 1). The Core's band
   stack, read-only (a write is refused; the `bandStack.*` verbs change it),
   sent only to a peer at agreed minor 11 that declared `bandStack` 1. `json`
@@ -6557,6 +6658,36 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `bandStack.reseed` | none | `bandStackVersion` | 1 | 11 |
 | `bandStack.options` | `dupeProtection` bool (optional), `expiryMinutes` i64 (optional), `dwellSeconds` i64 (optional) | `bandStackVersion` | 1 | 11 |
 | `bandStack.restoreExpired` | `batchId` utf8 | `bandStackVersion` | 1 | 11 |
+| `recordings.start` | `slice` i64 | `recordingsVersion` | 1 | 11 |
+| `recordings.stop` | `slice` i64 | `recordingsVersion` | 1 | 11 |
+| `recordings.list` | `offset` i64, `count` i64, `slice` i64 (optional), `kind` utf8 (optional), `reader` i64 (optional) | `recordingsVersion` | 1 | 11 |
+| `recordings.play` | `id` utf8 | `recordingsVersion` | 1 | 11 |
+| `recordings.stopPlay` | none | `recordingsVersion` | 1 | 11 |
+| `recordings.seek` | `positionMs` i64 | `recordingsVersion` | 1 | 11 |
+| `recordings.rename` | `id` utf8, `name` utf8 | `recordingsVersion` | 1 | 11 |
+| `recordings.delete` | `ids` utf8 | `recordingsVersion` | 1 | 11 |
+| `recordings.export` | `id` utf8, `offset` i64 | `recordingsVersion` | 1 | 11 |
+| `recordings.setSettings` | `keepMyVoice` bool (optional), `sidesApart` bool (optional), `autoStart` bool (optional), `autoStop` bool (optional), `quietMinutes` i64 (optional), `format` utf8 (optional), `disk` utf8 (optional), `onAirUseTxEq` bool (optional), `onAirUseCompressor` bool (optional), `onAirUseLeveler` bool (optional), `onAirUseCfc` bool (optional), `onAirUsePhaseRotator` bool (optional), `dsrEnabled` bool (optional), `dsrDisk` utf8 (optional), `dsrSizeLimitGb` i64 (optional) | `recordingsVersion` | 1 | 11 |
+| `voiceKeyer.send` | `n` i64 | `recordingsVersion` | 3 | 11 |
+| `voiceKeyer.stop` | none | `recordingsVersion` | 3 | 11 |
+| `voiceKeyer.beginImport` | `n` i64, `name` utf8, `size` i64, `imported` bool (optional) | `recordingsVersion` | 3 | 11 |
+| `voiceKeyer.chunk` | `data` utf8 | `recordingsVersion` | 3 | 11 |
+| `voiceKeyer.finishImport` | none | `recordingsVersion` | 3 | 11 |
+| `voiceKeyer.export` | `n` i64, `offset` i64 | `recordingsVersion` | 3 | 11 |
+| `voiceKeyer.rename` | `n` i64, `name` utf8 | `recordingsVersion` | 3 | 11 |
+| `voiceKeyer.clear` | `n` i64 | `recordingsVersion` | 3 | 11 |
+| `voiceKeyer.setRepeat` | `on` bool, `delaySec` i64 | `recordingsVersion` | 3 | 11 |
+| `voiceKeyer.listen` | `n` i64 | `recordingsVersion` | 3 | 11 |
+| `dsr.rewind` | `slice` i64, `utcNs` i64, `frequencyHz` i64 | `recordingsVersion` | 4 | 11 |
+| `dsr.live` | `slice` i64 | `recordingsVersion` | 4 | 11 |
+| `dsr.seek` | `slice` i64, `utcNs` i64 | `recordingsVersion` | 4 | 11 |
+| `dsr.rows` | `slice` i64, `fromUtcNs` i64, `toUtcNs` i64, `rowCount` i64, `fftSize` i64, `windowType` i64, `centreHz` i64, `spanHz` i64, `pixels` i64 | `recordingsVersion` | 4 | 11 |
+| `dsr.spectrum` | `slice` i64, `utcNs` i64, `fftSize` i64, `windowType` i64, `centreHz` i64, `spanHz` i64, `pixels` i64 | `recordingsVersion` | 4 | 11 |
+| `dsr.hours` | none | `recordingsVersion` | 4 | 11 |
+| `dsr.saveStretch` | `fromUtcNs` i64, `toUtcNs` i64, `kind` utf8 | `recordingsVersion` | 4 | 11 |
+| `recordings.saveSoundOnly` | `id` utf8 | `recordingsVersion` | 4 | 11 |
+| `recordings.openStretch` | `id` utf8 | `recordingsVersion` | 4 | 11 |
+| `dsr.eraseAll` | none | `recordingsVersion` | 4 | 11 |
 | `paProfile.setUseMax` | `band` i64, `on` bool | `paProfileVersion` | 1 | 11 |
 | `configureRfKit` | `host` utf8, `port` i64 | `remoteRfKitControlVersion` | 2 | 11 |
 | `disconnectRfKit` | none | `remoteRfKitControlVersion` | 2 | 11 |
@@ -6974,6 +7105,180 @@ These command groups need a sentence beyond the table:
   longer exists." for an entry another device removed, and the desktop's words
   for a locked or transmitting slice. A refusal changes nothing. None keys the
   radio. `slice.selectBand` is unchanged.
+- **Recordings** (`recordingsVersion` 1). Any device may start or stop any
+  open slice's recording; one another device started is not started again,
+  and one stopped from a device is kept with `reason` `device` and that
+  device's words in `kept`. `recordings.list` answers with `entries` (a JSON
+  array as text, newest first, at most 100 from `offset`: `id`, `kind`,
+  `slice`, `startUtc`, `lengthMs`, `frequencyHz`, `mode`, `call`, `name`,
+  `fileName`, `sizeBytes`, and for a whole-pan stretch at
+  `recordingsVersion` 4 `centreHz` and `spanHz`, the pan it kept),
+  `offset` and `total` in the result's `values`.
+  The optional `slice` and `kind` (`Contact`, `WholePan` or `Sound`) narrow
+  the list, and `total` counts only what matches; an optional `reader`, the
+  asking window's own number for one of its lists, comes back as `reader` in
+  the `values`, so a window with several lists gives each its own answer.
+  `recordings.play`, `recordings.stopPlay` and `recordings.seek` are the
+  requesting device's own playback, heard in its own speakers only; the Core
+  sends that device's sessions, and no other, a `command.result` with verb
+  `recordings.playback`, id 0, and `values` `id` ("" once it stops),
+  `positionMs`, `lengthMs`, `playing`, `onAir` each time it changes;
+  `onAir` (version 2) is true while that device's key sends the recording on
+  the air, and the position moves on while it does. A play refused after its
+  answer arrives as a `recordings.play` result with id 0.
+  `recordings.rename` takes `id` and `name`, `recordings.delete` takes `ids`,
+  a JSON array as text (an id another device deleted first is skipped),
+  `recordings.export` answers with `id`, `offset`, `size` (the whole file)
+  and `data`, up to 192 KiB of the file from `offset` as base64, and
+  `recordings.setSettings` takes any of the document's settings names, and
+  from version 4 the recorder's `dsrEnabled`, `dsrDisk` (a disk's `root`
+  from `disks`, "" for the Core's own; an SD card is taken, and the recorder
+  then stays off with its reason) and `dsrSizeLimitGb`.
+  Refusals: "Update this app to use recordings on this Core." without the
+  feature, "The request for recordings was not understood." for a missing or
+  wrong argument, "That slice is not open.", "That recording is no longer
+  kept." for a recording another device removed, "Quiet can be 1 to 60
+  minutes.", "The recorder's size can be 1 to 100000 GB.", "That disk is
+  not on the Core now." and the store's words for a name already used. None keys the
+  radio; playback alone never transmits.
+- **Rewind sound** (`recordingsVersion` 4). `dsr.rewind` (`slice`, `utcNs`,
+  ns since 1970 UTC, `frequencyHz`) moves the slice to that frequency and
+  feeds its demodulator from the Digital Spectrum Recorder from that moment,
+  in real time, from the next block; the receiver that kept that moment
+  with that frequency in its span plays. Other slices and receivers keep
+  playing the radio, and the recorder keeps the live I/Q meanwhile.
+  `dsr.seek` (`slice`, `utcNs`) moves a rewound slice to another moment at
+  the same frequency. `dsr.live` (`slice`) returns it to the radio at the
+  frequency it had before it was rewound (a live slice: accepted, nothing
+  changes). A rewound slice that plays up to the newest second kept goes
+  on into live by itself, on the frequency it plays. Any key of the radio
+  takes every rewound slice live on the frequency it plays, before the key
+  goes on as usual; `dsr.live` afterwards still returns it to the
+  frequency before rewinding. None keys the radio. Refusals: "That moment
+  is no longer kept." (outside what the recorder keeps, no receiver kept
+  that frequency then, or the recorder is off), "That slice is not open.",
+  "That slice is not playing the past." (`dsr.seek` on a live slice),
+  "That moment was kept at another sample rate." (the slice's receiver
+  runs at another rate now) and "Turn diversity off to rewind that
+  slice.".
+- **The past picture** (`recordingsVersion` 4). The Core draws the past
+  from the Digital Spectrum Recorder on its recordings worker, with the
+  asking pan's own FFT settings, which the window sends with each request
+  (the same `fftSize`, `windowType`, `centreHz`, `spanHz` and `pixels` its
+  display subscription carries, `pixels` 1 to 4096); `slice` is a slice on
+  that pan and names the receiver. Each row is reduced to `pixels` points
+  the way the live display reduces bins to pixels (the Peak detector on
+  linear power, without averaging). `dsr.rows` (`fromUtcNs`, `toUtcNs`, `rowCount`, 1 to 4096) draws
+  `rowCount` rows evenly from `toUtcNs` back to `fromUtcNs`, both ends
+  included, newest first; a row over a moment no longer kept is left out.
+  `dsr.spectrum` (`utcNs`) draws one frame. Both answer, in `values`, the bin
+  layout (`binCount` points, the pan's `pixels`, from `firstBinHz` up in
+  steps of `hzPerBin`, f64, over the stretch the live spectrum shows for
+  that pan), `slice`, `times` (base64 of little-endian 64-bit ns since 1970
+  UTC, one per row), `transmit` (base64, one byte per row, 1 where you were
+  transmitting) and `bins` (base64 of
+  little-endian signed 16-bit tenths of a dB, `binCount` per row, row after
+  row; -200 dBm where nothing kept lies under a bin). An answer carries at
+  most 196608 bytes of bins (at least one row); `rowsLeft` and
+  `nextToUtcNs` say what remains, and the window asks again with
+  `toUtcNs` = `nextToUtcNs` and `rowCount` = `rowsLeft`. `dsr.hours` answers
+  every kept hour, newest first: `starts` (base64 of 64-bit ns, each hour's
+  start) and `activity` (a JSON array, 0 for silence to 1 for a busy band).
+  None keys the radio. Refusals: "That slice is not open.", "The spectrum
+  size must be a power of two from 1024 to 262144.", "The Core does not
+  know that spectrum window.", "The pan is wider than the receiver kept."
+  (a span of 0 or wider than the receiver's rate), "Ask for 1 to 4096 past
+  rows at a time.", "The pan's width must be 1 to 4096 pixels." and "That moment is no longer kept." (the recorder is
+  off, or for `dsr.spectrum` nothing is kept then).
+- **Saving a stretch** (`recordingsVersion` 4). `dsr.saveStretch`
+  (`fromUtcNs`, `toUtcNs`, ns since 1970 UTC, `kind` `WholePan` or `Sound`)
+  saves that stretch of the Digital Spectrum Recorder as a recording, on the
+  recordings worker. `WholePan` copies every receiver's kept I/Q for it out
+  of the loop into the recordings folder, where the loop never overwrites
+  it; `Sound` keeps Slice A's sound over it, demodulated as Slice A is set,
+  in the Files format. Only what is still kept is saved. Accepted, the
+  result's `values` carry `note`, the Core's words for what it is doing
+  ("Saving 14:00 to 14:10 UTC to Recordings, whole pan.", or "Only 14:02 to
+  14:10 UTC is still kept. Saving that part to Recordings, sound only as
+  MP3."); the recordings list shows it when it is done.
+  `recordings.saveSoundOnly` (`id`) keeps the sound of a saved whole-pan
+  stretch as a Sound recording, at the frequency, mode and filter Slice A
+  had when it was saved, with the same `note`. `recordings.play` on a
+  whole-pan stretch plays that sound only. `recordings.openStretch` (`id`)
+  opens a saved whole-pan stretch on the waterfall: Slice A plays it like
+  `dsr.rewind` from its start, even with the recorder off, `dsr.rows`,
+  `dsr.spectrum` and `dsr.hours` draw from it too, and `dsr.stretch` names
+  it until Slice A goes live. None keys the radio. Refusals: "None of that
+  stretch is still kept.", "Slice A is not on a frequency kept in that
+  stretch." (`Sound`), "That recording is not a whole-pan stretch.", "That
+  recording is no longer kept.", "That recording cannot be played.", "The
+  Core has nowhere to keep recordings." and, for `recordings.openStretch`,
+  the `dsr.rewind` refusals.
+- **Erasing the recorder** (`recordingsVersion` 4). `dsr.eraseAll` (no
+  arguments) erases everything the Digital Spectrum Recorder keeps now.
+  Setup sends it only after asking, since it cannot be undone. Slices
+  rewound into the recorder go live first (one playing a saved stretch
+  plays on); a running recorder goes on from now in an empty loop, and the
+  `dsr` figures start again from nothing. Saved stretches are recordings
+  and stay. It never keys the radio, and is never refused by a Core that
+  keeps recordings.
+- **The voice keyer** (`recordingsVersion` 3). Messages M1 to M8 are kept on
+  the Core as 48 kHz 16-bit mono WAV, at most two minutes each.
+  `voiceKeyer.send` (`n`) is the one verb that keys the radio: it keys as
+  the requesting device, sends Mn through the transmit processing as it is
+  set (the recording on-air switches do not apply), and unkeys at the end;
+  with `repeat` on it waits `repeatDelaySec`, unkeyed, and sends again until
+  stopped. The same device's send while one goes out moves to the new one
+  without unkeying. The message keys the radio as the sender, so the
+  transmit watchdog watches it as any key of the sender's: the sender's
+  client sends `tx.keepalive` while `sending.deviceId` names it, and a
+  sender whose keepalives stop is held at 400 ms and cut at 3 s as ever. A
+  voice message counts as the microphone unused, as TUNE and two-tone do,
+  so a microphone line that starves meanwhile holds and stops nothing.
+  Ruling 8.5 holds: only the sender's own controls stop its message, and
+  any other device stops it only by taking transmit (the radio's own PTT
+  takes it, ruling 8.9). `voiceKeyer.stop` from the sender (or from the
+  holder) stops what goes out, or the wait, and unkeys; from any other
+  device it is refused with "<holder> has the transmitter. Take it to stop
+  the transmission." and the message goes on. The sender's PTT or MOX
+  press keeps the radio keyed and its microphone goes out within one
+  transmit block; its unkey unkeys. Another device's press is refused and
+  stops nothing; VOX stops nothing. The radio's connection dropping ends
+  the message and the wait between repeats. Another device holding transmit
+  refuses a send with the holder's words (section 7.6) and nothing keys; the
+  radio already on the air, or another device's message going out or
+  waiting to repeat, refuses it with "The radio is already
+  transmitting.". A device loads a message with `voiceKeyer.beginImport`
+  (`n`, `name`, "" to keep Mn's, `size`, the file's bytes, at most 100 MiB,
+  and an optional `imported` bool: true for a file the operator chose, which
+  goes on the air at the fixed recording level whatever the mic gain; false,
+  or absent from an older client, for a message recorded on the mic, which
+  goes out at the mic gain like the live voice; the Core keeps the mark
+  with the message, and recording, importing or clearing sets it afresh),
+  then `voiceKeyer.chunk` (`data`, at most 192 KiB as base64) in order, each
+  after the one before it is answered, then `voiceKeyer.finishImport`; the
+  Core converts any WAV or MP3 to 48 kHz mono, and keeps a 48 kHz 16-bit
+  mono PCM WAV as it came, so a saved message loads back byte for byte. The
+  conversion runs off the Core's main thread, and `finishImport` is
+  answered when it ends. One import runs per session; beginning another
+  drops the first, and the session ending drops it and its file.
+  `voiceKeyer.export` (`n`, `offset`) answers with `n`, `offset`, `size` and
+  `data` as `recordings.export` does. `voiceKeyer.rename` (`n`, `name`, at
+  most 32 characters), `voiceKeyer.clear` (`n`), `voiceKeyer.setRepeat`
+  (`on` bool, `delaySec` i64) and `voiceKeyer.listen` (`n`, the requesting
+  device's own speakers, as `recordings.play`, never the air) key nothing.
+  A message on the air (going out or waiting to repeat) cannot be cleared,
+  imported into or replaced by any device, its sender included:
+  `voiceKeyer.clear`, `voiceKeyer.beginImport` and a `finishImport` that
+  would land on it are refused with "M1 is on the air." (the slot's own
+  number), and `voiceKeyer.stop` is how it ends; renaming it is allowed.
+  The Core removes import files left behind by a Core that shut down in
+  the middle of one when it loads the messages. Refusals: "The request for the voice keyer was not understood.", "Voice
+  messages are M1 to M8.", "M3 is empty.", "Voice messages can be up to 2
+  minutes long.", "That file cannot be read as sound.", "That file is too
+  large for a voice message.", "The file did not arrive whole. Try again.",
+  "No voice message is being loaded.", "The wait between repeats can be 1
+  to 60 seconds." and "Connect to a radio to send a voice message.".
 - **The AM Mod Monitor's reset** (R-IOS-13, R-R3-49, `txModMonitorVersion`
   1). `txModMonitor.reset` (`source` i64: 0 the transmit I/Q, 1 the PA
   feedback) starts the Core's analyzer for that source afresh (its carrier

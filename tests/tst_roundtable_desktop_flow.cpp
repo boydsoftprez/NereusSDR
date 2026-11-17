@@ -32,11 +32,21 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Placement checks pass the details' upward left edge;
+//               your own tag stays while its details are open. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-16: The details open over the waterfall from your line, a tag, a
+//               fold and the flag's line (theDetailsOpenOverTheWaterfallFromEveryRoute);
+//               placement checks use placeRoundtableDetails. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-24: Created (Roundtable plan Task 15). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 //   2026-10-25: Roundtable fix wave: the Core's meter pump stops while the
 //               own reading is shown, since a clear now reaches the panel.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-16: Your frequency's line in the strip stays while the inspector is
+//               open, where the card on the spectrum gave way to it. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -1779,14 +1789,14 @@ private slots:
         QVERIFY(!open());
         QCOMPARE(swapped.size(), 1);
 
-        // ── Your own card: it toggles, and it is hidden while the inspector stands ──
+        // ── Your own line: it toggles, and it stays in the strip while the inspector is open ──
         const QJsonObject onMine{{"sourceRoom", "usb-14200000"}, {"ref", "cq"}, {"callsign", "W1AW"},
             {"hz", 14200000}, {"family", "usb"}, {"keyed", true}};
         QJsonObject mineTurn{{"id", 5}, {"kind", "talking"}, {"sourceRoom", "usb-14200000"}, {"hz", 14200000},
             {"start", g_now - 1000}, {"end", QJsonValue::Null}, {"talkers", QJsonArray{onMine}}};
         model->applyRoom(QJsonObject{{"id", "usb-14200000"}, {"view", "frequency"}, {"family", "usb"},
             {"hz", 14200000}, {"now", QJsonArray{mineTurn}}, {"members", QJsonArray{onMine}}});
-        const auto cardShown = [&]() {
+        const auto lineShown = [&]() {
             QImage image(pan->size(), QImage::Format_ARGB32_Premultiplied);
             image.fill(Qt::black);
             QPainter painter(&image);
@@ -1797,7 +1807,7 @@ private slots:
                 return hit.kind == SpectrumWidget::RoundtableTagHit::Kind::Card;
             });
         };
-        QTRY_VERIFY_WITH_TIMEOUT(cardShown(), kWaitMs);
+        QTRY_VERIFY_WITH_TIMEOUT(lineShown(), kWaitMs);
         const qsizetype readsBefore = link.reads.size();
         QVERIFY(clickHit(mine));
         QVERIFY(open());
@@ -1805,17 +1815,18 @@ private slots:
         // No read of your own room, which the panel would take for going back to the slice.
         QCOMPARE(link.reads.size(), readsBefore);
         QVERIFY(!panel->isReading());
-        QVERIFY(!cardShown());
+        // Open on your own frequency, the line stays (drawn open).
+        QVERIFY(lineShown());
         // The inspector carries the same talker.
         QTRY_COMPARE_WITH_TIMEOUT(peek()->viewForTest().card.kind, RoundtableCardModel::Kind::Talking, kWaitMs);
         emit pan->roundtableReadRequested(mine);
         QVERIFY(!open());
-        QVERIFY(cardShown());
+        QVERIFY(lineShown());
 
-        // Viewing another, the card stays hidden too, and Back goes to your own in place.
+        // Viewing another, the line stays too, and Back goes to your own in place.
         QVERIFY(clickHit(viewed));
         QVERIFY(open());
-        QVERIFY(!cardShown());
+        QVERIFY(lineShown());
         QSignalSpy backClosed(peek(), &RoundtableFrequencyPeek::closed);
         button("roundtablePeekBack")->click();
         QVERIFY(open());
@@ -2127,7 +2138,7 @@ private slots:
         QVERIFY(!panel->isReading());
         QVERIFY(nothingMoved());
 
-        // ── Your own compact tag: your own inspector, no read, and the tag goes ──
+        // ── Your own compact tag: your own inspector, no read, and the tag stays ──
         const qsizetype reads = link.reads.size();
         QVERIFY(!lineFlag->roundtableLineOpen());
         QVERIFY(click(mine));
@@ -2137,7 +2148,13 @@ private slots:
         QCOMPARE(link.reads.size(), reads);
         QVERIFY(!panel->isReading());
         SpectrumWidget::RoundtableTagHit gone;
-        QVERIFY(!hitOf(mine, &gone));
+        // It stays, outlined, so a click on it closes the details again.
+        QVERIFY(hitOf(mine, &gone));
+        QVERIFY(click(mine));
+        QVERIFY(!open());
+        QVERIFY(click(mine));
+        QVERIFY(open());
+        QVERIFY(peek()->showsOwn());
         QVERIFY(!button("roundtablePeekTune")->isEnabled());
         QVERIFY(button("roundtablePeekTune")->isVisible());
         QVERIFY(nothingMoved());
@@ -2731,7 +2748,7 @@ private slots:
         QCOMPARE(viewing->hz(), quint64(14200000));
         QVERIFY(openOn(first) == nullptr);
 
-        // Your slice's own pan keeps its card, since the inspector is not standing there.
+        // Your slice's own pan keeps its line in the strip.
         const QJsonObject actor{{"sourceRoom", "usb-14200000"}, {"ref", "tx"}, {"callsign", "W1AW"},
                                 {"hz", 14200000}, {"family", "usb"}, {"keyed", true}};
         const QJsonObject turn{{"id", 1}, {"kind", "talking"}, {"sourceRoom", "usb-14200000"}, {"hz", 14200000},
@@ -2854,6 +2871,144 @@ private slots:
         meter->setRxMode(QStringLiteral("S-Meter"));
     }
 
+    // Strip design 5 (V4): with 400 px of waterfall, the details from your line, a tag,
+    // a fold and the flag's line all hang under the strip, inside the waterfall clear
+    // of its time scale, lined up with your line.
+    void theDetailsOpenOverTheWaterfallFromEveryRoute()
+    {
+        ReadingLink link;
+        RoundtableState state;
+        Everything p;
+        SliceModel* slice = p.model()->sliceById(p.sliceId());
+        QVERIFY(slice);
+        slice->setDspMode(DSPMode::USB);
+        slice->setFrequency(14200000);
+        RoundtableModel* model = p.model()->roundtableModel();
+        QVERIFY(model);
+        model->attachStation(&link, &state);
+        state.applyStationValue("linkState", static_cast<int>(RoundtableModel::LinkState::Live));
+        const auto room = [](qint64 hz, const char* call) {
+            const QString id = QStringLiteral("usb-%1").arg(hz);
+            return QJsonObject{{"id", id}, {"stations", QJsonArray{QJsonObject{{"sourceRoom", id}, {"ref", "q"},
+                {"callsign", QString::fromLatin1(call)}, {"hz", hz}, {"family", "usb"}, {"keyed", false}}}}};
+        };
+        model->applyRooms({{"frequencyVersion", 1}, {"rooms", QJsonArray{room(14188600, "VE3XYZ"),
+            room(14150000, "N1AAA"), room(14150050, "N1BBB"), room(14150100, "N1CCC")}}});
+        // Your frequency is on the air, so your line is drawn.
+        const QJsonObject actor{{"sourceRoom", "usb-14200000"}, {"ref", "tx"}, {"callsign", "W1AW"},
+                                {"hz", 14200000}, {"family", "usb"}, {"keyed", true}};
+        const QJsonObject turn{{"id", 1}, {"kind", "talking"}, {"sourceRoom", "usb-14200000"}, {"hz", 14200000},
+                               {"start", g_now - 1000}, {"end", QJsonValue::Null}, {"talkers", QJsonArray{actor}}};
+        model->applyRoom(QJsonObject{{"id", "usb-14200000"}, {"view", "frequency"}, {"family", "usb"}, {"hz", 14200000},
+                                     {"now", QJsonArray{turn}}, {"members", QJsonArray{actor}}});
+        p.model()->setActiveSliceById(p.sliceId());
+        SpectrumWidget* pan = panOf(p.window());
+        QVERIFY(pan != nullptr);
+        settle();
+        QTRY_VERIFY_WITH_TIMEOUT(!pan->roundtableStripRectForTest().isNull(), kWaitMs);
+
+        // 400 px of waterfall under the strip: the split gives the rest to the spectrum.
+        // The split shares out the spectrum, the strip and the waterfall.
+        const int content = pan->roundtableTagSpectrumRectForTest().height() + kRoundtableStripHeight
+            + pan->roundtableInspectorSpot(-1, 0).below.height();
+        QVERIFY2(content > 400 + kRoundtableStripHeight + 60, qPrintable(QString::number(content)));
+        pan->setSpectrumFrac((static_cast<float>(content - 400 - kRoundtableStripHeight) + 0.5f) / static_cast<float>(content));
+        settle();
+        QCOMPARE(pan->roundtableInspectorSpot(-1, 0).below.height(), 400);
+        const auto draw = [pan]() {
+            if (pan->bandwidth() != kPanSpanHz) { pan->setFrequencyRange(14200000.0, kPanSpanHz); }
+            QImage image(pan->size(), QImage::Format_ARGB32_Premultiplied);
+            image.fill(Qt::black);
+            QPainter painter(&image);
+            pan->drawRoundtableTagsForTest(painter, pan->roundtableTagSpectrumRectForTest());
+        };
+        const auto hitWhere = [&](const std::function<bool(const SpectrumWidget::RoundtableTagHit&)>& want,
+                                  SpectrumWidget::RoundtableTagHit* out) {
+            draw();
+            for (const SpectrumWidget::RoundtableTagHit& hit : pan->roundtableTagHitsForTest()) {
+                if (want(hit)) {
+                    *out = hit;
+                    return true;
+                }
+            }
+            return false;
+        };
+        const auto peek = [pan]() { return pan->findChild<RoundtableFrequencyPeek*>(); };
+        const auto standsUnderTheStrip = [&](const char* route) {
+            QCoreApplication::processEvents();
+            const RoundtableFrequencyPeek* details = peek();
+            if (details == nullptr || !details->isOpen()) { return QStringLiteral("%1: not open").arg(route); }
+            const QRect rect = details->inspectorRect();
+            const QRect strip = pan->roundtableStripRectForTest();
+            const QRect line = pan->roundtableStripLineForTest().line;
+            const SpectrumWidget::RoundtableInspectorSpot spot = pan->roundtableInspectorSpot(-1, 0);
+            QStringList wrong;
+            if (spot.below.height() != 400) { wrong.append(QStringLiteral("waterfall %1").arg(spot.below.height())); }
+            if (spot.below.top() != strip.bottom() + 1) { wrong.append(QStringLiteral("waterfall top")); }
+            if (!spot.below.contains(rect)) { wrong.append(QStringLiteral("outside the waterfall")); }
+            if (rect.top() != strip.bottom() + 1 + 4) { wrong.append(QStringLiteral("top %1").arg(rect.top())); }
+            if (rect.intersects(pan->roundtableTagSpectrumRectForTest()) || rect.intersects(spot.above)) {
+                wrong.append(QStringLiteral("on the spectrum"));
+            }
+            if (rect.intersects(strip)) { wrong.append(QStringLiteral("on the strip")); }
+            if (rect.right() > spot.below.right()) { wrong.append(QStringLiteral("on the time scale")); }
+            if (line.isNull()) {
+                wrong.append(QStringLiteral("no line"));
+            } else if (rect.left() != line.left()) {
+                wrong.append(QStringLiteral("left %1, line %2").arg(rect.left()).arg(line.left()));
+            }
+            if (pan->roundtableInspectorRect() != rect) { wrong.append(QStringLiteral("pan's record")); }
+            return wrong.isEmpty() ? QString() : QStringLiteral("%1: %2").arg(route, wrong.join(QStringLiteral(", ")));
+        };
+
+        // From your line.
+        SpectrumWidget::RoundtableTagHit hit;
+        QTRY_VERIFY_WITH_TIMEOUT(hitWhere([](const SpectrumWidget::RoundtableTagHit& h) {
+            return h.kind == SpectrumWidget::RoundtableTagHit::Kind::Card; }, &hit), kWaitMs);
+        QTest::mouseClick(pan, Qt::LeftButton, Qt::NoModifier, hit.rect.center());
+        QVERIFY(peek() != nullptr && peek()->showsOwn());
+        QCOMPARE(standsUnderTheStrip("line"), QString());
+        // Your line stays, drawn open.
+        QVERIFY(hitWhere([](const SpectrumWidget::RoundtableTagHit& h) {
+            return h.kind == SpectrumWidget::RoundtableTagHit::Kind::Card; }, &hit));
+        peek()->closePeek();
+
+        // From a tag of another frequency: still lined up with your line, not the tag.
+        const QString viewed = RoundtableModel::frequencyContextId(14188600, QStringLiteral("usb"));
+        QTRY_VERIFY_WITH_TIMEOUT(hitWhere([&](const SpectrumWidget::RoundtableTagHit& h) {
+            return h.kind == SpectrumWidget::RoundtableTagHit::Kind::Tag && !h.folded && h.roomIds.contains(viewed); }, &hit),
+            kWaitMs);
+        QTest::mouseClick(pan, Qt::LeftButton, Qt::NoModifier, hit.rect.center());
+        QVERIFY(peek() != nullptr && peek()->isOpen() && !peek()->showsOwn());
+        QCOMPARE(standsUnderTheStrip("tag"), QString());
+        peek()->closePeek();
+
+        // From a fold's list.
+        QVERIFY(hitWhere([](const SpectrumWidget::RoundtableTagHit& h) { return h.folded; }, &hit));
+        QTest::mouseClick(pan, Qt::LeftButton, Qt::NoModifier, hit.rect.center());
+        QVERIFY(peek() != nullptr && peek()->showsFold());
+        QCOMPARE(standsUnderTheStrip("fold"), QString());
+        peek()->closePeek();
+
+        // From the flag's Roundtable line.
+        VfoWidget* flag = flagFor(p.window(), p.sliceId());
+        QVERIFY(flag != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(flag->roundtableLineButtonForTest()->isVisible(), kWaitMs);
+        QTest::mouseClick(flag->roundtableLineButtonForTest(), Qt::LeftButton);
+        QVERIFY(peek() != nullptr && peek()->showsOwn());
+        QCOMPARE(standsUnderTheStrip("flag line"), QString());
+
+        // Hiding the strip re-places it under the scale; showing it puts it back.
+        pan->setRoundtableStripShown(false);
+        QCoreApplication::processEvents();
+        QCOMPARE(peek()->inspectorRect().top(), pan->roundtableInspectorSpot(-1, 0).below.top() + 4);
+        pan->setRoundtableStripShown(true);
+        draw();
+        QCOMPARE(standsUnderTheStrip("strip back"), QString());
+        peek()->closePeek();
+        model->detach();
+    }
+
     // D37: a pan that does not hold the active slice places it by its own slice's flag.
     void aPanWithoutTheActiveSlicePlacesByItsOwnFlag()
     {
@@ -2897,14 +3052,16 @@ private slots:
         auto* peek = second->findChild<RoundtableFrequencyPeek*>();
         QVERIFY(peek != nullptr && peek->isOpen());
         const SpectrumWidget::RoundtableInspectorSpot spot = second->roundtableInspectorSpot(p.sliceId(), 14230000);
-        QVERIFY(!spot.flags.isEmpty());
         QCOMPARE(second->roundtableInspectorRect(), peek->inspectorRect());
-        QCOMPARE(peek->inspectorRect(), placeRoundtableInspector(spot.pan, spot.dialX, spot.flags, spot.flagFlipped, peek->height()));
+        QCOMPARE(peek->inspectorRect(), placeRoundtableDetails(spot.below, spot.above, spot.anchorLeft, peek->height(),
+                                                               spot.upwardAnchorLeft).rect);
         // A resize moves it with the spot, not by the one it had.
         second->resize(second->width() - 60, second->height());
         settle();
         const SpectrumWidget::RoundtableInspectorSpot after = second->roundtableInspectorSpot(p.sliceId(), 14230000);
-        QVERIFY(after.pan.contains(peek->inspectorRect()));
+        const RoundtableDetailsPlacement placed = placeRoundtableDetails(after.below, after.above, after.anchorLeft, 2000,
+                                                                        after.upwardAnchorLeft);
+        QVERIFY((placed.upward ? after.above : after.below).contains(peek->inspectorRect()));
         QCOMPARE(second->roundtableInspectorRect(), peek->inspectorRect());
         // A view on another pan: a change of pan is a close and an open.
         peek->closePeek();

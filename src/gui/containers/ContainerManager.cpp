@@ -1195,6 +1195,7 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
         c->setContainerMinimises(d.config.value("containerMinimises").toBool(false));
         c->setContainerHidesWhenRxNotUsed(d.config.value("hidesWhenRxNotUsed").toBool(false));
         c->setBackgroundColor(QColor(d.config.value("backgroundColor").toString("#0f0f1a")));
+        c->setClearFloatingBackground(d.config.value("clearFloatingBackground").toBool(false));
         c->setBorder(d.config.value("border").toBool(true)); c->setNoControls(d.config.value("noControls").toBool(false));
         c->setPinOnTop(d.config.value("pinOnTop").toBool(false));
         if (fresh && d.dockMode==DockMode::Floating && !d.geometry.isValid()) {
@@ -2335,6 +2336,7 @@ ContainerWidget* ContainerManager::duplicateContainer(const QString& sourceId)
     dup->setContainerMinimises(src->containerMinimises());
     dup->setContainerHidesWhenRxNotUsed(src->containerHidesWhenRxNotUsed());
     dup->setAutoHeight(src->autoHeight());
+    dup->setClearFloatingBackground(src->clearFloatingBackground());
     dup->setTitleBarVisible(src->isTitleBarVisible());
     dup->setPinOnTop(src->isPinOnTop());
     dup->setAxisLock(src->axisLock());

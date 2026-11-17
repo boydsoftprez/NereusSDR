@@ -58,6 +58,12 @@
 //               take the radio mic, the HL2 with the add-on note. J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
+//   2026-11-16: Recording plan Task 17: the Recordings tool after VAX
+//               Audio, offered where the Core runs the recordings service.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-16: Recording plan Task 18: Voice Keyer just before
+//               Recordings, offered with the recordings service. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -72,6 +78,7 @@
 
 #include <cmath>
 #include <memory>
+#include <utility>
 
 #include "core/AppSettings.h"
 #include "core/BoardCapabilities.h"
@@ -567,6 +574,7 @@ void checkDesktopValues(const QJsonObject& catalog, HPSDRModel model, ProtocolVe
                                  QStringLiteral("Diversity"), QStringLiteral("CWX"),
                                  QStringLiteral("Memory Manager"), QStringLiteral("CAT Control"),
                                  QStringLiteral("TCI Server"), QStringLiteral("VAX Audio"),
+                                 QStringLiteral("Voice Keyer"), QStringLiteral("Recordings"),
                                  QStringLiteral("Network Diagnostics"),
                                  QStringLiteral("Support Bundle"), QStringLiteral("Rotor")}));
     QStringList radioItems;
@@ -888,6 +896,41 @@ private slots:
         }
         QVERIFY(found);
     }
+    // Recording plan Tasks 17 and 18: Voice Keyer, then Recordings, after
+    // VAX Audio, at the Core, offered only where the Core runs the
+    // recordings service.
+    void recordingsToolFollowsTheService()
+    {
+        BandPlanManager plans;
+        plans.loadPlans();
+        StationCatalog::Inputs inputs = inputsFor(HPSDRModel::ANAN_G2, ProtocolVersion::Protocol2, plans);
+        const auto find = [&inputs](const QString& id) {
+            const QJsonArray tools = StationCatalog::build(inputs).value(QStringLiteral("tools")).toArray();
+            for (int i = 0; i < tools.size(); ++i) {
+                const QJsonObject tool = tools.at(i).toObject();
+                if (tool.value(QStringLiteral("id")).toString() == id) {
+                    const QString before =
+                        i > 0 ? tools.at(i - 1).toObject().value(QStringLiteral("id")).toString() : QString();
+                    return std::make_pair(tool, before);
+                }
+            }
+            return std::make_pair(QJsonObject(), QString());
+        };
+        const auto [keyer, keyerBefore] = find(QStringLiteral("voiceKeyer"));
+        QCOMPARE(keyerBefore, QStringLiteral("vaxAudio"));
+        QCOMPARE(keyer.value(QStringLiteral("label")).toString(), QStringLiteral("Voice Keyer"));
+        QCOMPARE(keyer.value(QStringLiteral("where")).toString(), QStringLiteral("station"));
+        QCOMPARE(keyer.value(QStringLiteral("offered")), QJsonValue(false));
+        const auto [without, before] = find(QStringLiteral("recordings"));
+        QCOMPARE(before, QStringLiteral("voiceKeyer"));
+        QCOMPARE(without.value(QStringLiteral("label")).toString(), QStringLiteral("Recordings"));
+        QCOMPARE(without.value(QStringLiteral("where")).toString(), QStringLiteral("station"));
+        QCOMPARE(without.value(QStringLiteral("offered")), QJsonValue(false));
+        inputs.recordingService = true;
+        QCOMPARE(find(QStringLiteral("recordings")).first.value(QStringLiteral("offered")), QJsonValue(true));
+        QCOMPARE(find(QStringLiteral("voiceKeyer")).first.value(QStringLiteral("offered")), QJsonValue(true));
+    }
+
     void fixturesHoldTheDesktopsValues()
     {
         const QJsonObject g2 = catalogInFixture(QStringLiteral("catalog-anan-g2.json"));

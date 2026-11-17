@@ -43,6 +43,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-15  Recording plan Task 6: the slice flag's Record and Play
+//               are built and leave the Voice entry. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 //   2026-10-26  CW transmit, CWX built: its surfaces show in both windows
 //               and Tools > CWX is usable (R-CW-46). J.J. Boyd (KG4VCF),
 //               AI-assisted via Claude Code.
@@ -686,14 +689,9 @@ QMap<F, QList<Surface>> surfaces()
         functionButton(QStringLiteral("PLAY"), B::Play),
         functionButton(QStringLiteral("REC"), B::Rec),
         status(QStringLiteral("statusDvkLabel")),
-        Surface{QStringLiteral("slice flag record"), Host::Flag, [](Hosts& h) {
-                    QPushButton* b = h.flag()->recordButtonForTest();
-                    return b != nullptr && !b->isHidden();
-                }},
-        Surface{QStringLiteral("slice flag play"), Host::Flag, [](Hosts& h) {
-                    QPushButton* b = h.flag()->playButtonForTest();
-                    return b != nullptr && !b->isHidden();
-                }},
+        // Recording plan Task 6: the slice flag's Record and Play are built
+        // (FlagRecordPlay); they show on every flag, disabled with a reason
+        // when they cannot be used, so they are no surface of this list.
         Surface{QStringLiteral("container Add > Voice Rec/Play"), Host::Container, [](Hosts& h) {
                     return actionShown(h.containerDialog(), QStringLiteral("Voice Rec/Play"));
                 }},

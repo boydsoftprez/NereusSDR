@@ -88,6 +88,11 @@ final class BandModel: ObservableObject {
                 stackChanged()
             }
             applyToState()
+            if settings != oldValue {
+                // A real change asks for its own draw; the band's view no
+                // longer draws on every update of the screen (``BandView``).
+                redraw()
+            }
         }
     }
 
@@ -425,6 +430,7 @@ final class BandModel: ObservableObject {
                 // The 3D view's paused note reads it.
                 objectWillChange.send()
                 applyToState()
+                redraw()
             }
         }
     }
@@ -447,7 +453,14 @@ final class BandModel: ObservableObject {
     private var frameCountStart: Double?
     /// Now, in seconds since 1970; the tests set their own.
     var clock: () -> Double = { Date().timeIntervalSince1970 }
-    @Published var catalog: StationCatalog?
+    @Published var catalog: StationCatalog? {
+        didSet {
+            if catalog != oldValue {
+                // The band plan strip is drawn from it.
+                redraw()
+            }
+        }
+    }
     /// The Core's band plan by its `BandPlanName` setting, as this app
     /// last knew it (nil when the Core has none): the plan the strip shows
     /// when the catalogue marks none `active` (D79).
@@ -461,6 +474,9 @@ final class BandModel: ObservableObject {
     @Published var gates: MediaFeatureGates = .none {
         didSet {
             state.expectsExtras = (settings.extrasRequest(gates: gates)?.sections ?? 0) != 0
+            if gates != oldValue {
+                redraw()
+            }
         }
     }
     /// The display is suspended for want of room: the frozen band shows paused.
@@ -468,6 +484,9 @@ final class BandModel: ObservableObject {
         didSet {
             if paused { freezeWaterfall() }
             else if !state.waterfallHeld { frozenWaterfallTop = nil }
+            if paused != oldValue {
+                redraw()
+            }
         }
     }
     private var frozenWaterfallTop: Double?
@@ -513,6 +532,42 @@ final class BandModel: ObservableObject {
     final class AwayMarks: ObservableObject {
         /// Newest first.
         @Published fileprivate(set) var marks: [AwayMark] = []
+        /// What else places the marks (``AwayPlacement``), published when
+        /// it moves while there are marks: the layer watches this and the
+        /// marks, not the whole band.
+        @Published fileprivate(set) var placement = AwayPlacement()
+    }
+
+    /// What places the marks on the band besides the marks themselves: the
+    /// band's parts (``BandLayout``'s settings), the look back, the
+    /// waterfall held still or let go, and the Update period the
+    /// waterfall's time axis spaces its rows by. A new line moves the marks
+    /// themselves, so the waterfall's top is not here.
+    struct AwayPlacement: Equatable {
+        var hasGeometry = false
+        var bandPlanSize: BandPlanSize = .small
+        var spectrumShare: CGFloat = 0
+        var showsDbmScale = true
+        var lookBackLines = 0
+        var frozen = false
+        var waterfallPeriodMs = 0
+    }
+
+    /// Brings ``AwayMarks/placement`` up to date while there are marks.
+    private func noteAwayPlacement() {
+        guard !away.marks.isEmpty else {
+            return
+        }
+        // As ``pointGeometry(size:)`` and ``awayMarkY(_:scale:)`` read them.
+        let laid = Self.raised(drawnSettings, floor: jumpedShareFloor)
+        let view = view
+        let next = AwayPlacement(hasGeometry: spanHz > 0 && view.spanHz > 0, bandPlanSize: laid.bandPlanSize,
+                                 spectrumShare: laid.spectrumShare, showsDbmScale: laid.showDbmScale,
+                                 lookBackLines: lookBackLines, frozen: frozenWaterfallTop != nil,
+                                 waterfallPeriodMs: settings.waterfallPeriodMs)
+        if next != away.placement {
+            away.placement = next
+        }
     }
     let away = AwayMarks()
     /// The marks still on the waterfall, newest first.
@@ -881,6 +936,9 @@ final class BandModel: ObservableObject {
                 transmitViewShared = false
                 applyToState()
             }
+            // The band drawn as the media left it: the receive settings
+            // back, the waterfall held where it stopped.
+            redraw()
         case .displayFrame(let frame) where frame.endpointId == endpointId:
             guard !holdsReceiveFrame(frame) else {
                 // The receiver hearing its own transmitter while the band
@@ -1258,6 +1316,7 @@ final class BandModel: ObservableObject {
     private func redraw() {
         revision &+= 1
         draws.send()
+        noteAwayPlacement()
     }
 
     /// Publishes the Display page's live numbers when one it prints moved.

@@ -19,6 +19,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: The microphone clip tap in pullTxMic (recording plan Task
+//               12). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
+//   2026-11-15: Recording player (spec 6.1, 6.3): the playback slots are
+//               registered with the speakers mixer, and each drain names
+//               the local one and each owner mix's own, each topped up
+//               from the playback feed first.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16 : The leveler gets its measuring band (the middle of the
 //                filter) from a second word per slice. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
@@ -447,6 +455,8 @@
 #include <bit>
 #include <array>
 #include <thread>
+
+#include "core/audio/PlaybackFeed.h"
 #include <vector>
 
 #ifdef HAVE_WDSP
@@ -651,6 +661,17 @@ AudioEngine::AudioEngine(QObject* parent)
     // mixer's readiness barrier: an intermittent member would stall the
     // drain for kStallTolerance periods on every TX transition.
     m_masterMix.setSliceOpportunistic(kTxMonitorSlotId, true);
+
+    // Recording player (spec 6.1, 6.3): the playback slots, registered here
+    // for the same reason as the monitor's (no insert once the DSP thread
+    // reads the map). Each reaches only the speakers sum that names it, and
+    // never the anti-VOX mixer.
+    m_masterMix.setSliceGain(kLocalPlaybackSlotId, 1.0f, 0.0f);
+    m_masterMix.setPlaybackSlot(kLocalPlaybackSlotId, true);
+    for (int k = 0; k < kMaxOwnerMixes; ++k) {
+        m_masterMix.setSliceGain(ownerPlaybackSlotId(k), 1.0f, 0.0f);
+        m_masterMix.setPlaybackSlot(ownerPlaybackSlotId(k), true);
+    }
 
     // kTxMonitorSlotId is registered with m_masterMix and ONLY with
     // m_masterMix. Upstream hands the speakers mixer RX1 + RX1S + RX2 + MON
@@ -4018,6 +4039,7 @@ int AudioEngine::acquireOwnerMix()
         if (!slot.taken.load(std::memory_order_acquire)) {
             slot.sliceMask.store(0, std::memory_order_release);
             slot.monitor.store(0, std::memory_order_release);
+            slot.playback.store(false, std::memory_order_release);
             slot.listenMask.store(0, std::memory_order_release);
             slot.taken.store(true, std::memory_order_release);
             return k;
@@ -4041,6 +4063,7 @@ void AudioEngine::releaseOwnerMix(int slot)
     owner.headphones.admissionClosed.store(false, std::memory_order_seq_cst);
     owner.sliceMask.store(0, std::memory_order_release);
     owner.monitor.store(0, std::memory_order_release);
+    owner.playback.store(false, std::memory_order_release);
     owner.listenMask.store(0, std::memory_order_release);
     owner.taken.store(false, std::memory_order_release);
 }
@@ -4117,6 +4140,57 @@ MasterMixer::OwnerMonitor AudioEngine::ownerMixMonitor(int slot) const
         ? static_cast<MasterMixer::OwnerMonitor>(
               m_ownerMixes[static_cast<size_t>(slot)].monitor.load(std::memory_order_acquire))
         : MasterMixer::OwnerMonitor::None;
+}
+
+void AudioEngine::setOwnerMixPlayback(int slot, bool on)
+{
+    if (!validOwnerMixSlot(slot)) {
+        return;
+    }
+    m_ownerMixes[static_cast<size_t>(slot)].playback.store(on, std::memory_order_release);
+}
+
+void AudioEngine::setPlaybackFeed(RecordingPlaybackFeed* feed)
+{
+    m_playbackFeed.store(feed, std::memory_order_seq_cst);
+    while (m_playbackFeedCalls.load(std::memory_order_seq_cst) != 0) {
+        std::this_thread::yield();
+    }
+}
+
+// DSP thread, inside drainMixes: the slot is topped up to `frames`, what
+// this drain can take, so it never holds more than one drain's worth.
+void AudioEngine::feedPlaybackSlot(int slotId, int frames)
+{
+    m_playbackFeedCalls.fetch_add(1, std::memory_order_seq_cst);
+    RecordingPlaybackFeed* const feed = m_playbackFeed.load(std::memory_order_seq_cst);
+    if (feed != nullptr) {
+        int want = frames - m_masterMix.queuedFrames(slotId);
+        while (want > 0) {
+            const int ask = std::min(want, kPlaybackPumpFrames);
+            const int got = feed->pullSpeaker(slotId, m_playbackPumpMono.data(), ask);
+            if (got <= 0) {
+                break;
+            }
+            for (int i = 0; i < got; ++i) {
+                m_playbackPumpStereo[static_cast<size_t>(2 * i)] = m_playbackPumpMono[static_cast<size_t>(i)];
+                m_playbackPumpStereo[static_cast<size_t>(2 * i + 1)] =
+                    m_playbackPumpMono[static_cast<size_t>(i)];
+            }
+            m_masterMix.accumulate(slotId, m_playbackPumpStereo.data(), got);
+            want -= got;
+            if (got < ask) {
+                break;
+            }
+        }
+    }
+    m_playbackFeedCalls.fetch_sub(1, std::memory_order_seq_cst);
+}
+
+bool AudioEngine::ownerMixPlayback(int slot) const
+{
+    return validOwnerMixSlot(slot)
+        && m_ownerMixes[static_cast<size_t>(slot)].playback.load(std::memory_order_acquire);
 }
 
 void AudioEngine::setOwnerMixSliceMask(int slot, quint32 mask)
@@ -4661,6 +4735,10 @@ void AudioEngine::drainMixes(int frames, bool monitorOnly)
             owner.listenLevels = levels.data();
         }
         owner.listenSlot = k;
+        // Recording player: this owner's own playback, in its speakers.
+        if (slot.playback.load(std::memory_order_acquire)) {
+            owner.playbackSlot = ownerPlaybackSlotId(k);
+        }
         ++ownerCount;
     }
     const quint32 localListen = m_localListenMask.load(std::memory_order_acquire);
@@ -4690,12 +4768,20 @@ void AudioEngine::drainMixes(int frames, bool monitorOnly)
     // CW transmit (R-CW-39, D15): the computer sidetone into the monitor
     // slot, the frames this drain will take, just before it sums.
     produceCwSidetone(drainFrames);
+    // Recording player (spec 6.1, 6.3): each playback slot this drain sums,
+    // topped up from the decoded playback, just before it sums.
+    feedPlaybackSlot(kLocalPlaybackSlotId, drainFrames);
+    for (int k = 0; k < ownerCount; ++k) {
+        if (owners[static_cast<size_t>(k)].playbackSlot != MasterMixer::kNoPlaybackSlot) {
+            feedPlaybackSlot(owners[static_cast<size_t>(k)].playbackSlot, drainFrames);
+        }
+    }
     const int mixed = m_masterMix.tryDrain(
         mix.data(), hpMix.data(), drainFrames,
         m_localOutputSliceMask.load(std::memory_order_acquire), owners.data(), ownerCount,
         m_txMonitorLocal.load(std::memory_order_acquire), monitorOnly, localListen,
         localListenLevels.data(), radioTapped ? radioSum.data() : nullptr,
-        speakersPlayEvery ? everySum.data() : nullptr);
+        speakersPlayEvery ? everySum.data() : nullptr, kLocalPlaybackSlotId);
 
     // Drain the anti-VOX reference in the same call stack, so both mixes are
     // paced by their own barrier over the same period.
@@ -5132,11 +5218,36 @@ int AudioEngine::pullTxMic(float* dst, int n)
         }
     }
 
+    // Recording plan Task 12: a copy for the microphone clip tap, before
+    // any processing. Lock-free and allocation-free; a copy that does not
+    // fit is dropped, and what goes to the transmitter is unchanged.
+    if (gotMonoSamples > 0 && m_txMicClipTapOn.load(std::memory_order_acquire)) {
+        m_txMicClipTapRateHz.store(fmt.sampleRate > 0 ? fmt.sampleRate : 48000,
+                                   std::memory_order_release);
+        (void)m_txMicClipTap.tryPush(dst, gotMonoSamples);
+    }
+
     // Phase 3M-1c TX pump architecture redesign (2026-04-29): no
     // accumulator side effects.  TxWorkerThread::onPumpTick is the
     // sole caller and uses the returned sample count directly.
 
     return gotMonoSamples;
+}
+
+void AudioEngine::setTxMicClipTap(bool on)
+{
+    if (on && !m_txMicClipTapOn.load(std::memory_order_acquire)) {
+        // The reader's side: what an earlier recording left goes first.
+        std::array<float, 4096> scratch{};
+        while (m_txMicClipTap.pop(scratch.data(), static_cast<int>(scratch.size())) > 0) {
+        }
+    }
+    m_txMicClipTapOn.store(on, std::memory_order_release);
+}
+
+int AudioEngine::drainTxMicClipTap(float* dst, int n)
+{
+    return m_txMicClipTap.pop(dst, n);
 }
 
 int AudioEngine::pullVaxTxMic(float* dst, int n)

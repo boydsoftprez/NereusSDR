@@ -20,6 +20,26 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16 — Roundtable pauses for a slice playing the past: presence
+//                 keeps the frequency it had live (RecordingService::
+//                 rewoundLiveFrequencyHz) and it sends no readings until it
+//                 is live again. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-11-16 — Recording plan Task 22: setSliceReplay, rewind sound's one
+//                 switch on the receive path, handed to the DSP worker; the
+//                 replays are let go once the DSP thread is joined. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-16 — Recording plan Task 21: forkIqToTaps also copies each
+//                 receiver's I/Q into the Digital Spectrum Recorder (copy
+//                 only), behind a gate the destructor closes first. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-15 — Recording plan Task 10: the TX worker pulls the recording
+//                 service's on-air source, and lets go of it before the
+//                 service goes. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-11-15 — Recording plan Task 5: the `recordings` facade and the
+//                 recordings access by role. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-11-16 — Receive leveler: the slice's filter sets the band its
 //                 loudness is read in (RxLeveler::measureBand), sent again
 //                 on a filter change. NereusSDR-original. J.J. Boyd
@@ -1973,6 +1993,9 @@ mw0lge@grange-lane.co.uk
 //   2026-11-05 - Hot keys plan Task 5: wireCwSoftPaddle, and the soft paddle
 //                at every stop. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-11-15 - Recording plan Task 3: the recording service in Role::Local,
+//                fed your voice from the transmit monitor. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/cat/CatService.h"
@@ -2088,6 +2111,12 @@ mw0lge@grange-lane.co.uk
 #include "core/FreeDVRadeReporterBridge.h"
 #include "core/PskReporterClient.h"
 #include "core/SpotSourceHost.h"
+#include "core/recordings/RecordingService.h"
+#include "core/recordings/dsr/DsrRecorder.h"
+#include "core/recordings/dsr/DsrReplay.h"
+#include "core/session/RecordingsFacade.h"
+#include "models/recordings/LocalRecordingsAccess.h"
+#include "models/recordings/RemoteRecordingsAccess.h"
 #include "core/roundtable/RoundtableClient.h"
 #include "core/security/StationIdentity.h"
 #include "core/session/RecordStream.h"
@@ -2166,6 +2195,7 @@ mw0lge@grange-lane.co.uk
 #include <functional>
 #include <limits>
 #include <mutex>
+#include <thread>
 #include <tuple>
 #include <vector>
 
@@ -4078,6 +4108,22 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
         m_bandStackAccess = new LocalBandStackAccess(this);
     }
     m_roundtableModel = new RoundtableModel(this);
+    // Recording plan Task 3: the Core's recordings, only where this model
+    // runs the radio (the slices' audio taps and MOX are here).
+    if (m_role == Role::Local) {
+        m_recordingService = std::make_unique<RecordingService>(this);
+        // Recording plan Task 21: forkIqToTaps copies into the recorder.
+        m_dsrTap.store(m_recordingService->dsrRecorder(), std::memory_order_seq_cst);
+    }
+    // Recording plan Task 5: the `recordings` object, in every placement,
+    // and what a window talks to (as the band stack's, above).
+    m_recordingsFacade = new RecordingsFacade(this);
+    m_recordingsFacade->bind(m_recordingService.get());
+    if (m_role == Role::Remote) {
+        m_recordingsAccess = new RemoteRecordingsAccess(this);
+    } else {
+        m_recordingsAccess = new LocalRecordingsAccess(this);
+    }
     // CAT setup from a connected desktop (stationCatVersion 1): the Core's
     // CAT as the `stationCat` object, filled from CatService on the Core.
     m_stationCatModel = new StationCatModel(this);
@@ -5679,6 +5725,24 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
 
 RadioModel::~RadioModel()
 {
+    // Recording plan Task 3: every recording is kept and the recordings
+    // worker joins while the audio engine and the slices still exist.
+    // Recording plan Task 5: the facade stops following it first.
+    if (m_recordingsFacade != nullptr) {
+        m_recordingsFacade->bind(nullptr);
+    }
+    // Recording plan Task 10: no transmit block may still read its on-air
+    // source.
+    if (m_txWorker) {
+        m_txWorker->setOnAirSource(nullptr);
+    }
+    // Recording plan Task 21: no I/Q copy may still be inside the spectrum
+    // recorder.
+    m_dsrTap.store(nullptr, std::memory_order_seq_cst);
+    while (m_dsrTapInFlight.load(std::memory_order_seq_cst) != 0) {
+        std::this_thread::yield();
+    }
+    m_recordingService.reset();
     // The band stack writes its last change while the model is whole.
     m_bandStackController.reset();
     // A retained ingress handle stays alive, inhibited, after this model.
@@ -6644,6 +6708,12 @@ void RadioModel::wireRoundtable()
         connect(m_moxController, &MoxController::moxStateChanged, this,
                 &RadioModel::pushRoundtableSlices);
     }
+    // A slice playing the past pauses: no readings, presence where it was
+    // live, through the rewind's retune and any tune in the past.
+    if (m_recordingService) {
+        connect(m_recordingService.get(), &RecordingService::rewoundSlicesChanged, this,
+                &RadioModel::pushRoundtableSlices);
+    }
     pushRoundtableSlices();
     updateRoundtableAtRadio();
 }
@@ -6656,13 +6726,21 @@ void RadioModel::pushRoundtableSlices()
     SliceModel* active = activeSlice();
     SliceModel* keyedSlice = (m_moxController != nullptr && m_moxController->isMox()) ? txBoundSlice() : nullptr;
     QList<RoundtableSliceState> states;
-    const auto add = [&states, keyedSlice](SliceModel* slice) {
+    const RecordingService* recordings = m_recordingService.get();
+    const auto add = [&states, keyedSlice, recordings](SliceModel* slice) {
         RoundtableSliceState state;
         state.id = slice->sliceIndex();
         state.hz = std::llround(slice->frequency());
         state.mode = roundtableModeOf(slice->dspMode());
         state.filterHz = qAbs(slice->filterHigh() - slice->filterLow());
         state.keyed = slice == keyedSlice;
+        // Playing the past: paused, and still where it was live.
+        const std::optional<qint64> liveHz =
+            recordings != nullptr ? recordings->rewoundLiveFrequencyHz(state.id) : std::nullopt;
+        if (liveHz.has_value()) {
+            state.hz = *liveHz;
+            state.paused = true;
+        }
         states.append(state);
     };
     if (active != nullptr) {
@@ -22480,6 +22558,17 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
             connect(m_txChannel, &TxChannel::sip1OutputReady,
                     m_audioEngine, &AudioEngine::txMonitorBlockReady,
                     Qt::DirectConnection);
+            // Recording plan Task 3: your voice in a recording is this same
+            // monitor signal (what MON plays), whether or not MON is on.
+            // The recorder copies the block into its ring and returns.
+            if (m_recordingService) {
+                RecordingService* recordings = m_recordingService.get();
+                connect(m_txChannel, &TxChannel::sip1OutputReady, recordings,
+                        [recordings, txOutRate](const float* samples, int frames) {
+                            recordings->consumeMonitor(samples, frames, txOutRate);
+                        },
+                        Qt::DirectConnection);
+            }
 
             // L.1 connection 2 — REMOVED (Codex review on PR #149).
             // RadioMicSource::RadioMicSource subscribes to micFrameDecoded
@@ -23146,6 +23235,11 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
                 // which outlives the worker.
                 m_txWorker->setRemoteMicFeed(m_remoteMicFeed.get());
                 m_txWorker->setRemoteRadioMicActive(m_remoteRadioMicActive);
+                // Recording plan Task 10: a recording on the air, pulled
+                // first in each block (the service outlives the worker).
+                if (m_recordingService) {
+                    m_txWorker->setOnAirSource(m_recordingService->onAirSource());
+                }
                 // R-R3-39: the TX channel stays on this thread. Its setters
                 // post their WDSP calls to the transmit lane (applied even
                 // while no mic block arrives); the worker only runs the
@@ -31191,6 +31285,11 @@ void RadioModel::teardownConnection()
         m_dspThread->wait();
         delete m_dspThread;
         m_dspThread = nullptr;
+    }
+    // Recording plan Task 22: the DSP thread is joined, so no worker reads a
+    // rewound slice's replay any more; the next worker starts with none.
+    for (std::shared_ptr<DsrReplay>& replay : m_sliceReplays) {
+        replay.reset();
     }
 
     // 3M-1c TX pump architecture redesign — TxWorkerThread teardown.
@@ -41144,6 +41243,36 @@ void RadioModel::forkIqToTaps(int receiverIndex, const QVector<float>& samples)
         emit rawIqData(samples);
     }
     emit rawIqDataForStream(receiverIndex, samples);
+    // Recording plan Task 21: the Digital Spectrum Recorder copies each
+    // receiver's I/Q into its lock-free ring and returns. A copy only: the
+    // samples, and what reaches every consumer above, are unchanged.
+    m_dsrTapInFlight.fetch_add(1, std::memory_order_seq_cst);
+    if (DsrRecorder* dsr = m_dsrTap.load(std::memory_order_seq_cst)) {
+        dsr->consumeIq(receiverIndex, samples.constData(), static_cast<int>(samples.size() / 2));
+    }
+    m_dsrTapInFlight.fetch_sub(1, std::memory_order_seq_cst);
+}
+
+// Recording plan Task 22, rewind sound. The worker's switch is the one place
+// the recording design changes what reaches a demodulator (RxDspWorker.h).
+// The live I/Q above, and so the Digital Spectrum Recorder, never sees a
+// replay: the past goes straight to the slice's demodulator.
+bool RadioModel::setSliceReplay(int sliceId, std::shared_ptr<DsrReplay> replay)
+{
+    if (sliceId < 0 || sliceId >= static_cast<int>(m_sliceReplays.size())
+        || sliceId >= RxDspWorker::kMaxReplaySlices) {
+        return false;
+    }
+    RxDspWorker* const worker = m_dspWorker;
+    if (worker == nullptr) {
+        // No worker reads a replay now. A worker still stopping in teardown
+        // may, so what is held stays held until its thread is joined.
+        return replay == nullptr;
+    }
+    // Returns once the DSP thread no longer reads the replay it replaces.
+    worker->setSliceReplay(sliceId, replay.get());
+    m_sliceReplays[static_cast<size_t>(sliceId)] = std::move(replay);
+    return true;
 }
 
 QString RadioModel::describeSuspendedStreams(const QVector<int>& streams) const

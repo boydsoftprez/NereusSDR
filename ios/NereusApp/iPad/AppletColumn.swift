@@ -8,6 +8,9 @@
 // 2026-10-25: Roundtable fix wave: the applet's place in the scroll is
 // kept only as whether its box is pinned, so a scroll frame no longer
 // redraws the column. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan Task 19, the optional Recordings panel under the
+//   S-Meter.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import SwiftUI
 
@@ -19,7 +22,9 @@ import SwiftUI
 /// instead of sliding over the band. While the Roundtable applet is in
 /// view its box is pinned at the column's foot. Widened, the column is
 /// Roundtable's room list beside the room. The toolbar's corner button
-/// hides the column and brings it back.
+/// hides the column and brings it back. The Recordings panel, when this
+/// iPad turns it on in Setup > Recording settings, sits under the S-meter
+/// and pushes the rest down the scroll.
 struct AppletColumn: View {
     @ObservedObject var main: MainScreenModel
     @ObservedObject var rx: RxPanelModel
@@ -31,6 +36,8 @@ struct AppletColumn: View {
     var openBandStackSetup: () -> Void = {}
     /// Roundtable's applet; nil leaves it out.
     let roundtable: RoundtableAppletConfig?
+    /// The Recordings panel, shown while this iPad turns it on; nil leaves it out.
+    let recordings: RecordingsAppletConfig?
 
     @State private var roundtablePosition: Int
     @StateObject private var roomScroll = RoundtableRoomScroll()
@@ -44,7 +51,8 @@ struct AppletColumn: View {
     @State private var footHeight: CGFloat = 0
 
     init(main: MainScreenModel, openRadio: @escaping () -> Void = {}, openSettings: @escaping () -> Void = {},
-         openBandStackSetup: @escaping () -> Void = {}, roundtable: RoundtableAppletConfig? = nil) {
+         openBandStackSetup: @escaping () -> Void = {}, roundtable: RoundtableAppletConfig? = nil,
+         recordings: RecordingsAppletConfig? = nil) {
         self.main = main
         rx = main.rx
         transmit = main.transmit
@@ -52,6 +60,7 @@ struct AppletColumn: View {
         self.openSettings = openSettings
         self.openBandStackSetup = openBandStackSetup
         self.roundtable = roundtable
+        self.recordings = recordings
         _roundtablePosition = State(initialValue: roundtable?.settings.roundtableAppletPosition
                                     ?? AppletOrder.roundtableDefault)
     }
@@ -64,8 +73,10 @@ struct AppletColumn: View {
 
     private var wide: Bool { roundtable?.wide.wrappedValue ?? false }
 
+    /// The applets in the scroll. The Recordings panel's place is always
+    /// there with a config; the panel draws nothing while it is off.
     private var order: [AppletKind] {
-        let kinds = AppletOrder.order(roundtableAt: roundtablePosition)
+        let kinds = AppletOrder.order(roundtableAt: roundtablePosition, recordings: recordings != nil)
         return roundtable == nil ? kinds.filter { $0 != .roundtable } : kinds
     }
 
@@ -146,9 +157,15 @@ struct AppletColumn: View {
         switch kind {
         case .sMeter:
             AnalogSMeter(model: main.sMeter)
+        case .recordings:
+            if let recordings {
+                RecordingsApplet(recordings)
+                    .id(RecordingsApplet.id)
+            }
         case .roundtable:
             if let roundtable {
-                let position = order.firstIndex(of: .roundtable) ?? AppletOrder.roundtableDefault
+                // Counted without the Recordings panel, as the setting keeps it.
+                let position = AppletOrder.clamped(roundtablePosition)
                 RoundtableApplet(roundtable: roundtable.roundtable, transmit: transmit, slices: main.slices,
                                  stationCallsign: roundtable.stationCallsign, wide: false,
                                  toggleWide: { roundtable.wide.wrappedValue = true },

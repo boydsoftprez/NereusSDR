@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iPad Recordings</title>
+<style>
+:root{ --bg:#08080a; --ink:#e8e8ec; --dim:#9a9aa2; }
+@media (prefers-color-scheme: light){ :root:not([data-theme="light"]){ --bg:#08080a; --ink:#e8e8ec; } }
+:root[data-theme="dark"]{ --bg:#08080a; }
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:14px -apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;-webkit-text-size-adjust:100%}
+.top{max-width:1180px;margin:0 auto;padding:12px 16px 4px}
+.top h1{font-size:17px;margin:0 0 6px;font-weight:600}
+.top p{margin:4px 0;color:var(--dim);font-size:13px;line-height:1.4}
+.bar{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 4px;align-items:center}
+.bar button{background:#1c1c1f;color:var(--ink);border:1px solid #333338;border-radius:8px;padding:7px 10px;font:inherit;font-size:13px;cursor:pointer}
+.bar button.on{background:#2b4a75;border-color:#4a76b0}
+.bar label{color:var(--dim);font-size:13px;margin-left:4px}
+details{margin:4px 0 8px;color:var(--dim);font-size:13px}
+details summary{cursor:pointer;color:var(--ink)}
+details li{margin:3px 0;line-height:1.35}
+.view{position:relative;overflow:hidden;margin:6px auto 24px;border-radius:22px;border:6px solid #1a1a1d;background:#000;box-shadow:0 10px 40px rgba(0,0,0,.6)}
+/* everything in the stage is in iPad points (the capture is 2x) */
+#st{position:absolute;left:0;top:0;width:1376px;height:1032px;transform-origin:0 0}
+#st > img{position:absolute;left:0;top:0;width:1376px;height:1032px;display:block;user-select:none;-webkit-user-drag:none}
+#spec{position:absolute;left:0;top:78px;width:1016px;height:459px}
+#wf{position:absolute;left:0;top:566px;width:1056px;height:384px}
+#axis{position:absolute;left:30px;top:548px;width:1026px;height:17px;display:flex;justify-content:space-around;align-items:center;font:12px ui-monospace,"SF Mono",Menlo,monospace;color:#e8d36a;pointer-events:none}
+#band{position:absolute;left:0;top:537px;width:1056px;height:11px;background:#5a3510;color:#e6e6e6;font:600 8px/11px -apple-system,sans-serif;text-align:center;letter-spacing:.3px}
+#pb{position:absolute;left:494.8px;width:25.2px;top:78px;height:459px;background:rgba(40,140,170,.28);pointer-events:none}
+#car{position:absolute;left:519.5px;top:78px;height:872px;width:1px;background:rgb(45,170,205);pointer-events:none}
+#btns{position:absolute;left:476.3px;top:78px;width:43.67px;height:152px;display:flex;flex-direction:column;z-index:4}
+.pf{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#5c5c60}
+.pf svg{width:16px;height:16px;flex:none;filter:drop-shadow(0 0 1.5px #000) drop-shadow(0 0 1.5px #000)}
+.pf.on svg{width:13px;height:13px}
+#fRec,#fPlay{cursor:pointer}
+.pf .c{font:600 9px ui-monospace,"SF Mono",Menlo,monospace;margin-top:1px;display:none;line-height:1}
+#fRec.on{color:#ff453a}
+#fRec.on .c{display:block;color:#ff8a84}
+#fRec.on svg{animation:rp 1.1s ease-in-out infinite}
+@keyframes rp{50%{opacity:.35}}
+#fPlay.on{color:#3a9cff}
+#fPlay.on .c{display:block;color:#8cc4ff}
+#fPlay.air{color:#ff453a}
+#flag{position:absolute;left:520.33px;top:78px;width:200.33px;height:159.33px;pointer-events:none}
+#flag img{width:200.33px;display:block}
+#pbar{position:absolute;left:520.33px;top:241px;width:260px;height:40px;border-radius:9px;background:rgba(18,36,60,.96);border:1px solid #3a7bd5;display:none;align-items:center;gap:6px;padding:0 5px 0 10px;z-index:4}
+#pbar.on{display:flex}
+#pbar .m{flex:1;min-width:0}
+#pbar .m1{font:600 13px -apple-system,sans-serif;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#pbar .m2{white-space:nowrap;overflow:hidden;font:11px ui-monospace,"SF Mono",Menlo,monospace;color:#cfe2ff}
+#pbar button{height:30px;border-radius:7px;border:0;font:600 12.5px -apple-system,sans-serif;padding:0 8px;flex:none;cursor:pointer}
+#pbOld{background:#24466f;color:#cfe2ff}
+#pbStop{background:#fff;color:#1d5fb0}
+#pbar .bar{position:absolute;left:0;bottom:0;height:2px;background:#3a9cff;border-radius:0 0 0 9px}
+#pbar.air{background:rgba(70,16,13,.97);border-color:#ff453a}
+#pbar.air .m2{color:#ffb3ad}
+#pbar.air .bar{background:#ff453a}
+#pbar.air #pbStop{color:#c0392b}
+#ptt{position:absolute;left:14px;top:862px;width:76px;height:76px;border-radius:50%;cursor:pointer;z-index:5}
+#ptt.tx{background:rgba(255,40,30,.28);box-shadow:0 0 0 3px #ff453a}
+#vkBtn{position:absolute;left:102px;top:874px;width:52px;height:52px;border-radius:50%;background:rgba(30,30,33,.92);border:1.5px solid rgba(110,110,116,.75);color:#ddd;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;z-index:5;cursor:pointer;padding:0}
+#vkBtn svg.w{width:22px;height:16px}
+#vkBtn .l{font:700 8.5px -apple-system,sans-serif;letter-spacing:.6px}
+#vkBtn.air{background:#5a1410;border-color:#ff453a;color:#fff}
+#vkPop{position:absolute;left:14px;top:600px;width:340px;background:rgba(28,28,31,.98);border:1px solid #3a3a40;border-radius:14px;padding:12px;display:none;z-index:7;box-shadow:0 12px 40px rgba(0,0,0,.6)}
+#vkPop.on{display:block}
+#vkPop .hd{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+#vkPop .hd b{font:700 12px -apple-system,sans-serif;letter-spacing:1px;color:#cfcfd4}
+#vkPop .hd span{color:#0a84ff;font-size:13px;cursor:pointer}
+.vg{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.vt{height:44px;border-radius:9px;border:1px solid #333338;background:#222226;color:#eee;text-align:left;padding:4px 8px;font:inherit;cursor:pointer;position:relative;overflow:hidden}
+.vt .n{display:block;font:700 10px -apple-system,sans-serif;color:#8e8e96}
+.vt .a{display:block;font:600 13px -apple-system,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vt.blank{background:#151517;border-style:dashed}
+.vt.blank .a{color:#5e5e64;font-weight:400}
+/* Recordings applet in the column */
+#colWrap{position:absolute;left:1057px;top:258px;width:319px;height:692px;overflow:hidden;background:#0c0c0e;display:none}
+#colWrap.on{display:block}
+#ra{background:#0c0c0e}
+#ra .h{height:22px;background:#26252a;display:flex;align-items:center;justify-content:space-between;padding:0 8px;font:600 12.5px -apple-system,sans-serif;color:#e8e8ec}
+#ra .h span{color:#9a9aa2;font-size:14px}
+#rl{padding:4px 6px 0}
+.rr{display:grid;grid-template-columns:30px 1fr auto;gap:8px;align-items:center;height:42px;padding:0 4px;border-radius:7px;position:relative}
+.rr:nth-child(odd){background:#0a0a0c}
+.rr .pb{width:28px;height:28px;border-radius:7px;border:1px solid #333338;background:#222226;color:#ddd;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
+.rr .pb svg{width:12px;height:12px}
+.rr .a{font:600 13px -apple-system,sans-serif;color:#e8e8ec;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rr .b{font:11px -apple-system,sans-serif;color:#7e7e85;white-space:nowrap}
+.rr .d{font:11.5px ui-monospace,"SF Mono",Menlo,monospace;color:#7e7e85}
+.rr.playing{background:#12202f !important}
+.rr.playing .pb{background:#1e3d5f;border-color:#4a7ba8;color:#fff}
+.rr.air{background:#2a0f0d !important}
+.rr.air .pb{background:#7a2c2e;border-color:#ff453a;color:#fff}
+.rr.now{background:#1a0d0e !important}
+.rr.now .pb{background:#7a2c2e;border-color:#c25a5c;color:#ffd9d9}
+.rr.now .a{color:#ffd9d9}
+.tag{display:inline-block;padding:0 4px;margin-right:4px;border-radius:3px;font:600 9.5px/14px -apple-system,sans-serif}
+.tag.c{background:#1f2a1f;color:#8fc79c}.tag.w{background:#1e2a3a;color:#8cc4ff}.tag.s{background:#2a2418;color:#d8a55f}
+#ra .ft{display:flex;justify-content:space-between;align-items:center;padding:6px 10px 8px;font:12px -apple-system,sans-serif;color:#7e7e85;border-bottom:1px solid #1f1f23}
+#ra .ft b{color:#0a84ff;font-weight:500;cursor:pointer}
+#rxShift{width:319px;height:692px;background:url(ipad.jpg) -1057px -258px / 1376px 1032px no-repeat}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:rgba(44,44,48,.97);color:#fff;border-radius:12px;padding:10px 14px;font-size:13px;max-width:380px;text-align:center;z-index:90;opacity:0;transition:opacity .2s;pointer-events:none;border:1px solid #444}
+.toast.on{opacity:1}
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>Record, Play and the voice keyer on the iPad</h1>
+  <p>Built on a real iPad capture, with a pan drawn in (the capture was taken with no radio connected). The iPad takes the phone's design: Record and Play in the flag's side column, the playing bar under the flag, VOICE beside PTT. The column on the right can hold a Recordings panel, like the desktop's.</p>
+  <div class="bar">
+    <button id="colB" class="on">Recordings panel in the column: on</button>
+    <label>Tip: tap PTT to key and unkey.</label>
+  </div>
+  <details open>
+    <summary>Things to try</summary>
+    <ul>
+      <li>Tap the dot beside the flag to record (it blinks red, with the time under it); tap again to keep it. It shows at the top of the Recordings panel while it records.</li>
+      <li>Tap the triangle to play the latest on the iPad's speaker; the blue bar under the flag shows it, with Others for the last eight. Or tap any row's play button in the Recordings panel.</li>
+      <li>While something plays, tap PTT: it goes out on the air instead of your mic, and the bar turns red with ON AIR. Tap PTT again and it carries on in your speaker.</li>
+      <li>Tap VOICE beside PTT for your eight messages. Tapping one sends it; tap VOICE or PTT to stop.</li>
+      <li>"All recordings" in the panel goes to Tools, Recordings: the phone's page, wider. Recording settings is the phone's page too, in Setup.</li>
+    </ul>
+  </details>
+</div>
+<div class="view" id="view"><div id="st">
+  <img src="ipad.jpg" alt="NereusSDR on the iPad">
+  <canvas id="spec" width="1016" height="459"></canvas>
+  <div id="band">PHONE General</div>
+  <canvas id="wf" width="1056" height="384"></canvas>
+  <div id="pb"></div><div id="car"></div>
+  <div id="btns">
+    <div class="pf"><svg viewBox="0 0 18 18"><path d="M3.5 3.5l11 11M14.5 3.5l-11 11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
+    <div class="pf"><svg viewBox="0 0 18 18"><rect x="2.5" y="8" width="9" height="7.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M9.5 8V5.5a3 3 0 0 1 6 0V7" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg></div>
+    <div class="pf" id="fRec" role="button" aria-label="Record"><svg viewBox="0 0 18 18"><circle cx="9" cy="9" r="6" fill="currentColor"/></svg><span class="c" id="fRecC"></span></div>
+    <div class="pf" id="fPlay" role="button" aria-label="Play"><svg viewBox="0 0 18 18" id="fPlayI"></svg><span class="c" id="fPlayC"></span></div>
+    <div class="pf"><svg viewBox="0 0 18 18"><circle cx="3.5" cy="9" r="1.6" fill="currentColor"/><circle cx="9" cy="9" r="1.6" fill="currentColor"/><circle cx="14.5" cy="9" r="1.6" fill="currentColor"/></svg></div>
+  </div>
+  <div id="flag"><img src="flag.png" alt=""></div>
+  <div id="pbar"><div class="m"><div class="m1" id="pbT"></div><div class="m2" id="pbS"></div></div><button id="pbOld">Others</button><button id="pbStop">Stop</button><div class="bar" id="pbBar"></div></div>
+  <div id="ptt" aria-label="PTT"></div>
+  <button id="vkBtn" aria-label="Voice keyer"><svg class="w" viewBox="0 0 22 16"><g stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="2" y1="6" x2="2" y2="10"/><line x1="6" y1="3" x2="6" y2="13"/><line x1="10" y1="1" x2="10" y2="15"/><line x1="14" y1="4" x2="14" y2="12"/><line x1="18" y1="6.5" x2="18" y2="9.5"/></g></svg><span class="l" id="vkL">VOICE</span></button>
+  <div id="vkPop"><div class="hd"><b>VOICE KEYER</b><span id="vkAll">All settings &rsaquo;</span></div><div class="vg" id="vg"></div></div>
+  <div id="colWrap" class="on">
+    <div id="ra">
+      <div class="h">Recordings<span>&#8801;</span></div>
+      <div id="rl"></div>
+      <div class="ft"><span id="ru"></span><b id="rAll">All recordings &rsaquo;</b></div>
+    </div>
+    <div id="rxShift"></div>
+  </div>
+</div></div>
+<div class="toast" id="toast"></div>
+<script>
+(() => {
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const pad = n => String(n).padStart(2,'0'); const mm = s => Math.floor(s/60) + ':' + pad(Math.floor(s%60));
+let tt = 0; function toast(m){ const el = $('#toast'); el.textContent = m; el.classList.add('on'); clearTimeout(tt); tt = setTimeout(() => el.classList.remove('on'), 3000); }
+
+function fit(){ const vw = Math.min(document.documentElement.clientWidth - 16, 1180) - 12, s = vw / 1376;
+  $('#view').style.width = (vw + 12) + 'px'; $('#view').style.height = (1032*s + 12) + 'px'; $('#st').style.transform = 'scale(' + s + ')'; }
+addEventListener('resize', fit); fit();
+
+/* ---------- pan drawing (the capture had no radio) ---------- */
+const SIG = [{x:300,w:24,h:.55},{x:507,w:25,h:.72},{x:640,w:20,h:.45},{x:820,w:25,h:.6}];
+function drawSpec(){
+  const c = $('#spec'), g = c.getContext('2d'), W = c.width, H = c.height; g.clearRect(0,0,W,H);
+  g.beginPath(); g.moveTo(0,H);
+  for (let x = 0; x < W; x++){ let v = .12 + Math.random()*.06; for (const s of SIG) if (x >= s.x && x < s.x + s.w) v = s.h - Math.random()*.04; g.lineTo(x, H - v*H*.75); }
+  g.lineTo(W,H); g.closePath(); g.fillStyle = 'rgba(30,140,170,.35)'; g.fill(); g.strokeStyle = '#4fd3f0'; g.lineWidth = 1; g.stroke();
+}
+const wf = $('#wf'), wg = wf.getContext('2d');
+function wfRow(){
+  wg.drawImage(wf, 0, 0, wf.width, wf.height - 2, 0, 2, wf.width, wf.height - 2);
+  const img = wg.createImageData(wf.width, 2);
+  for (let x = 0; x < wf.width; x++){ let v = Math.random()*.25; for (const s of SIG) if (x >= s.x && x < s.x + s.w && Math.random() < .8) v = .55 + Math.random()*.4;
+    const r = v > .5 ? 255*v : 10, gg = v > .5 ? 200*v : 30 + 80*v, b = v > .5 ? 40 : 90 + 120*v;
+    for (let y = 0; y < 2; y++){ const i = (y*wf.width + x)*4; img.data[i] = r; img.data[i+1] = gg; img.data[i+2] = b; img.data[i+3] = 255; } }
+  wg.putImageData(img, 0, 0);
+}
+for (let i = 0; i < 200; i++) wfRow();
+setInterval(() => { drawSpec(); wfRow(); }, 120);
+
+/* ---------- recordings ---------- */
+const NOW = Date.now()/1000, KIND = {c:'Contact', w:'Whole pan', s:'Sound'};
+let RECS = [
+  {k:'c', name:'7.236.400 LSB W1XYZ', when:NOW-1800, len:205},
+  {k:'w', name:'40 m net, whole pan', when:NOW-5400, len:600},
+  {k:'c', name:'7.200.000 LSB N4QQ', when:NOW-9000, len:540},
+  {k:'s', name:'14.250.000 USB', when:NOW-86400, len:64},
+  {k:'c', name:'3.880.000 LSB', when:NOW-170000, len:1210}
+];
+const hm = t => { const d = new Date(t*1000); return pad(d.getUTCHours()) + pad(d.getUTCMinutes()) + 'Z'; };
+const day = t => (NOW - t) < 20*3600 ? 'today' : (NOW - t) < 44*3600 ? 'yesterday' : Math.round((NOW - t)/86400) + ' days ago';
+const PLAY = '<svg viewBox="0 0 20 20"><path d="M6 3.5l10 6.5-10 6.5z" fill="currentColor"/></svg>', STOP = '<svg viewBox="0 0 20 20"><rect x="4.5" y="4.5" width="11" height="11" rx="1.5" fill="currentColor"/></svg>', PAN = '<svg viewBox="0 0 20 20"><path d="M2 15l4-6 3 4 4-8 5 10z" fill="currentColor"/></svg>';
+let rec = null, play = null, tx = false, col = true, vkSend = null, vkOpen = false;
+const VK = ['CQ CQ de KG4VCF', 'QRZ?', 'Thanks, 59, 73', 'CQ contest', null, null, null, null];
+
+function render(){
+  // flag
+  $('#fRec').classList.toggle('on', !!rec); $('#fRecC').textContent = rec ? mm(rec.t) : '';
+  const air = !!play && tx;
+  $('#fPlay').classList.toggle('on', !!play); $('#fPlay').classList.toggle('air', air);
+  $('#fPlayI').innerHTML = play ? '<rect x="4" y="4" width="10" height="10" rx="1.5" fill="currentColor"/>' : '<path d="M5 3l10 6-10 6z" fill="currentColor"/>';
+  $('#fPlayC').textContent = play ? mm(play.pos) : '';
+  $('#pbar').classList.toggle('on', !!play); $('#pbar').classList.toggle('air', air);
+  if (play){ $('#pbT').textContent = play.r.name; $('#pbS').textContent = (air ? 'ON AIR · ' : '') + mm(play.pos) + ' / ' + mm(play.r.len) + (air ? '' : ' · iPad speaker'); $('#pbBar').style.width = (play.pos / play.r.len * 100) + '%'; }
+  $('#ptt').classList.toggle('tx', tx);
+  // voice keyer
+  $('#vkBtn').classList.toggle('air', !!vkSend); $('#vkL').textContent = vkSend ? 'M' + (vkSend.i+1) : 'VOICE';
+  $('#vkPop').classList.toggle('on', vkOpen);
+  // column
+  $('#colWrap').classList.toggle('on', col); $('#colB').classList.toggle('on', col); $('#colB').textContent = 'Recordings panel in the column: ' + (col ? 'on' : 'off');
+  const L = $('#rl'); L.innerHTML = '';
+  if (rec){ const d = document.createElement('div'); d.className = 'rr now';
+    d.innerHTML = '<button class="pb">' + STOP + '</button><div style="min-width:0"><div class="a">● Recording slice A</div><div class="b">what you hear and your voice</div></div><div class="d">' + mm(rec.t) + '</div>';
+    d.querySelector('.pb').onclick = stopRec; L.appendChild(d); }
+  RECS.slice(0, rec ? 3 : 4).forEach(r => {
+    const d = document.createElement('div'), p = play && play.r === r;
+    d.className = 'rr' + (p ? (air ? ' air' : ' playing') : '');
+    d.innerHTML = '<button class="pb">' + (p ? STOP : r.k === 'w' ? PAN : PLAY) + '</button><div style="min-width:0"><div class="a">' + esc(r.name) + '</div><div class="b"><span class="tag ' + r.k + '">' + KIND[r.k] + '</span>' + day(r.when) + ' ' + hm(r.when) + '</div></div><div class="d">' + (p ? mm(play.pos) + '/' : '') + mm(r.len) + '</div>';
+    d.querySelector('.pb').onclick = () => { if (p){ play = null; render(); return; } if (r.k === 'w'){ toast('Mockup: the waterfall jumps back to this stretch and plays it, like rewind.'); return; } play = {r, pos:0}; render(); };
+    L.appendChild(d);
+  });
+  $('#ru').textContent = RECS.length + ' on the Core';
+}
+function stopRec(){ const len = Math.max(1, Math.round(rec.t)); RECS.unshift({k:'c', name:'7.236.400 LSB K4ABC', when:Date.now()/1000, len}); rec = null; render(); toast('Kept in Recordings: 7.236.400 LSB K4ABC, ' + mm(len) + '.'); }
+$('#fRec').onclick = () => { if (rec){ stopRec(); return; } rec = {t:0}; render(); toast('Recording this contact on the Core: what you hear, and your voice when you transmit.'); };
+$('#fPlay').onclick = () => { if (play){ play = null; render(); return; } play = {r:RECS[0], pos:0}; render(); };
+$('#pbStop').onclick = () => { play = null; render(); };
+$('#pbOld').onclick = () => toast('Mockup: the last eight, as on the phone.');
+$('#rAll').onclick = () => toast('Mockup: Tools, Recordings: the phone’s page, laid out wider.');
+$('#ptt').onclick = () => {
+  if (vkSend){ vkSend = null; render(); toast('PTT stopped the message. Back to receive.'); return; }
+  tx = !tx; render();
+  if (tx && play) toast('On the air: ' + play.r.name + ' goes out instead of your mic.');
+  else if (tx) toast('Transmitting on your mic.');
+  else if (play) toast('Back to receive. It keeps playing on the iPad speaker.');
+};
+$('#vkBtn').onclick = e => { e.stopPropagation(); if (vkSend){ vkSend = null; render(); toast('Stopped. Back to receive.'); return; } vkOpen = !vkOpen; renderVG(); render(); };
+$('#vkPop').onclick = e => e.stopPropagation();
+document.addEventListener('click', () => { if (vkOpen){ vkOpen = false; render(); } });
+$('#vkAll').onclick = () => toast('Mockup: Tools, Voice Keyer, the phone’s page.');
+function renderVG(){ const g = $('#vg'); g.innerHTML = '';
+  VK.forEach((m, i) => { const b = document.createElement('button'); b.className = 'vt' + (m ? '' : ' blank');
+    b.innerHTML = '<span class="n">M' + (i+1) + '</span><span class="a">' + (m ? esc(m) : 'Empty') + '</span>';
+    b.onclick = () => { vkOpen = false; if (!m){ render(); toast('Mockup: opens Tools, Voice Keyer to record M' + (i+1) + '.'); return; } vkSend = {i, t:0}; render(); toast('On the air: M' + (i+1) + '. Tap VOICE or PTT to stop.'); };
+    g.appendChild(b); }); }
+$('#colB').onclick = () => { col = !col; render(); };
+setInterval(() => {
+  if (rec) rec.t += .25;
+  if (play){ play.pos += .25; if (play.pos >= play.r.len){ play = null; if (tx) toast('The recording ended. Still keyed, so your mic takes over.'); } }
+  if (vkSend){ vkSend.t += .25; if (vkSend.t > 5){ vkSend = null; toast('Sent. Back to receive.'); } }
+  render();
+}, 250);
+drawSpec(); render();
+})();
+</script>
+</body>
+</html>

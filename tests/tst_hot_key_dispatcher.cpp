@@ -4,6 +4,8 @@
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-07 - J.J. Boyd (KG4VCF), hot keys: VOX on or off (vox.toggle).
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 13: voice.* and msg.*
+//                reach runVoiceMessage. AI-assisted via Anthropic Claude Code.
 // no-port-check: NereusSDR-original test.
 //
 // The one dispatcher, against a fake HotKeyTargets with an injected clock: the
@@ -64,6 +66,7 @@ public:
     QStringList windowActions;
     QStringList transmitActions;
     QStringList cwMessages;
+    QStringList voiceMessages;
     QList<bool> keyHolds;
     QList<QPair<QString, bool>> cwKeys;
     QStringList toasts;
@@ -112,6 +115,7 @@ public:
     }
     void runTransmitAction(const QString& id) override { ++anyCall; transmitActions.append(id); }
     void runCwMessage(const QString& id) override { ++anyCall; cwMessages.append(id); }
+    void runVoiceMessage(const QString& id) override { ++anyCall; voiceMessages.append(id); }
     void setCwKeyDown(const QString& id, bool down) override { ++anyCall; cwKeys.append({id, down}); }
     void toast(const QString& text) override { ++anyCall; toasts.append(text); }
     qint64 nowMs() const override { return clock; }
@@ -119,7 +123,7 @@ public:
     int anythingRan() const
     {
         return int(tunes.size() + sliceActions.size() + windowActions.size() + transmitActions.size()
-                   + cwMessages.size() + keyHolds.size() + cwKeys.size());
+                   + cwMessages.size() + voiceMessages.size() + keyHolds.size() + cwKeys.size());
     }
 };
 
@@ -966,6 +970,18 @@ private slots:
         d().press(QStringLiteral("cw.msg3"), kSpace);
         d().press(QStringLiteral("cw.stop"), kSpace);
         QCOMPARE(t().cwMessages, (QStringList{QStringLiteral("cw.msg3"), QStringLiteral("cw.stop")}));
+    }
+
+    // Recording plan Task 13: the voice keys and F1 to F8 have their own entry point.
+    void voice_messagesAndTheMessageKeysGoToTheVoiceEntry()
+    {
+        for (const char* id : {"voice.msg7", "voice.stop", "msg.3"}) {
+            d().press(QString::fromLatin1(id), kSpace);
+        }
+        QCOMPARE(t().voiceMessages, (QStringList{QStringLiteral("voice.msg7"), QStringLiteral("voice.stop"),
+                                                 QStringLiteral("msg.3")}));
+        QVERIFY(t().windowActions.isEmpty());
+        QVERIFY(t().cwMessages.isEmpty());
     }
 
     // ---- Levels ----

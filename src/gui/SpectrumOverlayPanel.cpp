@@ -21,6 +21,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-17 - The zoom row stays wholly inside a very short pan. J.J.
+//                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-16 - The zoom row stays on the waterfall, under the Roundtable
+//                strip, and follows the waterfall top as the split or the
+//                strip changes (SpectrumWidget::waterfallTopChanged). J.J.
+//                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22 - A closed Display pill no longer lays itself out on every
 //                 remote telemetry tick: geometry refreshes wait for the
 //                 pill to open, unchanged remote and station gates and an
@@ -4973,6 +4979,9 @@ void SpectrumOverlayPanel::buildZoomButtons()
         });
         connect(pan, &SpectrumWidget::panDisplayReset, this,
                 [this]() { repositionZoomButtons(); });
+        // The split or the Roundtable strip moved the waterfall's top.
+        connect(pan, &SpectrumWidget::waterfallTopChanged, this,
+                [this]() { repositionZoomButtons(); });
     }
 }
 
@@ -4994,6 +5003,14 @@ void SpectrumOverlayPanel::repositionZoomButtons()
     int x = kMargin;
     int y = spectrum->height() - freqScaleH - m_zoomStrip->height() - kMargin;
     y = std::max(kMargin, y);
+    // Never above the waterfall's top: on a short waterfall the row would
+    // rise into the Roundtable strip or the frequency scale.
+    if (pan) {
+        y = std::max(y, pan->waterfallTop() + kMargin);
+    }
+    // On a very short pan with the divider pulled low, that can put the row
+    // past the bottom edge: it stays wholly inside the pan.
+    y = std::max(0, std::min(y, spectrum->height() - m_zoomStrip->height()));
     // Task 26: on a short pan the open button column reaches down to the
     // row and the row covered its lower buttons (ATT). Then the row moves to
     // just right of the column at the same height; on a tall pan, or with

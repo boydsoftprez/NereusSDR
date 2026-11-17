@@ -11,7 +11,9 @@ import SwiftUI
 /// readouts. A mark scrolls down the waterfall with its lines and passes
 /// under those controls, never over them. Nothing here takes a touch.
 struct BandAwayMarks: View {
-    @ObservedObject var band: BandModel
+    /// Read, not watched: the layer redraws when the marks or what places
+    /// them move (``BandModel/AwayMarks``), not on every change of the band.
+    let band: BandModel
     /// The marks themselves: they move with every line, and only this layer redraws for it.
     @ObservedObject private var away: BandModel.AwayMarks
     @Environment(\.displayScale) private var displayScale

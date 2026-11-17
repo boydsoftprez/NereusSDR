@@ -152,12 +152,14 @@ struct FlagMetrics: Equatable {
 /// TX is greyed as PTT is, and a tap on it says why.
 struct VfoFlagView: View {
     let entry: BandSlicesModel.Entry
+    /// The slices' signal readings: only the level bar watches them.
+    let readings: BandSlicesModel.Readings
     let meter: StationCatalog.Meters.SMeter?
     /// How the level beside the bar is printed.
     var readout: SMeterReadout = .desktopDefaults
     /// The level the bar shows, from the S-meter's RX Mode
     /// (``FlagMeterChoice``); nil shows the Core's `signalStrengthDbm`.
-    var level: (@MainActor (BandSlicesModel.Entry) -> Double?)?
+    var level: (@MainActor (BandSlicesModel.Entry, BandSlicesModel.Reading) -> Double?)?
     /// Which reading `level` is, for the bar's tag.
     var meterSource: FlagMeterChoice = .peak
     var openPad: (() -> Void)?
@@ -293,8 +295,8 @@ struct VfoFlagView: View {
                 ownerRow(metrics)
             }
             frequencyRow(metrics)
-            FlagLevelBar(dbm: level.map { $0(entry) } ?? entry.signalDbm, meter: meter, readout: readout,
-                         source: level == nil ? .peak : meterSource)
+            FlagReadingBar(readings: readings, entry: entry, level: level, meter: meter, readout: readout,
+                           source: level == nil ? .peak : meterSource)
                 .frame(height: FlagMetrics.levelHeight)
                 .padding(.top, FlagMetrics.levelTop)
             if let rade = entry.rade {
@@ -750,5 +752,33 @@ private struct FlagFrame: ViewModifier {
             content
                 .frame(width: FlagLayout.flagSize.width, height: height, alignment: .top)
         }
+    }
+}
+
+/// The flag's level bar, redrawn on its own as the slice's signal readings
+/// move, without building the rest of the flag again.
+private struct FlagReadingBar: View {
+    @ObservedObject var readings: BandSlicesModel.Readings
+    let entry: BandSlicesModel.Entry
+    let level: (@MainActor (BandSlicesModel.Entry, BandSlicesModel.Reading) -> Double?)?
+    let meter: StationCatalog.Meters.SMeter?
+    let readout: SMeterReadout
+    let source: FlagMeterChoice
+
+    var body: some View {
+        let reading = readings[entry.id]
+        FlagLevelBar(dbm: level.map { $0(entry, reading) } ?? reading.signalDbm, meter: meter, readout: readout,
+                     source: source)
+    }
+}
+
+/// Builds `content` from the slices' signal readings, again each time one
+/// moves, so only what shows a reading redraws with it.
+struct SliceReadingsReader<Content: View>: View {
+    @ObservedObject var readings: BandSlicesModel.Readings
+    @ViewBuilder let content: (BandSlicesModel.Readings) -> Content
+
+    var body: some View {
+        content(readings)
     }
 }

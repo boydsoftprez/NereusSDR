@@ -20,8 +20,8 @@ import CoreGraphics
 /// folded tag that would land on a flag or a tag already placed drops below
 /// it, as the board draws the stack.
 ///
-/// A full flag's footprint is the flag and the column of round buttons
-/// (close, lock and more) beside it on its line's side, as JJ's board
+/// A full flag's footprint is the flag and the column of buttons
+/// (close, lock, Record, Play and more) beside it on its line's side, as JJ's board
 /// "Flag controls at finger size" places them: two flags hanging the same
 /// way fold the second when their lines are closer than the flag, the gap
 /// and the column, 246 points at every text size (the redrawn flag of
@@ -40,13 +40,17 @@ public enum FlagLayout {
     public static let radeFlagHeight: CGFloat = 176
     /// The listening flag's owner row, as tall as the header.
     public static let ownerRowHeight: CGFloat = 44
-    /// The round buttons beside a full flag: 44 points across at every
-    /// text size, three of them 2 points apart, the column 2 points from
-    /// the flag.
+    /// The buttons beside a full flag: close, lock, Record, Play and more,
+    /// gray icons with no box, all inside the flag's height (the recording
+    /// design of 2026-11-15, the phone's flag look): a column 44 points
+    /// across at every text size, five rows 30 points tall, 2 points
+    /// apart, 158 points in all, the column 2 points from the flag.
     public static let sideButton: CGFloat = 44
     public static let largeSideButton: CGFloat = 44
     public static let sideGap: CGFloat = 2
-    public static let sideButtonCount = 3
+    public static let sideButtonCount = 5
+    /// One button's row in the column.
+    public static let sideRowHeight: CGFloat = 30
     /// The folded tag's height.
     public static let foldedHeight: CGFloat = 28
     /// The gap between a tag and the flag or tag above it.
@@ -59,10 +63,16 @@ public enum FlagLayout {
     /// the letter badge (18), two gaps (12) and the TX badge (28).
     public static let foldedFixedWidth: CGFloat = 70
 
-    /// The column of round buttons for buttons `button` points across.
+    /// The column of buttons for buttons `button` points across.
     public static func sideColumnSize(button: CGFloat = sideButton) -> CGSize {
         CGSize(width: button,
-               height: CGFloat(sideButtonCount) * button + CGFloat(sideButtonCount - 1) * sideGap)
+               height: CGFloat(sideButtonCount) * sideRowHeight + CGFloat(sideButtonCount - 1) * sideGap)
+    }
+
+    /// The `index`th button's place in a column at `column` (0 is close, 4 more).
+    public static func sideButtonRect(_ index: Int, column: CGRect) -> CGRect {
+        CGRect(x: column.minX, y: column.minY + CGFloat(index) * (sideRowHeight + sideGap),
+               width: column.width, height: sideRowHeight)
     }
 
     /// Where a full flag's column of round buttons sits: beside the flag

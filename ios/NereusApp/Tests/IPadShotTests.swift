@@ -1,11 +1,17 @@
 // NereusSDR for iOS: the iPad on its side and upright, and Setup beside its page, for comparing with the boards
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-11-16: Recording plan Task 19, the ipad-recordings shots: the pan's
+//   Record, Play, playing bar and VOICE, the column's Recordings panel, and
+//   the Recordings and Recording settings pages, at the mockup's 13-inch
+//   size. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
 import NereusKitTesting
 import NereusLink
 import NereusMirror
+import NereusModels
 @testable import NereusSDR
 import SwiftUI
 import Testing
@@ -33,10 +39,15 @@ struct IPadShotTests {
         var displayTab: DisplayPillTab = .spectrum
         /// On its side, a window shorter than the screen (Stage Manager).
         var height: CGFloat? = nil
+        /// Another iPad's screen on its side (the recording mockup's 13-inch).
+        var sideways: CGSize? = nil
 
         /// The 11-inch iPad's screen, either way up.
         var size: CGSize {
-            onItsSide ? CGSize(width: 1210, height: height ?? 834) : CGSize(width: 834, height: 1210)
+            if onItsSide, let sideways {
+                return sideways
+            }
+            return onItsSide ? CGSize(width: 1210, height: height ?? 834) : CGSize(width: 834, height: 1210)
         }
 
         /// The band's width in the layout, in points.
@@ -65,7 +76,7 @@ struct IPadShotTests {
         ])))
         #expect(await settle(seconds: 30) {
             model.main.slices.entries.count == 2 && model.main.coreName != nil
-                && model.main.slices.active?.signalPeakDbm == -79
+                && model.main.slices.active.map { model.main.slices.reading($0.id).signalPeakDbm } == -79
         })
         #expect(await settle(seconds: 30) { model.roundTripMs != nil })
 
@@ -80,6 +91,179 @@ struct IPadShotTests {
             try await shoot(screen, model: model)
         }
         await model.disconnect()
+    }
+
+    /// Recording plan Task 19 (design sections 3 and 6.8, A16 for the iPad):
+    /// the 13-inch iPad on its side as the mockup has it, with slice A's
+    /// flag column (×, lock, Record, Play, ···), the playing bar under the
+    /// flag and VOICE beside PTT, and the Recordings panel in the column
+    /// under the S-meter: off (the default), idle, recording, playing, on
+    /// the air, a voice message going out and an older Core; then Tools >
+    /// Recordings and Setup > Recording settings, the phone's pages, at the
+    /// iPad's width. Written as `ipad-recordings-<name>.png`.
+    @Test("recordings on the iPad: the flag, the playing bar, VOICE, the Recordings panel and the pages",
+          .enabled("The iPad's screens are drawn on an iPad simulator") {
+              await MainActor.run { UIDevice.current.userInterfaceIdiom == .pad }
+          },
+          .timeLimit(.minutes(10)))
+    func recordingsShots() async throws {
+        let mockup = CGSize(width: 1376, height: 1032)
+        for older in [false, true] {
+            let suite = "IPadShotTests-recordings-\(UUID().uuidString)"
+            let defaults = try #require(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let model = AppModel(displaySettings: BandDisplaySettingsStore(defaults: defaults))
+            let station = try FakeStation()
+            await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
+                                transportFactory: station.transportFactory)
+            #expect(await station.waitUntilLive())
+            try await MainScreenShotTests.fill(station)
+            #expect(await settle(seconds: 30) { model.main.slices.entries.count == 2 && model.main.coreName != nil })
+            let band = model.main.band
+            band.endpointId = 1
+            band.receive(.context(try #require(BandFlagShotTests.context())))
+            Self.offerRecordings(model, version: older ? nil : 3)
+            model.recordingFlag.blinks = false
+            let settings = model.phoneSettings
+            let entries = RecordingsPagesTests.entries()
+
+            if older {
+                settings.recordingsAppletShown = true
+                #expect(model.recordingsApplet.reason == RecordingsClient.updateReason)
+                try await shoot(Screen(name: "ipad-recordings-older-core", onItsSide: true, columnShown: true,
+                                       sideways: mockup), model: model)
+                await model.disconnect()
+                continue
+            }
+            Self.publishRecordings(model, state: "idle", revision: 1)
+            model.recordingsApplet.actions.received(entries)
+            model.recordingsList.received(entries)
+            model.recordingFlag.received(RecordingsPage(entries: entries.filter { $0.slice == 0 && $0.kind == .contact },
+                                                        offset: 0, total: 1, reader: nil), slice: 0)
+
+            settings.recordingsAppletShown = false
+            try await shoot(Screen(name: "ipad-recordings-panel-off", onItsSide: true, columnShown: true,
+                                   sideways: mockup), model: model)
+            settings.recordingsAppletShown = true
+            #expect(model.recordingsApplet.rows.count == entries.count)
+            try await shoot(Screen(name: "ipad-recordings-idle", onItsSide: true, columnShown: true, sideways: mockup),
+                            model: model)
+
+            Self.publishRecordings(model, state: "recording", revision: 2)
+            #expect(model.recordingsApplet.rows.first == .recording(slice: 0, elapsedMs: 12_400))
+            try await shoot(Screen(name: "ipad-recordings-recording", onItsSide: true, columnShown: true,
+                                   sideways: mockup), model: model)
+            Self.publishRecordings(model, state: "idle", revision: 3)
+
+            for onAir in [false, true] {
+                Self.playback(model, id: "r-4", positionMs: 12_000, onAir: onAir)
+                #expect(model.recordingFlag.bar(slice: 0)?.detail
+                    == (onAir ? "ON AIR · 0:12 / 3:25" : "0:12 / 3:25 · speaker"))
+                try await shoot(Screen(name: onAir ? "ipad-recordings-onair" : "ipad-recordings-playing",
+                                       onItsSide: true, columnShown: true, sideways: mockup), model: model)
+            }
+            Self.playback(model, id: "r-4", positionMs: 0, onAir: false, playing: false)
+
+            Self.publishRecordings(model, state: "idle", revision: 4,
+                                   sending: VoiceKeyerTests.sending(2, deviceId: "another-device", by: "Shack Mac"))
+            try await shoot(Screen(name: "ipad-recordings-voice-sending", onItsSide: true, columnShown: true,
+                                   sideways: mockup), model: model)
+            Self.publishRecordings(model, state: "idle", revision: 5)
+
+            try await shootPage("ipad-recordings-tools-page", size: mockup) {
+                VStack(spacing: 0) {
+                    ConnectChrome.NavBar(title: "Recordings", back: "Tools") {
+                        RecordingsListPage.Trailing(model: model.recordingsList)
+                    }
+                    RecordingsListPage(model: model.recordingsList)
+                }
+            }
+            try await shootPage("ipad-recordings-settings-page", size: mockup, tab: .setup) {
+                NavigationStack {
+                    RecordingSettingsPage(model: model.recordingSettings, phone: settings)
+                }
+            }
+            await model.disconnect()
+        }
+    }
+
+    /// Re-sends the fake Core's capabilities with `recordingsVersion` at
+    /// `version` (none when nil), as a Core with recordings advertises it,
+    /// and has the app's recordings client read them.
+    private static func offerRecordings(_ model: AppModel, version: Int64?) {
+        var entries: [LinkMessage.PropertyEntry] = []
+        for (name, value) in model.mirror.capabilities.sorted(by: { $0.key < $1.key })
+        where name != RecordingsClient.capabilityName {
+            let wire: LinkMessage.PropertyValue
+            switch value {
+            case .bool(let flag): wire = .bool(flag)
+            case .int(let whole): wire = .i64(whole)
+            case .double(let real): wire = .f64(real)
+            case .text(let text): wire = .utf8(text)
+            case .enumeration(let raw): wire = .enumeration(raw)
+            }
+            entries.append(.init(ordinal: UInt16(entries.count), name: name, value: wire))
+        }
+        if let version {
+            entries.append(.init(ordinal: UInt16(entries.count), name: RecordingsClient.capabilityName,
+                                 value: .i64(version)))
+        }
+        model.mirror.apply(.capabilities(LinkMessage.Capabilities(properties: entries)))
+        model.recordings.handle(.stateChanged(.ready))
+    }
+
+    /// The Core's recordings document with slice A `state`, the totals the
+    /// pages read, and the voice keyer's messages, one going out when `sending`.
+    private static func publishRecordings(_ model: AppModel, state: String, revision: Int64,
+                                          sending: [String: Any]? = nil) {
+        var document = RecordingsPagesShotTests.document()
+        document["slices"] = RecordingFlagTests.document(state: state, elapsedMs: 12_400)["slices"]
+        document["voiceKeyer"] = VoiceKeyerTests.document(sending: sending)["voiceKeyer"]
+        RecordingFlagTests.publish(document, mirror: model.mirror, client: model.recordings, revision: revision)
+    }
+
+    /// This iPad's playback, as the Core pushes it.
+    private static func playback(_ model: AppModel, id: String, positionMs: Int64, onAir: Bool, playing: Bool = true) {
+        model.recordings.handle(.message(.commandResult(LinkMessage.CommandResult(
+            verb: RecordingsClient.playbackVerb, id: 0, accepted: true, reason: "", affected: [],
+            values: [.init(name: "id", value: .utf8(id)), .init(name: "positionMs", value: .i64(positionMs)),
+                     .init(name: "lengthMs", value: .i64(205_000)), .init(name: "playing", value: .bool(playing)),
+                     .init(name: "onAir", value: .bool(onAir))]))))
+    }
+
+    /// One page over the iPad's tab bar, on its side, written with `NEREUS_IPAD_SHOTS` set.
+    private func shootPage<Content: View>(_ name: String, size: CGSize, tab: AppTab = .tools,
+                                          @ViewBuilder content: () -> Content) async throws {
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(origin: CGPoint(x: 0, y: 120), size: size)
+        window.windowLevel = .alert + 1
+        let root = VStack(spacing: 0) {
+            content()
+            TabBar(selection: .constant(tab), sideways: true, iPad: true)
+        }
+        .background(ChromeColours.page)
+        .environment(\.horizontalSizeClass, .regular)
+        .preferredColorScheme(.dark)
+        let host = ShotHosting.host(root)
+        host.additionalSafeAreaInsets = UIEdgeInsets(top: 24, left: 0, bottom: 20, right: 0)
+        host.view.frame = CGRect(origin: .zero, size: size)
+        window.rootViewController = host
+        window.isHidden = false
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        await ShotWait.laidOut(window)
+        let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        if let directory = ProcessInfo.processInfo.environment["NEREUS_IPAD_SHOTS"], !directory.isEmpty,
+           let data = image.pngData() {
+            let url = URL(fileURLWithPath: directory).appendingPathComponent("\(name).png")
+            try data.write(to: url)
+            print("Wrote \(url.path)")
+        }
     }
 
     /// R-IOS-58, DC7, DC8: the band column at the band's top-left, on its

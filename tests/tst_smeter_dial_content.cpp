@@ -23,6 +23,9 @@
 //                 power limit property, and the VHF S9 rule of the copy's
 //                 slice at 30 MHz. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-11-12 - The scaled dial is the same dial, fitted to its widget,
+//                 and it takes the leftover height of a vertical stack.
+//                 Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 //   2026-10-26 - Appearance and dynamics per copy: the declared rows, two
 //                 copies' colours and ratios across save and load, a copy
 //                 saved before them drawn unchanged, Fade on TX, and the
@@ -1354,6 +1357,72 @@ private slots:
         QCOMPARE(dial->testPeakLevel(), -90.0f);
         QCOMPARE(dial->testHistorySize(), 0);
         QVERIFY(dial->testIgnoringHistory());
+    }
+
+    // sMeter.dialScaled is the S-Meter dial. Its plate is the Main Panel
+    // plate fitted to the widget, and in a vertical stack it takes the
+    // height the fixed dial leaves behind.
+    void scaledDialMatchesTheDialAndFillsTheStack()
+    {
+        ContainerContentRegistry registry;
+        SMeterDialContent::registerDial(registry, {});
+        bool found = false;
+        for (const auto& d : registry.descriptors()) {
+            if (d.typeId != QLatin1String(SMeterDialContent::kScaledDialType)) {
+                continue;
+            }
+            found = true;
+            QVERIFY(!d.singleton);
+            QCOMPARE(d.title, QStringLiteral("S-Meter dial (scales)"));
+            QCOMPARE(d.group, ContentGroup::ReadyMadeMeters);
+        }
+        QVERIFY(found);
+
+        ContentEntry scaled = registry.makeEntry(QString::fromLatin1(SMeterDialContent::kScaledDialType));
+        scaled.id = QStringLiteral("scaled");
+        QWidget parent;
+        std::unique_ptr<QWidget> widget(registry.createWidget(scaled, &parent));
+        auto* dial = qobject_cast<SMeterWidget*>(widget.get());
+        QVERIFY(dial);
+        QVERIFY(dial->uniformScale());
+        QVERIFY(dial->property("containerStackFill").toBool());
+        QCOMPARE(dial->minimumSizeHint(), QSize(64, 30));
+        QCOMPARE(dial->txMode(), SMeterWidget::TxMode::Power);
+        QCOMPARE(dial->rxMode(), SMeterWidget::RxMode::SMeter);
+        QVERIFY(dial->peakHoldEnabled());
+        QCOMPARE(dial->faceStyle(), SMeterWidget::FaceStyle::AgedCream);
+        QCOMPARE(dial->sUnitsText(), QStringLiteral("--"));
+
+        dial->setGeometry(0, 0, 1000, 140);
+        QCOMPARE(dial->plateRect(), QRectF(351, 0, 298, 140));
+        dial->setGeometry(0, 0, 596, 280);
+        QCOMPARE(dial->plateRect(), QRectF(0, 0, 596, 280));
+        dial->setGeometry(0, 0, 200, 200);
+        const QRectF fitted = dial->plateRect();
+        QCOMPARE(fitted.width(), 200.0);
+        QVERIFY(fitted.height() < 120.0);
+        QVERIFY(fitted.top() > 40.0);
+        dial->setPlateAlign(Qt::AlignTop);
+        QCOMPARE(dial->plateRect().top(), 0.0);
+        dial->setPlateAlign(Qt::AlignBottom);
+        QCOMPARE(dial->plateRect().bottom(), 200.0);
+        dial->setPlateAlign(Qt::AlignVCenter);
+
+        SMeterWidget original(SMeterWidget::SettingsStore::Instance, &parent);
+        original.setGeometry(0, 0, 200, 200);
+        QCOMPARE(original.plateRect(), QRectF(0, 0, 200, 200));
+        QVERIFY(!original.uniformScale());
+
+        const ContentEntry fixed = dialEntry(registry, QStringLiteral("fixed"));
+        DialStation station(registry, {fixed, scaled});
+        QCOMPARE(station.committed.status, CommitStatus::Saved);
+        SMeterWidget* fixedDial = dialFor(*station.host(), QStringLiteral("fixed"));
+        SMeterWidget* scaledDial = dialFor(*station.host(), QStringLiteral("scaled"));
+        QVERIFY(fixedDial);
+        QVERIFY(scaledDial);
+        QVERIFY(!fixedDial->uniformScale());
+        QVERIFY(scaledDial->uniformScale());
+        QVERIFY(scaledDial->height() > fixedDial->height() + 80);
     }
 };
 

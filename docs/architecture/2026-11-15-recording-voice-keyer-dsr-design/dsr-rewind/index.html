@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Waterfall Rewind Sound</title>
+<style>
+:root { --app: #08080a; --panel: #0c0c0e; --border: #2c2c31; --text: #dcdce1; --dim: #a6a6ac; --blue: #264e78; --blue-b: #4a7ba8; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--app); color: var(--text); font: 13px/1.4 system-ui, -apple-system, sans-serif; }
+header { padding: 16px 20px 4px; }
+h1 { margin: 0 0 4px; font: 700 21px/1.2 system-ui, sans-serif; }
+.note { color: var(--dim); margin: 0; max-width: 1150px; }
+.bar { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; padding: 10px 20px; }
+.chips { display: inline-flex; gap: 4px; align-items: center; }
+.chips span { color: var(--dim); margin-right: 4px; }
+.chip { height: 24px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--border); background: #1b1b1f; color: #e8e8ec; font: 600 12px/22px system-ui; cursor: pointer; }
+.chip.on { background: var(--blue); border-color: var(--blue-b); color: #fff; }
+.hear { display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 12px; border-radius: 6px; background: var(--panel); border: 1px solid var(--border); min-width: 460px; }
+.hear .k { color: var(--dim); }
+.hear .v { font-weight: 600; }
+.hear.past { border-color: #a03030; }
+.hear.past .v { color: #ff8a8a; }
+.wrap { padding: 0 20px 30px; }
+.stage-box { position: relative; width: 100%; overflow: hidden; border: 1px solid var(--border); }
+.stage { position: absolute; left: 0; top: 0; width: 1512px; height: 869px; transform-origin: 0 0; background: url(clean.jpg) 0 0 / 1512px 869px no-repeat; user-select: none; }
+.stage > * { position: absolute; }
+#wf { left: 0; top: 359px; width: 1141px; height: 443px; cursor: crosshair; }
+.shade { width: 16px; }
+.shade.spec { top: 30px; height: 281px; background: rgba(0, 48, 58, .375); border-left: 1px solid #01a0bf; }
+.shade.wf { top: 359px; height: 443px; background: rgba(0, 150, 180, .10); border-left: 1px solid rgba(1, 160, 191, .7); pointer-events: none; }
+.carrier { top: 30px; width: 1px; height: 773px; background: #04a4c4; pointer-events: none; }
+.tri { width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 6px solid #00d4ff; top: 100px; }
+#flag { top: 30px; width: 252px; height: 135px; background: url(flag.png) 0 0 / 252px 135px; }
+#lock { top: 32px; width: 19px; height: 20px; background: url(lock.png) 0 0 / 19px 20px; }
+#flag .freq { position: absolute; left: 100px; top: 40px; width: 140px; height: 26px; background: #0c0c0e; color: #00e5ff; font: 700 24.5px/26px Menlo, ui-monospace, monospace; text-align: right; letter-spacing: -.2px; }
+#flag .who { position: absolute; left: 4px; top: 21px; width: 240px; height: 16px; white-space: nowrap; background: #0c0c0e; color: #dcdce1; font: 500 11.5px/16px system-ui, sans-serif; padding-left: 2px; }
+#flag .who.past { color: #ff6b6b; font-weight: 700; letter-spacing: .02em; }
+/* Time strip in its paused (rewound) form, as SpectrumWidget::drawTimeScale draws it. */
+#strip { left: 1107px; top: 359px; width: 72px; height: 443px; background: rgba(10, 10, 24, .86); border-left: 1px solid #304050; display: none; cursor: ns-resize; overflow: hidden; }
+#stripLive { left: 1141px; top: 359px; width: 38px; height: 443px; cursor: ns-resize; }
+#strip .t { position: absolute; right: 4px; font: 9.5px/1 system-ui, sans-serif; color: #80a0b0; transform: translateY(-50%); }
+#strip .tick { position: absolute; left: 0; width: 4px; height: 1px; background: #507080; }
+#strip .kept { position: absolute; left: 0; top: 0; width: 3px; background: #4caf6a; }
+#live { left: 1144px; top: 333px; width: 32px; height: 16px; border-radius: 3px; border: 1px solid #405060; background: #454545; color: #b0b0b0; font: 700 9.5px/14px system-ui, sans-serif; text-align: center; cursor: pointer; display: none; }
+#live.past { display: block; left: 1137px; top: 332px; width: 40px; height: 20px; line-height: 18px; background: #c02020; color: #fff; }
+#head { left: 0; width: 1141px; height: 2px; background: #ff3b3b; box-shadow: 0 0 6px #ff3b3b; display: none; pointer-events: none; }
+#headTag { padding: 1px 6px; border-radius: 3px; background: #c02020; color: #fff; font: 700 10px/14px system-ui; display: none; pointer-events: none; white-space: nowrap; }
+.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 7px 12px; background: #1b1b1f; border: 1px solid #3d3d41; border-radius: 4px; font-size: 12.5px; opacity: 0; transition: opacity .15s; pointer-events: none; z-index: 9; }
+.toast.on { opacity: 1; }
+.legend { color: var(--dim); font-size: 12px; padding: 8px 0 0; max-width: 1150px; }
+.legend b { color: var(--text); font-weight: 600; }
+.legend i { display: inline-block; width: 3px; height: 11px; background: #4caf6a; vertical-align: -1px; margin: 0 3px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Rewinding the waterfall rewinds the sound</h1>
+  <p class="note">This is the real desktop with slice A on 7.185 LSB. Pull the time strip on the waterfall's right edge upward to go back, as you do today. Then click a signal on the waterfall: slice A tunes to it and plays it from that moment. The red LIVE button brings slice A back to live sound on 7.185. The signals here are a picture, so you won't hear any sound.</p>
+</header>
+<div class="bar">
+  <div class="hear" id="hear"><span class="k">Slice A is playing</span><span class="v" id="hearV">Live · 7.185.000 LSB</span></div>
+  <div class="chips" id="modeChips"><span>While you're back in time:</span>
+    <button class="chip on" data-mode="move">Waterfall moves with the sound</button>
+    <button class="chip" data-mode="still">Waterfall holds still, a line moves</button></div>
+</div>
+<div class="wrap">
+  <div class="stage-box" id="box"><div class="stage" id="stage">
+    <canvas id="wf"></canvas>
+    <div class="shade spec" id="shS"></div>
+    <div class="shade wf" id="shW"></div>
+    <div class="carrier" id="car"></div>
+    <div class="tri" id="tri"></div>
+    <div id="lock"></div>
+    <div id="flag"><div class="who" id="who">You control</div><div class="freq" id="fq">7.185.000</div></div>
+    <div id="stripLive" title="Pull up to go back in time"></div>
+    <div id="strip" title="Pull up to go further back, down to come forward"></div>
+    <div id="head"></div><div id="headTag"></div>
+    <button id="live" title="Back to live sound on the frequency you were on">LIVE</button>
+  </div></div>
+  <p class="legend"><b>The green edge</b> on the time strip <i></i> marks the stretch of time that still has sound. The picture goes back 20 minutes, but the sound only goes back 5 here, because the Core has to keep the raw signal in memory to play it again. Click a signal below the green edge and it tunes, but there is nothing to hear.</p>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+(function () {
+  var PX_PER_S = 33.3;                 // rows per second on this pan (5 s ticks every ~166 px at 2x)
+  var WF_H = 443, WF_W = 1141, HIST_S = 1200, SOUND_S = 300;
+  var LIVE_HZ = 7185000, PX_PER_HZ = 5789 / 1e6, CAR_LIVE_X = 570.5;
+  var NOW0 = Date.UTC(2026, 10, 14, 14, 32, 10);   // the capture's clock
+  var TRACE_RIGHT = [419.6, 491.4, 568.5, 646.4, 748.4];
+  var t0 = performance.now();
+  function now() { return NOW0 + (performance.now() - t0); }   // ms
+
+  var st = { mode: 'move', past: false, topT: 0, playT: 0, hz: LIVE_HZ, still: false, frozenTop: 0, hasSound: true };
+  var img = new Image(); img.src = 'wf.jpg';
+  var cv = document.getElementById('wf'), cx = cv.getContext('2d');
+  cv.width = WF_W * 2; cv.height = WF_H * 2;
+
+  function hzToX(hz) { return CAR_LIVE_X + (hz - LIVE_HZ) * PX_PER_HZ; }
+  function xToHz(x) { return LIVE_HZ + (x - CAR_LIVE_X) / PX_PER_HZ; }
+  function fmtHz(hz) { var k = Math.round(hz / 10) * 10; var s = (k / 1e6).toFixed(5); return s.slice(0, 5) + '.' + s.slice(5) + '0'; }
+  function clock(ms) { var d = new Date(ms); return d.toISOString().slice(11, 19); }
+  function ago(sec) { sec = Math.max(0, Math.round(sec)); return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0'); }
+  var tt; function say(t) { var e = document.getElementById('toast'); e.textContent = t; e.classList.add('on'); clearTimeout(tt); tt = setTimeout(function () { e.classList.remove('on'); }, 3200); }
+
+  // Top row's time: live = now; moving playback = playT; still = frozen.
+  function topTime() {
+    if (!st.past) { return now(); }
+    if (st.mode === 'move') { return st.playing ? st.playT + (performance.now() - st.playAt) : st.frozenTop; }
+    // still: picture frozen until the play line reaches the top, then it follows.
+    if (st.playing) { var p = st.playT + (performance.now() - st.playAt); if (p >= st.frozenTop) { st.frozenTop = p; } }
+    return st.frozenTop;
+  }
+  function playTime() { return st.playing ? st.playT + (performance.now() - st.playAt) : null; }
+
+  function draw() {
+    var top = topTime();
+    if (img.complete && img.naturalWidth) {
+      var off = ((top / 1000) * PX_PER_S * 2) % (WF_H * 2);
+      cx.drawImage(img, 0, off, WF_W * 2, WF_H * 2);
+      cx.drawImage(img, 0, off - WF_H * 2, WF_W * 2, WF_H * 2);
+    }
+    var x = hzToX(st.hz);
+    ['shS', 'shW'].forEach(function (id) { var e = document.getElementById(id); e.style.left = (x - 16) + 'px'; });
+    document.getElementById('car').style.left = x + 'px';
+    document.getElementById('tri').style.left = (x - 4) + 'px';
+    document.getElementById('flag').style.left = (x + 1) + 'px';
+    document.getElementById('lock').style.left = (x - 21) + 'px';
+    document.getElementById('fq').textContent = fmtHz(st.hz);
+    var who = document.getElementById('who'), live = document.getElementById('live'), strip = document.getElementById('strip');
+    var hear = document.getElementById('hear'), hv = document.getElementById('hearV');
+    var head = document.getElementById('head'), tag = document.getElementById('headTag');
+    var pt = playTime();
+    live.className = st.past ? 'past' : '';
+    live.style.display = 'block';
+    strip.style.display = st.past ? 'block' : 'none';
+    head.style.display = tag.style.display = 'none';
+    if (st.past) {
+      var behind = (now() - (pt || top)) / 1000;
+      if (pt !== null) {
+        who.className = 'who past'; who.textContent = 'PLAYING ' + ago(behind) + ' AGO';
+        hear.className = 'hear past'; hv.textContent = clock(pt) + ' UTC, ' + ago(behind) + ' ago · ' + fmtHz(st.hz) + ' LSB';
+        if (st.mode === 'still') {
+          var y = 359 + (top - pt) / 1000 * PX_PER_S;
+          head.style.top = y + 'px'; head.style.display = 'block';
+          tag.style.top = (y - 16) + 'px'; tag.style.left = (Math.min(x + 6, 1000)) + 'px'; tag.style.display = 'block';
+          tag.textContent = 'Playing ' + clock(pt);
+        }
+      } else if (!st.hasSound) {
+        who.className = 'who past'; who.textContent = 'NO SOUND THAT FAR BACK';
+        hear.className = 'hear past'; hv.textContent = 'Nothing: the sound only goes back 5 minutes · ' + fmtHz(st.hz) + ' LSB';
+      } else {
+        who.className = 'who'; who.textContent = 'You control';
+        hear.className = 'hear'; hv.textContent = 'Live · ' + fmtHz(st.hz) + ' LSB (click a signal to play it)';
+      }
+      drawStrip(top);
+    } else {
+      who.className = 'who'; who.textContent = 'You control';
+      hear.className = 'hear'; hv.textContent = 'Live · ' + fmtHz(st.hz) + ' LSB';
+    }
+    requestAnimationFrame(draw);
+  }
+  var lastStripKey = '';
+  function drawStrip(top) {
+    var key = Math.floor(top / 1000) + '|' + Math.floor(now() / 1000);
+    if (key === lastStripKey) { return; }
+    lastStripKey = key;
+    var s = document.getElementById('strip'), h = '';
+    var topAge = (now() - top) / 1000;
+    var keptPx = Math.max(0, Math.min(WF_H, (SOUND_S - topAge) * PX_PER_S));
+    h += '<div class="kept" style="height:' + keptPx + 'px"></div>';
+    var first = Math.ceil(top / 5000) * 5000;    // labels on whole 5 s marks
+    for (var tm = first; ; tm -= 5000) {
+      var y = (top - tm) / 1000 * PX_PER_S + 4;
+      if (y > WF_H - 5) { break; }
+      if (y < 0) { continue; }
+      h += '<div class="tick" style="top:' + y + 'px"></div><div class="t" style="top:' + y + 'px">' + clock(tm) + '</div>';
+    }
+    s.innerHTML = h;
+  }
+
+  // Pull the time strip up to go back (SpectrumWidget: pull up = scroll back; full height = whole history).
+  var drag = null;
+  function stagePt(e) { var r = document.getElementById('stage').getBoundingClientRect(); var k = r.width / 1512; return { x: (e.clientX - r.left) / k, y: (e.clientY - r.top) / k }; }
+  function startDrag(e) { e.preventDefault(); drag = { y: stagePt(e).y, age: st.past ? (now() - topTime()) / 1000 : 0 }; }
+  document.getElementById('strip').addEventListener('mousedown', startDrag);
+  document.getElementById('stripLive').addEventListener('mousedown', startDrag);
+  window.addEventListener('mousemove', function (e) {
+    if (!drag) { return; }
+    var dy = drag.y - stagePt(e).y;
+    var age = Math.max(0, Math.min(HIST_S, drag.age + dy / WF_H * HIST_S));
+    if (age < 0.5) { goLive(true); return; }
+    if (!st.past) { st.past = true; st.playing = false; st.hasSound = true; }
+    st.frozenTop = now() - age * 1000;
+    if (st.mode === 'still') { st.playing = false; st.hasSound = true; }
+    if (st.mode === 'move') {
+      // The slice follows the top row: it plays from there, on the frequency it is on.
+      st.hasSound = age <= SOUND_S;
+      if (st.hasSound) { st.playing = true; st.playT = st.frozenTop; st.playAt = performance.now(); } else { st.playing = false; }
+    }
+  });
+  window.addEventListener('mouseup', function () { drag = null; });
+  document.getElementById('box').addEventListener('wheel', function (e) {
+    var p = stagePt(e); if (p.x < 1107 || p.x > 1179 || p.y < 359 || p.y > 802) { return; }
+    e.preventDefault(); drag = { y: 0, age: st.past ? (now() - topTime()) / 1000 : 0 };
+    var fake = { clientX: e.clientX, clientY: e.clientY }; var r = document.getElementById('stage').getBoundingClientRect(); var k = r.width / 1512;
+    drag.y = stagePt(fake).y; fake.clientY = e.clientY + e.deltaY * k * 0.4;
+    window.dispatchEvent(new MouseEvent('mousemove', fake)); drag = null;
+  }, { passive: false });
+
+  // Click a signal on the waterfall.
+  cv.addEventListener('click', function (e) {
+    var p = stagePt(e), x = p.x, best = null;
+    TRACE_RIGHT.forEach(function (r) { if (x >= r - 22 && x <= r + 8 && (best === null || Math.abs(r - 8 - x) < Math.abs(best - 8 - x))) { best = r; } });
+    var cx2 = best !== null ? best + 2 : x;
+    var hz = Math.round(xToHz(cx2) / 100) * 100;
+    if (!st.past) { st.hz = hz; say('Live: slice A tuned to ' + fmtHz(hz) + '. Pull the time strip up to go back.'); return; }
+    var top = topTime();
+    var t = top - (p.y - 359) / PX_PER_S * 1000;
+    var age = (now() - t) / 1000;
+    st.hz = hz;
+    if (age > SOUND_S) {
+      st.playing = false; st.hasSound = false;
+      say('Tuned to ' + fmtHz(hz) + ', but there is no sound from ' + ago(age) + ' ago. Sound goes back 5 minutes.');
+      return;
+    }
+    st.hasSound = true; st.playing = true; st.playT = t; st.playAt = performance.now();
+    if (st.mode === 'move') { st.frozenTop = t; }
+    say('Slice A plays ' + fmtHz(hz) + ' from ' + clock(t) + ' UTC, ' + ago(age) + ' ago');
+  });
+
+  function goLive(quiet) {
+    st.past = false; st.playing = false; st.hasSound = true; st.hz = LIVE_HZ; drag = null; lastStripKey = '';
+    if (!quiet) { say('Live again: slice A is back on 7.185.000 LSB'); }
+  }
+  document.getElementById('live').addEventListener('click', function () { if (st.past) { goLive(false); } });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && st.past) { goLive(false); } });
+  document.getElementById('modeChips').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-mode]'); if (!b) { return; }
+    st.mode = b.getAttribute('data-mode');
+    document.querySelectorAll('#modeChips .chip').forEach(function (c) { c.classList.toggle('on', c === b); });
+    if (st.past) { st.frozenTop = topTime(); if (st.mode === 'move' && st.playing) { st.playT = playTime(); st.playAt = performance.now(); st.frozenTop = st.playT; } }
+  });
+
+  function fit() { var b = document.getElementById('box'), k = b.clientWidth / 1512; document.getElementById('stage').style.transform = 'scale(' + k + ')'; b.style.height = (869 * k) + 'px'; }
+  window.addEventListener('resize', fit); fit();
+  requestAnimationFrame(draw);
+})();
+</script>
+</body>
+</html>

@@ -15,6 +15,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-14 - The RX Attenuator caption stays on the control's line
+//                 when the container object is taller than that line.
+//                 Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 //   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
 //   2026-11-04 - The RX AGC AUTO button says that a right-click opens the
@@ -474,9 +477,16 @@ RxAttenuatorSection::RxAttenuatorSection(QWidget* parent)
     m_label = new QLabel(QStringLiteral("ATT"), this);
     m_label->setObjectName(QStringLiteral("RxCopyAttLabel"));
     caption(m_label);
-    row->addWidget(m_label);
+    // A container object is often taller than this one line. A Preferred
+    // label grows with that height and centers S-ATT under the control
+    // unless a neighbor keeps the object short. Fixed height keeps the
+    // caption on the control's line.
+    m_label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    m_label->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    row->addWidget(m_label, 0, Qt::AlignVCenter);
     m_stack = new QStackedWidget(this);
     m_stack->setObjectName(QStringLiteral("RxCopyAttenuatorStack"));
+    m_stack->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     m_preamp = new QComboBox(m_stack);
     m_preamp->setObjectName(QStringLiteral("RxCopyPreampCombo"));
     workspaceCombo(m_preamp);
@@ -488,7 +498,7 @@ RxAttenuatorSection::RxAttenuatorSection(QWidget* parent)
     workspaceSpin(m_step);
     m_stack->addWidget(m_step);
     m_stack->setCurrentIndex(0);
-    row->addWidget(m_stack, 1);
+    row->addWidget(m_stack, 1, Qt::AlignVCenter);
     rows(this)->addLayout(row);
 
     m_rx1Preamp = new QCheckBox(QStringLiteral("RX1 preamp"), this);
@@ -499,6 +509,9 @@ RxAttenuatorSection::RxAttenuatorSection(QWidget* parent)
         m_rx1Preamp));
     m_rx1Preamp->hide();
     rows(this)->addWidget(m_rx1Preamp);
+    // Spare height sits under the line. The caption and the control stay
+    // together at the top of a tall object.
+    rows(this)->addStretch(1);
 
     // The parts a container copy hides and orders (SectionParts). The
     // preamp check box shows only when the applet allows it.

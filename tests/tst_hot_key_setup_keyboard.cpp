@@ -7,6 +7,9 @@
 //   2026-11-08 - J.J. Boyd (KG4VCF), hot keys: band stack rows can be set now
 //                that the window has band stacking.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 13: F1 to F8 and
+//                Escape have defaults now, so the free keys here are F9 and F12.
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original test.
 // Setup > Keys and controllers > Keyboard: the map, the list, Set and its
 // refusals, Acts on, disabled rows with their reasons, import and export, and
@@ -392,6 +395,8 @@ private slots:
         WorkspacePreview::setEnabledForTest(workspaceLook);
         const auto restore = qScopeGuard([] { WorkspacePreview::setEnabledForTest(false); });
         HotKeyBindings bindings;
+        // Escape stops a voice message by default; with that gone it holds nothing.
+        bindings.clear(QStringLiteral("voice.stop"));
         KeyboardMapWidget map(&bindings);
         QAbstractButton* const cap = map.findChild<QAbstractButton*>(QStringLiteral("Esc"));
         QVERIFY(cap != nullptr);
@@ -586,8 +591,8 @@ private slots:
         QCOMPARE(named<QLineEdit>(&b.page, QStringLiteral("hotKeySearch"))->text(), QString());
         QVERIFY(!b.table->isRowHidden(rowOf(QStringLiteral("slice.lock"))));
         QCOMPARE(keyText(&b.page, QStringLiteral("slice.lock")), QStringLiteral("Press a key"));
-        tap(&b.page, Qt::Key_F5);
-        QCOMPARE(b.bindings.keysFor(QStringLiteral("slice.lock")), QStringList{QStringLiteral("F5")});
+        tap(&b.page, Qt::Key_F9);
+        QCOMPARE(b.bindings.keysFor(QStringLiteral("slice.lock")), QStringList{QStringLiteral("F9")});
     }
 
     // ---- Set ----
@@ -602,9 +607,9 @@ private slots:
         // A modifier alone waits for its key.
         tap(&b.page, Qt::Key_Shift, Qt::ShiftModifier);
         QCOMPARE(keyText(&b.page, id), QStringLiteral("Press a key"));
-        down(&b.page, Qt::Key_F2);
-        QCOMPARE(b.bindings.keysFor(id), QStringList{QStringLiteral("F2")});
-        QCOMPARE(keyText(&b.page, id), QStringLiteral("F2"));
+        down(&b.page, Qt::Key_F12);
+        QCOMPARE(b.bindings.keysFor(id), QStringList{QStringLiteral("F12")});
+        QCOMPARE(keyText(&b.page, id), QStringLiteral("F12"));
         QVERIFY(messageOf(&b.page, id).isEmpty());
     }
 
@@ -618,7 +623,7 @@ private slots:
         QCOMPARE(keyText(&b.page, id), QStringLiteral("Right"));
         QCOMPARE(b.bindings.exportText(), before);
         // No longer listening: the next key binds nothing.
-        tap(&b.page, Qt::Key_F2);
+        tap(&b.page, Qt::Key_F12);
         QCOMPARE(b.bindings.exportText(), before);
     }
 
@@ -630,7 +635,7 @@ private slots:
         b.beginSet(QStringLiteral("tune.up"));
         QTest::mouseClick(b.table->viewport(), Qt::LeftButton);
         QCOMPARE(keyText(&b.page, QStringLiteral("tune.up")), QStringLiteral("Right"));
-        tap(&b.page, Qt::Key_F2);
+        tap(&b.page, Qt::Key_F12);
         QCOMPARE(b.bindings.exportText(), before);
     }
 
@@ -729,7 +734,7 @@ private slots:
             }
             return ids;
         };
-        QCOMPARE(shown().size(), 51);
+        QCOMPARE(shown().size(), 63);
 
         auto* const search = named<QLineEdit>(&b.page, QStringLiteral("hotKeySearch"));
         search->setText(QStringLiteral("ZOOM"));
@@ -912,14 +917,14 @@ private slots:
         QFile file(path);
         QVERIFY(file.open(QIODevice::WriteOnly));
         file.write("# NereusSDR shortcuts 1\n"
-                   "tune.up\tF5\t\n"
+                   "tune.up\tF9\t\n"
                    "no.such.action\tF6\t\n"
                    "cw.stop\tQ\t\n");
         file.close();
 
         QVERIFY(b.page.importFromFile(path));
-        QCOMPARE(b.bindings.keysFor(QStringLiteral("tune.up")), QStringList{QStringLiteral("F5")});
-        QCOMPARE(keyText(&b.page, QStringLiteral("tune.up")), QStringLiteral("F5"));
+        QCOMPARE(b.bindings.keysFor(QStringLiteral("tune.up")), QStringList{QStringLiteral("F9")});
+        QCOMPARE(keyText(&b.page, QStringLiteral("tune.up")), QStringLiteral("F9"));
         QCOMPARE(b.bindings.keysFor(QStringLiteral("cw.stop")), QStringList{QStringLiteral("Ctrl+F10")});
 
         auto* const skipped = named<QPlainTextEdit>(&b.page, QStringLiteral("hotKeySkippedLines"));
@@ -964,7 +969,7 @@ private slots:
         PageBench b;
         QTemporaryDir directory;
         const QString path = directory.filePath(QStringLiteral("shortcuts.txt"));
-        b.bindings.bind(QStringLiteral("tune.up"), QStringLiteral("F5"), false);
+        b.bindings.bind(QStringLiteral("tune.up"), QStringLiteral("F9"), false);
         b.bindings.setPin(QStringLiteral("tune.up"), QLatin1Char('B'));
         QVERIFY(b.page.exportToFile(path));
         QVERIFY(named<QLabel>(&b.page, QStringLiteral("hotKeyStatus"))->text().startsWith(QStringLiteral("Shortcuts saved")));
@@ -976,7 +981,7 @@ private slots:
         HotKeyBindings other;
         KeyboardPage page(&other);
         QVERIFY(page.importFromFile(path));
-        QCOMPARE(other.keysFor(QStringLiteral("tune.up")), QStringList{QStringLiteral("F5")});
+        QCOMPARE(other.keysFor(QStringLiteral("tune.up")), QStringList{QStringLiteral("F9")});
         QCOMPARE(other.pinFor(QStringLiteral("tune.up")), QLatin1Char('B'));
 
         QVERIFY(!b.page.exportToFile(directory.filePath(QStringLiteral("no/such/folder/out.txt"))));
@@ -1120,8 +1125,8 @@ private slots:
         QVERIFY(w.openPage());
         const QString id = QStringLiteral("tune.up");
         button(w.page, QStringLiteral("hotKeySet:"), id)->click();
-        down(w.dialog, Qt::Key_F5);
-        QCOMPARE(AppSettings::instance().value(QStringLiteral("HotKeys/Binding/tune.up")).toString(), QStringLiteral("F5"));
+        down(w.dialog, Qt::Key_F9);
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("HotKeys/Binding/tune.up")).toString(), QStringLiteral("F9"));
         auto* const combo = named<QComboBox>(w.page, QStringLiteral("hotKeyActsOn:") + id);
         combo->setCurrentIndex(2);
         emit combo->activated(2);
@@ -1129,7 +1134,7 @@ private slots:
 
         HotKeyBindings next;
         next.load();
-        QCOMPARE(next.keysFor(id), QStringList{QStringLiteral("F5")});
+        QCOMPARE(next.keysFor(id), QStringList{QStringLiteral("F9")});
         QCOMPARE(next.pinFor(id), QLatin1Char('B'));
     }
 
@@ -1172,19 +1177,17 @@ private slots:
         QVERIFY2(w.ready(), qPrintable(NereusSDR::Test::activationState(&w.window)));
         QVERIFY(w.openPage());
         MainWindowHotKeyTargets targets(&w.window);
-        // Voice is not built.
-        for (const char* id : {"voice.msg1", "voice.stop"}) {
-            const QString reason = targets.unavailableReason(QLatin1String(id));
-            QVERIFY2(!reason.isEmpty(), id);
-            auto* const set = button(w.page, QStringLiteral("hotKeySet:"), QLatin1String(id));
-            QVERIFY2(!set->isEnabled(), id);
-            QCOMPARE(set->toolTip(), reason);
+        // The voice keys follow the window's recordings: this local window's
+        // radio is connected, so they can be set, and so can F1 to F8.
+        for (const char* id : {"voice.msg1", "voice.msg8", "voice.stop", "msg.1"}) {
+            QCOMPARE(targets.setupUnavailableReason(QLatin1String(id)), QString());
             auto* const table = w.page->findChild<QTableWidget*>(QStringLiteral("hotKeyList"));
             QVERIFY2(!table->isRowHidden(rowOf(QLatin1String(id))), id);
         }
         // On a local window, dot and dash are fine. The window has band stacking,
         // so its keys can be set.
-        for (const char* id : {"cw.dot", "cw.dash", "tune.up", "tx.hold", "bandstack.next", "bandstack.panel"}) {
+        for (const char* id : {"cw.dot", "cw.dash", "tune.up", "tx.hold", "bandstack.next", "bandstack.panel",
+                               "voice.msg1", "voice.stop", "msg.1"}) {
             QVERIFY2(button(w.page, QStringLiteral("hotKeySet:"), QLatin1String(id))->isEnabled(), id);
         }
     }
@@ -1211,8 +1214,8 @@ private slots:
 
         // Local to this computer: a key binds and nothing goes to the Core.
         button(page, QStringLiteral("hotKeySet:"), QStringLiteral("tune.up"))->click();
-        down(dialog, Qt::Key_F5);
-        QCOMPARE(h.window()->hotKeyBindings()->keysFor(QStringLiteral("tune.up")), QStringList{QStringLiteral("F5")});
+        down(dialog, Qt::Key_F9);
+        QCOMPARE(h.window()->hotKeyBindings()->keysFor(QStringLiteral("tune.up")), QStringList{QStringLiteral("F9")});
         QVERIFY(!h.stationSettings().contains(QStringLiteral("HotKeys/Binding/tune.up")));
 
         auto* const dot = button(page, QStringLiteral("hotKeySet:"), QStringLiteral("cw.dot"));

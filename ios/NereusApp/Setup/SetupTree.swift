@@ -6,6 +6,10 @@
 //   AI-assisted via Claude Code.
 // 2026-11-06: General's Band Stack page after Options (band stack plan Task
 //   18). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording settings near the foot, before About this app
+//   (recording plan Task 17). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: The Digital Spectrum Recorder's page before Recording settings
+//   (recording plan Task 28). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -34,6 +38,10 @@ enum SetupTree {
         case rotor
         case dataUse
         case coreLogs
+        /// The Digital Spectrum Recorder: on or off, its disk and size, erase.
+        case dsrSettings
+        /// Recording settings: the Core's Record button, files and where they are kept.
+        case recordingSettings
         case about
     }
 
@@ -160,9 +168,22 @@ enum SetupTree {
         Skeleton(coreId: "diagnostics", title: "Diagnostics", tag: .both,
                  pageOrder: ["Radio Status", "Connection Quality", "Settings Validation", "Logs", "Export / Import"],
                  native: [PageEntry(page: .coreLogs, title: "Logs", tag: .core)], opensPage: nil),
+        // The recording design of 2026-11-15, sections 3 and 6.7: the recorder's own page.
+        Skeleton(coreId: nil, title: dsrSettingsTitle, tag: .core, pageOrder: [dsrSettingsTitle],
+                 native: [PageEntry(page: .dsrSettings, title: dsrSettingsTitle, tag: .core)],
+                 opensPage: .dsrSettings),
+        // The recording design of 2026-11-15, section 6.5: its own page near the foot.
+        Skeleton(coreId: nil, title: recordingSettingsTitle, tag: .core, pageOrder: [recordingSettingsTitle],
+                 native: [PageEntry(page: .recordingSettings, title: recordingSettingsTitle, tag: .core)],
+                 opensPage: .recordingSettings),
         Skeleton(coreId: nil, title: "About this app", tag: .thisPhone, pageOrder: ["About this app"],
                  native: [PageEntry(page: .about, title: "About this app", tag: .thisPhone)], opensPage: .about),
     ]
+
+    static let dsrSettingsTitle = "Digital Spectrum Recorder"
+    static let dsrSettingsSummary = "Rewind the pan · Disk and size"
+    static let recordingSettingsTitle = "Recording settings"
+    static let recordingSettingsSummary = "The Record button, file type and names"
 
     /// Pages the phone never shows, whatever a description says.
     static let leftOff: Set<String> = ["keyboard", "skins", "collapsible display", "remote access"]
@@ -231,7 +252,8 @@ enum SetupTree {
                            unreadable: [String: String], stackOffered: Bool = false, showPaValues: Bool = true) -> [Category] {
         var result: [Category] = []
         for skeleton in skeleton {
-            if skeleton.title == "About this app" {
+            // A newer Core's own categories follow Diagnostics, before the app's own pages at the foot.
+            if skeleton.title == dsrSettingsTitle {
                 result.append(contentsOf: extraCategories(described: described, order: order, unreadable: unreadable))
             }
             let description = skeleton.coreId.flatMap { described[$0] }
@@ -309,6 +331,12 @@ enum SetupTree {
         }
         if opensPage == .about {
             return "Build · Credits · Licenses"
+        }
+        if opensPage == .recordingSettings {
+            return recordingSettingsSummary
+        }
+        if opensPage == .dsrSettings {
+            return dsrSettingsSummary
         }
         if pages.isEmpty, let notice {
             return notice

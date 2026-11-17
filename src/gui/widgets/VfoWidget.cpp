@@ -242,6 +242,12 @@
 //               from Longpath) frees each once, so a parent that dies
 //               while its menu is open no longer frees it twice. With
 //               AI-assisted transformation via Claude Code.
+//   2026-11-15 - Recording plan Task 6: the side buttons run x, lock,
+//                 Record, Play, then the more button at the bottom. Record
+//                 and Play are no longer hidden as unbuilt (UnbuiltFeatures):
+//                 they show on every flag, disabled with the reason until
+//                 FlagRecordPlay drives them. J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -496,7 +502,6 @@ warren@wpratt.com
 #include "NnrControls.h"
 #include "VaxChannelSelector.h"
 #include "gui/AntennaPopupBuilder.h"
-#include "gui/UnbuiltFeatures.h"
 #include "gui/OperatorReasonText.h"
 #include "gui/QtCocoaAccessibleTableCache.h"
 #include "core/BoardCapabilities.h"
@@ -511,6 +516,7 @@ warren@wpratt.com
 #include "gui/widgets/AntennaPickerMenu.h"
 #include "models/FilterPresetStore.h"
 #include "models/RadioModel.h"
+#include "models/recordings/RecordingsAccess.h"
 #include "core/RadeV2Feature.h"
 #include "core/dsp/DspAssetService.h"
 #include "models/SliceModel.h"
@@ -998,7 +1004,7 @@ VfoWidget::VfoWidget(QWidget* parent)
     buildUI();
 }
 
-// Floating buttons (m_closeBtn/m_lockBtn/m_moreBtn/m_recBtn/m_playBtn) are parented to
+// Floating buttons (m_closeBtn/m_lockBtn/m_recBtn/m_playBtn/m_moreBtn) are parented to
 // parentWidget() (SpectrumWidget), i.e. they are SIBLINGS of VfoWidget in
 // SpectrumWidget's children list. Qt's parent chain already owns them — do
 // NOT explicitly delete here. Explicit deletes caused issue #113: Qt's
@@ -1013,7 +1019,7 @@ VfoWidget::~VfoWidget() = default;
 // still alive keeps the ordering ours, so it cannot reproduce issue #113.
 void VfoWidget::destroyFloatingButtons()
 {
-    for (QPushButton** btn : {&m_closeBtn, &m_lockBtn, &m_moreBtn, &m_recBtn, &m_playBtn}) {
+    for (QPushButton** btn : {&m_closeBtn, &m_lockBtn, &m_recBtn, &m_playBtn, &m_moreBtn}) {
         if (*btn) {
             delete *btn;
             *btn = nullptr;
@@ -4011,33 +4017,34 @@ void VfoWidget::buildFloatingButtons()
         }
     });
 
-    m_recBtn = makeBtn(QStringLiteral("\u23FA"), kFloatingBtn);
-    // From Thetis console.resx:2028 — ckQuickRec.ToolTip
-    m_recBtn->setToolTip(QStringLiteral("Quick Record of \"off the air\" signals"));
+    // Recording plan Task 6: Record and Play sit between the lock and the
+    // more button. FlagRecordPlay sets their icons, looks and reasons; until
+    // one drives them they wait, disabled, for a radio.
+    m_recBtn = makeBtn(QString(), kFloatingBtn);
+    m_recBtn->setObjectName(QStringLiteral("VfoFlagRecordButton"));
+    m_recBtn->setAccessibleName(QStringLiteral("Record"));
+    m_recBtn->setToolTip(RecordingsAccess::notConnectedReason());
+    m_recBtn->setAccessibleDescription(RecordingsAccess::notConnectedReason());
     m_recBtn->setCheckable(true);
     connect(m_recBtn, &QPushButton::toggled, this, [this](bool on) {
         if (!m_updatingFromModel) {
             emit recordToggled(on);
         }
     });
-    m_recBtn->setEnabled(false);  // nothing behind it until the voice recorder is built
+    m_recBtn->setEnabled(false);
 
-    // Play button: checkable, disabled (no consumer yet)
-    m_playBtn = makeBtn(QStringLiteral("\u25B6"), kFloatingBtn);
-    // From Thetis console.resx:1941 — ckQuickPlay.ToolTip
-    m_playBtn->setToolTip(QStringLiteral("Quick Playback of signals recorded \"off the air\""));
+    m_playBtn = makeBtn(QString(), kFloatingBtn);
+    m_playBtn->setObjectName(QStringLiteral("VfoFlagPlayButton"));
+    m_playBtn->setAccessibleName(QStringLiteral("Play"));
+    m_playBtn->setToolTip(RecordingsAccess::notConnectedReason());
+    m_playBtn->setAccessibleDescription(RecordingsAccess::notConnectedReason());
     m_playBtn->setCheckable(true);
     connect(m_playBtn, &QPushButton::toggled, this, [this](bool on) {
         if (!m_updatingFromModel) {
             emit playToggled(on);
         }
     });
-    m_playBtn->setEnabled(false);  // nothing behind it until the voice recorder is built
-
-    // R-R3-49: record and play are hidden until the voice recorder is
-    // built; positionFloatingButtons() keeps them out of the strip.
-    UnbuiltFeatures::hideUnlessBuilt(m_recBtn, UnbuiltFeature::Voice);
-    UnbuiltFeatures::hideUnlessBuilt(m_playBtn, UnbuiltFeature::Voice);
+    m_playBtn->setEnabled(false);
 
     // Flag fold: the folded flag's frequency, beside it on the SpectrumWidget
     // like the buttons above. Our flag's own colours: the floating buttons'
@@ -4054,6 +4061,12 @@ void VfoWidget::buildFloatingButtons()
     m_collapsedFreqLabel->setAlignment(Qt::AlignCenter);
     m_collapsedFreqLabel->hide();
     updateCollapsedFreqLabel();
+    emit floatingButtonsBuilt();
+}
+
+QString VfoWidget::floatingButtonStyleSheet()
+{
+    return QString::fromLatin1(kFloatingBtn);
 }
 
 // ---- Lock state: applyLockedState + setLocked (S1.8a review — I3) ----
@@ -4144,17 +4157,11 @@ void VfoWidget::positionFloatingButtons()
     // is fine on Slice A too.
     const bool closeShown = (m_sliceIndex != 0) || isListening();
 
-    // R-R3-49: record and play take no slot while the voice recorder is
-    // not built.
-    const bool voiceBuilt = UnbuiltFeatures::isBuilt(UnbuiltFeature::Voice);
-
+    // Recording plan Task 6 (design section 3, flag order): x, lock,
+    // Record, Play, then the more button at the bottom.
     bool raisedAny = false;
-    QPushButton* btns[] = {m_closeBtn, m_lockBtn, m_moreBtn, m_recBtn, m_playBtn};
+    QPushButton* btns[] = {m_closeBtn, m_lockBtn, m_recBtn, m_playBtn, m_moreBtn};
     for (QPushButton* btn : btns) {
-        if (!voiceBuilt && (btn == m_recBtn || btn == m_playBtn)) {
-            btn->hide();
-            continue;
-        }
         const bool isCloseBtn = (btn == m_closeBtn);
         // Flag fold: the side buttons hide while the flag is folded and come
         // back by the same rule when it opens.
@@ -4191,7 +4198,7 @@ void VfoWidget::positionFloatingButtons()
 // body also ends up above its own buttons.
 void VfoWidget::raiseAboveSiblings()
 {
-    QPushButton* btns[] = {m_closeBtn, m_lockBtn, m_moreBtn, m_recBtn, m_playBtn};
+    QPushButton* btns[] = {m_closeBtn, m_lockBtn, m_recBtn, m_playBtn, m_moreBtn};
     for (QPushButton* btn : btns) {
         if (btn) {
             btn->raise();
@@ -4264,7 +4271,7 @@ void VfoWidget::hideEvent(QHideEvent* event)
     endFlagDrag();
     m_dragArmed = false;
     m_releaseAction = ReleaseAction::None;
-    for (QPushButton* button : {m_closeBtn, m_lockBtn, m_moreBtn, m_recBtn, m_playBtn}) {
+    for (QPushButton* button : {m_closeBtn, m_lockBtn, m_recBtn, m_playBtn, m_moreBtn}) {
         if (button) {
             button->hide();
         }
@@ -4496,8 +4503,8 @@ QRegion VfoWidget::occupiedRegion() const
     }
     region += geometry();
     for (QWidget* w : {static_cast<QWidget*>(m_closeBtn), static_cast<QWidget*>(m_lockBtn),
-                       static_cast<QWidget*>(m_moreBtn),
                        static_cast<QWidget*>(m_recBtn), static_cast<QWidget*>(m_playBtn),
+                       static_cast<QWidget*>(m_moreBtn),
                        static_cast<QWidget*>(m_collapsedFreqLabel.data())}) {
         if (w && w->isVisibleTo(parent)) {
             region += w->geometry();

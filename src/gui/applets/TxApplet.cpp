@@ -12,6 +12,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16 - VOICE in each keying row (recording plan Task 12): a
+//                 VoiceButton per row on the model's recordings access,
+//                 gated with TUNE and MOX, with Take transmit in its box.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - The dynamic shows and hides of PS-A, the holder line and
 //                 Take transmit go through each row's parts, so a container
 //                 copy that hides one keeps it hidden. J.J. Boyd (KG4VCF),
@@ -403,6 +407,8 @@
 #include "TxProcessingSection.h"
 #include "TxFilterSection.h"
 #include "TxKeyingSection.h"
+#include "gui/recordings/VoiceButton.h"
+#include "models/recordings/RecordingsAccess.h"
 #include "TxMonitorSection.h"
 #include "TxPowerSection.h"
 #include "TxVoxSection.h"
@@ -622,6 +628,7 @@ void TxApplet::buildUI()
     // here rather than inside the section.
     connect(m_keyingSection->takeTransmitButton(), &QPushButton::clicked, this,
             &TxApplet::takeTransmitRequested);
+    addVoiceButton(m_keyingSection);
 
     // ── 4b. VOX row (3M-3a-iii bench polish 2026-05-04) ───────────────────────
     // Relocated from PhoneCwApplet (Phone tab Control #10).  Operators
@@ -1809,6 +1816,30 @@ QPushButton* TxApplet::takeTransmitButton() const
     return m_keyingSection ? m_keyingSection->takeTransmitButton() : nullptr;
 }
 
+VoiceButton* TxApplet::voiceButton() const
+{
+    return m_voiceButtons.isEmpty() ? nullptr : m_voiceButtons.first().data();
+}
+
+// Recording plan Task 12: the row's VOICE, on the model's recordings
+// access, starting as gated as TUNE and MOX are now.
+void TxApplet::addVoiceButton(TxKeyingSection* section)
+{
+    if (section == nullptr || section->voiceButton() == nullptr) {
+        return;
+    }
+    auto* voice = new VoiceButton(section, m_model ? m_model->recordings() : nullptr);
+    voice->setTransmitPermitted(m_transmitPermitted, m_transmitPermissionReason);
+    voice->setTakeTransmitOffered(m_takeTransmitOffered);
+    connect(voice, &VoiceButton::panelRequested, this, &TxApplet::voiceKeyerPanelRequested);
+    connect(voice, &VoiceButton::takeTransmitRequested, this, &TxApplet::takeTransmitRequested);
+    connect(voice, &VoiceButton::refusalShown, this, &TxApplet::voiceRefused);
+    // Dropped from the list when the next one is added once its row is gone.
+    // (No destroyed() hook: the applet's own row goes after this list does.)
+    m_voiceButtons.removeAll(QPointer<VoiceButton>());
+    m_voiceButtons.append(voice);
+}
+
 QList<QPushButton*> TxApplet::transmitSliceButtons() const
 {
     return m_keyingSection ? m_keyingSection->transmitSliceButtons() : QList<QPushButton*>();
@@ -2170,6 +2201,13 @@ void TxApplet::setTransmitPermitted(bool permitted, const QString& unavailableRe
         apply(s->tuneButton());
         apply(s->moxButton());
     }
+    // Recording plan Task 12: VOICE dims with the same reason, and its box
+    // offers Take transmit (VoiceButton).
+    for (const QPointer<VoiceButton>& voice : std::as_const(m_voiceButtons)) {
+        if (voice) {
+            voice->setTransmitPermitted(permitted, reason);
+        }
+    }
     // Fix wave 2 (M8): VOX also needs this computer's microphone line.
     for (TxVoxSection* s : allVoxSections()) {
         gateTransmitControl(s->button(), permitted && m_voxPermitted,
@@ -2335,6 +2373,11 @@ void TxApplet::setTakeTransmitOffered(bool offered, bool holderOnAir)
 {
     m_takeTransmitOffered = offered;
     m_holderOnAir = holderOnAir;
+    for (const QPointer<VoiceButton>& voice : std::as_const(m_voiceButtons)) {
+        if (voice) {
+            voice->setTakeTransmitOffered(offered);
+        }
+    }
     for (TxKeyingSection* s : allKeyingSections()) {
         if (!s->takeTransmitButton()) { continue; }
         // Through the parts: a copy that hides its slice indicators keeps
@@ -3241,6 +3284,7 @@ TxKeyingSection* TxApplet::createKeyingSection(QWidget* parent, bool preview)
         connect(s->takeTransmitButton(), &QPushButton::clicked, this,
                 &TxApplet::takeTransmitRequested);
     }
+    addVoiceButton(s);
     m_extraKeyingSections.append(s);
     // The copy belongs to the container, which owns it and may destroy it
     // when the operator closes the container or removes the item.  The

@@ -6,6 +6,12 @@
 // AI-assisted via Claude Code.
 // 2026-10-26: CW transmit, the cwx tool opens the CWX page (R-CW-50).
 //             J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan Task 17, the recordings tool opens Recordings,
+//             with Select beside the Core chip. J.J. Boyd (KG4VCF),
+//             AI-assisted via Claude Code.
+// 2026-11-16: Recording plan Task 18, the voiceKeyer tool opens Voice
+//             Keyer; VOICE's All settings opens it too. J.J. Boyd
+//             (KG4VCF), AI-assisted via Claude Code.
 
 import NereusMirror
 import SwiftUI
@@ -23,6 +29,12 @@ final class ToolsRouter: ObservableObject {
     @Published private(set) var spotHubRequest: UInt64 = 0
     /// Opens Spot Hub's page (a swipe mapped to it).
     func openSpotHub() { spotHubRequest &+= 1 }
+    @Published private(set) var recordingsRequest: UInt64 = 0
+    /// Opens Recordings (the flag's All recordings…, Recording settings' Recordings).
+    func openRecordings() { recordingsRequest &+= 1 }
+    @Published private(set) var voiceKeyerRequest: UInt64 = 0
+    /// Opens Voice Keyer (VOICE's All settings ›, an empty message over the pan).
+    func openVoiceKeyer() { voiceKeyerRequest &+= 1 }
     @Published private(set) var listRequest: UInt64 = 0
     /// Shows the Tools list itself, every page closed (a swipe mapped to Tools).
     func openList() { listRequest &+= 1 }
@@ -95,6 +107,8 @@ struct ToolsTab: View {
         case roundtable
         /// One room read from Roundtable's page, with its title (`7.236.400 LSB`).
         case roundtableRoom(id: String, title: String)
+        case recordings
+        case voiceKeyer
 
         var title: String {
             switch self {
@@ -114,6 +128,8 @@ struct ToolsTab: View {
             case .rotor: return "Rotor"
             case .roundtable: return "Roundtable"
             case .roundtableRoom(_, let title): return title
+            case .recordings: return "Recordings"
+            case .voiceKeyer: return "Voice Keyer"
             }
         }
 
@@ -133,6 +149,8 @@ struct ToolsTab: View {
             case .supportBundle: self = .supportBundle
             case .rotor: self = .rotor
             case .roundtable: self = .roundtable
+            case .recordings: self = .recordings
+            case .voiceKeyer: self = .voiceKeyer
             }
         }
 
@@ -223,6 +241,10 @@ struct ToolsTab: View {
                 RoundtableToolsRoomPage(roundtable: app.roundtable, slices: app.main.slices,
                                         transmit: app.main.transmit, roomId: id,
                                         stationCallsign: app.freedv.callsign)
+            } else if route.last == .recordings {
+                RecordingsListPage(model: app.recordingsList)
+            } else if route.last == .voiceKeyer {
+                VoiceKeyerPage(model: app.voiceKeyer, take: app.main.take)
             } else if route.last == .freedvReporter {
                 // The list scrolls under its filters, with your status below it.
                 FreeDVReporterPage(freedv: freedv)
@@ -247,6 +269,12 @@ struct ToolsTab: View {
         }
         .onChange(of: router.spotHubRequest) { _, _ in
             route = [.spotHub]
+        }
+        .onChange(of: router.recordingsRequest) { _, _ in
+            route = [.recordings]
+        }
+        .onChange(of: router.voiceKeyerRequest) { _, _ in
+            route = [.voiceKeyer]
         }
         .onChange(of: router.listRequest) { _, _ in
             route = []
@@ -331,7 +359,8 @@ struct ToolsTab: View {
         case .spotHubPage(.identity)?:
             SpotIdentityPage(spots: spots)
         case .performance?, .freedvReporter?, .txEqualizer?, .pureSignal?, .diversity?, .cwx, .catControl?,
-             .catControlPage?, .tciServer?, .vaxAudio?, .supportBundle?, .rotor?, .roundtableRoom?:
+             .catControlPage?, .tciServer?, .vaxAudio?, .supportBundle?, .rotor?, .roundtableRoom?, .recordings?,
+             .voiceKeyer?:
             EmptyView()
         }
     }
@@ -399,6 +428,18 @@ struct ToolsTab: View {
             // The heading, and where it is turning.
             detail = rotor.toolLine
         }
+        if entry.page == .recordings, entry.enabled,
+           let reason = app.recordings.unavailableReason(needs: RecordingsClient.recordingsVersion) {
+            // A Core that lists Recordings but does not offer this app their verbs (V9).
+            detail = reason
+            enabled = false
+        }
+        if entry.page == .voiceKeyer, entry.enabled,
+           let reason = app.recordings.unavailableReason(needs: RecordingsClient.voiceKeyerVersion) {
+            // A Core that lists the voice keyer but offers this app no voice keyer verbs (V9).
+            detail = reason
+            enabled = false
+        }
         let identifier = entry.page == .performance ? "tools.connectionPerformance" : "tools.\(entry.id)"
         return SpotHubPage.Row(title: entry.title, detail: detail, tag: entry.tag, enabled: enabled,
                                identifier: identifier) {
@@ -434,6 +475,11 @@ struct ToolsTab: View {
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(ChromeColours.accentText)
                 .accessibilityIdentifier("freedv.website")
+        case .recordings:
+            // The Core chip, and Select for deleting or sharing several.
+            RecordingsListPage.Trailing(model: app.recordingsList)
+        case .voiceKeyer:
+            SetupTagBadge(tag: .core)
         case .spotHub, .spotHubPage(.display), .performance, .txEqualizer, .pureSignal, .diversity, .cwx, .catControl,
              .catControlPage, .tciServer, .vaxAudio, .supportBundle, .rotor, .roundtable, .roundtableRoom:
             LinkChip(link: link, core: core)

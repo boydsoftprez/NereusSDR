@@ -11,6 +11,17 @@
 // transmit scene refuses to run if one exists).
 //
 // Modification history (NereusSDR):
+//   2026-11-16: Details opened upward are checked against their own left edge
+//               (past the flag, or the dial's other side) and the flags.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-16: The Roundtable strip: checkRoundtableTags checks the strip
+//               (every tag and your line inside it, off the spectrum and band
+//               plan, none overlapping, the spectrum kept with the strip
+//               hidden, CPU hits as the GPU frame's), checkRoundtableDetails,
+//               and the roundtable-strip-talking, -more, -double, -quiet,
+//               -details and -details-short scenes from a frequency-first
+//               server. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 //   2026-10-26 - container-parity-* round 4: the token picker opens where
 //                 its tool button opens it, below the button or above it.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -305,6 +316,46 @@
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys CI fixes: dialog-setup-keyboard--min and
 //                --wide, for the map that reflows.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 6: flag-recplay--idle, --recording,
+//                --recording-myvoice, --armed, --playing, --kept, --menu and --older-core pose
+//                Slice A's Record and Play against a fake recordings access, at 7.236.400 LSB
+//                as the approved desktop-flag and recording-together mockups do.
+//                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 7: recordings-panel--list,
+//                --recording-row and --menu pose the Recordings applet in the window's column,
+//                and recordings-window--all, --filtered and --delete-confirm the Recordings
+//                window, against a fake recordings access, as the approved recordings-panel and
+//                recordings-window mockups do.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 8: recordings-setup--ssd and --sd-card
+//                pose Setup > Cores > Recordings against a fake recordings access, as the approved
+//                recording-settings mockup's two Cores do.
+//                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 10: flag-recplay--onair, Slice A's
+//                recording on the air (the playing label red with ON AIR, Play's ring red), as
+//                the recording-together mockup shows it. AI-assisted implementation via
+//                Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 12: voice-keyer-panel--idle, --recording,
+//                --sending, --menu and --older-core pose the Voice keyer applet in the window's
+//                column, and voice-button--idle, --open, --sending, --waiting, --held and
+//                --older-core VOICE in the TX panel, against a fake recordings access, as the
+//                approved voice-keyer-panel (shape A) and desktop-voice-button mockups do.
+//                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 24: dsr-rewind--past, --hours,
+//                --drawing, --typed-time and --older-core pose rewind on Slice A's waterfall
+//                (PAST on the spectrum, the hours map beside the strip, the Core drawing, the
+//                typed-time box, and an older Core with the new parts disabled) against a fake
+//                recordings access, as the dsr-rewind mockups do. AI-assisted implementation via
+//                Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 25: dsr-save--bracket (SAVE pressed:
+//                the 10 minute yellow bracket and the save box) and dsr-save--box (a longer
+//                stretch over the net, sizes in GB, sound only as WAV), as hours.html does.
+//                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 26: dsr-setup--ssd (a full loop on a
+//                Core's SSD: the hours, the always erasing note, the bar's head and red zone),
+//                dsr-setup--sd-card (a Pi with only an SD card: the switch off and the red
+//                warning) and dsr-setup--erase-confirm pose Setup > Cores > Digital Spectrum
+//                Recorder against a fake recordings access, as the dsr-setup mockup does.
+//                AI-assisted implementation via Anthropic Claude Code.
 
 #include "models/MainPowerMeter.h"
 #include "models/AmplifierModel.h"
@@ -361,6 +412,7 @@
 #include <QLineEdit>
 #include <QPainter>
 #include <QPushButton>
+#include <QDir>
 #include <QTimeZone>
 #include <QToolTip>
 #include <QMetaObject>
@@ -396,6 +448,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <tuple>
@@ -443,6 +496,9 @@
 #include "gui/setup/AppearanceSetupPages.h"
 #include "gui/setup/HardwarePage.h"
 #include "gui/setup/KnobsSetupPage.h"
+#include "core/recordings/dsr/DsrRingFile.h"
+#include "gui/setup/DsrSetupPage.h"
+#include "gui/setup/RecordingsSetupPage.h"
 #include "gui/setup/TciLogWindow.h"
 #include "gui/widgets/FilterPolicyDialog.h"
 #include "gui/widgets/FilterPresetEditDialog.h"
@@ -521,8 +577,18 @@
 #include "core/StationTciController.h"
 #include "models/StationTciModel.h"
 #include "fakes/FakeStationLink.h"
+#include "fakes/FakeRecordingsAccess.h"
+#include "gui/recordings/FlagRecordPlay.h"
+#include "gui/recordings/RecordingsPanel.h"
+#include "gui/recordings/RecordingsWindow.h"
+#include "gui/recordings/VoiceButton.h"
+#include "gui/recordings/DsrHoursMap.h"
+#include "gui/recordings/DsrRewindLink.h"
+#include "gui/applets/VoiceKeyerApplet.h"
+#include "gui/applets/AppletVisibilityController.h"
 #include "core/roundtable/RoundtableState.h"
 #include "gui/roundtable/RoundtableFirstRunDialog.h"
+#include "gui/roundtable/RoundtableFrequencyPeek.h"
 #include "gui/roundtable/RoundtablePanel.h"
 #include "gui/roundtable/RoundtableWindow.h"
 #include "models/RoundtableModel.h"
@@ -6982,6 +7048,9 @@ public:
     CommandOutcome requestActiveSlice(int) override { return {}; }
     CommandOutcome requestSliceSampleRate(int, int) override { return {}; }
     bool roundtableAvailable() const override { return true; }
+    // The strip scenes pose a frequency-first server (one line per frequency).
+    bool roundtableFrequencyAvailable() const override { return frequency; }
+    bool frequency = false;
 };
 
 struct WindowRoundtable {
@@ -6990,8 +7059,10 @@ struct WindowRoundtable {
     RadioModel* radio = nullptr;
     RoundtableModel* model = nullptr;
 
-    explicit WindowRoundtable(RadioModel* r) : radio(r), model(r != nullptr ? r->roundtableModel() : nullptr)
+    explicit WindowRoundtable(RadioModel* r, bool frequency = false)
+        : radio(r), model(r != nullptr ? r->roundtableModel() : nullptr)
     {
+        link.frequency = frequency;
         if (model != nullptr) {
             model->detach();
             model->attachStation(&link, &rt.state);
@@ -7043,6 +7114,116 @@ struct WindowRoundtable {
         rt.state.applyStationValue("mentionCounts", QStringLiteral("{\"lsb-7170100\":2}"));
     }
 
+    // The strip scenes (strip design 1 to 8): a frequency-first server. Your
+    // frequency, 7.185 LSB, has one talker, two on top of each other, or
+    // nobody on the band at all; `listeners` hear the turn (you among them,
+    // the rest in order from the table below). The pan also holds three
+    // other frequencies: a talker, a quiet station and a double.
+    enum class StripTalk { Talking, Double, Nobody };
+    void strip(StripTalk talk, int listeners)
+    {
+        rt.live(false);
+        if (model == nullptr) {
+            return;
+        }
+        if (talk == StripTalk::Nobody) {
+            model->applyRooms(QJsonObject{{QStringLiteral("frequencyVersion"), 1},
+                                          {QStringLiteral("rooms"), QJsonArray{}}});
+            return;
+        }
+        constexpr qint64 kDial = 7185000;
+        constexpr qint64 kTurn = 30;
+        const QString home = QStringLiteral("lsb-7184000");
+        const auto station = [](const QString& source, const QString& ref, const QString& call, qint64 hz,
+                                bool keyed) {
+            return QJsonObject{{QStringLiteral("sourceRoom"), source}, {QStringLiteral("ref"), ref},
+                               {QStringLiteral("callsign"), call},     {QStringLiteral("hz"), hz},
+                               {QStringLiteral("family"), QStringLiteral("lsb")},
+                               {QStringLiteral("keyed"), keyed}};
+        };
+        const auto summary = [](const QString& id, const QString& state, const QStringList& talkers,
+                                const QJsonArray& stations) {
+            return QJsonObject{{QStringLiteral("id"), id},
+                               {QStringLiteral("family"), QStringLiteral("lsb")},
+                               {QStringLiteral("state"), state},
+                               {QStringLiteral("talkers"), QJsonArray::fromStringList(talkers)},
+                               {QStringLiteral("stations"), stations}};
+        };
+
+        const bool doubled = talk == StripTalk::Double;
+        QJsonArray talkers{station(home, QStringLiteral("t"), QStringLiteral("W1TLK"), kDial, true)};
+        if (doubled) {
+            talkers.append(station(home, QStringLiteral("u"), QStringLiteral("K4QQ"), kDial + 40, true));
+        }
+        struct Listener {
+            const char* ref;
+            const char* call;
+            double dbm;
+            qint64 ageMs;
+            double km;
+        };
+        static constexpr Listener kListeners[]{
+            {"me", "KG4VCF", -76, 600, -1},   {"r1", "N4RDR", -68, 400, 610},
+            {"r2", "KD8LMN", -80, 1200, 880}, {"r3", "W4ABC", -64, 1500, 210},
+            {"r4", "N3XYZ", -88, 2500, 1040}, {"r5", "K9AWY", -93, 3200, 940},
+            {"r6", "VE3OLD", -97, 4100, 1210}};
+        QJsonArray homeStations = talkers;
+        QJsonArray members = talkers;
+        const int count = std::clamp(listeners, 0, static_cast<int>(std::size(kListeners)));
+        for (int i = 0; i < count; ++i) {
+            const Listener& l = kListeners[i];
+            QJsonObject listener = station(home, QString::fromLatin1(l.ref), QString::fromLatin1(l.call), kDial,
+                                           false);
+            homeStations.append(listener);
+            // The wire marks you on the member alone.
+            listener.insert(QStringLiteral("you"), i == 0);
+            if (l.km >= 0) {
+                listener.insert(QStringLiteral("km"), l.km);
+            }
+            listener.insert(QStringLiteral("reading"),
+                            QJsonObject{{QStringLiteral("turn"), kTurn}, {QStringLiteral("dbm"), l.dbm},
+                                        {QStringLiteral("present"), true},
+                                        {QStringLiteral("t"), kRoundtableNow - l.ageMs}});
+            members.append(listener);
+        }
+
+        const QString talker = QStringLiteral("lsb-7172000");
+        const QString quiet = QStringLiteral("lsb-7178000");
+        const QString pair = QStringLiteral("lsb-7160000");
+        const QJsonArray rooms{
+            summary(home, doubled ? QStringLiteral("doubled") : QStringLiteral("talking"),
+                    doubled ? QStringList{QStringLiteral("W1TLK"), QStringLiteral("K4QQ")}
+                            : QStringList{QStringLiteral("W1TLK")},
+                    homeStations),
+            summary(talker, QStringLiteral("talking"), {QStringLiteral("K4ABC")},
+                    QJsonArray{station(talker, QStringLiteral("a"), QStringLiteral("K4ABC"), 7172000, true),
+                               station(talker, QStringLiteral("b"), QStringLiteral("W6ABC"), 7172000, false),
+                               station(talker, QStringLiteral("c"), QStringLiteral("G0ABC"), 7172000, false)}),
+            summary(quiet, QStringLiteral("quiet"), {},
+                    QJsonArray{station(quiet, QStringLiteral("q"), QStringLiteral("W2QQQ"), 7178000, false),
+                               station(quiet, QStringLiteral("r"), QStringLiteral("N4RRR"), 7178000, false)}),
+            summary(pair, QStringLiteral("doubled"), {QStringLiteral("AA5ABC"), QStringLiteral("K0ABC")},
+                    QJsonArray{station(pair, QStringLiteral("d"), QStringLiteral("AA5ABC"), 7160000, true),
+                               station(pair, QStringLiteral("e"), QStringLiteral("K0ABC"), 7160040, true)})};
+        model->applyRooms(QJsonObject{{QStringLiteral("frequencyVersion"), 1}, {QStringLiteral("rooms"), rooms}});
+
+        const QJsonObject turn{{QStringLiteral("id"), kTurn},
+                               {QStringLiteral("kind"), doubled ? QStringLiteral("doubled") : QStringLiteral("talking")},
+                               {QStringLiteral("hz"), kDial},
+                               {QStringLiteral("sourceRoom"), home},
+                               {QStringLiteral("start"), kRoundtableNow - 42000},
+                               {QStringLiteral("end"), QJsonValue::Null},
+                               {QStringLiteral("talkers"), talkers}};
+        model->applyRoom(QJsonObject{{QStringLiteral("id"), QStringLiteral("lsb-%1").arg(kDial)},
+                                     {QStringLiteral("view"), QStringLiteral("frequency")},
+                                     {QStringLiteral("family"), QStringLiteral("lsb")},
+                                     {QStringLiteral("hz"), kDial},
+                                     {QStringLiteral("members"), members},
+                                     {QStringLiteral("now"), QJsonArray{turn}},
+                                     {QStringLiteral("earlier"), QJsonArray{}},
+                                     {QStringLiteral("messages"), QJsonArray{}}});
+    }
+
     void setLink(RoundtableModel::LinkState state, qint64 since)
     {
         rt.state.applyStationValue("linkSince", since);
@@ -7050,8 +7231,11 @@ struct WindowRoundtable {
     }
 };
 
-// Pan 1's tags: whether each sits clear of the flags and the band plan,
-// and the CPU painter's tags against the GPU frame's, border by border.
+// Pan 1's Roundtable strip (strip design 1 to 4): every tag and your line lie
+// inside the strip, none on the spectrum or its band plan, no tag overlaps
+// another or the line, the strip is kRoundtableStripHeight high, the
+// spectrum keeps its rect with the strip hidden, and the CPU painter's hits
+// match the GPU frame's, border by border.
 void checkRoundtableTags(SceneContext& ctx, const QString& name)
 {
     SpectrumWidget* s = panOne(ctx);
@@ -7061,7 +7245,7 @@ void checkRoundtableTags(SceneContext& ctx, const QString& name)
     }
     // The CPU tags are painted over the pan's own frame with the tags
     // taken off, so both paths blend onto the same backdrop: a dimmed
-    // (translucent) border shows the spectrum through it, which a black
+    // (translucent) border shows the strip through it, which a black
     // backdrop would not.
     const QList<RoundtableTag> shownTags = s->roundtableTags();
     const RoundtableTagDisplay shown = s->roundtableTagDisplay();
@@ -7080,51 +7264,101 @@ void checkRoundtableTags(SceneContext& ctx, const QString& name)
     const QList<SpectrumWidget::RoundtableTagHit> painted = s->roundtableTagHitsForTest();
 
     const QRect spec = s->roundtableTagSpectrumRectForTest();
-    const int bandTop = spec.bottom() + 1 - s->bandPlanStripHeightForTest();
-    QRegion flags = s->receiverFlagRegion();
-    // The pan's toolbar down its left side counts as a flag here.
-    if (auto* toolbar = s->findChild<SpectrumOverlayPanel*>(QString(), Qt::FindDirectChildrenOnly);
-        toolbar != nullptr && toolbar->isVisible()) {
-        flags += toolbar->geometry();
+    const QRect strip = s->roundtableStripRectForTest();
+    const QRect bandPlan(spec.left(), spec.bottom() + 1 - s->bandPlanStripHeightForTest(), spec.width(),
+                         s->bandPlanStripHeightForTest());
+    const bool stripRight = strip.height() == kRoundtableStripHeight;
+    QRect line;
+    for (const auto& hit : painted) {
+        if (hit.kind == SpectrumWidget::RoundtableTagHit::Kind::Card) {
+            line = hit.rect;
+        }
     }
     QJsonArray tags;
+    bool inStrip = true;
     bool clear = true;
+    bool apart = true;
     bool same = drawn.size() == painted.size();
     for (qsizetype i = 0; i < painted.size(); ++i) {
         const auto& hit = painted.at(i);
+        const bool isLine = hit.kind == SpectrumWidget::RoundtableTagHit::Kind::Card;
         const QPoint edge(static_cast<int>(std::lround(hit.rect.center().x() * dpr)),
                           static_cast<int>(std::floor(hit.rect.top() * dpr)));
         const QString cpuColor = QColor(cpu.pixel(edge)).name();
         const QString gpuColor = QColor(gpu.pixel(edge)).name();
-        const bool underFlag = flags.intersects(hit.rect);
-        const bool onBandPlan = hit.rect.bottom() >= bandTop;
-        clear = clear && !underFlag && !onBandPlan;
-        same = same && i < drawn.size() && drawn.at(i).rect == hit.rect && cpuColor == gpuColor;
-        tags.append(QJsonObject{{QStringLiteral("rooms"), QJsonArray::fromStringList(hit.roomIds)},
+        const bool inside = strip.contains(hit.rect);
+        const bool onSpectrum = hit.rect.intersects(spec);
+        const bool onBandPlan = hit.rect.intersects(bandPlan);
+        QStringList overlaps;
+        for (qsizetype j = 0; j < painted.size(); ++j) {
+            if (j != i && painted.at(j).rect.intersects(hit.rect)) {
+                overlaps.append(QString::number(j));
+            }
+        }
+        inStrip = inStrip && inside;
+        clear = clear && !onSpectrum && !onBandPlan;
+        apart = apart && overlaps.isEmpty();
+        same = same && i < drawn.size() && drawn.at(i).rect == hit.rect && drawn.at(i).kind == hit.kind
+            && cpuColor == gpuColor;
+        tags.append(QJsonObject{{QStringLiteral("kind"), isLine ? QStringLiteral("line") : QStringLiteral("tag")},
+                                {QStringLiteral("rooms"), QJsonArray::fromStringList(hit.roomIds)},
                                 {QStringLiteral("folded"), hit.folded},
                                 {QStringLiteral("x"), hit.rect.x()},
                                 {QStringLiteral("y"), hit.rect.y()},
                                 {QStringLiteral("w"), hit.rect.width()},
                                 {QStringLiteral("h"), hit.rect.height()},
-                                {QStringLiteral("under_flag"), underFlag},
+                                {QStringLiteral("in_strip"), inside},
+                                {QStringLiteral("on_spectrum"), onSpectrum},
                                 {QStringLiteral("on_band_plan"), onBandPlan},
+                                {QStringLiteral("overlaps"), QJsonArray::fromStringList(overlaps)},
                                 {QStringLiteral("cpu_border"), cpuColor},
                                 {QStringLiteral("gpu_border"), gpuColor}});
     }
-    ctx.checks.append(QJsonObject{{QStringLiteral("check"), QStringLiteral("roundtable-tags")},
+
+    // The spectrum with the strip hidden: only the waterfall gives up height.
+    s->setRoundtableStripShown(false);
+    const QRect specHidden = s->roundtableTagSpectrumRectForTest();
+    s->setRoundtableStripShown(true);
+    // A fresh pass puts the hits back for the scene's own steps.
+    grabWidget(s);
+    const bool specKept = specHidden == spec;
+
+    const auto rectJson = [](const QRect& r) {
+        return QJsonObject{{QStringLiteral("x"), r.x()}, {QStringLiteral("y"), r.y()},
+                           {QStringLiteral("w"), r.width()}, {QStringLiteral("h"), r.height()}};
+    };
+    ctx.checks.append(QJsonObject{{QStringLiteral("check"), QStringLiteral("roundtable-strip")},
                                   {QStringLiteral("scene"), name},
+                                  {QStringLiteral("strip"), rectJson(strip)},
+                                  {QStringLiteral("spectrum"), rectJson(spec)},
+                                  {QStringLiteral("line"), line.isNull() ? QJsonValue() : QJsonValue(rectJson(line))},
                                   {QStringLiteral("tags"), tags},
-                                  {QStringLiteral("clear_of_flags_and_band_plan"), clear},
+                                  {QStringLiteral("strip_height_right"), stripRight},
+                                  {QStringLiteral("all_in_strip"), inStrip},
+                                  {QStringLiteral("clear_of_spectrum_and_band_plan"), clear},
+                                  {QStringLiteral("none_overlap"), apart},
+                                  {QStringLiteral("spectrum_kept_with_strip_hidden"), specKept},
                                   {QStringLiteral("cpu_matches_gpu"), same}});
-    ctx.notes.append(QStringLiteral("%1: pan 1 drew %2 Roundtable tag(s); clear of the flags and band plan: %3; "
-                                    "CPU tags match the GPU frame's: %4")
-                         .arg(name).arg(painted.size())
+    ctx.notes.append(QStringLiteral("%1: pan 1's strip is %2 px high and drew %3 (line %4); all in the strip: %5; "
+                                    "clear of the spectrum and band plan: %6; none overlap: %7; spectrum kept "
+                                    "with the strip hidden: %8; CPU hits match the GPU frame's: %9")
+                         .arg(name)
+                         .arg(strip.height())
+                         .arg(painted.size())
+                         .arg(line.isNull() ? QStringLiteral("none") : QStringLiteral("drawn"))
+                         .arg(inStrip ? QStringLiteral("yes") : QStringLiteral("no"))
                          .arg(clear ? QStringLiteral("yes") : QStringLiteral("no"))
+                         .arg(apart ? QStringLiteral("yes") : QStringLiteral("no"))
+                         .arg(specKept ? QStringLiteral("yes") : QStringLiteral("no"))
                          .arg(same ? QStringLiteral("yes") : QStringLiteral("no")));
-    if (!same || !clear) {
-        ctx.failure = QStringLiteral("%1: the tags are under a flag or the band plan, or the CPU tags "
-                                     "differ from the GPU frame's: %2")
-                          .arg(name, QString::fromUtf8(QJsonDocument(tags).toJson(QJsonDocument::Compact)));
+    if (!stripRight || !inStrip || !clear || !apart || !specKept || !same) {
+        ctx.failure = QStringLiteral("%1: the strip is %2 px (want %3), or a tag or the line is outside it, on the "
+                                     "spectrum or band plan, overlapping, the spectrum moved with the strip, or the "
+                                     "CPU hits differ from the GPU frame's: %4")
+                          .arg(name)
+                          .arg(strip.height())
+                          .arg(kRoundtableStripHeight)
+                          .arg(QString::fromUtf8(QJsonDocument(tags).toJson(QJsonDocument::Compact)));
     }
 
     // The pan as the GPU path drew it, and the CPU painter's tags alone.
@@ -7137,6 +7371,59 @@ void checkRoundtableTags(SceneContext& ctx, const QString& name)
         img.logicalSize = s->size();
         img.dpr = dpr;
         ctx.images.append(img);
+    }
+}
+
+// Pan 1's details (strip design 5, 6): open from your line, under the strip
+// over the waterfall, or upward over the spectrum when the waterfall has
+// under kRoundtableDetailsMinBelow px of room, clear of the strip. Upward they
+// line up with their own left edge and stand clear of the flags.
+void checkRoundtableDetails(SceneContext& ctx, const QString& name, bool upward)
+{
+    SpectrumWidget* s = panOne(ctx);
+    auto* details = s != nullptr ? s->findChild<RoundtableFrequencyPeek*>() : nullptr;
+    if (details == nullptr || !details->isOpen()) {
+        ctx.failure = QStringLiteral("%1: the details did not open from the line").arg(name);
+        return;
+    }
+    const QRect rect = details->inspectorRect();
+    const QRect strip = s->roundtableStripRectForTest();
+    const QRect line = s->roundtableStripLineForTest().line;
+    const SpectrumWidget::RoundtableInspectorSpot spot = s->roundtableInspectorSpot(0, 0);
+    const QRect area = upward ? spot.above : spot.below;
+    const bool sideRight = details->upwardForTest() == upward;
+    const bool inside = area.contains(rect) && !rect.intersects(strip);
+    const bool topRight = upward || rect.top() == strip.bottom() + 1 + kRoundtableDetailsGap;
+    const bool lined = upward
+        ? rect.left() == spot.upwardAnchorLeft && !s->receiverFlagRegion().intersects(rect)
+        : !line.isNull() && rect.left() == line.left();
+    ctx.checks.append(QJsonObject{{QStringLiteral("check"), QStringLiteral("roundtable-details")},
+                                  {QStringLiteral("scene"), name},
+                                  {QStringLiteral("upward"), details->upwardForTest()},
+                                  {QStringLiteral("room_below"), spot.below.height()},
+                                  {QStringLiteral("x"), rect.x()},
+                                  {QStringLiteral("y"), rect.y()},
+                                  {QStringLiteral("w"), rect.width()},
+                                  {QStringLiteral("h"), rect.height()},
+                                  {QStringLiteral("in_its_area"), inside},
+                                  {QStringLiteral("top_under_strip"), topRight},
+                                  {QStringLiteral("lined_up_with_line"), lined}});
+    ctx.notes.append(QStringLiteral("%1: the details open %2 (%3 px of waterfall), %4 x %5 at %6,%7")
+                         .arg(name, details->upwardForTest() ? QStringLiteral("upward") : QStringLiteral("downward"))
+                         .arg(spot.below.height())
+                         .arg(rect.width())
+                         .arg(rect.height())
+                         .arg(rect.x())
+                         .arg(rect.y()));
+    if (!sideRight || !inside || !topRight || !lined) {
+        ctx.failure = QStringLiteral("%1: the details stand wrong: upward %2 (want %3), inside %4, top %5, "
+                                     "lined up %6")
+                          .arg(name)
+                          .arg(details->upwardForTest())
+                          .arg(upward)
+                          .arg(inside)
+                          .arg(topRight)
+                          .arg(lined);
     }
 }
 
@@ -7450,8 +7737,8 @@ void appendRoundtableScenes(QVector<Scene>& scenes)
         sheet.close();
         AppSettings::instance().remove(QString::fromLatin1(RoundtableFirstRunDialog::kSeenKey));
     }});
-    // Roundtable plan Task 14: the tags along pan 1's foot and slice A's
-    // flag line, live; crowded (folds, one +N list open); offline (the
+    // Roundtable plan Task 14: the tags in pan 1's Roundtable strip and
+    // slice A's flag line, live; crowded (folds, one +N list open); offline (the
     // tags greyed as last known); connecting (no tags).
     const auto tagScene = [&scenes](const QString& name,
                                     const std::function<void(WindowRoundtable&)>& pose,
@@ -7516,6 +7803,102 @@ void appendRoundtableScenes(QVector<Scene>& scenes)
         rt.rt.state.applyStationValue("hidden", true);
         rt.setLink(RoundtableModel::LinkState::Hidden, kRoundtableNow);
     });
+
+    // The strip design's own scenes (strip design 1 to 8), from a
+    // frequency-first server through the same station-attached window feed:
+    // your line beside slice A's dial with the other frequencies' tags; more
+    // listeners than fit ("+N more"); your frequency doubled; Roundtable on
+    // with nobody on the band (an empty strip); and the details opened from
+    // your line, over the waterfall and, with under 140 px of waterfall,
+    // upward. `spectrumFrac` > 0 sets pan 1's split before the freeze (the
+    // default split leaves pan 1 enough waterfall for the details below);
+    // `details`: 0 none, 1 open downward, 2 open upward.
+    using StripTalk = WindowRoundtable::StripTalk;
+    const auto stripScene = [&scenes](const QString& name, StripTalk talk, int listeners, float spectrumFrac,
+                                      int details, const QString& note) {
+        scenes.append({name, QStringLiteral("2v"), false,
+                       [name, talk, listeners, spectrumFrac, details, note](SceneContext& ctx) {
+            onRoundtableClock([&] {
+                WindowRoundtable rt(ctx.model, true);
+                if (rt.model == nullptr) {
+                    ctx.failure = QStringLiteral("the window has no Roundtable model");
+                    return;
+                }
+                float savedFrac = -1.0f;
+                runWindowScene(ctx, twoBandPoses(), 0, [&](SceneContext& c) {
+                    rt.strip(talk, listeners);
+                    SpectrumWidget* s = panOne(c);
+                    if (s != nullptr && spectrumFrac > 0.0f) {
+                        savedFrac = s->spectrumFrac();
+                        s->setSpectrumFrac(spectrumFrac);
+                    }
+                });
+                SpectrumWidget* s = panOne(ctx);
+                const auto restore = [&]() {
+                    if (s == nullptr) {
+                        return;
+                    }
+                    if (auto* open = s->findChild<RoundtableFrequencyPeek*>(); open != nullptr && open->isOpen()) {
+                        open->closePeek();
+                    }
+                    if (savedFrac > 0.0f) {
+                        s->setSpectrumFrac(savedFrac);
+                    }
+                    pump(kTabSettleMs);
+                };
+                if (!ctx.failure.isEmpty() || s == nullptr) {
+                    if (ctx.failure.isEmpty()) {
+                        ctx.failure = QStringLiteral("%1: no pan 1").arg(name);
+                    }
+                    restore();
+                    return;
+                }
+                pump(kFinalSettleMs);
+                if (details > 0) {
+                    // A click on your line, as the operator opens the details.
+                    QRect line;
+                    for (const auto& hit : s->roundtableTagHitsForTest()) {
+                        if (hit.kind == SpectrumWidget::RoundtableTagHit::Kind::Card) {
+                            line = hit.rect;
+                        }
+                    }
+                    if (line.isNull()) {
+                        ctx.failure = QStringLiteral("%1: no line in pan 1's strip to click").arg(name);
+                        restore();
+                        return;
+                    }
+                    sendMouse(s, QEvent::MouseButtonPress, line.center(), Qt::LeftButton, Qt::LeftButton);
+                    sendMouse(s, QEvent::MouseButtonRelease, line.center(), Qt::LeftButton, Qt::NoButton);
+                    pump(kFinalSettleMs);
+                }
+                captureWindow(ctx, name);
+                if (details > 0) {
+                    checkRoundtableDetails(ctx, name, details == 2);
+                }
+                const QString failed = ctx.failure;
+                checkRoundtableTags(ctx, name);
+                if (!failed.isEmpty()) {
+                    ctx.failure = failed;
+                }
+                ctx.notes.append(note);
+                restore();
+            });
+        }});
+    };
+    stripScene(QStringLiteral("roundtable-strip-talking"), StripTalk::Talking, 5, 0.0f, 0,
+               QStringLiteral("W1TLK talking on 7.185 LSB with 5 listeners (you among them); other frequencies: "
+                              "K4ABC talking on 7.172, a quiet 7.178 and a double on 7.160"));
+    stripScene(QStringLiteral("roundtable-strip-more"), StripTalk::Talking, 7, 0.0f, 0,
+               QStringLiteral("W1TLK talking on 7.185 LSB with 7 listeners: the line ends in +N more"));
+    stripScene(QStringLiteral("roundtable-strip-double"), StripTalk::Double, 5, 0.0f, 0,
+               QStringLiteral("W1TLK and K4QQ on top of each other on your 7.185 LSB, 5 listening"));
+    stripScene(QStringLiteral("roundtable-strip-quiet"), StripTalk::Nobody, 0, 0.0f, 0,
+               QStringLiteral("Roundtable on with nobody on the band: the strip is empty"));
+    stripScene(QStringLiteral("roundtable-strip-details"), StripTalk::Talking, 5, 0.0f, 1,
+               QStringLiteral("the details opened from your line, hanging over the waterfall under the strip"));
+    stripScene(QStringLiteral("roundtable-strip-details-short"), StripTalk::Talking, 5, 0.80f, 2,
+               QStringLiteral("the details opened from your line with under 140 px of waterfall: they open "
+                              "upward over the spectrum"));
 
     // Slice A's flag line: live in room 7.185 (six there, W1TLK talking),
     // two messages naming you, you transmitting there, offline and
@@ -8530,6 +8913,781 @@ void addFoldStateCrops(SceneContext& ctx, QVector<CropRect>& crops, double dpr)
     addFoldCrop(ctx, crops, dpr, QStringLiteral("fold-left-of-marker"), flagOnPan(ctx, 1));
     addFoldCrop(ctx, crops, dpr, QStringLiteral("fold-tx-lit"), flagOnPan(ctx, 2));
     addFoldCrop(ctx, crops, dpr, QStringLiteral("fold-locked"), flagOnPan(ctx, 3));
+}
+
+// ---- Recording plan Task 6: Record and Play on the flag ----
+//
+// Slice A at 7.236.400 LSB (its flag right of the marker, the side buttons
+// on its left), as the desktop-flag and recording-together mockups show it.
+// The window's own recordings access has no Core behind it, so a fake one
+// takes its place on Slice A's flag; it starts nothing and keys nothing.
+
+enum class RecPlayPose { Idle, Recording, RecordingMyVoice, Armed, Playing, OnAir, Kept, Menu, OlderCore };
+
+QVector<PanPose> recPlayPoses()
+{
+    PanPose a;
+    a.panId = panIdAt(0);
+    a.sliceHz = 7236400.0;
+    a.mode = DSPMode::LSB;
+    a.filterLo = -2850;
+    a.filterHi = -150;
+    a.sMeterDbm = -79.0;
+    a.spectrum = fortyMetresPhone(a.panId);
+    return {a};
+}
+
+// The mockup's recordings: Slice A's newest first, a quarter hour apart in
+// the right-click list's "today", then older days.
+QList<RecordingEntry> recPlayEntries(int sliceId)
+{
+    struct Row {
+        qint64 hz;
+        const char* call;
+        qint64 agoSeconds;
+        qint64 lengthMs;
+    };
+    const Row rows[] = {{7236400, "K4ABC", 1800, 312000},  {7236400, "W1XYZ", 5400, 205000},
+                        {14250000, "", 9000, 64000},       {7200000, "N4QQ", 86400, 540000},
+                        {3880000, "", 90000, 1210000},     {14313000, "VE3ABC", 170000, 188000},
+                        {7188000, "", 200000, 95000},      {21300000, "EA8XX", 260000, 402000},
+                        {7191000, "KD4Z", 400000, 150000}};
+    const QDateTime now(QDate(2026, 11, 15), QTime(15, 2), QTimeZone::utc());
+    QList<RecordingEntry> out;
+    int n = 0;
+    for (const Row& r : rows) {
+        RecordingEntry e;
+        e.id = QStringLiteral("rec-%1").arg(++n);
+        e.kind = RecordingKind::Contact;
+        e.sliceId = sliceId;
+        e.startUtc = now.addSecs(-r.agoSeconds);
+        e.lengthMs = r.lengthMs;
+        e.frequencyHz = r.hz;
+        e.mode = r.hz < 10000000 ? QStringLiteral("LSB") : QStringLiteral("USB");
+        e.call = QString::fromLatin1(r.call);
+        e.name = recordingBaseName(e.startUtc, e.frequencyHz, e.mode, e.call);
+        out.append(e);
+    }
+    return out;
+}
+
+FlagRecordPlay* poseRecPlay(SceneContext& ctx, RecPlayPose pose)
+{
+    VfoWidget* flag = flagA(ctx);
+    FlagRecordPlay* rp = flag != nullptr ? flag->findChild<FlagRecordPlay*>(QStringLiteral("FlagRecordPlay"))
+                                         : nullptr;
+    if (rp == nullptr) {
+        ctx.failure = QStringLiteral("no Record and Play on Slice A's flag");
+        return nullptr;
+    }
+    const int slice = flag->sliceIndex();
+    auto* access = new FakeRecordingsAccess(ctx.window);
+    access->entries = recPlayEntries(slice);
+    QString state = QStringLiteral("idle");
+    qint64 elapsed = 0;
+    bool myVoice = false;
+    if (pose == RecPlayPose::Recording || pose == RecPlayPose::RecordingMyVoice) {
+        state = QStringLiteral("recording");
+        elapsed = 83000;
+        myVoice = pose == RecPlayPose::RecordingMyVoice;
+    } else if (pose == RecPlayPose::Armed) {
+        state = QStringLiteral("armed");
+    }
+    const QString folder = QDir::homePath() + QStringLiteral("/Music/NereusSDR Recordings");
+    access->setDocument(FakeRecordingsAccess::document(
+        {FakeRecordingsAccess::slice(slice, state, elapsed, myVoice)}, 1, folder));
+    if (pose == RecPlayPose::Playing || pose == RecPlayPose::OnAir) {
+        access->setPlayback(PlaybackState{QStringLiteral("local"), QStringLiteral("rec-1"), 12000, 312000, true,
+                                          pose == RecPlayPose::OnAir});
+    }
+    if (pose == RecPlayPose::OlderCore) {
+        access->setState(RecordingsAccess::State::NeedsNewerCore);
+    }
+    rp->setClockForTest([] { return QDateTime(QDate(2026, 11, 15), QTime(15, 2), QTimeZone::utc()); });
+    rp->setAccess(access);
+    if (pose == RecPlayPose::Kept) {
+        emit access->kept(QJsonObject{{QStringLiteral("seq"), 1},
+                                      {QStringLiteral("slice"), slice},
+                                      {QStringLiteral("id"), QStringLiteral("rec-1")},
+                                      {QStringLiteral("name"), QStringLiteral("7.236.400 LSB K4ABC")},
+                                      {QStringLiteral("lengthMs"), 83000},
+                                      {QStringLiteral("reason"), QStringLiteral("device")},
+                                      {QStringLiteral("device"), QStringLiteral("iPhone")}});
+    }
+    ctx.notes.append(QStringLiteral("Slice A's Record and Play follow a fake recordings access (no Core)"));
+    return rp;
+}
+
+// The flag, its side buttons, the labels beside them and the Kept notice.
+constexpr int kRecPlayCropPadPx = 24;
+
+void addRecPlayCrop(SceneContext& ctx, QVector<CropRect>& crops, double dpr)
+{
+    VfoWidget* flag = flagA(ctx);
+    FlagRecordPlay* rp = flag != nullptr ? flag->findChild<FlagRecordPlay*>(QStringLiteral("FlagRecordPlay"))
+                                         : nullptr;
+    if (rp == nullptr || flag->parentWidget() == nullptr) {
+        return;
+    }
+    QRect area = flag->occupiedRegion().boundingRect();
+    for (QWidget* w : {static_cast<QWidget*>(rp->recordLabelForTest()), static_cast<QWidget*>(rp->playLabelForTest()),
+                       static_cast<QWidget*>(rp->keptNoticeForTest())}) {
+        if (w != nullptr && w->isVisible()) {
+            area = area.united(w->geometry());
+        }
+    }
+    area.adjust(-kRecPlayCropPadPx, -kRecPlayCropPadPx / 6, kRecPlayCropPadPx, kRecPlayCropPadPx);
+    const QRect logical(flag->parentWidget()->mapTo(ctx.window, area.topLeft()), area.size());
+    const QRect clipped = logical.intersected(QRect(QPoint(0, 0), ctx.window->size()));
+    if (!clipped.isEmpty()) {
+        crops.append({QStringLiteral("recplay"), clipped, deviceRect(clipped, dpr)});
+    }
+}
+
+void sceneFlagRecPlay(SceneContext& ctx, const QString& name, RecPlayPose pose)
+{
+    ctx.provenance = provProposed();
+    ctx.extraCrops = addRecPlayCrop;
+    if (pose == RecPlayPose::Recording || pose == RecPlayPose::RecordingMyVoice) {
+        noteNotShown(ctx, QStringLiteral("Record's blink"),
+                     QStringLiteral("a still image holds one phase; the dot is shown at full red"));
+    }
+    runWindowScene(ctx, recPlayPoses(), 0, [pose](SceneContext& c) { poseRecPlay(c, pose); });
+    if (!ctx.failure.isEmpty()) {
+        return;
+    }
+    if (pose != RecPlayPose::Menu) {
+        captureWindow(ctx, name);
+        return;
+    }
+    VfoWidget* flag = flagA(ctx);
+    QPushButton* play = flag != nullptr ? flag->playButton() : nullptr;
+    if (play == nullptr) {
+        ctx.failure = QStringLiteral("no Play button on Slice A's flag");
+        return;
+    }
+    PopupShot shot;
+    shot.anchor = globalAt(play, QPoint(play->width() / 2 + 2, play->height() / 2 + 2));
+    shot.provenance = provProposed();
+    shot.submenus = false;
+    shootPopup(ctx, name, [play]() { sendContextMenu(play, middleOf(play)); }, shot);
+}
+
+// ---- Recording plan Task 7: the Recordings panel and window ----
+//
+// The recordings the approved mockups list, on a fake recordings access: no
+// Core is behind it, it plays and keys nothing.
+
+const QDateTime kRecordingsNow(QDate(2026, 11, 15), QTime(15, 2), QTimeZone::utc());
+
+RecordingEntry recordingRow(const QString& id, RecordingKind kind, int slice, const QDateTime& start,
+                            qint64 lengthMs, qint64 bytes, qint64 hz, const QString& mode, const QString& call,
+                            const QString& name = {})
+{
+    RecordingEntry e;
+    e.id = id;
+    e.kind = kind;
+    e.sliceId = slice;
+    e.startUtc = start;
+    e.lengthMs = lengthMs;
+    e.frequencyHz = hz;
+    e.mode = mode;
+    e.call = call;
+    e.name = name.isEmpty() ? recordingBaseName(start, hz, mode, call) : name;
+    e.fileName = e.name + (kind == RecordingKind::WholePan ? QStringLiteral(".iq") : QStringLiteral(".mp3"));
+    e.sizeBytes = bytes;
+    return e;
+}
+
+// recordings-panel/'s nine, newest first.
+QList<RecordingEntry> panelRecordings()
+{
+    const QDateTime n = kRecordingsNow;
+    constexpr qint64 kMb = 1000 * 1000;
+    return {recordingRow(QStringLiteral("p1"), RecordingKind::Contact, 0, n.addSecs(-1800), 312000, 9 * kMb, 7185000,
+                         QStringLiteral("LSB"), QStringLiteral("K4ABC")),
+            recordingRow(QStringLiteral("p2"), RecordingKind::WholePan, -1, n.addSecs(-5400), 600000, 1650 * kMb,
+                         7220000, QString(), QString(), QStringLiteral("40 m net, whole pan")),
+            recordingRow(QStringLiteral("p3"), RecordingKind::Contact, 0, n.addSecs(-9000), 205000, 6 * kMb, 7236400,
+                         QStringLiteral("LSB"), QStringLiteral("W1XYZ")),
+            recordingRow(QStringLiteral("p4"), RecordingKind::Sound, -1, n.addSecs(-86400), 64000, 2 * kMb, 14250000,
+                         QStringLiteral("USB"), QString()),
+            recordingRow(QStringLiteral("p5"), RecordingKind::Contact, 1, n.addSecs(-90000), 540000, 15 * kMb, 7200000,
+                         QStringLiteral("LSB"), QStringLiteral("N4QQ")),
+            recordingRow(QStringLiteral("p6"), RecordingKind::Contact, 0, n.addSecs(-170000), 1210000, 34 * kMb,
+                         3880000, QStringLiteral("LSB"), QString()),
+            recordingRow(QStringLiteral("p7"), RecordingKind::Contact, 1, n.addSecs(-200000), 188000, 5 * kMb,
+                         14313000, QStringLiteral("USB"), QStringLiteral("VE3ABC")),
+            recordingRow(QStringLiteral("p8"), RecordingKind::Sound, -1, n.addSecs(-260000), 402000, 11 * kMb, 21300000,
+                         QStringLiteral("USB"), QStringLiteral("EA8XX")),
+            recordingRow(QStringLiteral("p9"), RecordingKind::Contact, 0, n.addSecs(-400000), 150000, 4 * kMb, 7191000,
+                         QStringLiteral("LSB"), QStringLiteral("KD4Z"))};
+}
+
+// recordings-window/'s eight.
+QList<RecordingEntry> windowRecordings()
+{
+    const auto at = [](int day, int h, int m) { return QDateTime(QDate(2026, 11, day), QTime(h, m), QTimeZone::utc()); };
+    constexpr qint64 kMb = 1000 * 1000;
+    QList<RecordingEntry> out{
+        recordingRow(QStringLiteral("w1"), RecordingKind::Contact, 0, at(14, 15, 2), 312000, 15 * kMb, 7188000,
+                     QStringLiteral("LSB"), QStringLiteral("W4XYZ")),
+        recordingRow(QStringLiteral("w3"), RecordingKind::Sound, -1, at(14, 13, 5), 390000, 6 * kMb, 7198500,
+                     QStringLiteral("LSB"), QStringLiteral("K4ABC")),
+        recordingRow(QStringLiteral("w2"), RecordingKind::WholePan, -1, at(14, 13, 2), 600000, 460 * kMb, 7185000,
+                     QString(), QString(), QStringLiteral("Sunday net")),
+        recordingRow(QStringLiteral("w4"), RecordingKind::Contact, 1, at(13, 23, 11), 2410000, 116 * kMb, 3873000,
+                     QStringLiteral("LSB"), QStringLiteral("N4RDR")),
+        recordingRow(QStringLiteral("w6"), RecordingKind::Contact, 0, at(13, 21, 5), 95000, 4600 * 1000, 14250000,
+                     QStringLiteral("USB"), QString()),
+        recordingRow(QStringLiteral("w5"), RecordingKind::WholePan, -1, at(13, 21, 0), 900000, 690 * kMb, 14250000,
+                     QString(), QString(), QStringLiteral("20 m opening")),
+        recordingRow(QStringLiteral("w8"), RecordingKind::Sound, -1, at(12, 18, 22), 640000, 10 * kMb, 7200000,
+                     QStringLiteral("LSB"), QStringLiteral("AA5ABC")),
+        recordingRow(QStringLiteral("w7"), RecordingKind::WholePan, -1, at(12, 18, 15), 1800000, 1380 * kMb, 7200000,
+                     QString(), QStringLiteral("AA5ABC"))};
+    return out;
+}
+
+FakeRecordingsAccess* fakeRecordings(QObject* owner, const QList<RecordingEntry>& entries, const QJsonArray& slices,
+                                     const QString& diskName, qint64 freeBytes)
+{
+    auto* access = new FakeRecordingsAccess(owner);
+    access->entries = entries;
+    QJsonObject doc = FakeRecordingsAccess::document(
+        slices, 1, QDir::homePath() + QStringLiteral("/Music/NereusSDR Recordings"));
+    qint64 used = 0;
+    for (const RecordingEntry& e : entries) {
+        used += e.sizeBytes;
+    }
+    QJsonObject index = doc.value(QStringLiteral("index")).toObject();
+    index.insert(QStringLiteral("count"), entries.size());
+    index.insert(QStringLiteral("usedBytes"), used);
+    index.insert(QStringLiteral("freeBytes"), freeBytes);
+    doc.insert(QStringLiteral("index"), index);
+    QJsonObject settings = doc.value(QStringLiteral("settings")).toObject();
+    settings.insert(QStringLiteral("disk"), QString());
+    settings.insert(QStringLiteral("disks"), QJsonArray{QJsonObject{{QStringLiteral("root"), QStringLiteral("/")},
+                                                                    {QStringLiteral("name"), diskName},
+                                                                    {QStringLiteral("own"), true}}});
+    doc.insert(QStringLiteral("settings"), settings);
+    access->setDocument(doc);
+    return access;
+}
+
+enum class RecordingsPanelPose { List, RecordingRow, Menu };
+
+RecordingsPanel* poseRecordingsPanel(SceneContext& ctx, RecordingsPanelPose pose)
+{
+    auto* visibility = ctx.window->findChild<AppletVisibilityController*>();
+    if (visibility == nullptr) {
+        ctx.failure = QStringLiteral("no applet visibility controller in the window");
+        return nullptr;
+    }
+    visibility->setVisible(QStringLiteral("Recordings"), true);
+    pump(kSettleMs);
+    auto* panel = ctx.window->findChild<RecordingsPanel*>();
+    if (panel == nullptr || !panel->isVisible()) {
+        ctx.failure = QStringLiteral("the Recordings applet is not in the window");
+        return nullptr;
+    }
+    const QJsonArray slices{FakeRecordingsAccess::slice(0, pose == RecordingsPanelPose::RecordingRow
+                                                               ? QStringLiteral("recording")
+                                                               : QStringLiteral("idle"),
+                                                        83000, true)};
+    FakeRecordingsAccess* access =
+        fakeRecordings(ctx.window, panelRecordings(), slices, QStringLiteral("T7"), qint64(812) * 1000 * 1000 * 1000);
+    if (pose == RecordingsPanelPose::List) {
+        access->setPlayback(PlaybackState{QStringLiteral("local"), QStringLiteral("p3"), 74000, 205000, true, false});
+    }
+    panel->setClockForTest([] { return kRecordingsNow; });
+    panel->setSliceTextSource([](int slice) { return slice == 0 ? QStringLiteral("7.185.000 LSB") : QString(); });
+    panel->setAccess(access);
+    for (QWidget* up = panel->parentWidget(); up != nullptr; up = up->parentWidget()) {
+        if (auto* area = qobject_cast<QScrollArea*>(up)) {
+            area->ensureWidgetVisible(panel, 0, 0);
+            break;
+        }
+    }
+    ctx.notes.append(QStringLiteral("the Recordings applet follows a fake recordings access (no Core)"));
+    return panel;
+}
+
+void sceneRecordingsPanel(SceneContext& ctx, const QString& name, RecordingsPanelPose pose)
+{
+    ctx.provenance = provProposed();
+    if (pose == RecordingsPanelPose::RecordingRow) {
+        noteNotShown(ctx, QStringLiteral("the red dot's blink"),
+                     QStringLiteral("a still image holds one phase; the dot is shown at full red"));
+    }
+    RecordingsPanel* panel = nullptr;
+    runWindowScene(ctx, recPlayPoses(), 0, [&panel, pose](SceneContext& c) { panel = poseRecordingsPanel(c, pose); });
+    if (!ctx.failure.isEmpty() || panel == nullptr) {
+        return;
+    }
+    pump(kFinalSettleMs);
+    if (pose == RecordingsPanelPose::Menu) {
+        QFrame* row = panel->rowForTest(QStringLiteral("p1"));
+        if (row == nullptr) {
+            ctx.failure = QStringLiteral("no first row in the Recordings panel");
+            return;
+        }
+        const QPoint at(row->width() / 3, row->height() / 2);
+        PopupShot shot;
+        shot.anchor = globalAt(row, at);
+        shot.provenance = provProposed();
+        shot.submenus = false;
+        shootPopup(ctx, name, [row, at]() { sendContextMenu(row, at); }, shot);
+        return;
+    }
+    captureWindow(ctx, name);
+    // The applet with its container's title bar, as the mockup's close-up.
+    QWidget* shown = panel->parentWidget() != nullptr && panel->parentWidget()->height() < panel->height() + 60
+        ? panel->parentWidget()
+        : panel;
+    CapturedImage img;
+    img.name = name + QStringLiteral("--applet");
+    img.kind = QStringLiteral("detail");
+    img.image = grabWidget(shown);
+    img.logicalSize = shown->size();
+    img.dpr = img.image.devicePixelRatio();
+    ctx.images.append(img);
+}
+
+enum class RecordingsWindowPose { All, Filtered, DeleteConfirm };
+
+void sceneRecordingsWindow(SceneContext& ctx, const QString& name, RecordingsWindowPose pose)
+{
+    ctx.provenance = provProposed();
+    prepareForDialog(ctx);
+    FakeRecordingsAccess* access =
+        fakeRecordings(ctx.window, windowRecordings(), {}, QStringLiteral("the USB SSD"), qint64(884) * 1000 * 1000 * 1000);
+    access->coreHere = false;
+    RecordingsWindow window(access, ctx.window);
+    window.resize(RecordingsWindow::kDefaultWidth, RecordingsWindow::kDefaultHeight);
+    if (pose == RecordingsWindowPose::All) {
+        access->setPlayback(PlaybackState{QStringLiteral("local"), QStringLiteral("w4"), 312000, 2410000, true, false});
+        window.setSelectedIds({QStringLiteral("w2")});
+    } else if (pose == RecordingsWindowPose::Filtered) {
+        window.setFilter(RecordingsWindow::Filter::Contact);
+        window.setSearchText(QStringLiteral("LSB"));
+        window.setSelectedIds({QStringLiteral("w1"), QStringLiteral("w4")});
+    } else {
+        window.setSelectedIds({QStringLiteral("w4"), QStringLiteral("w6"), QStringLiteral("w5")});
+    }
+    window.show();
+    pump(kTabSettleMs);
+    if (pose != RecordingsWindowPose::DeleteConfirm) {
+        captureDialog(ctx, &window, name);
+        window.hide();
+        ctx.notes.append(QStringLiteral("the Recordings window on a fake recordings access, the Core on another "
+                                        "computer"));
+        return;
+    }
+    QList<RecordingEntry> chosen;
+    for (const RecordingEntry& e : window.entries()) {
+        if (window.selectedIds().contains(e.id)) {
+            chosen.append(e);
+        }
+    }
+    RecordingsDeleteConfirm confirm(chosen, &window);
+    confirm.show();
+    pump(kTabSettleMs);
+    captureDialog(ctx, &confirm, name);
+    confirm.hide();
+    window.hide();
+    ctx.notes.append(QStringLiteral("Delete 3... in the Recordings window: the confirm"));
+}
+
+// Recording plan Task 8: defined beside the Setup scenes' helpers below.
+void sceneRecordingsSetup(SceneContext& ctx, const QString& name, bool sdCard);
+// Recording plan Task 26: defined beside it.
+enum class DsrSetupPose { Ssd, SdCard, EraseConfirm };
+void sceneDsrSetup(SceneContext& ctx, const QString& name, DsrSetupPose pose);
+
+// ---- Recording plan Task 12: the Voice keyer panel and VOICE ----
+//
+// M1 to M8 as the approved mockups name them, on a fake recordings access:
+// no Core is behind it, it keys nothing and no microphone is read.
+
+QJsonObject voiceScenesDocument(const QJsonValue& sending, bool repeat = false)
+{
+    const struct { const char* name; int ms; } kept[] = {
+        {"CQ", 6200}, {"Call", 1800}, {"59 QTH", 4400}, {"73", 2100}};
+    QJsonArray slotList;
+    for (int n = 1; n <= 8; ++n) {
+        const bool has = n <= 4;
+        slotList.append(QJsonObject{{QStringLiteral("n"), n},
+                                    {QStringLiteral("name"), has ? QString::fromLatin1(kept[n - 1].name) : QString()},
+                                    {QStringLiteral("lengthMs"), has ? kept[n - 1].ms : 0},
+                                    {QStringLiteral("empty"), !has}});
+    }
+    QJsonObject doc = FakeRecordingsAccess::document({}, 1);
+    doc.insert(QStringLiteral("voiceKeyer"), QJsonObject{{QStringLiteral("slots"), slotList},
+                                                          {QStringLiteral("repeat"), repeat},
+                                                          {QStringLiteral("repeatDelaySec"), 5},
+                                                          {QStringLiteral("sending"), sending}});
+    return doc;
+}
+
+QJsonObject voiceScenesSending(int n, qint64 positionMs, qint64 lengthMs, qint64 waitingMs = 0)
+{
+    return QJsonObject{{QStringLiteral("n"), n},
+                       {QStringLiteral("positionMs"), positionMs},
+                       {QStringLiteral("lengthMs"), lengthMs},
+                       {QStringLiteral("waitingMs"), waitingMs},
+                       {QStringLiteral("by"), QStringLiteral("Desktop")},
+                       {QStringLiteral("deviceId"), QStringLiteral("station")}};
+}
+
+FakeRecordingsAccess* voiceScenesAccess(QObject* owner, const QJsonValue& sending, bool olderCore,
+                                        bool repeat = false)
+{
+    auto* access = new FakeRecordingsAccess(owner);
+    access->version = olderCore ? 2 : 3;
+    access->setDocument(voiceScenesDocument(sending, repeat));
+    return access;
+}
+
+void scrollIntoView(QWidget* w)
+{
+    for (QWidget* up = w->parentWidget(); up != nullptr; up = up->parentWidget()) {
+        if (auto* area = qobject_cast<QScrollArea*>(up)) {
+            area->ensureWidgetVisible(w, 0, 0);
+            return;
+        }
+    }
+}
+
+void addDetail(SceneContext& ctx, const QString& name, QWidget* shown)
+{
+    CapturedImage img;
+    img.name = name;
+    img.kind = QStringLiteral("detail");
+    img.image = grabWidget(shown);
+    img.logicalSize = shown->size();
+    img.dpr = img.image.devicePixelRatio();
+    ctx.images.append(img);
+}
+
+enum class VoicePanelPose { Idle, Recording, Sending, Menu, OlderCore };
+
+VoiceKeyerApplet* poseVoicePanel(SceneContext& ctx, VoicePanelPose pose)
+{
+    auto* visibility = ctx.window->findChild<AppletVisibilityController*>();
+    if (visibility == nullptr) {
+        ctx.failure = QStringLiteral("no applet visibility controller in the window");
+        return nullptr;
+    }
+    visibility->setVisible(QStringLiteral("VoiceKeyer"), true);
+    pump(kSettleMs);
+    auto* panel = ctx.window->findChild<VoiceKeyerApplet*>();
+    if (panel == nullptr || !panel->isVisible()) {
+        ctx.failure = QStringLiteral("the Voice keyer applet is not in the window");
+        return nullptr;
+    }
+    const QJsonValue sending = pose == VoicePanelPose::Sending ? QJsonValue(voiceScenesSending(1, 2500, 6200))
+                                                               : QJsonValue(QJsonValue::Null);
+    FakeRecordingsAccess* access = voiceScenesAccess(ctx.window, sending, pose == VoicePanelPose::OlderCore);
+    panel->setClockForTest([] { return qint64(0); });
+    panel->setAccess(access);
+    if (pose == VoicePanelPose::Recording) {
+        panel->showRecordingForTest(5, 4200, 0.62f);
+    }
+    scrollIntoView(panel);
+    ctx.notes.append(QStringLiteral("the Voice keyer applet follows a fake recordings access (no Core)"));
+    return panel;
+}
+
+void sceneVoicePanel(SceneContext& ctx, const QString& name, VoicePanelPose pose)
+{
+    ctx.provenance = provProposed();
+    if (pose == VoicePanelPose::Recording) {
+        noteNotShown(ctx, QStringLiteral("Record's blink"),
+                     QStringLiteral("a still image holds one phase; Record is shown at full red"));
+    }
+    VoiceKeyerApplet* panel = nullptr;
+    runWindowScene(ctx, recPlayPoses(), 0, [&panel, pose](SceneContext& c) { panel = poseVoicePanel(c, pose); });
+    if (!ctx.failure.isEmpty() || panel == nullptr) {
+        return;
+    }
+    pump(kFinalSettleMs);
+    if (pose == VoicePanelPose::Menu) {
+        QPushButton* m2 = panel->messageButtonForTest(2);
+        const QPoint at = middleOf(m2);
+        PopupShot shot;
+        shot.anchor = globalAt(m2, at);
+        shot.provenance = provProposed();
+        shot.submenus = false;
+        shootPopup(ctx, name, [m2, at]() { emit m2->customContextMenuRequested(at); }, shot);
+        return;
+    }
+    captureWindow(ctx, name);
+    QWidget* shown = panel->parentWidget() != nullptr && panel->parentWidget()->height() < panel->height() + 60
+        ? panel->parentWidget()
+        : panel;
+    addDetail(ctx, name + QStringLiteral("--applet"), shown);
+}
+
+enum class VoiceButtonPose { Idle, Open, Sending, Waiting, Held, OlderCore };
+
+VoiceButton* poseVoiceButton(SceneContext& ctx, VoiceButtonPose pose)
+{
+    auto* tx = ctx.window->findChild<TxApplet*>();
+    VoiceButton* voice = tx != nullptr ? tx->voiceButton() : nullptr;
+    if (voice == nullptr || voice->button() == nullptr || !voice->button()->isVisible()) {
+        ctx.failure = QStringLiteral("VOICE is not in the window's TX panel");
+        return nullptr;
+    }
+    QJsonValue sending = QJsonValue::Null;
+    if (pose == VoiceButtonPose::Sending) {
+        sending = voiceScenesSending(2, 1000, 1800);
+    } else if (pose == VoiceButtonPose::Waiting) {
+        sending = voiceScenesSending(2, 1800, 1800, 5000);
+    }
+    FakeRecordingsAccess* access = voiceScenesAccess(ctx.window, sending, pose == VoiceButtonPose::OlderCore,
+                                                     pose == VoiceButtonPose::Waiting);
+    voice->setClockForTest([] { return qint64(0); });
+    voice->setAccess(access);
+    if (pose == VoiceButtonPose::Held) {
+        const QString reason = QStringLiteral("iPhone has the transmitter. Take it to transmit from here.");
+        tx->setTransmitPermitted(false, reason);
+        tx->setTransmitHolderText(QStringLiteral("Transmit: iPhone"));
+        tx->setTakeTransmitOffered(true, false);
+    }
+    scrollIntoView(tx);
+    ctx.notes.append(QStringLiteral("VOICE follows a fake recordings access (no Core)"));
+    return voice;
+}
+
+void sceneVoiceButton(SceneContext& ctx, const QString& name, VoiceButtonPose pose)
+{
+    ctx.provenance = provProposed();
+    if (pose == VoiceButtonPose::Sending) {
+        noteNotShown(ctx, QStringLiteral("the running time"),
+                     QStringLiteral("a still image holds one moment: M2 at 0:01 of 0:02"));
+    }
+    VoiceButton* voice = nullptr;
+    runWindowScene(ctx, recPlayPoses(), 0, [&voice, pose](SceneContext& c) { voice = poseVoiceButton(c, pose); });
+    if (!ctx.failure.isEmpty() || voice == nullptr) {
+        return;
+    }
+    pump(kFinalSettleMs);
+    if (pose == VoiceButtonPose::Open || pose == VoiceButtonPose::Held) {
+        PopupShot shot;
+        shot.find = [voice]() -> QWidget* { return voice->boxForTest(); };
+        shot.provenance = provProposed();
+        shot.submenus = false;
+        shootPopup(ctx, name, [voice]() { voice->openBox(); }, shot);
+        return;
+    }
+    captureWindow(ctx, name);
+    auto* tx = ctx.window->findChild<TxApplet*>();
+    if (tx != nullptr) {
+        addDetail(ctx, name + QStringLiteral("--tx"), tx);
+    }
+}
+
+// ---- Recording plan Task 24: rewind on the waterfall ----
+// Slice A at 7.185.000 LSB on one pan, as the dsr-rewind mockups show it,
+// the waterfall's clock on the mockup's afternoon (14:32 UTC on 14 November
+// 2026). The window's own recordings access has no Core behind it, so a
+// fake one takes the pan's rewind link: it keeps three hours, answers the
+// rows and the spectrum the waterfall asks for with the band as the pose
+// feeds it, and keys nothing.
+
+enum class DsrRewindPose { Past, Hours, Drawing, TypedTime, OlderCore, SaveBracket, SaveBox };
+
+const qint64 kDsrSceneNowMs =
+    QDateTime(QDate(2026, 11, 14), QTime(14, 32, 10), QTimeZone::utc()).toMSecsSinceEpoch();
+constexpr qint64 kDsrSceneKeptMs = 3LL * 3600LL * 1000LL + 1800LL * 1000LL;   // 3.5 hours
+
+QVector<PanPose> dsrRewindPoses()
+{
+    return {twoBandPoses().constFirst()};
+}
+
+// One past row over the pan: the pose's noise, each voice signal on or off
+// by a fixed pattern per row (a net's overs), stronger toward the Core's
+// busy patch.
+QVector<float> dsrSceneRow(const PanSpectrum& band, double firstHz, double hzPerPoint, int points, qint64 utcMs)
+{
+    QVector<float> row(points, float(band.noiseDbm));
+    quint32 seed = quint32(utcMs / 50) * 2654435761u;
+    for (int x = 0; x < points; ++x) {
+        seed = seed * 1664525u + 1013904223u;
+        row[x] += float(int(seed >> 24) % 7) - 3.0f;
+    }
+    int k = 0;
+    for (const SignalSpec& sig : band.signalList) {
+        ++k;
+        const qint64 over = (utcMs / 400) / (3 + k);   // overs of a second or two
+        if (((over * 2654435761LL + k) & 3) == 0) {
+            continue;   // between overs
+        }
+        const double lo = sig.shape == SignalShape::Lsb ? sig.hz - 2400.0 : sig.hz;
+        const double hi = lo + 2400.0;
+        for (int x = 0; x < points; ++x) {
+            const double hz = firstHz + (x + 0.5) * hzPerPoint;
+            if (hz >= lo && hz <= hi) {
+                row[x] = std::max(row[x], float(sig.dbm - 6.0 * std::abs(hz - (lo + hi) / 2.0) / 1200.0));
+            }
+        }
+    }
+    return row;
+}
+
+void answerDsrScene(FakeRecordingsAccess* access, const PanSpectrum& band, int& answered)
+{
+    const QList<FakeRecordingsAccess::Call> calls = access->calls;
+    for (int i = answered; i < calls.size(); ++i) {
+        const FakeRecordingsAccess::Call& c = calls.at(i);
+        if (c.verb != QStringLiteral("requestPastRows") && c.verb != QStringLiteral("requestPastSpectrum")) {
+            continue;
+        }
+        const int points = std::max(1, c.view.pixels);
+        DsrPastFrames f;
+        f.slice = c.sliceId;
+        f.firstBinHz = double(c.view.centreHz) - double(c.view.spanHz) / 2.0;
+        f.hzPerBin = double(c.view.spanHz) / points;
+        f.binCount = points;
+        const int n = c.verb == QStringLiteral("requestPastRows") ? c.count : 1;
+        const qint64 step = n > 1 ? (c.utcNs - c.fromUtcNs) / (n - 1) : 0;
+        for (int r = 0; r < n; ++r) {
+            const qint64 ns = c.utcNs - qint64(r) * step;
+            f.utcNs.append(ns);
+            f.rows.append(dsrSceneRow(band, f.firstBinHz, f.hzPerBin, points, ns / 1000000LL));
+            f.transmit.append(false);
+        }
+        if (c.verb == QStringLiteral("requestPastRows")) {
+            emit access->pastRowsReady(f);
+        } else {
+            emit access->pastSpectrumReady(f);
+        }
+    }
+    answered = int(calls.size());
+}
+
+QList<DsrHour> dsrSceneHours()
+{
+    // Busier through the afternoon, a net around 13:05.
+    QList<DsrHour> hours;
+    const qint64 newestHour = (kDsrSceneNowMs / 3600000LL) * 3600000LL;
+    const double activity[] = {0.55, 0.85, 0.35, 0.22};
+    for (int h = 0; h < 4; ++h) {
+        hours.append(DsrHour{(newestHour - h * 3600000LL) * 1000000LL, activity[h]});
+    }
+    return hours;
+}
+
+void poseDsrRewind(SceneContext& ctx, DsrRewindPose pose, const PanSpectrum& band)
+{
+    SpectrumWidget* sw = spectrumFor(ctx.window, panIdAt(0));
+    DsrRewindLink* link = sw != nullptr
+        ? sw->findChild<DsrRewindLink*>(QStringLiteral("DsrRewindLink"), Qt::FindDirectChildrenOnly)
+        : nullptr;
+    if (link == nullptr) {
+        ctx.failure = QStringLiteral("no rewind link on the first pan's waterfall");
+        return;
+    }
+    auto* access = new FakeRecordingsAccess(ctx.window);
+    access->version = 4;
+    const qint64 rewoundMs =
+        QDateTime(QDate(2026, 11, 14), QTime(13, 5, 12), QTimeZone::utc()).toMSecsSinceEpoch();
+    QJsonArray rewound;
+    if (pose != DsrRewindPose::OlderCore) {
+        rewound.append(QJsonObject{{QStringLiteral("slice"), 0},
+                                   {QStringLiteral("utcNs"), rewoundMs * 1000000LL},
+                                   {QStringLiteral("frequencyHz"), 7185000},
+                                   {QStringLiteral("liveFrequencyHz"), 7185000}});
+    }
+    QJsonObject doc = FakeRecordingsAccess::document({}, 1);
+    // Task 25: the loop's figures give the save box its sizes, 46 MB a
+    // minute as hours.html has it.
+    constexpr double kSceneBytesPerMs = 46.0e6 / 60000.0;
+    doc.insert(QStringLiteral("dsr"), QJsonObject{{QStringLiteral("enabled"), true},
+                                                  {QStringLiteral("recording"), true},
+                                                  {QStringLiteral("reason"), QString()},
+                                                  {QStringLiteral("oldestUtcMs"), kDsrSceneNowMs - kDsrSceneKeptMs},
+                                                  {QStringLiteral("newestUtcMs"), kDsrSceneNowMs},
+                                                  {QStringLiteral("usedBytes"),
+                                                   kSceneBytesPerMs * double(kDsrSceneKeptMs)},
+                                                  {QStringLiteral("rewound"), rewound}});
+    if (pose == DsrRewindPose::SaveBox) {
+        QJsonObject settings = doc.value(QStringLiteral("settings")).toObject();
+        settings.insert(QStringLiteral("format"), QStringLiteral("wav"));
+        doc.insert(QStringLiteral("settings"), settings);
+    }
+    access->setDocument(doc);
+    if (pose == DsrRewindPose::OlderCore) {
+        access->setState(RecordingsAccess::State::NeedsNewerCore);
+    }
+    link->setAccess(access);
+    if (pose == DsrRewindPose::OlderCore) {
+        // Pulled back as far as this window's own minutes go.
+        sw->setWaterfallHistoryOffsetForTest(sw->maxWaterfallHistoryOffsetRows());
+        if (sw->wfLive()) {
+            ctx.failure = QStringLiteral("the waterfall has no history to pull back into");
+        }
+        ctx.notes.append(QStringLiteral("the first pan's rewind follows a fake older Core (no recordings)"));
+        return;
+    }
+    int answered = 0;
+    if (pose != DsrRewindPose::Drawing) {
+        answerDsrScene(access, band, answered);
+        pump(kSettleMs);
+        answerDsrScene(access, band, answered);
+    }
+    if (auto* map = qobject_cast<DsrHoursMap*>(sw->dsrHoursMapForTest())) {
+        map->setHours(dsrSceneHours());
+    }
+    if (pose == DsrRewindPose::TypedTime) {
+        const QRect strip = sw->waterfallTimeScaleRectForTest();
+        sw->openDsrGoto(sw->waterfallTopUtcMs(), strip.top() + strip.height() / 3);
+    }
+    if (pose == DsrRewindPose::SaveBracket || pose == DsrRewindPose::SaveBox) {
+        // SAVE: the bracket from the top row, 10 minutes; the box beside it.
+        sw->toggleDsrSaveBracket();
+        auto* map = qobject_cast<DsrHoursMap*>(sw->dsrHoursMapForTest());
+        if (map == nullptr || !map->hasBracket()) {
+            ctx.failure = QStringLiteral("SAVE put up no bracket");
+            return;
+        }
+        if (pose == DsrRewindPose::SaveBox) {
+            // Its ends dragged out over the net: 12:55 to 13:20.
+            map->setBracket(QDateTime(QDate(2026, 11, 14), QTime(12, 55), QTimeZone::utc()).toMSecsSinceEpoch(),
+                            QDateTime(QDate(2026, 11, 14), QTime(13, 20), QTimeZone::utc()).toMSecsSinceEpoch());
+        }
+        pump(kSettleMs);
+    }
+    ctx.notes.append(QStringLiteral("the first pan's rewind follows a fake recordings access (no Core); its past "
+                                    "rows are drawn from the pose's band"));
+}
+
+void sceneDsrRewind(SceneContext& ctx, const QString& name, DsrRewindPose pose)
+{
+    ctx.provenance = provProposed();
+    const QVector<PanPose> poses = dsrRewindPoses();
+    const PanSpectrum band = poses.constFirst().spectrum;
+    const qint64 started = QDateTime::currentMSecsSinceEpoch();
+    noteNotShown(ctx, QStringLiteral("the waterfall's clock"),
+                 QStringLiteral("set to the mockup's 14:32 UTC; the strip's seconds move with the run"));
+    runWindowScene(
+        ctx, poses, 0,
+        [started](SceneContext& c) {
+            SpectrumWidget* sw = spectrumFor(c.window, panIdAt(0));
+            if (sw == nullptr) {
+                c.failure = QStringLiteral("no spectrum on the first pan");
+                return;
+            }
+            sw->setWaterfallClockForTest(
+                [started] { return kDsrSceneNowMs + (QDateTime::currentMSecsSinceEpoch() - started); });
+        },
+        [pose, band](SceneContext& c) { poseDsrRewind(c, pose, band); });
+    if (!ctx.failure.isEmpty()) {
+        return;
+    }
+    captureWindow(ctx, name);
 }
 
 void sceneFlagFoldTwoBand(SceneContext& ctx, const QString& name)
@@ -10521,6 +11679,102 @@ QVector<Scene> fixedScenes()
             captureWindow(ctx, QStringLiteral("flag-fold--states"));
         }
     }});
+    // ---- Recording plan Task 6: Record and Play on the flag ----
+    for (const auto& [suffix, pose] : std::initializer_list<std::pair<const char*, RecPlayPose>>{
+             {"idle", RecPlayPose::Idle},
+             {"recording", RecPlayPose::Recording},
+             {"recording-myvoice", RecPlayPose::RecordingMyVoice},
+             {"armed", RecPlayPose::Armed},
+             {"playing", RecPlayPose::Playing},
+             {"onair", RecPlayPose::OnAir},
+             {"kept", RecPlayPose::Kept},
+             {"menu", RecPlayPose::Menu},
+             {"older-core", RecPlayPose::OlderCore}}) {
+        const QString name = QStringLiteral("flag-recplay--") + QLatin1String(suffix);
+        const RecPlayPose p = pose;
+        scenes.append({name, QStringLiteral("1"), false,
+                       [name, p](SceneContext& ctx) { sceneFlagRecPlay(ctx, name, p); }, true});
+    }
+    // ---- Recording plan Task 7: the Recordings panel and window ----
+    for (const auto& [suffix, pose] : std::initializer_list<std::pair<const char*, RecordingsPanelPose>>{
+             {"list", RecordingsPanelPose::List},
+             {"recording-row", RecordingsPanelPose::RecordingRow},
+             {"menu", RecordingsPanelPose::Menu}}) {
+        const QString name = QStringLiteral("recordings-panel--") + QLatin1String(suffix);
+        const RecordingsPanelPose p = pose;
+        scenes.append({name, QStringLiteral("1"), false,
+                       [name, p](SceneContext& ctx) { sceneRecordingsPanel(ctx, name, p); }, true});
+    }
+    for (const auto& [suffix, pose] : std::initializer_list<std::pair<const char*, RecordingsWindowPose>>{
+             {"all", RecordingsWindowPose::All},
+             {"filtered", RecordingsWindowPose::Filtered},
+             {"delete-confirm", RecordingsWindowPose::DeleteConfirm}}) {
+        const QString name = QStringLiteral("recordings-window--") + QLatin1String(suffix);
+        const RecordingsWindowPose p = pose;
+        scenes.append({name, QStringLiteral("2v"), true,
+                       [name, p](SceneContext& ctx) { sceneRecordingsWindow(ctx, name, p); }, true});
+    }
+    // ---- Recording plan Task 12: the Voice keyer panel and VOICE ----
+    for (const auto& [suffix, pose] : std::initializer_list<std::pair<const char*, VoicePanelPose>>{
+             {"idle", VoicePanelPose::Idle},
+             {"recording", VoicePanelPose::Recording},
+             {"sending", VoicePanelPose::Sending},
+             {"menu", VoicePanelPose::Menu},
+             {"older-core", VoicePanelPose::OlderCore}}) {
+        const QString name = QStringLiteral("voice-keyer-panel--") + QLatin1String(suffix);
+        const VoicePanelPose p = pose;
+        scenes.append({name, QStringLiteral("1"), false,
+                       [name, p](SceneContext& ctx) { sceneVoicePanel(ctx, name, p); }, true});
+    }
+    for (const auto& [suffix, pose] : std::initializer_list<std::pair<const char*, VoiceButtonPose>>{
+             {"idle", VoiceButtonPose::Idle},
+             {"open", VoiceButtonPose::Open},
+             {"sending", VoiceButtonPose::Sending},
+             {"waiting", VoiceButtonPose::Waiting},
+             {"held", VoiceButtonPose::Held},
+             {"older-core", VoiceButtonPose::OlderCore}}) {
+        const QString name = QStringLiteral("voice-button--") + QLatin1String(suffix);
+        const VoiceButtonPose p = pose;
+        scenes.append({name, QStringLiteral("1"), false,
+                       [name, p](SceneContext& ctx) { sceneVoiceButton(ctx, name, p); }, true});
+    }
+    // ---- Recording plan Task 24: rewind on the waterfall ----
+    for (const auto& [suffix, pose] : std::initializer_list<std::pair<const char*, DsrRewindPose>>{
+             {"past", DsrRewindPose::Past},
+             {"hours", DsrRewindPose::Hours},
+             {"drawing", DsrRewindPose::Drawing},
+             {"typed-time", DsrRewindPose::TypedTime},
+             {"older-core", DsrRewindPose::OlderCore}}) {
+        const QString name = QStringLiteral("dsr-rewind--") + QLatin1String(suffix);
+        const DsrRewindPose p = pose;
+        scenes.append({name, QStringLiteral("1"), false,
+                       [name, p](SceneContext& ctx) { sceneDsrRewind(ctx, name, p); }, true});
+    }
+    // ---- Recording plan Task 25: saving a stretch ----
+    for (const auto& [suffix, pose] : std::initializer_list<std::pair<const char*, DsrRewindPose>>{
+             {"bracket", DsrRewindPose::SaveBracket}, {"box", DsrRewindPose::SaveBox}}) {
+        const QString name = QStringLiteral("dsr-save--") + QLatin1String(suffix);
+        const DsrRewindPose p = pose;
+        scenes.append({name, QStringLiteral("1"), false,
+                       [name, p](SceneContext& ctx) { sceneDsrRewind(ctx, name, p); }, true});
+    }
+    // ---- Recording plan Task 8: Setup > Cores > Recordings ----
+    for (const auto& [suffix, sd] : std::initializer_list<std::pair<const char*, bool>>{{"ssd", false},
+                                                                                     {"sd-card", true}}) {
+        const QString name = QStringLiteral("recordings-setup--") + QLatin1String(suffix);
+        const bool sdCard = sd;
+        scenes.append({name, QStringLiteral("2v"), true,
+                       [name, sdCard](SceneContext& ctx) { sceneRecordingsSetup(ctx, name, sdCard); }, true});
+    }
+    // ---- Recording plan Task 26: Setup > Cores > Digital Spectrum Recorder ----
+    for (const auto& [suffix, pose] : std::initializer_list<std::pair<const char*, DsrSetupPose>>{
+             {"ssd", DsrSetupPose::Ssd}, {"sd-card", DsrSetupPose::SdCard},
+             {"erase-confirm", DsrSetupPose::EraseConfirm}}) {
+        const QString name = QStringLiteral("dsr-setup--") + QLatin1String(suffix);
+        const DsrSetupPose p = pose;
+        scenes.append({name, QStringLiteral("2v"), true,
+                       [name, p](SceneContext& ctx) { sceneDsrSetup(ctx, name, p); }, true});
+    }
     // ---- Longpath instruments as container content (switch on) ----
     scenes.append({QStringLiteral("instruments-sheet"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) { sceneInstrumentsSheet(ctx); }, true});
@@ -11815,6 +13069,169 @@ QSize growSetupToFit(SceneContext& ctx, SetupDialog* d, const QString& where)
 }
 
 } // namespace
+
+// ---- Recording plan Task 8: Setup > Cores > Recordings ----
+// The page against a fake recordings access, as the approved
+// recording-settings mockup's two Cores: one with its own SSD and a USB SSD,
+// and a Pi with only an SD card (the note that the card is fine).
+void sceneRecordingsSetup(SceneContext& ctx, const QString& name, bool sdCard)
+{
+    ctx.provenance = provProposed();
+    SetupDialog* first = openSetupDialog(ctx.window);
+    const int index = first != nullptr ? first->pageLabelsForTest().indexOf(QStringLiteral("Recordings")) : -1;
+    if (index < 0) {
+        ctx.failure = QStringLiteral("no Recordings page in Setup");
+        return;
+    }
+    SetupDialog* d = openSetupPageScene(ctx, index);
+    if (d == nullptr) {
+        return;
+    }
+    auto* page = d->findChild<RecordingsSetupPage*>();
+    if (page == nullptr) {
+        ctx.failure = QStringLiteral("the Recordings page was not built");
+        return;
+    }
+    const qint64 gb = qint64(1000) * 1000 * 1000;
+    const auto disk = [](const QString& root, const QString& diskName, qint64 free, bool own, bool sd) {
+        return QJsonObject{{QStringLiteral("root"), root}, {QStringLiteral("name"), diskName},
+                           {QStringLiteral("free"), free}, {QStringLiteral("total"), free * 2},
+                           {QStringLiteral("sd"), sd},     {QStringLiteral("own"), own}};
+    };
+    const QJsonArray disks = sdCard
+        ? QJsonArray{disk(QStringLiteral("/"), QStringLiteral("SD card"), 58 * gb, true, true)}
+        : QJsonArray{disk(QStringLiteral("/"), QStringLiteral("SSD"), 412 * gb, true, false),
+                     disk(QStringLiteral("/media/t7"), QStringLiteral("USB disk: Samsung T7 SSD"), 931 * gb, false,
+                          false)};
+    QJsonObject settings{{QStringLiteral("keepMyVoice"), true},  {QStringLiteral("sidesApart"), false},
+                         {QStringLiteral("autoStart"), false},   {QStringLiteral("autoStop"), true},
+                         {QStringLiteral("quietMinutes"), 2},    {QStringLiteral("format"), QStringLiteral("mp3")},
+                         {QStringLiteral("disk"), QString()},    {QStringLiteral("disks"), disks}};
+    auto* access = new FakeRecordingsAccess(ctx.window);
+    QJsonObject doc = FakeRecordingsAccess::document({}, 1, QString(), settings);
+    QJsonObject index0 = doc.value(QStringLiteral("index")).toObject();
+    index0.insert(QStringLiteral("count"), 12);
+    index0.insert(QStringLiteral("usedBytes"), qint64(1400) * 1000 * 1000);
+    index0.insert(QStringLiteral("freeBytes"), (sdCard ? 58 : 412) * gb);
+    doc.insert(QStringLiteral("index"), index0);
+    access->setDocument(doc);
+    page->setAccess(access);
+    pump(kTabSettleMs);
+    ctx.notes.append(QStringLiteral("Setup > Cores > Recordings on a fake recordings access (no Core), %1")
+                         .arg(sdCard ? QStringLiteral("a Pi with only an SD card")
+                                     : QStringLiteral("a Core with an SSD and a USB SSD")));
+    captureDialog(ctx, d, name);
+    // The page's foot: Playing back and its five switches.
+    if (auto* scroll = page->findChild<QScrollArea*>()) {
+        scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum());
+        pump(kTabSettleMs);
+        captureDialog(ctx, d, name + QStringLiteral("--bottom"));
+    }
+}
+
+// ---- Recording plan Task 26: Setup > Cores > Digital Spectrum Recorder ----
+// The page against a fake recordings access, as the approved dsr-setup
+// mockup's Cores: one with an SSD recording two receivers at 192 kHz into a
+// full 10 GB loop (the head and the red zone), a Pi with only an SD card
+// (the switch off and the red warning), and the erase's confirm.
+void sceneDsrSetup(SceneContext& ctx, const QString& name, DsrSetupPose pose)
+{
+    ctx.provenance = provProposed();
+    SetupDialog* first = openSetupDialog(ctx.window);
+    const int index =
+        first != nullptr ? first->pageLabelsForTest().indexOf(QStringLiteral("Digital Spectrum Recorder")) : -1;
+    if (index < 0) {
+        ctx.failure = QStringLiteral("no Digital Spectrum Recorder page in Setup");
+        return;
+    }
+    SetupDialog* d = openSetupPageScene(ctx, index);
+    if (d == nullptr) {
+        return;
+    }
+    auto* page = d->findChild<DsrSetupPage*>();
+    if (page == nullptr) {
+        ctx.failure = QStringLiteral("the Digital Spectrum Recorder page was not built");
+        return;
+    }
+    const bool sdCard = pose == DsrSetupPose::SdCard;
+    const qint64 gb = qint64(1000) * 1000 * 1000;
+    const auto disk = [](const QString& root, const QString& diskName, qint64 free, bool own, bool sd) {
+        return QJsonObject{{QStringLiteral("root"), root}, {QStringLiteral("name"), diskName},
+                           {QStringLiteral("free"), free}, {QStringLiteral("total"), free * 2},
+                           {QStringLiteral("sd"), sd},     {QStringLiteral("own"), own}};
+    };
+    const QJsonArray disks = sdCard
+        ? QJsonArray{disk(QStringLiteral("/"), QStringLiteral("SD card"), 58 * gb, true, true)}
+        : QJsonArray{disk(QStringLiteral("/"), QStringLiteral("SSD"), 412 * gb, true, false)};
+    QJsonObject settings{{QStringLiteral("format"), QStringLiteral("mp3")},
+                         {QStringLiteral("disk"), QString()},
+                         {QStringLiteral("disks"), disks}};
+    // The mockup's moment: 14:32 UTC on 14 Nov 2026, the loop full.
+    const qint64 newestMs = QDateTime(QDate(2026, 11, 14), QTime(14, 32), QTimeZone::utc()).toMSecsSinceEpoch();
+    const int rate = 192000;
+    const qint64 perHour = DsrRingFile::blockBytes(rate) * 3600 * 2;
+    const qint64 limit = 10 * gb;
+    const qint64 heldMs = limit * 3600 * 1000 / perHour;
+    const QJsonArray receivers{QJsonObject{{QStringLiteral("receiver"), 0}, {QStringLiteral("rateHz"), rate}},
+                               QJsonObject{{QStringLiteral("receiver"), 1}, {QStringLiteral("rateHz"), rate}}};
+    const QJsonObject dsr{
+        {QStringLiteral("enabled"), true},
+        {QStringLiteral("disk"), QString()},
+        {QStringLiteral("sizeLimitGb"), 10},
+        {QStringLiteral("recording"), !sdCard},
+        {QStringLiteral("reason"), sdCard ? QStringLiteral("The only disk is an SD card.") : QString()},
+        {QStringLiteral("sizeLimitBytes"), limit},
+        {QStringLiteral("usedBytes"), sdCard ? qint64(0) : limit - 4096},
+        {QStringLiteral("writePosition"), sdCard ? qint64(0) : limit * 2 / 5},
+        {QStringLiteral("oldestUtcMs"), sdCard ? qint64(0) : newestMs - heldMs},
+        {QStringLiteral("newestUtcMs"), sdCard ? qint64(0) : newestMs},
+        {QStringLiteral("hoursHeld"), sdCard ? 0.0 : double(heldMs) / 3600000.0},
+        {QStringLiteral("overflows"), 0},
+        {QStringLiteral("rewound"), QJsonArray()},
+        {QStringLiteral("stretch"), QJsonValue()},
+        {QStringLiteral("saving"), 0},
+        {QStringLiteral("receivers"), receivers},
+        {QStringLiteral("bytesPerHour"), perHour}};
+    auto* access = new FakeRecordingsAccess(ctx.window);
+    access->version = RecordingsAccess::kDsrVersion;
+    if (!sdCard) {
+        // The mockup's three saved stretches, 1.4 GB.
+        const qint64 sizes[] = {700, 500, 200};
+        for (int i = 0; i < 3; ++i) {
+            RecordingEntry e;
+            e.id = QStringLiteral("w%1").arg(i + 1);
+            e.kind = i < 2 ? RecordingKind::WholePan : RecordingKind::Sound;
+            e.startUtc = QDateTime::fromMSecsSinceEpoch(newestMs - (i + 1) * 3600000LL, QTimeZone::utc());
+            e.sizeBytes = sizes[i] * 1000 * 1000;
+            e.name = e.id;
+            access->entries.append(e);
+        }
+    }
+    QJsonObject doc = FakeRecordingsAccess::document({}, 1, QString(), settings);
+    doc.insert(QStringLiteral("version"), RecordingsAccess::kDsrVersion);
+    doc.insert(QStringLiteral("dsr"), dsr);
+    access->setDocument(doc);
+    page->setAccess(access);
+    pump(kTabSettleMs);
+    ctx.notes.append(QStringLiteral("Setup > Cores > Digital Spectrum Recorder on a fake recordings access (no "
+                                    "Core), %1")
+                         .arg(sdCard ? QStringLiteral("a Pi with only an SD card")
+                                     : QStringLiteral("a Core with an SSD, two receivers at 192 kHz, the loop full")));
+    if (pose != DsrSetupPose::EraseConfirm) {
+        captureDialog(ctx, d, name);
+        return;
+    }
+    // The confirm the page shows before erasing, built as its own is.
+    QMessageBox box(QMessageBox::Warning, DsrSetupPage::eraseTitle(), DsrSetupPage::eraseTitle(),
+                    QMessageBox::NoButton, d);
+    box.setInformativeText(page->eraseText());
+    box.addButton(QStringLiteral("Erase"), QMessageBox::DestructiveRole);
+    box.setDefaultButton(box.addButton(QMessageBox::Cancel));
+    box.show();
+    pump(kTabSettleMs);
+    captureDialog(ctx, &box, name);
+    box.hide();
+}
 
 QVector<Scene> setupPageScenes(MainWindow* window)
 {

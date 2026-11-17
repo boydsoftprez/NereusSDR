@@ -8,6 +8,75 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16 J.J. Boyd / KG4VCF : rewind plays on release (JJ's design
+//                 change): letting go of the picture in the past plays the
+//                 pan's slice from the top row at its own frequency; a
+//                 click in the past tunes as a live click does, and plays
+//                 from the top row when the slice is not playing yet; why
+//                 it cannot play shows on the waterfall. AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-11-16 J.J. Boyd / KG4VCF : rewound, the past spectrum is asked
+//                 for on the paint timer's tick, at the display's frame
+//                 rate, for the moment playing; an answer that comes late
+//                 asks again at once. AI-assisted via Anthropic Claude Code.
+//   2026-11-16 J.J. Boyd / KG4VCF : SAVE above the hours map, its yellow
+//                 bracket and the save box (recording plan Task 25).
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-11-16 J.J. Boyd / KG4VCF : rewind on the waterfall (recording plan
+//                 Task 24): the strip reaches past this window's history
+//                 into the Core's rows, a past click rewinds the slice, PAST,
+//                 the hours map, a typed time, the drawing dim and your
+//                 transmit rows marked. AI-assisted via Anthropic Claude Code.
+//   2026-11-16: Review fixes: details opened upward stand past the flag, clear
+//                 of the divider, opaque; the strip is left out over a
+//                 waterfall share under 58 px; a flag hanging into the strip
+//                 sends your line to the dial's other side and keeps tags
+//                 clear; the strip's scale column takes its presses; your own
+//                 tag stays while its details are open; the zoom row follows
+//                 the waterfall top (waterfallTopChanged); pausing re-places
+//                 the details. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-11-16: The details stand over the waterfall: roundtableInspectorSpot
+//                 gives the waterfall, the spectrum and the left edge to line up
+//                 with; the divider and your line moving re-place them.
+//                 roundtableControlRects is gone. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-11-16: Your frequency's line and the tags in the Roundtable strip,
+//                 each tag one line, kept clear only of the line; nothing
+//                 Roundtable on the spectrum any more (the card, its tick and
+//                 the tags' ticks are gone). The strip's background spans the
+//                 whole width (roundtableStripChrome). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-11-16: The Roundtable strip between the frequency scale and the
+//                 waterfall: its row in spectrumLayout (out of the waterfall
+//                 only), its background in both paint paths, presses, hover and
+//                 wheel in it consumed, LIVE anchored to the scale row, and the
+//                 waterfall image rebuild shared by resize and the strip
+//                 (rebuildWaterfallImage). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-11-15: A right-click goes to the pan through panContextMenuRequested
+//               only when the pan detached this spectrum into its own window,
+//               not whenever the spectrum has no parent.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-09: On Intel macOS the detached spectrum window presents
+//               without waiting for the panel. The layer was still vsynced,
+//               so a timer that drifted a millisecond waited another
+//               refresh and the row clock stepped.
+//   2026-11-09: On Intel macOS the spectrum is its own frameless window.
+//               Flushing it on the texture-only path still left the next
+//               sync copying the main window's backing store, and that copy
+//               stepped the waterfall. A separate window flushes only itself.
+//   2026-11-09: On Intel macOS the meters stay QWidget. Each QRhiWidget is
+//               its own Metal swapchain, and Qt waits for every other
+//               swapchain before the spectrum can present. A screen of
+//               meter swapchains held the waterfall row clock. Skipping the
+//               3D ridge outline did not change that, so the lines draw
+//               again. The spectrum stays the one Metal surface.
+//   2026-11-09: On Intel macOS the spectrum color buffer is logical pixels.
+//               A device-pixel frame on the scaled Retina framebuffer stayed
+//               open longer than a waterfall row, and the next paint blocked
+//               in Metal until it finished, so the row queue dropped the
+//               rows that wait. The window scales the smaller texture.
 //   2026-11-06 J.J. Boyd / KG4VCF : the band stack overlay, ticks in both
 //                 paint paths, their click, hover and right-click (band stack
 //                 plan Task 11). AI-assisted via Anthropic Claude Code.
@@ -685,19 +754,33 @@
 #include <QDesktopServices>
 #include <QScopedValueRollback>
 #include <QGuiApplication>
+#include <QAction>
+#include <QFrame>
 #include <QHoverEvent>
+#include <QHBoxLayout>
+#include <QKeyEvent>
 #include <QLabel>
+#include <QLineEdit>
+#include <QPushButton>
+#include <QStyle>
+#include <QTimer>
+#include <QRegularExpression>
+#include <QVBoxLayout>
 #include <QPropertyAnimation>
 #include <QScreen>
 #include <QSignalBlocker>
+#include <QSurfaceFormat>
 #include <QToolTip>
 #include <QUrl>
+#include <QWindow>
 
 #include <QDateTime>
 #include <QElapsedTimer>
 #include <QTimeZone>
 
 #include "core/MemoryLock.h"
+#include "gui/recordings/DsrHoursMap.h"
+#include "gui/recordings/DsrSaveBox.h"
 #include "core/MemoryPressure.h"
 #include "core/PerfMonitor.h"
 #include <QMap>
@@ -795,6 +878,11 @@ QRgb interpolateWfGradient(float t, const WfGradientStop* stops, int count)
 
 // ---- SpectrumWidget ----
 
+#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
+bool presentIntelSpectrumFrame(QWidget* spectrum);
+void noteIntelSpectrumPainted(qint64 paintMs);
+#endif
+
 // Every SpectrumWidget, for the settings every pan shares (Spectrum Peaks:
 // reloadSpectrumPeaksSettingsOnAllPans; the rest: shareWithOtherPans).
 // GUI thread only.
@@ -872,6 +960,11 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     m_displayTimer.setSingleShot(false);
     connect(&m_displayTimer, &QTimer::timeout, this, [this]() {
         checkImdFreshness(QDateTime::currentMSecsSinceEpoch());
+        // Rewound: the past spectrum moves at the display's frame rate,
+        // as the live one does.
+        if (m_dsrRewound) {
+            askDsrPastSpectrum();
+        }
         // 2026-05-25 KG4VCF Option B revisit: the original Option B drop
         // of this gate ("always repaint at display cadence") looked great
         // on a healthy system but pegged a CPU core under macOS low-power
@@ -883,9 +976,13 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
         // Trade-off: animation cadence is tied to FFT-arrival cadence
         // (not display cadence), but FFT arrival drives push too, so the
         // two stay locked in steady state.
+        // The scroll advance below has to land before the paint, so the
+        // request is held until the end of this tick. On Intel this tick
+        // presents the spectrum without a full-window flush.
+        bool paintSpectrum = false;
         if (m_hasNewSpectrum) {
             m_hasNewSpectrum = false;
-            update();
+            paintSpectrum = true;
         }
 
         // 3DSS: advance the continuous scroll-progress accumulator from
@@ -912,6 +1009,15 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
             m_dssLastTickMs = nowTickMs;
         } else {
             m_dssLastTickMs = 0;
+        }
+        if (paintSpectrum) {
+#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
+            if (!presentIntelSpectrumFrame(this)) {
+                repaint();
+            }
+#else
+            update();
+#endif
         }
     });
     m_displayTimer.start();
@@ -4147,6 +4253,9 @@ void SpectrumWidget::setSpectrumFrac(float frac)
     if (std::abs(m_spectrumFrac - clamped) < 1e-6f) { return; }
     m_spectrumFrac = clamped;
     refreshWfTimestampLabel();
+    // The waterfall's room changed: open details re-place (strip design 5).
+    emit roundtableInspectorSpotChanged();
+    emit waterfallTopChanged();
     markOverlayDirty();
     update();
     scheduleSettingsSave();
@@ -7048,6 +7157,9 @@ void SpectrumWidget::setBandEdgeColor(const QColor& c)
 // Shared overlay consumers of the final local or remote reduced trace.
 void SpectrumWidget::updateReducedSpectrumOverlays()
 {
+    // Rewind (Task 24): while rewound the trace, and the S-meter that reads
+    // it (spectrumFrameRendered), are the moment played.
+    substituteDsrPastTrace();
     // Legacy per-pixel peak hold -- track running max in display-pixel
     // space.  Replaces the old per-bin m_peakHoldBins.
     if (m_peakHoldEnabled) {
@@ -7758,13 +7870,67 @@ SpectrumWidget::SpectrumLayout SpectrumWidget::spectrumLayout() const
     const int specH = static_cast<int>(contentH * m_spectrumFrac);
     const int plotW = width() - effectiveStripW();
     const int freqY = specH + kDividerH;
-    const int wfY = freqY + freqScaleH;
+    // The Roundtable strip comes out of the waterfall's share only: the
+    // spectrum keeps the height the split gives it, shown or hidden.
+    // A waterfall share too short to keep kRoundtableStripMinWaterfall under
+    // the strip leaves the strip out: the waterfall keeps its whole share and
+    // the flag's Roundtable line is the way in.
+    const int wfShare = std::max(0, contentH - specH);
+    const bool stripLaidOut = m_roundtableStripShown
+        && wfShare >= kRoundtableStripHeight + kRoundtableStripMinWaterfall;
+    const int stripH = stripLaidOut ? kRoundtableStripHeight : 0;
+    const int stripY = freqY + freqScaleH;
+    const int wfY = stripY + stripH;
+    const int wfH = std::max(0, wfShare - stripH);
     return {contentH,
             QRect(0, 0, plotW, specH),
             QRect(0, specH, width(), kDividerH),
             QRect(0, freqY, plotW, freqScaleH),
-            QRect(0, wfY, plotW, contentH - specH),
-            QRect(0, wfY, width(), contentH - specH)};
+            QRect(0, wfY, plotW, wfH),
+            QRect(0, wfY, width(), wfH),
+            stripLaidOut ? QRect(0, stripY, plotW, stripH) : QRect(),
+            stripLaidOut ? QRect(0, stripY, width(), stripH) : QRect()};
+}
+
+void SpectrumWidget::setRoundtableStripShown(bool shown)
+{
+    if (shown == m_roundtableStripShown) {
+        return;
+    }
+    m_roundtableStripShown = shown;
+    // The waterfall's height changed: the same rebuild as a resize.
+    rebuildWaterfallImage();
+    updateVfoPositions();
+    // Rewind (Task 24): the hours map and the typed-time box stay by the strip.
+    layoutDsrChildren();
+    refreshWfTimestampLabel();
+    emit roundtableInspectorSpotChanged();
+    emit waterfallTopChanged();
+    markOverlayDirty();
+    refreshRoundtableTagLayer();
+    update();
+}
+
+QRect SpectrumWidget::roundtableStripRectForTest() const
+{
+    return spectrumLayout().roundtableStrip;
+}
+
+namespace {
+// The Roundtable strip's colors (strip design): the fill and its edge lines.
+constexpr QRgb kRoundtableStripFill = 0x0c0c0e;
+constexpr QRgb kRoundtableStripEdge = 0x2c2c31;
+} // namespace
+
+void SpectrumWidget::drawRoundtableStrip(QPainter& p, const QRect& strip)
+{
+    if (strip.isEmpty()) {
+        return;
+    }
+    p.fillRect(strip, QColor(kRoundtableStripFill));
+    const QColor edge(kRoundtableStripEdge);
+    p.fillRect(QRect(strip.left(), strip.top(), strip.width(), 1), edge);
+    p.fillRect(QRect(strip.left(), strip.bottom(), strip.width(), 1), edge);
 }
 
 void SpectrumWidget::resizeEvent(QResizeEvent* event)
@@ -7793,6 +7959,19 @@ void SpectrumWidget::resizeEvent(QResizeEvent* event)
     }
 
     // Recreate waterfall image at new size
+    rebuildWaterfallImage();
+
+    // Reposition VFO flags after resize
+    updateVfoPositions();
+    // Rewind (Task 24): the hours map and the typed-time box stay by the strip.
+    layoutDsrChildren();
+}
+
+// The waterfall image at the layout's waterfall size, refilled from the
+// history. Moved out of resizeEvent unchanged so the Roundtable strip
+// (setRoundtableStripShown) takes the same path as a resize.
+void SpectrumWidget::rebuildWaterfallImage()
+{
     const SpectrumLayout layout = spectrumLayout();
     const int wfW = layout.waterfall.width();
     const int wfH = layout.waterfall.height();
@@ -7836,10 +8015,9 @@ void SpectrumWidget::resizeEvent(QResizeEvent* event)
             rebuildWaterfallViewport();
         }
     }
-
-    // Reposition VFO flags after resize
-    updateVfoPositions();
 }
+
+static void noteSpectrumPaintMs(qint64 ms);
 
 void SpectrumWidget::paintEvent(QPaintEvent* event)
 {
@@ -7854,7 +8032,13 @@ void SpectrumWidget::paintEvent(QPaintEvent* event)
 #ifdef NEREUS_GPU_SPECTRUM
     // GPU mode: render() handles everything via QRhi.
     // Do NOT use QPainter on QRhiWidget — it doesn't support paintEngine.
+    // Set before QRhiWidget::paintEvent builds the color texture. A resize
+    // and the first Show both paint through here.
+    applySpectrumColorBufferSize();
+    QElapsedTimer spectrumPaintTimer;
+    spectrumPaintTimer.start();
     SpectrumBaseClass::paintEvent(event);
+    noteSpectrumPaintMs(spectrumPaintTimer.elapsed());
     return;
 #endif
     Q_UNUSED(event);
@@ -7885,6 +8069,10 @@ void SpectrumWidget::paintEvent(QPaintEvent* event)
     drawGrid(p, specRect);
     drawSpectrum(p, specRect);
     drawWaterfall(p, wfRect);
+    // The Roundtable strip under the frequency scale, before the markers so
+    // the dial's line still runs through it to the waterfall. Its background
+    // spans the whole width, the scale column too.
+    drawRoundtableStrip(p, layout.roundtableStripChrome);
     // TNF notch overlay immediately before the spots, matching upstream's
     // paint order: AetherSDR src/gui/SpectrumWidget.cpp:12903-12904
     // [@c6481cbf] draws drawTnfMarkers then drawSpotMarkers.  No visibility
@@ -7950,6 +8138,7 @@ void SpectrumWidget::paintEvent(QPaintEvent* event)
     // strip lands in the same right-edge column as the dBm scale strip.
     const QRect wfRectFull = layout.waterfallChrome;
     drawTimeScale(p, wfRectFull);
+    drawDsrOverlay(p, specRect, wfRectFull);
     // B8 Task 21: guard cursor frequency readout by m_showCursorFreq.
     if (m_showCursorFreq) {
         drawCursorInfo(p, specRect);
@@ -9166,7 +9355,10 @@ void SpectrumWidget::drawTimeScale(QPainter& p, const QRect& wfRect)
     // LIVE button — grey when live, bright red when paused.
     const QRect liveRect = waterfallLiveButtonRect(wfRect);
     p.setPen(QColor(0x40, 0x50, 0x60));
-    p.setBrush(m_wfLive ? QColor(0x45, 0x45, 0x45)
+    // Rewind (Task 24): LIVE also stays red after PTT took a rewound slice
+    // live, until it returns to the frequency before rewinding.
+    const bool liveGrey = m_wfLive && !m_dsrLiveReturnPending;
+    p.setBrush(liveGrey ? QColor(0x45, 0x45, 0x45)
                         : QColor(0xc0, 0x20, 0x20));  // bright red when paused
     p.drawRoundedRect(liveRect, 3, 3);
 
@@ -9174,8 +9366,27 @@ void SpectrumWidget::drawTimeScale(QPainter& p, const QRect& wfRect)
     liveFont.setPointSize(7); liveFont = WorkspacePreview::readableFont(liveFont, p.device());
     liveFont.setBold(true);
     p.setFont(liveFont);
-    p.setPen(m_wfLive ? QColor(0xb0, 0xb0, 0xb0) : Qt::white);
+    p.setPen(liveGrey ? QColor(0xb0, 0xb0, 0xb0) : Qt::white);
     p.drawText(liveRect, Qt::AlignCenter, QStringLiteral("LIVE"));
+
+    // Rewind (Task 24): your transmit rows, marked down the strip's left
+    // edge while it shows times.
+    if (!m_wfLive && !m_waterfall.isNull() && wfRect.height() > 0) {
+        const int rows = m_waterfall.height();
+        const QColor yours(0xff, 0x5a, 0x5a);
+        int runStart = -1;
+        for (int y = 0; y <= rows; ++y) {
+            const bool tx = y < rows && waterfallRowIsTransmit(m_wfHistoryOffsetRows + y);
+            if (tx && runStart < 0) {
+                runStart = y;
+            } else if (!tx && runStart >= 0) {
+                const int y0 = wfRect.top() + runStart * wfRect.height() / rows;
+                const int y1 = wfRect.top() + y * wfRect.height() / rows;
+                p.fillRect(QRect(stripX + 1, y0, 3, std::max(1, y1 - y0)), yours);
+                runStart = -1;
+            }
+        }
+    }
 
     // Tick labels along the strip.
     const float msPerRow = static_cast<float>(waterfallRowPeriodMs());
@@ -9450,7 +9661,13 @@ int SpectrumWidget::waterfallHistoryCapacityRows() const
 
 int SpectrumWidget::maxWaterfallHistoryOffsetRows() const
 {
-    return std::max(0, m_wfHistoryRowCount - m_waterfall.height());
+    const int own = std::max(0, m_wfHistoryRowCount - m_waterfall.height());
+    if (!m_dsrAvailable || m_dsrOldestUtcMs <= 0) {
+        return own;
+    }
+    // Rewind (Task 24): the top row reaches back to the oldest moment the
+    // Digital Spectrum Recorder keeps.
+    return std::max(own, waterfallAgeForUtcMs(m_dsrOldestUtcMs));
 }
 
 int SpectrumWidget::historyRowIndexForAge(int ageRows) const
@@ -9465,6 +9682,13 @@ int SpectrumWidget::historyRowIndexForAge(int ageRows) const
 QString SpectrumWidget::pausedTimeLabelForAge(int ageRows) const
 {
     const int rowIndex = historyRowIndexForAge(ageRows);
+    if (m_dsrAvailable && ageRows >= m_wfHistoryRowCount) {
+        // Rewind (Task 24): past this window's own history the Core's rows,
+        // one row period apart.
+        const QDateTime utc = QDateTime::fromMSecsSinceEpoch(
+            waterfallUtcMsForAge(ageRows), QTimeZone::utc());
+        return QStringLiteral("-") + utc.toString(QStringLiteral("HH:mm:ssZ"));
+    }
     if (rowIndex < 0 || rowIndex >= m_wfHistoryTimestamps.size()) {
         return QString();
     }
@@ -9513,6 +9737,7 @@ void SpectrumWidget::ensureWaterfallHistory()
         newHistory.fill(Qt::black);
         const bool replacingHistory = !m_waterfallHistory.isNull();
         m_wfHistoryTimestamps = QVector<qint64>(desiredSize.height(), 0);
+        m_wfHistoryTransmit = QVector<quint8>(desiredSize.height(), 0);
         m_wfHistorySequences = QVector<quint64>(desiredSize.height(), 0);
         m_imdWaterfallAnnotations.clear();
         m_imdEarlyHistoryRows.clear();
@@ -9579,6 +9804,10 @@ void SpectrumWidget::appendHistoryRow(const QRgb* rowData, qint64 timestampMs,
     if (m_wfHistoryWriteRow >= 0
         && m_wfHistoryWriteRow < m_wfHistoryTimestamps.size()) {
         m_wfHistoryTimestamps[m_wfHistoryWriteRow] = timestampMs;
+        if (m_wfHistoryWriteRow < m_wfHistoryTransmit.size()) {
+            // Rewind (Task 24): a row of your transmit is marked as yours.
+            m_wfHistoryTransmit[m_wfHistoryWriteRow] = m_moxOverlay ? 1 : 0;
+        }
         m_wfHistoryWindows[m_wfHistoryWriteRow] = {m_centerHz, m_bandwidthHz};
         m_wfHistorySequences[m_wfHistoryWriteRow] = ++m_wfNextRowSequence;
     }
@@ -9590,9 +9819,10 @@ void SpectrumWidget::appendHistoryRow(const QRgb* rowData, qint64 timestampMs,
     if (oldestIndex >= 0) {
         m_imdWaterfallAnnotations.expireBefore(m_wfHistorySequences[oldestIndex]);
     }
-    if (!m_wfLive) {
+    if (!m_wfLive && !m_dsrRewound) {
         // Auto-bump while paused so the displayed row stays visually fixed
-        // as new live rows arrive underneath.
+        // as new live rows arrive underneath. Rewound (Task 24) the picture
+        // moves with the sound instead: the top row stays the moment heard.
         m_wfHistoryOffsetRows = std::min(
             m_wfHistoryOffsetRows + 1, maxWaterfallHistoryOffsetRows());
     }
@@ -9655,10 +9885,48 @@ void SpectrumWidget::rebuildWaterfallViewport(double centerHz, double bandwidthH
     const int rowWidthBytes = m_waterfall.width() * static_cast<int>(sizeof(QRgb));
     const int historyWidth = m_waterfallHistory.width();
     const bool sameWidth = historyWidth == m_waterfall.width();
+    // Rewind (Task 24): past this window's own history, the rows the Core
+    // drew from the Digital Spectrum Recorder; those not here yet are asked
+    // for once (askDsrRows).
+    const bool coreRows = m_dsrAvailable && !m_wfLive;
+    if (coreRows && (std::abs(bandwidthHz - m_dsrCacheSpanHz) > 0.5
+                     || m_waterfall.width() != m_dsrCacheWidth)) {
+        clearDsrRows();
+        m_dsrCacheSpanHz = bandwidthHz;
+        m_dsrCacheWidth = m_waterfall.width();
+    }
+    qint64 missingFromMs = 0;
+    qint64 missingToMs = 0;
+    int missing = 0;
+    const float coreRowCalDb = m_remoteSpectrum ? 0.0f : displayCalOffsetDb();
     for (int y = 0; y < m_waterfall.height(); ++y) {
         const int rowIndex = historyRowIndexForAge(m_wfHistoryOffsetRows + y);
         if (rowIndex < 0) {
-            break;
+            if (!coreRows) {
+                break;
+            }
+            const qint64 t = waterfallUtcMsForAge(m_wfHistoryOffsetRows + y);
+            if (const DsrPastRow* row = dsrRowNear(t)) {
+                auto* dst = reinterpret_cast<QRgb*>(m_waterfall.scanLine(y));
+                const int width = m_waterfall.width();
+                const double startHz = centerHz - bandwidthHz / 2.0;
+                const qsizetype points = row->dbm.size();
+                for (int x = 0; x < width; ++x) {
+                    const double hz = startHz + (x + 0.5) * bandwidthHz / width;
+                    const double k = row->hzPerPoint > 0.0
+                        ? std::floor((hz - row->firstHz) / row->hzPerPoint) : -1.0;
+                    if (k >= 0.0 && k < double(points)) {
+                        dst[x] = dbmToRgb(row->dbm[qsizetype(k)] + coreRowCalDb);
+                    }
+                }
+            } else if (!dsrAnswered(t)) {
+                if (missing == 0) {
+                    missingToMs = t;   // the top row: the newest
+                }
+                missingFromMs = t;
+                ++missing;
+            }
+            continue;
         }
         const QRgb* src = reinterpret_cast<const QRgb*>(
             m_waterfallHistory.constScanLine(rowIndex));
@@ -9705,6 +9973,10 @@ void SpectrumWidget::rebuildWaterfallViewport(double centerHz, double bandwidthH
     m_wfTexFullUpload = true;
     m_wfLastUploadedRow = -1;
 #endif
+    if (missing > 0) {
+        askDsrRows(missingFromMs, missingToMs, missing);
+    }
+    layoutDsrChildren();
     update();
 }
 
@@ -9716,9 +9988,18 @@ void SpectrumWidget::setWaterfallLive(bool live)
     }
     if (live) {
         m_wfHistoryOffsetRows = 0;
+        // Rewind (Task 24): the picture and the spectrum are live again.
+        m_dsrRewound = false;
+        m_dsrPastTrace = NereusSDR::DsrPastFrames{};
+        m_dsrSpectrumInFlight = false;
+        m_dsrDrawing = false;
+        m_dsrRowsRefusal.clear();
+        m_dsrPlayRefusal.clear();
     }
     m_wfLive = live;
     rebuildWaterfallViewport();
+    // Paused, the time scale widens: open details re-place clear of it.
+    emit roundtableInspectorSpotChanged();
     markOverlayDirty();
 }
 
@@ -9753,8 +10034,822 @@ QRect SpectrumWidget::waterfallLiveButtonRect(const QRect& wfRect) const
     const int buttonH = m_wfLive ? 16 : 20;
     const int padding = m_wfLive ? 2 : 4;
     const int buttonX = strip.right() - buttonW - 2;
-    const int buttonY = wfRect.top() - freqScaleHeight() + padding;
+    // Anchored to the frequency scale row, so the Roundtable strip between
+    // the scale and the waterfall leaves it where it was.
+    const int buttonY = spectrumLayout().frequency.top() + padding;
     return QRect(buttonX, buttonY, buttonW, buttonH);
+}
+
+// ─── Rewind on the waterfall (recording plan Task 24) ─────────────────
+// NereusSDR-original. Design: docs/architecture/
+// 2026-11-15-recording-voice-keyer-dsr-design.md, section 3 ("Rewind
+// sound", "Rewind picture", "PTT while rewound", "Moving through hours"),
+// 6.7, A11, A12; mockups dsr-rewind/index.html and hours.html.
+
+qint64 SpectrumWidget::wfNowMs() const
+{
+    return m_wfClockForTest ? m_wfClockForTest() : QDateTime::currentMSecsSinceEpoch();
+}
+
+qint64 SpectrumWidget::waterfallUtcMsForAge(int ageRows) const
+{
+    ageRows = std::max(0, ageRows);
+    const int rowIndex = historyRowIndexForAge(ageRows);
+    if (rowIndex >= 0 && rowIndex < m_wfHistoryTimestamps.size()
+        && m_wfHistoryTimestamps[rowIndex] > 0) {
+        return m_wfHistoryTimestamps[rowIndex];
+    }
+    // Past this window's own history (or before it has any): one row
+    // period a row, back from its oldest row, or from now.
+    int anchorAge = 0;
+    qint64 anchorMs = wfNowMs();
+    if (m_wfHistoryRowCount > 0) {
+        const int oldest = historyRowIndexForAge(m_wfHistoryRowCount - 1);
+        if (oldest >= 0 && oldest < m_wfHistoryTimestamps.size()
+            && m_wfHistoryTimestamps[oldest] > 0) {
+            anchorAge = m_wfHistoryRowCount - 1;
+            anchorMs = m_wfHistoryTimestamps[oldest];
+        }
+    }
+    return anchorMs - std::llround(double(ageRows - anchorAge) * waterfallRowPeriodMs());
+}
+
+int SpectrumWidget::waterfallAgeForUtcMs(qint64 utcMs) const
+{
+    const auto tsAt = [this](int age) -> qint64 {
+        const int i = historyRowIndexForAge(age);
+        return i >= 0 && i < m_wfHistoryTimestamps.size() ? m_wfHistoryTimestamps[i] : 0;
+    };
+    if (m_wfHistoryRowCount > 0) {
+        const int oldestAge = m_wfHistoryRowCount - 1;
+        const qint64 oldestMs = tsAt(oldestAge);
+        if (oldestMs > 0 && tsAt(0) > 0 && utcMs >= oldestMs) {
+            // Newest first: the first row no newer than the moment.
+            int lo = 0;
+            int hi = oldestAge;
+            while (lo < hi) {
+                const int mid = (lo + hi) / 2;
+                if (tsAt(mid) <= utcMs) {
+                    hi = mid;
+                } else {
+                    lo = mid + 1;
+                }
+            }
+            return lo;
+        }
+    }
+    int anchorAge = 0;
+    qint64 anchorMs = wfNowMs();
+    if (m_wfHistoryRowCount > 0 && tsAt(m_wfHistoryRowCount - 1) > 0) {
+        anchorAge = m_wfHistoryRowCount - 1;
+        anchorMs = tsAt(anchorAge);
+    }
+    const double rows = double(anchorMs - utcMs) / waterfallRowPeriodMs();
+    const double age = double(anchorAge) + rows;
+    return int(std::clamp(std::round(age), 0.0, double(std::numeric_limits<int>::max() / 2)));
+}
+
+std::optional<qint64> SpectrumWidget::parseTypedUtcTime(const QString& text, qint64 nowMs)
+{
+    static const QRegularExpression kTime(
+        QStringLiteral("^(\\d{1,2}):(\\d{2})(?::(\\d{2}))?$"));
+    const QRegularExpressionMatch m = kTime.match(text.trimmed());
+    if (!m.hasMatch()) {
+        return std::nullopt;
+    }
+    const int h = m.captured(1).toInt();
+    const int min = m.captured(2).toInt();
+    const int sec = m.captured(3).isEmpty() ? 0 : m.captured(3).toInt();
+    if (h > 23 || min > 59 || sec > 59) {
+        return std::nullopt;
+    }
+    const QDateTime now = QDateTime::fromMSecsSinceEpoch(nowMs, QTimeZone::utc());
+    QDateTime at(now.date(), QTime(h, min, sec), QTimeZone::utc());
+    if (at.toMSecsSinceEpoch() > nowMs) {
+        at = at.addDays(-1);   // the latest such moment: yesterday's
+    }
+    return at.toMSecsSinceEpoch();
+}
+
+int SpectrumWidget::waterfallStripRowsPerHeight(int maxOffset) const
+{
+    if (!m_dsrAvailable) {
+        return maxOffset;   // as before: the strip's height is the whole history
+    }
+    // The strip stays fine: 20 minutes a height (kDefaultWaterfallHistoryMs).
+    return std::max(1, static_cast<int>(std::llround(
+        double(kDefaultWaterfallHistoryMs) / waterfallRowPeriodMs())));
+}
+
+bool SpectrumWidget::waterfallRowIsTransmit(int ageRows) const
+{
+    const int rowIndex = historyRowIndexForAge(ageRows);
+    if (rowIndex >= 0) {
+        return rowIndex < m_wfHistoryTransmit.size() && m_wfHistoryTransmit[rowIndex] != 0;
+    }
+    if (!m_dsrAvailable) {
+        return false;
+    }
+    const DsrPastRow* row = dsrRowNear(waterfallUtcMsForAge(ageRows));
+    return row != nullptr && row->transmit;
+}
+
+const SpectrumWidget::DsrPastRow* SpectrumWidget::dsrRowNear(qint64 utcMs) const
+{
+    if (m_dsrRows.isEmpty()) {
+        return nullptr;
+    }
+    const qint64 reach = std::max<qint64>(1, std::llround(waterfallRowPeriodMs() * kDsrRowMatchPeriods));
+    auto it = m_dsrRows.lowerBound(utcMs);
+    const DsrPastRow* best = nullptr;
+    qint64 bestGap = reach + 1;
+    if (it != m_dsrRows.cend()) {
+        bestGap = it.key() - utcMs;
+        best = &it.value();
+    }
+    if (it != m_dsrRows.cbegin()) {
+        --it;
+        const qint64 gap = utcMs - it.key();
+        if (gap < bestGap) {
+            bestGap = gap;
+            best = &it.value();
+        }
+    }
+    return bestGap <= reach ? best : nullptr;
+}
+
+bool SpectrumWidget::dsrAnswered(qint64 utcMs) const
+{
+    const qint64 reach = std::llround(waterfallRowPeriodMs());
+    for (const auto& span : m_dsrAnswered) {
+        if (utcMs >= span.first - reach && utcMs <= span.second + reach) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void SpectrumWidget::askDsrRows(qint64 fromMs, qint64 toMs, int missing)
+{
+    if (m_dsrRowsInFlight || !m_dsrRowsRefusal.isEmpty() || !m_dsrAvailable) {
+        return;
+    }
+    const double period = waterfallRowPeriodMs();
+    if (m_dsrRewound) {
+        // The picture scrolls toward this window's own rows: the rows it
+        // scrolls into next come with these.
+        const qint64 ownOldestMs = m_wfHistoryRowCount > 0
+            ? waterfallUtcMsForAge(m_wfHistoryRowCount - 1)
+            : wfNowMs();
+        toMs = std::max(toMs, std::min(toMs + kDsrLeadMs, ownOldestMs - std::llround(period)));
+    }
+    int rowCount = static_cast<int>(std::llround(double(toMs - fromMs) / period)) + 1;
+    rowCount = std::clamp(rowCount, 1, NereusSDR::DsrPastRenderer::kMaxRows);
+    fromMs = std::min(fromMs, toMs);
+    if (rowCount == NereusSDR::DsrPastRenderer::kMaxRows) {
+        fromMs = toMs - std::llround(double(rowCount - 1) * period);
+    }
+    m_dsrRowsInFlight = true;
+    m_dsrInFlightFromMs = fromMs;
+    m_dsrInFlightToMs = toMs;
+    if (missing * kDsrDrawingShareDivisor >= std::max(1, m_waterfall.height())) {
+        // Much of the picture waits: dim it with "Drawing" until it comes.
+        m_dsrDrawing = true;
+        m_dsrDrawingAtMs = waterfallTopUtcMs();
+        markOverlayDirty();
+    }
+    emit dsrPastRowsWanted(fromMs, toMs, rowCount);
+}
+
+void SpectrumWidget::clearDsrRows()
+{
+    m_dsrRows.clear();
+    m_dsrAnswered.clear();
+    m_dsrRowsRefusal.clear();
+}
+
+void SpectrumWidget::addDsrPastRows(const NereusSDR::DsrPastFrames& rows)
+{
+    const qsizetype n = std::min(rows.utcNs.size(), rows.rows.size());
+    for (qsizetype i = 0; i < n; ++i) {
+        DsrPastRow row;
+        row.dbm = rows.rows.at(i);
+        row.firstHz = rows.firstBinHz;
+        row.hzPerPoint = rows.hzPerBin;
+        row.transmit = rows.transmit.value(i, false);
+        m_dsrRows.insert(rows.utcNs.at(i) / 1000000LL, row);
+    }
+    if (rows.rowsLeft <= 0 && m_dsrRowsInFlight) {
+        m_dsrRowsInFlight = false;
+        m_dsrAnswered.append({m_dsrInFlightFromMs, m_dsrInFlightToMs});
+        constexpr qsizetype kMaxAnswered = 64;
+        while (m_dsrAnswered.size() > kMaxAnswered) {
+            m_dsrAnswered.removeFirst();
+        }
+        m_dsrDrawing = false;
+    }
+    // Keep the rows nearest the picture.
+    const qsizetype keep = qsizetype(std::max(1, m_waterfall.height())) * kDsrCacheHeights;
+    if (m_dsrRows.size() > keep) {
+        const qint64 top = waterfallTopUtcMs();
+        while (m_dsrRows.size() > keep) {
+            const qint64 first = m_dsrRows.firstKey();
+            const qint64 last = m_dsrRows.lastKey();
+            m_dsrRows.remove(std::abs(top - first) > std::abs(last - top) ? first : last);
+        }
+    }
+    if (!m_wfLive) {
+        rebuildWaterfallViewport();
+    }
+    markOverlayDirty();
+}
+
+void SpectrumWidget::dsrPastRowsRefused(const QString& reason)
+{
+    m_dsrRowsInFlight = false;
+    m_dsrDrawing = false;
+    m_dsrRowsRefusal = reason;
+    markOverlayDirty();
+}
+
+void SpectrumWidget::dsrPlayRefused(const QString& reason)
+{
+    m_dsrPlayRefusal = reason;
+    markOverlayDirty();
+}
+
+QString SpectrumWidget::dsrWaterfallReason() const
+{
+    if (m_wfLive) {
+        return {};
+    }
+    if (!m_dsrAvailable) {
+        return m_dsrReason;
+    }
+    if (!m_dsrRowsRefusal.isEmpty()) {
+        return m_dsrRowsRefusal;
+    }
+    return !m_dsrPlayRefusal.isEmpty() ? m_dsrPlayRefusal : m_dsrNote;
+}
+
+void SpectrumWidget::setDsrRewindAvailable(bool available, const QString& reason, qint64 oldestUtcMs)
+{
+    const bool changed = available != m_dsrAvailable || reason != m_dsrReason
+        || oldestUtcMs != m_dsrOldestUtcMs;
+    if (!changed) {
+        return;
+    }
+    m_dsrAvailable = available;
+    m_dsrReason = available ? QString() : reason;
+    m_dsrOldestUtcMs = available ? oldestUtcMs : 0;
+    if (!available) {
+        clearDsrRows();
+        m_dsrRowsInFlight = false;
+        m_dsrDrawing = false;
+    }
+    if (!m_wfLive) {
+        rebuildWaterfallViewport();   // clamps the offset to what is kept now
+    } else {
+        layoutDsrChildren();
+    }
+    markOverlayDirty();
+}
+
+void SpectrumWidget::setDsrRewound(bool rewound, qint64 playedUtcMs)
+{
+    const bool was = m_dsrRewound;
+    m_dsrRewound = rewound;
+    if (rewound) {
+        if (playedUtcMs > 0) {
+            const int age = std::clamp(waterfallAgeForUtcMs(playedUtcMs), 0,
+                                       maxWaterfallHistoryOffsetRows());
+            // Already following: a row or two of drift is left alone.
+            if (!was || std::abs(age - m_wfHistoryOffsetRows) > 2) {
+                m_wfHistoryOffsetRows = age;
+            }
+        }
+        m_wfLive = false;
+        m_dsrPlayRefusal.clear();
+        rebuildWaterfallViewport();
+        askDsrPastSpectrum();
+    } else {
+        m_dsrPastTrace = NereusSDR::DsrPastFrames{};
+        m_dsrSpectrumInFlight = false;
+    }
+    markOverlayDirty();
+    update();
+}
+
+void SpectrumWidget::setDsrLiveReturnPending(bool pending)
+{
+    if (pending != m_dsrLiveReturnPending) {
+        m_dsrLiveReturnPending = pending;
+        markOverlayDirty();
+    }
+}
+
+qint64 SpectrumWidget::dsrPlayingUtcMs()
+{
+    // The top row is the moment playing when it got there; the sound goes
+    // on in real time until the next row moves the top, at most one row.
+    const qint64 top = waterfallTopUtcMs();
+    const qint64 now = wfNowMs();
+    if (top != m_dsrTopAnchorUtcMs) {
+        m_dsrTopAnchorUtcMs = top;
+        m_dsrTopAnchorAtMs = now;
+    }
+    const qint64 rowMs = std::max<qint64>(1, std::llround(waterfallRowPeriodMs()));
+    return top + std::clamp<qint64>(now - m_dsrTopAnchorAtMs, 0, rowMs);
+}
+
+void SpectrumWidget::askDsrPastSpectrum()
+{
+    if (!m_dsrRewound) {
+        return;
+    }
+    // Followed even when no ask goes out, so the moment runs from when the
+    // top really moved.
+    const qint64 playing = dsrPlayingUtcMs();
+    if (m_dsrSpectrumInFlight) {
+        return;
+    }
+    const qint64 now = wfNowMs();
+    const qint64 periodMs = std::max(1, m_displayTimer.interval());
+    if (m_dsrSpectrumAskedMs > 0 && now - m_dsrSpectrumAskedMs < periodMs - periodMs / kDsrSpectrumSlackDivisor) {
+        return;
+    }
+    m_dsrSpectrumAskedMs = now;
+    m_dsrSpectrumInFlight = true;
+    emit dsrPastSpectrumWanted(playing);
+}
+
+void SpectrumWidget::setDsrPastSpectrum(const NereusSDR::DsrPastFrames& frame)
+{
+    m_dsrSpectrumInFlight = false;
+    if (!m_dsrRewound) {
+        return;
+    }
+    m_dsrPastTrace = frame;
+    substituteDsrPastTrace();
+    updateReducedSpectrumOverlays();
+    m_hasNewSpectrum = true;
+    emit spectrumFrameRendered();
+    markOverlayDirty();
+    update();
+    // An answer that took a frame or more: the moment has moved on, so the
+    // next is asked for now rather than on the next tick.
+    askDsrPastSpectrum();
+}
+
+void SpectrumWidget::dsrPastSpectrumRefused()
+{
+    m_dsrSpectrumInFlight = false;
+}
+
+void SpectrumWidget::substituteDsrPastTrace()
+{
+    if (!m_dsrRewound || m_dsrPastTrace.rows.isEmpty() || m_dsrPastTrace.hzPerBin <= 0.0) {
+        return;
+    }
+    const QVector<float>& past = m_dsrPastTrace.rows.constFirst();
+    const int n = !m_renderedPixels.isEmpty() ? int(m_renderedPixels.size())
+                                              : qMax(width() - effectiveStripW(), 800);
+    if (m_renderedPixels.size() != n) {
+        m_renderedPixels.resize(n);
+    }
+    const double startHz = m_centerHz - m_bandwidthHz / 2.0;
+    for (int x = 0; x < n; ++x) {
+        const double hz = startHz + (x + 0.5) * m_bandwidthHz / n;
+        const double k = std::floor((hz - m_dsrPastTrace.firstBinHz) / m_dsrPastTrace.hzPerBin);
+        m_renderedPixels[x] = k >= 0.0 && k < double(past.size())
+            ? past[qsizetype(k)] : NereusSDR::DsrPastRenderer::kFloorDbm;
+    }
+}
+
+void SpectrumWidget::setDsrHours(const QList<NereusSDR::DsrHour>& hours)
+{
+    if (auto* map = qobject_cast<DsrHoursMap*>(m_dsrHoursMap.data())) {
+        map->setHours(hours);
+    }
+}
+
+void SpectrumWidget::jumpWaterfallTo(qint64 utcMs)
+{
+    m_dsrRowsRefusal.clear();
+    m_wfHistoryOffsetRows = std::clamp(waterfallAgeForUtcMs(utcMs), 0,
+                                       maxWaterfallHistoryOffsetRows());
+    m_wfLive = false;
+    rebuildWaterfallViewport();
+    markOverlayDirty();
+    dsrPlayFromTop();
+}
+
+void SpectrumWidget::dsrPlayFromTop()
+{
+    if (m_wfLive) {
+        return;
+    }
+    m_dsrPlayRefusal.clear();
+    markOverlayDirty();
+    if (m_dsrRewound) {
+        // Already playing the past: the sound follows the picture's top.
+        emit dsrPastSeekWanted(waterfallTopUtcMs());
+        askDsrPastSpectrum();
+        return;
+    }
+    if (!m_dsrAvailable) {
+        return;   // the waterfall already shows why (recorder off, older Core)
+    }
+    // The picture moves with the sound from here (its top row is the moment
+    // heard); a refusal takes this back and shows why.
+    m_dsrRewound = true;
+    m_dsrLiveReturnPending = false;
+    emit dsrPastPlayWanted(waterfallTopUtcMs());
+    askDsrPastSpectrum();
+}
+
+QWidget* SpectrumWidget::dsrHoursMapForTest() const
+{
+    return m_dsrHoursMap.data();
+}
+
+QWidget* SpectrumWidget::dsrGotoBoxForTest() const
+{
+    return m_dsrGoto.data();
+}
+
+QWidget* SpectrumWidget::dsrSaveButtonForTest() const
+{
+    return m_dsrSaveButton.data();
+}
+
+QWidget* SpectrumWidget::dsrSaveBoxForTest() const
+{
+    return m_dsrSaveBox.data();
+}
+
+void SpectrumWidget::setDsrSaveEstimates(double panBytesPerMs, bool soundAsWav)
+{
+    m_dsrPanBytesPerMs = panBytesPerMs;
+    m_dsrSoundAsWav = soundAsWav;
+    if (auto* box = qobject_cast<DsrSaveBox*>(m_dsrSaveBox.data())) {
+        box->setEstimates(panBytesPerMs, soundAsWav);
+    }
+}
+
+void SpectrumWidget::showDsrNote(const QString& text)
+{
+    m_dsrNote = text;
+    const quint64 serial = ++m_dsrNoteSerial;
+    QTimer::singleShot(kDsrNoteMs, this, [this, serial] {
+        if (serial == m_dsrNoteSerial) {
+            m_dsrNote.clear();
+            markOverlayDirty();
+        }
+    });
+    markOverlayDirty();
+}
+
+void SpectrumWidget::toggleDsrSaveBracket()
+{
+    auto* map = qobject_cast<DsrHoursMap*>(m_dsrHoursMap.data());
+    if (map == nullptr || !m_dsrAvailable || m_wfLive) {
+        return;
+    }
+    if (map->hasBracket()) {
+        takeDownDsrSave();
+        return;
+    }
+    if (!m_dsrSaveBox) {
+        auto* box = new DsrSaveBox(this);
+        box->hide();
+        box->setEstimates(m_dsrPanBytesPerMs, m_dsrSoundAsWav);
+        connect(box, &DsrSaveBox::saveWanted, this, [this](qint64 fromMs, qint64 toMs, bool wholePan) {
+            takeDownDsrSave();
+            emit dsrSaveStretchWanted(fromMs, toMs, wholePan);
+        });
+        connect(box, &DsrSaveBox::cancelled, this, &SpectrumWidget::takeDownDsrSave);
+        m_dsrSaveBox = box;
+    }
+    if (m_dsrGoto) {
+        m_dsrGoto->hide();
+    }
+    // hours.html: the ten minutes from the top row, ending no later than a
+    // second ago.
+    const qint64 to = std::min(wfNowMs() - kDsrSaveNewestGapMs, waterfallTopUtcMs() + kDsrSaveDefaultMs);
+    map->setBracket(to - kDsrSaveDefaultMs, to);
+    m_dsrSaveBox->show();
+    m_dsrSaveBox->raise();
+    placeDsrSaveBox();
+    if (m_dsrSaveButton) {
+        m_dsrSaveButton->setProperty("on", true);
+        m_dsrSaveButton->style()->unpolish(m_dsrSaveButton);
+        m_dsrSaveButton->style()->polish(m_dsrSaveButton);
+    }
+}
+
+void SpectrumWidget::takeDownDsrSave()
+{
+    if (auto* map = qobject_cast<DsrHoursMap*>(m_dsrHoursMap.data())) {
+        map->clearBracket();
+    }
+    if (m_dsrSaveBox) {
+        m_dsrSaveBox->hide();
+    }
+    if (m_dsrSaveButton && m_dsrSaveButton->property("on").toBool()) {
+        m_dsrSaveButton->setProperty("on", false);
+        m_dsrSaveButton->style()->unpolish(m_dsrSaveButton);
+        m_dsrSaveButton->style()->polish(m_dsrSaveButton);
+    }
+}
+
+void SpectrumWidget::placeDsrSaveBox()
+{
+    auto* map = qobject_cast<DsrHoursMap*>(m_dsrHoursMap.data());
+    auto* box = qobject_cast<DsrSaveBox*>(m_dsrSaveBox.data());
+    if (map == nullptr || box == nullptr || !map->hasBracket()) {
+        return;
+    }
+    box->setStretch(map->bracketFromUtcMs(), map->bracketToUtcMs());
+    // hours.html: beside the map, its top 55 px above the bracket's middle,
+    // kept on the waterfall.
+    const QRect wf = spectrumLayout().waterfall;
+    const QRect r = map->bracketRect();
+    const int middle = map->y() + (r.top() + r.bottom()) / 2;
+    const int top = std::clamp(middle - DsrSaveBox::kAboveMiddlePx, wf.top() + 3,
+                               std::max(wf.top() + 3, wf.bottom() - box->height()));
+    box->move(std::max(0, map->x() - DsrSaveBox::kWidth - DsrSaveBox::kGapPx), top);
+}
+
+void SpectrumWidget::layoutDsrChildren()
+{
+    // Only beside a waterfall a recordings link has spoken for (available,
+    // or a reason it is not): a pan without one stays as it was.
+    const bool show = !m_wfLive && !m_waterfall.isNull()
+        && (m_dsrAvailable || !m_dsrReason.isEmpty());
+    if (!show) {
+        if (m_dsrHoursMap) {
+            m_dsrHoursMap->hide();
+        }
+        if (m_dsrGoto) {
+            m_dsrGoto->hide();
+        }
+        // Going live takes the bracket down (hours.html goLive).
+        takeDownDsrSave();
+        if (m_dsrSaveButton) {
+            m_dsrSaveButton->hide();
+        }
+        return;
+    }
+    if (!m_dsrHoursMap) {
+        auto* map = new DsrHoursMap(this);
+        map->hide();
+        connect(map, &DsrHoursMap::jumpRequested, this, [this](qint64 utcMs) {
+            if (m_dsrGoto) {
+                m_dsrGoto->hide();
+            }
+            jumpWaterfallTo(utcMs);
+        });
+        connect(map, &DsrHoursMap::bracketChanged, this, [this](qint64, qint64) { placeDsrSaveBox(); });
+        m_dsrHoursMap = map;
+    }
+    auto* map = static_cast<DsrHoursMap*>(m_dsrHoursMap.data());
+    const SpectrumLayout layout = spectrumLayout();
+    const QRect strip = waterfallTimeScaleRect(layout.waterfallChrome);
+    const QRect wf = layout.waterfall;
+    map->setGeometry(strip.left() - DsrHoursMap::kWidth, wf.top() + DsrHoursMap::kTopGap,
+                     DsrHoursMap::kWidth, std::max(0, wf.height() - DsrHoursMap::kTopGap));
+    const qint64 now = wfNowMs();
+    const qint64 ownOldestMs = m_wfHistoryRowCount > 0
+        ? waterfallUtcMsForAge(m_wfHistoryRowCount - 1) : now;
+    const qint64 oldest = m_dsrAvailable && m_dsrOldestUtcMs > 0
+        ? std::min(m_dsrOldestUtcMs, ownOldestMs) : ownOldestMs;
+    map->setRange(oldest, now);
+    map->setOwnSpanMs(now - ownOldestMs);
+    map->setPosition(waterfallTopUtcMs());
+    const QString reason = m_dsrAvailable ? QString() : m_dsrReason;
+    if (map->unavailableReason() != reason) {
+        map->setUnavailableReason(reason);
+    }
+    if (map->isHidden()) {
+        map->show();
+        map->raise();
+        if (m_dsrAvailable) {
+            emit dsrHoursWanted();
+        }
+    }
+    if (m_dsrGoto && m_dsrGoto->isVisible()) {
+        m_dsrGoto->move(std::max(0, map->x() - m_dsrGoto->width() - 6), m_dsrGoto->y());
+    }
+    // SAVE above the map (hours.html #saveBtn): 44 by 18, 2 px below the
+    // waterfall's top.
+    if (!m_dsrSaveButton) {
+        auto* save = new QPushButton(QStringLiteral("SAVE"), this);
+        save->setObjectName(QStringLiteral("DsrSaveButton"));
+        save->setFocusPolicy(Qt::NoFocus);
+        save->setStyleSheet(QStringLiteral(
+            "#DsrSaveButton { border-radius: 4px; border: 1px solid #405060; background: #1b1b1f;"
+            " color: #e8e8ec; font-weight: 700; font-size: 9.5px; padding: 0; }"
+            "#DsrSaveButton[on=\"true\"] { background: #264e78; border-color: #4a7ba8; color: #ffffff; }"
+            "#DsrSaveButton:disabled { color: #6a6a70; border-color: #2c2c31; }"));
+        connect(save, &QPushButton::clicked, this, &SpectrumWidget::toggleDsrSaveBracket);
+        m_dsrSaveButton = save;
+    }
+    constexpr int kSaveButtonHeight = 18;
+    constexpr int kSaveButtonTopGap = 2;
+    m_dsrSaveButton->setGeometry(map->x(), wf.top() + kSaveButtonTopGap, DsrHoursMap::kWidth, kSaveButtonHeight);
+    m_dsrSaveButton->setEnabled(m_dsrAvailable);
+    m_dsrSaveButton->setToolTip(m_dsrAvailable
+                                    ? QStringLiteral("Save a stretch to Recordings before it is overwritten")
+                                    : m_dsrReason);
+    if (!m_dsrAvailable) {
+        takeDownDsrSave();
+    }
+    if (m_dsrSaveButton->isHidden()) {
+        m_dsrSaveButton->show();
+        m_dsrSaveButton->raise();
+    }
+    if (m_dsrSaveBox && m_dsrSaveBox->isVisible()) {
+        placeDsrSaveBox();
+    }
+}
+
+void SpectrumWidget::openDsrGoto(qint64 utcMs, int y)
+{
+    if (m_wfLive || (!m_dsrAvailable && m_dsrReason.isEmpty() && m_wfHistoryRowCount == 0)) {
+        return;
+    }
+    if (!m_dsrGoto) {
+        // The mockup's box: "Go to [13:05] UTC [Go]", and a line under it
+        // when the time cannot be reached.
+        auto* box = new QFrame(this);
+        box->setObjectName(QStringLiteral("DsrGotoBox"));
+        box->setStyleSheet(QStringLiteral(
+            "#DsrGotoBox { background: #1b1b1f; border: 1px solid #3d3d41; border-radius: 4px; }"
+            "#DsrGotoBox QLabel { color: #e8e8ec; background: transparent; border: none; font-size: 12px; }"
+            "#DsrGotoBox QLabel#DsrGotoNote { color: #ff8a8a; }"
+            "#DsrGotoBox QLineEdit { min-width: 66px; max-width: 74px; min-height: 20px; border-radius: 4px;"
+            " border: 1px solid #3d3d41; background: #040406; color: #ffffff; font-weight: 600; }"
+            "#DsrGotoBox QPushButton { min-height: 20px; padding: 0 9px; border-radius: 5px;"
+            " border: 1px solid #4a7ba8; background: #264e78; color: #ffffff; font-weight: 700; }"));
+        auto* outer = new QVBoxLayout(box);
+        outer->setContentsMargins(6, 6, 6, 6);
+        outer->setSpacing(4);
+        auto* row = new QHBoxLayout;
+        row->setSpacing(4);
+        row->addWidget(new QLabel(QStringLiteral("Go to"), box));
+        auto* edit = new QLineEdit(box);
+        edit->setObjectName(QStringLiteral("DsrGotoEdit"));
+        edit->setMaxLength(8);
+        edit->setAlignment(Qt::AlignCenter);
+        edit->setToolTip(QStringLiteral("A UTC time, like 13:05 or 13:05:30"));
+        row->addWidget(edit);
+        row->addWidget(new QLabel(QStringLiteral("UTC"), box));
+        auto* go = new QPushButton(QStringLiteral("Go"), box);
+        go->setObjectName(QStringLiteral("DsrGotoGo"));
+        row->addWidget(go);
+        outer->addLayout(row);
+        auto* note = new QLabel(box);
+        note->setObjectName(QStringLiteral("DsrGotoNote"));
+        note->hide();
+        outer->addWidget(note);
+        connect(go, &QPushButton::clicked, this, &SpectrumWidget::dsrGotoSubmit);
+        connect(edit, &QLineEdit::returnPressed, this, &SpectrumWidget::dsrGotoSubmit);
+        // Escape closes it.
+        auto* close = new QAction(box);
+        close->setShortcut(QKeySequence(Qt::Key_Escape));
+        close->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+        connect(close, &QAction::triggered, box, &QWidget::hide);
+        box->addAction(close);
+        box->hide();
+        m_dsrGoto = box;
+    }
+    auto* edit = m_dsrGoto->findChild<QLineEdit*>(QStringLiteral("DsrGotoEdit"));
+    auto* note = m_dsrGoto->findChild<QLabel*>(QStringLiteral("DsrGotoNote"));
+    if (edit != nullptr) {
+        edit->setText(QDateTime::fromMSecsSinceEpoch(utcMs, QTimeZone::utc())
+                          .toString(QStringLiteral("HH:mm")));
+    }
+    if (note != nullptr) {
+        note->hide();
+    }
+    m_dsrGoto->adjustSize();
+    layoutDsrChildren();
+    const SpectrumLayout layout = spectrumLayout();
+    const int mapLeft = m_dsrHoursMap ? m_dsrHoursMap->x()
+                                      : waterfallTimeScaleRect(layout.waterfallChrome).left();
+    const int top = std::clamp(y - 14, layout.waterfall.top(),
+                               std::max(layout.waterfall.top(), layout.waterfall.bottom() - m_dsrGoto->height()));
+    m_dsrGoto->move(std::max(0, mapLeft - m_dsrGoto->width() - 6), top);
+    m_dsrGoto->show();
+    m_dsrGoto->raise();
+    if (edit != nullptr) {
+        edit->setFocus();
+        edit->selectAll();
+    }
+}
+
+void SpectrumWidget::dsrGotoSubmit()
+{
+    if (!m_dsrGoto) {
+        return;
+    }
+    auto* edit = m_dsrGoto->findChild<QLineEdit*>(QStringLiteral("DsrGotoEdit"));
+    auto* note = m_dsrGoto->findChild<QLabel*>(QStringLiteral("DsrGotoNote"));
+    const auto say = [this, note](const QString& words) {
+        if (note != nullptr) {
+            note->setText(words);
+            note->show();
+            m_dsrGoto->adjustSize();
+        }
+    };
+    const qint64 now = wfNowMs();
+    const std::optional<qint64> at = parseTypedUtcTime(edit != nullptr ? edit->text() : QString(), now);
+    if (!at) {
+        say(QStringLiteral("Type a time like 13:05"));
+        return;
+    }
+    const qint64 ownOldestMs = m_wfHistoryRowCount > 0
+        ? waterfallUtcMsForAge(m_wfHistoryRowCount - 1) : now;
+    const qint64 oldest = m_dsrAvailable && m_dsrOldestUtcMs > 0 ? m_dsrOldestUtcMs : ownOldestMs;
+    if (*at < oldest) {
+        const QString hm = QDateTime::fromMSecsSinceEpoch(oldest, QTimeZone::utc())
+                               .toString(QStringLiteral("HH:mm"));
+        say(m_dsrAvailable ? QStringLiteral("The Core keeps back to %1 UTC").arg(hm)
+                           : QStringLiteral("This window holds back to %1 UTC").arg(hm));
+        return;
+    }
+    m_dsrGoto->hide();
+    jumpWaterfallTo(*at);
+}
+
+void SpectrumWidget::drawDsrOverlay(QPainter& p, const QRect& specRect, const QRect& wfRect)
+{
+    // PAST on the spectrum while it shows the moment played.
+    if (m_dsrRewound && !m_dsrPastTrace.rows.isEmpty()) {
+        QFont f = WorkspacePreview::readableFont(p.font(), p.device());
+        f.setPixelSize(10);
+        f.setBold(true);
+        f.setLetterSpacing(QFont::PercentageSpacing, 106);
+        f = WorkspacePreview::readableFont(f, p.device());
+        p.setFont(f);
+        const QFontMetrics fm(f, p.device());
+        const QString past = QStringLiteral("PAST");
+        constexpr int kPastLeft = 84;
+        constexpr int kPastTop = 6;
+        const QRect tag(specRect.left() + kPastLeft, specRect.top() + kPastTop,
+                        fm.horizontalAdvance(past) + 14, fm.height() + 2);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0xc0, 0x20, 0x20));
+        p.drawRoundedRect(tag, 3, 3);
+        p.setPen(Qt::white);
+        p.drawText(tag, Qt::AlignCenter, past);
+    }
+    if (m_wfLive) {
+        return;
+    }
+    const QRect strip = waterfallTimeScaleRect(wfRect);
+    const bool mapShown = m_dsrHoursMap && m_dsrHoursMap->isVisible();
+    const int pictureRight = (mapShown ? m_dsrHoursMap->x() : strip.left()) - 1;
+    const QRect picture(wfRect.left(), wfRect.top(), std::max(0, pictureRight - wfRect.left()),
+                        wfRect.height());
+    if (m_dsrDrawing) {
+        // "Drawing" dims the picture while the Core draws it.
+        p.fillRect(picture, QColor(5, 5, 12, 184));
+        QFont f = WorkspacePreview::readableFont(p.font(), p.device());
+        f.setPixelSize(13);
+        f.setWeight(QFont::DemiBold);
+        f = WorkspacePreview::readableFont(f, p.device());
+        p.setFont(f);
+        p.setPen(QColor(0xc8, 0xd8, 0xe8));
+        const QString at = QDateTime::fromMSecsSinceEpoch(m_dsrDrawingAtMs, QTimeZone::utc())
+                               .toString(QStringLiteral("HH:mm"));
+        p.drawText(picture, Qt::AlignCenter,
+                   QStringLiteral("Digital Spectrum Recorder: drawing %1…").arg(at));
+    }
+    // Why the past past this window cannot be reached or played, in words.
+    const QString why = dsrWaterfallReason();
+    if (!why.isEmpty()) {
+        QFont f = WorkspacePreview::readableFont(p.font(), p.device());
+        f.setPixelSize(12);
+        f.setBold(false);
+        f = WorkspacePreview::readableFont(f, p.device());
+        p.setFont(f);
+        const QFontMetrics fm(f, p.device());
+        // A few pixels of slack: the text is measured and drawn at slightly
+        // different widths on a scaled screen.
+        constexpr int kReasonSlackPx = 4;
+        const int textW = std::min(fm.horizontalAdvance(why) + kReasonSlackPx,
+                                   std::max(40, picture.width() - 40));
+        const QRect box(picture.right() - textW - 24, picture.bottom() - fm.height() - 22,
+                        textW + 16, fm.height() + 12);
+        p.setPen(QColor(0x3d, 0x3d, 0x41));
+        p.setBrush(QColor(0x1b, 0x1b, 0x1f));
+        p.drawRoundedRect(box, 4, 4);
+        p.setPen(QColor(0xe8, 0xe8, 0xec));
+        p.drawText(box.adjusted(8, 0, -8, 0), Qt::AlignVCenter | Qt::AlignLeft,
+                   fm.elidedText(why, Qt::ElideRight, textW));
+    }
 }
 
 // Sub-epic E — flush ring buffer + force live. Called from clearDisplay()
@@ -9778,6 +10873,7 @@ void SpectrumWidget::clearWaterfallHistory()
     }
     m_wfWriteRow = 0;
     std::fill(m_wfHistoryTimestamps.begin(), m_wfHistoryTimestamps.end(), 0);
+    std::fill(m_wfHistoryTransmit.begin(), m_wfHistoryTransmit.end(), quint8(0));
     std::fill(m_wfHistoryWindows.begin(), m_wfHistoryWindows.end(), WaterfallRowWindow{});
     std::fill(m_wfHistorySequences.begin(), m_wfHistorySequences.end(), quint64(0));
     m_imdWaterfallAnnotations.clear();
@@ -10471,13 +11567,15 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& wfPixelsDbm,
     //   adapter: NereusSDR has a single FFT-derived path (no native tile
     //   path), so we always use QDateTime::currentMSecsSinceEpoch().
     {
-        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        const qint64 nowMs = wfNowMs();
         appendHistoryRow(scanline, nowMs, imdEligible, acceptedOrdinal);
         if (!m_wfLive) {
             // Paused: don't show the new row — auto-bump in appendHistoryRow
             // already shifted offset, just rebuild the viewport.
             rebuildWaterfallViewport();
             markOverlayDirty();
+            // Rewind (Task 24): the spectrum moves with the sound.
+            askDsrPastSpectrum();
         }
     }
     if (effectiveGuard) { announceEffectiveWaterfallLevels(); }
@@ -12858,20 +13956,20 @@ void SpectrumWidget::showSpotClusterPopup(const SpotCluster& cluster, const QPoi
 // Roundtable room tags (Roundtable plan Task 14, design 11.2 Panadapter
 // tags, U4, U7, U8, U10). NereusSDR-original; the look is the mockup's
 // (docs/architecture/reporter-brainstorm/mockups/board.html, .rt-tag and
-// .rt-fold): a 22 px tag 8 px above the band plan, a 1 px border in the
-// state color, the glyph, the talker in bold 11 px and the member count.
+// .rt-fold): a 22 px tag centered in the Roundtable strip (strip design 4,
+// .rct--line), a 1 px border in the state color, the glyph, the talker in
+// bold 11 px and the member count.
 // ---------------------------------------------------------------------------
 namespace {
 
 constexpr int kRoundtableTagHeight = 22;
-constexpr int kRoundtableTagFootGap = 8;      // tag bottom to band plan top
 constexpr int kRoundtableTagGap = 4;          // between tags and from the edges
 constexpr int kRoundtableTagMinWidth = 56;
 constexpr int kRoundtableTagMaxWidth = 128;
-constexpr int kRoundtableCardTopGap = 2;      // card top limit, under the pan's top edge
-constexpr int kRoundtableTagNameLine = 16;    // each name under a double's head
-constexpr int kRoundtableTagNameIndent = 14;  // a double's names, past the glyph
+constexpr int kRoundtableDetailsDialGap = 8;  // the details' left edge off the dial, with no line drawn
 constexpr int kRoundtableTagNames = 2;        // a double names up to two (D20)
+constexpr int kRoundtableTagLineGap = 6;      // .rct--line gap: a double's word, names and count
+constexpr int kRoundtableLineKeepOut = 4;     // tags keep this clear each side of your line
 constexpr int kRoundtableTagPadLeft = 6;
 constexpr int kRoundtableTagPadRight = 7;
 constexpr int kRoundtableTagInnerGap = 5;     // glyph to text
@@ -12931,7 +14029,8 @@ QString roundtableTagCountText(const RoundtableTag& tag)
     return tag.members > 1 ? QStringLiteral("+%1").arg(tag.members - 1) : QString();
 }
 
-int roundtableTagNameLines(const RoundtableTag& tag)
+// How many of a double's names its tag shows, side by side after the word.
+int roundtableTagNames(const RoundtableTag& tag)
 {
     return tag.state == static_cast<int>(RoundtableGlyph::Doubled)
         ? std::min(kRoundtableTagNames, static_cast<int>(tag.keyed.size())) : 0;
@@ -12995,7 +14094,7 @@ void SpectrumWidget::measureRoundtableTags(const QFont& labelFont, const QFont& 
         + kRoundtableTagInnerGap + kRoundtableTagPadRight;
     for (RoundtableTag& tag : m_roundtablePanTags) {
         const QString count = roundtableTagCountText(tag);
-        const int names = roundtableTagNameLines(tag);
+        const int names = roundtableTagNames(tag);
         QString key = tag.label + QChar(0x1f) + count;
         for (int k = 0; k < names; ++k) {
             key += QChar(0x1f) + tag.keyed.at(k);
@@ -13007,12 +14106,16 @@ void SpectrumWidget::measureRoundtableTags(const QFont& labelFont, const QFont& 
             if (names == 0 && !count.isEmpty()) {
                 width += labelMetrics.horizontalAdvance(QLatin1Char(' ')) + countMetrics.horizontalAdvance(count);
             }
+            // A double is one line: the word, its names side by side, the count.
             for (int k = 0; k < names; ++k) {
-                width = std::max(width, 2 + kRoundtableTagPadLeft + kRoundtableTagNameIndent
-                                            + labelMetrics.horizontalAdvance(tag.keyed.at(k))
-                                            + kRoundtableTagPadRight + 2);
+                width += kRoundtableTagLineGap + labelMetrics.horizontalAdvance(tag.keyed.at(k));
             }
-            found = m_roundtableTagWidths.insert(key, std::min(width, kRoundtableTagMaxWidth));
+            if (names > 0 && !count.isEmpty()) {
+                width += kRoundtableTagLineGap + countMetrics.horizontalAdvance(count);
+            }
+            // A double's bound holds a name for each.
+            const int bound = names > 0 ? kRoundtableTagMaxWidth * kRoundtableTagNames : kRoundtableTagMaxWidth;
+            found = m_roundtableTagWidths.insert(key, std::min(width, bound));
         }
         tag.width = found.value();
     }
@@ -13032,15 +14135,22 @@ void SpectrumWidget::setRoundtableCard(const RoundtableCardModel& card, const QS
         && roundtableCardsEqual(card, m_roundtableCard)) {
         return;
     }
-    // Values redraw in place; only structure places the card again (D14).
-    if (roomId != m_roundtableCardRoom || format != m_roundtableCardFormat
-        || !roundtableCardSameStructure(card, m_roundtableCard)) {
-        m_roundtableCardPlacedValid = false;
+    // Values redraw in place; only structure places the line again (D14).
+    const bool sameShape = roomId == m_roundtableCardRoom && format == m_roundtableCardFormat
+        && roundtableCardSameStructure(card, m_roundtableCard);
+    if (!sameShape) {
+        m_roundtableStripLinePlacedValid = false;
     }
     m_roundtableCard = card;
     m_roundtableCardRoom = roomId;
     m_roundtableCardFormat = format;
-    // As a tag: values update in the child, never in the static overlay (D14).
+    // As a tag: values update in the child, never in the static overlay (D14),
+    // and a value-only change repaints no more than the line.
+    if (sameShape && m_roundtableTagLayer && m_roundtableStripLinePlacedValid
+        && !m_roundtableStripLineDrawn.line.isNull()) {
+        m_roundtableTagLayer->update(m_roundtableStripLineDrawn.line.adjusted(-1, -1, 1, 1));
+        return;
+    }
     refreshRoundtableTagLayer();
 }
 
@@ -13067,12 +14177,26 @@ QRect SpectrumWidget::roundtableTagSpectrumRectForTest() const
 
 void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
 {
+    // Open details line up with your line: when it moves, appears or goes, they
+    // re-place, after this paint (strip design 5).
+    struct LineWatch {
+        SpectrumWidget* widget;
+        QRect before;
+        ~LineWatch()
+        {
+            if (widget->m_roundtableStripLineDrawn.line != before) {
+                QMetaObject::invokeMethod(widget, &SpectrumWidget::roundtableInspectorSpotChanged, Qt::QueuedConnection);
+            }
+        }
+    } lineWatch{this, m_roundtableStripLineDrawn.line};
     m_roundtableTagHits.clear();
-    const bool wantsCard = m_roundtableCard.kind != RoundtableCardModel::Kind::Quiet;
-    // The inspector stands in the card's place: one box, not two (D34).
-    const bool inspecting = !m_roundtableInspectorRect.isNull();
-    if (m_roundtableTagDisplay == RoundtableTagDisplay::Hidden || (m_roundtablePanTags.isEmpty() && !wantsCard && !inspecting)
-        || m_bandwidthHz <= 0.0 || specRect.width() <= 0) {
+    m_roundtableStripLineDrawn = RoundtableStripLinePlacement{};
+    // Everything Roundtable sits in the strip under the frequency scale (strip
+    // design 3, 4); nothing is drawn on the spectrum.
+    const QRect strip = spectrumLayout().roundtableStrip;
+    const bool wantsLine = m_roundtableCard.kind != RoundtableCardModel::Kind::Quiet || !m_roundtableCard.note.isEmpty();
+    if (m_roundtableTagDisplay == RoundtableTagDisplay::Hidden || strip.isEmpty()
+        || (m_roundtablePanTags.isEmpty() && !wantsLine) || m_bandwidthHz <= 0.0 || specRect.width() <= 0) {
         return;
     }
     // A dropped link draws no live color (overlay design D7).
@@ -13080,22 +14204,21 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
     // You are hidden: the rooms as when live, each state's marking dimmed
     // (roundtableDimmedColor, the workspace look's role).
     const bool dimmed = m_roundtableTagDisplay == RoundtableTagDisplay::Dimmed;
+    const bool inspecting = !m_roundtableInspectorRect.isNull();
 
-    const int bandTop = specRect.bottom() + 1 - bandPlanStripHeight(p.device());
-    const int top = bandTop - kRoundtableTagFootGap - kRoundtableTagHeight;
-    if (top < specRect.top()) {
-        return;
+    // A flag taller than a short spectrum hangs down into the strip: tags keep
+    // clear of it, and your line goes on the dial's other side from it.
+    QList<QRect> flagsInStrip;
+    for (const QRect& rect : m_receiverFlagRegion) {
+        if (rect.top() <= strip.bottom() && rect.bottom() >= strip.top()) {
+            flagsInStrip.append(rect);
+        }
     }
 
-    const QVector<QRect> controls = roundtableControlRects();
-
-    // The card for the active slice's frequency (D16), when its dial is here.
-    RoundtableCardPlacement placed;
-    int dialX = 0;
-    const QFont cardNameFont = roundtableTagFont(p.device(), 12, QFont::Bold);
-    const QFontMetrics cardNameMetrics(cardNameFont, p.device());
-    if (wantsCard) {
-        dialX = hzToX(static_cast<double>(m_roundtableCard.hz), specRect);
+    // Your frequency's line, beside its dial (strip design 3), when the dial is here.
+    RoundtableStripLinePlacement placed;
+    if (wantsLine) {
+        const int dialX = hzToX(static_cast<double>(m_roundtableCard.hz), specRect);
         if (dialX >= specRect.left() && dialX <= specRect.right()) {
             // The flag whose dial this is says which side it hangs on.
             bool flipped = false;
@@ -13107,39 +14230,42 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
                     flipped = vfo->geometry().center().x() < dialX;
                 }
             }
-            const int panTop = specRect.top() + kRoundtableCardTopGap;
-            const QRect pan(specRect.left() + kRoundtableTagGap, panTop, specRect.width() - 2 * kRoundtableTagGap,
-                            bandTop - kRoundtableTagFootGap - panTop);
-            if (!m_roundtableCardPlacedValid || pan != m_roundtableCardPlacedPan || dialX != m_roundtableCardPlacedDialX
-                || flipped != m_roundtableCardPlacedFlipped || controls != m_roundtableCardPlacedControls
-                || cardNameFont != m_roundtableCardPlacedFont) {
-                m_roundtableCardPlaced = placeRoundtableCard(m_roundtableCard, pan, dialX, controls, flipped, cardNameMetrics);
-                m_roundtableCardPlacedPan = pan;
-                m_roundtableCardPlacedDialX = dialX;
-                m_roundtableCardPlacedFlipped = flipped;
-                m_roundtableCardPlacedControls = controls;
-                m_roundtableCardPlacedFont = cardNameFont;
-                m_roundtableCardPlacedValid = true;
+            // The flag hanging into the strip nearest the dial sends the line to
+            // the dial's other side, when at least its head fits there.
+            RoundtableStripLineSide side = RoundtableStripLineSide::Either;
+            int nearestFlag = -1;
+            for (const QRect& rect : std::as_const(flagsInStrip)) {
+                const int off = std::min(std::abs(rect.left() - dialX), std::abs(rect.right() - dialX));
+                if (nearestFlag < 0 || off < nearestFlag) {
+                    nearestFlag = off;
+                    side = rect.center().x() < dialX ? RoundtableStripLineSide::Right : RoundtableStripLineSide::Left;
+                }
+            }
+            // The line's text size, which a workspace text size changes.
+            const QFont lineFont = roundtableTagFont(p.device(), 12, QFont::Bold);
+            if (!m_roundtableStripLinePlacedValid || strip != m_roundtableStripLinePlacedStrip
+                || dialX != m_roundtableStripLinePlacedDialX || flipped != m_roundtableStripLinePlacedFlipped
+                || side != m_roundtableStripLinePlacedSide || lineFont != m_roundtableStripLinePlacedFont) {
+                m_roundtableStripLinePlaced = placeRoundtableStripLine(m_roundtableCard, strip, dialX, flipped,
+                                                                       m_roundtableCardFormat, p.device(), side);
+                if (m_roundtableStripLinePlaced.line.isNull() && side != RoundtableStripLineSide::Either) {
+                    // Not even the head fits there: the rule as without the flag.
+                    m_roundtableStripLinePlaced = placeRoundtableStripLine(m_roundtableCard, strip, dialX, flipped,
+                                                                           m_roundtableCardFormat, p.device());
+                }
+                m_roundtableStripLinePlacedStrip = strip;
+                m_roundtableStripLinePlacedDialX = dialX;
+                m_roundtableStripLinePlacedFlipped = flipped;
+                m_roundtableStripLinePlacedSide = side;
+                m_roundtableStripLinePlacedFont = lineFont;
+                m_roundtableStripLinePlacedValid = true;
                 ++m_roundtableCardPlacements;
             }
-            placed = m_roundtableCardPlaced;
+            placed = m_roundtableStripLinePlaced;
         }
     }
-    const bool hasCard = !placed.card.isNull();
+    const bool hasLine = !placed.line.isNull();
 
-    // What the card or another slice's flag already says has no tag (D20).
-    const auto saidByAnotherFlag = [this](const RoundtableTag& tag) {
-        for (const VfoWidget* vfo : std::as_const(m_vfoWidgets)) {
-            if (vfo->isActiveSlice()) {
-                continue;
-            }
-            const qint64 flagHz = std::llround(vfo->frequency());
-            if (flagHz == tag.hz || tag.mergedHz.contains(flagHz)) {
-                return true;
-            }
-        }
-        return false;
-    };
     const QFont labelFont = roundtableTagFont(p.device(), 11, QFont::Bold);
     const QFont countFont = roundtableTagFont(p.device(), 11, QFont::DemiBold);
     measureRoundtableTags(labelFont, countFont, p.device());
@@ -13147,14 +14273,13 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
     QList<RoundtableTag> shown;
     shown.reserve(m_roundtablePanTags.size());
     for (const RoundtableTag& tag : std::as_const(m_roundtablePanTags)) {
-        if ((hasCard && (tag.active || tag.roomId == m_roundtableCardRoom)) || saidByAnotherFlag(tag)) {
+        // The line speaks for your active frequency; another slice of yours keeps its tag.
+        if (hasLine && (tag.active || tag.roomId == m_roundtableCardRoom)) {
             continue;
         }
-        // While it shows your own frequency your compact tag goes; while it shows
-        // another, the compact tag stays and a click on it goes to your own (D37).
-        if (inspecting && !m_roundtableViewedIsFold && tag.active && tag.roomId == m_roundtableViewedRoom) {
-            continue;
-        }
+        // Your compact tag stays while the details show your own frequency, with
+        // the viewed outline, so a click on it closes them; while they show
+        // another, a click on it goes to your own (D37).
         shown.append(tag);
     }
 
@@ -13162,30 +14287,17 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
     const QFontMetrics countMetrics(countFont, p.device());
     const int space = labelMetrics.horizontalAdvance(QLatin1Char(' '));
 
-    // The row is as tall as the tallest double.
-    int stackHeight = kRoundtableTagHeight;
-    for (const RoundtableTag& tag : std::as_const(shown)) {
-        stackHeight = std::max(stackHeight, kRoundtableTagHeight + roundtableTagNameLines(tag) * kRoundtableTagNameLine);
-    }
-
-    // Tags keep clear of what is over their row, and of the card.
-    const QRect row(specRect.left(), top + kRoundtableTagHeight - stackHeight, specRect.width(), stackHeight);
+    // Tags keep clear of your line and of a flag hanging into the strip; the
+    // toolbar and other flags stand on the spectrum, above it.
     QList<RoundtableKeepOut> keepOut;
-    const auto keepClearOf = [&](const QRect& over) {
-        keepOut.append(RoundtableKeepOut{static_cast<double>(over.left() - specRect.left()),
-                                         static_cast<double>(over.right() + 1 - specRect.left())});
-    };
-    for (const QRect& control : std::as_const(controls)) {
-        if (control.intersects(row)) {
-            keepClearOf(control);
-        }
+    if (hasLine) {
+        keepOut.append(RoundtableKeepOut{
+            static_cast<double>(placed.line.left() - kRoundtableLineKeepOut - specRect.left()),
+            static_cast<double>(placed.line.right() + 1 + kRoundtableLineKeepOut - specRect.left())});
     }
-    // The inspector stands in the card's place, so a card it hides keeps nothing clear.
-    if (hasCard && !inspecting) {
-        keepClearOf(placed.card);
-    }
-    if (inspecting && m_roundtableInspectorRect.intersects(row)) {
-        keepClearOf(m_roundtableInspectorRect);
+    for (const QRect& rect : std::as_const(flagsInStrip)) {
+        keepOut.append(RoundtableKeepOut{static_cast<double>(rect.left() - specRect.left()),
+                                         static_cast<double>(rect.right() + 1 - specRect.left())});
     }
 
     const double lowHz = m_centerHz - m_bandwidthHz / 2.0;
@@ -13202,57 +14314,27 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
     p.save();
     p.setRenderHint(QPainter::Antialiasing, true);
 
-    if (inspecting) {
-        // On your own frequency the inspector keeps the card's tick to the dial.
-        const int inspectorDialX = hzToX(static_cast<double>(m_roundtableCard.hz), specRect);
-        if (m_roundtableCard.hz > 0 && !m_roundtableCardRoom.isEmpty() && !m_roundtableViewedIsFold
-            && m_roundtableViewedRoom == m_roundtableCardRoom
-            && inspectorDialX >= specRect.left() && inspectorDialX <= specRect.right()) {
-            QColor tick = wantsCard ? roundtableCardColor(m_roundtableCard)
-                                    : roundtableTagBorder(static_cast<int>(RoundtableGlyph::Quiet));
-            tick.setAlphaF(tick.alphaF() * (dimmed ? 0.4 : 0.75));
-            p.setPen(QPen(tick, 1, Qt::DashLine));
-            p.drawLine(QPointF(inspectorDialX + 0.5, m_roundtableInspectorRect.bottom() + 1), QPointF(inspectorDialX + 0.5, bandTop - 1));
-        }
-    } else if (hasCard) {
-        m_roundtableTagHits.append(RoundtableTagHit{placed.card,
+    if (hasLine) {
+        m_roundtableStripLineDrawn = placed;
+        m_roundtableTagHits.append(RoundtableTagHit{placed.line,
             m_roundtableCardRoom.isEmpty() ? QStringList{} : QStringList{m_roundtableCardRoom}, false,
             RoundtableTagHit::Kind::Card, static_cast<qint64>(m_roundtableCard.hz)});
-        // A dashed tick joins the card to the dial (D16).
-        QColor tick = roundtableCardColor(m_roundtableCard);
-        tick.setAlphaF(tick.alphaF() * (dimmed ? 0.4 : 0.75));
-        p.setPen(QPen(tick, 1, Qt::DashLine));
-        p.drawLine(QPointF(dialX + 0.5, placed.card.bottom() + 1), QPointF(dialX + 0.5, bandTop - 1));
-        paintRoundtableCard(p, m_roundtableCard, placed, m_roundtableCardFormat, cardNameMetrics, dimmed);
+        // Open while the inspector shows your own frequency (.rcs.is-open).
+        const bool open = inspecting && !m_roundtableViewedIsFold && !m_roundtableCardRoom.isEmpty()
+            && m_roundtableViewedRoom == m_roundtableCardRoom;
+        paintRoundtableStripLine(p, m_roundtableCard, placed, m_roundtableCardFormat, dimmed, open);
     }
 
+    // The tags, centered in the strip.
+    const int top = strip.top() + (strip.height() - kRoundtableTagHeight) / 2;
     for (const RoundtableTagPlacement& placement : placements) {
         const RoundtableTag* first = byId.value(placement.roomIds.value(0));
-        const int names = !placement.folded && first ? roundtableTagNameLines(*first) : 0;
-        const int bodyHeight = kRoundtableTagHeight + names * kRoundtableTagNameLine;
-        const QRect rect(specRect.left() + static_cast<int>(std::lround(placement.rect.left())),
-                         top + kRoundtableTagHeight - bodyHeight, static_cast<int>(std::lround(placement.rect.width())),
-                         bodyHeight);
-        if (rect.top() < specRect.top()) { continue; }
+        const QRect rect(specRect.left() + static_cast<int>(std::lround(placement.rect.left())), top,
+                         static_cast<int>(std::lround(placement.rect.width())), kRoundtableTagHeight);
         m_roundtableTagHits.append(RoundtableTagHit{rect, placement.roomIds, placement.folded,
                                                     RoundtableTagHit::Kind::Tag, first ? first->hz : 0});
         if (first == nullptr) {
             continue;
-        }
-
-        // A dashed tick from the tag down to each room's frequency.
-        for (const QString& id : placement.roomIds) {
-            const RoundtableTag* tag = byId.value(id);
-            if (tag == nullptr) {
-                continue;
-            }
-            QColor tick = stale ? roundtableStaleColor()
-                : dimmed        ? roundtableDimmedColor(tag->state)
-                                : roundtableTagBorder(tag->state);
-            tick.setAlphaF(tick.alphaF() * 0.7);
-            p.setPen(QPen(tick, 1, Qt::DashLine));
-            const int x = hzToX(static_cast<double>(tag->hz), specRect);
-            p.drawLine(QPointF(x + 0.5, rect.bottom() + 1), QPointF(x + 0.5, bandTop - 1));
         }
 
         const QColor border = stale ? QColor(0x60, 0x60, 0x66)
@@ -13317,25 +14399,39 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
         paintRoundtableGlyph(p, QPointF(glyphX, midY), kRoundtableGlyphSize, first->state, stale, dimmed);
         const int textLeft = static_cast<int>(glyphX + kRoundtableGlyphSize / 2.0) + kRoundtableTagInnerGap;
         const int textRight = rect.right() - kRoundtableTagPadRight;
-        // A double with names has no count beside the word.
-        const QString members = names > 0 ? QString() : roundtableTagCountText(*first);
+        const QString members = roundtableTagCountText(*first);
         const int countWidth = countMetrics.horizontalAdvance(members);
+        const int names = roundtableTagNames(*first);
+        if (names > 0) {
+            // One line (.rct--line): the word, the names side by side, the count.
+            const QColor word = !stale ? QColor(0xe0, 0x6c, 0x6e) : text;
+            const auto drawPiece = [&](int x, const QString& piece, const QFont& font, const QColor& color, int width) {
+                const int room = std::min(width + 1, textRight + 1 - x);
+                if (room <= 0) {
+                    return x;
+                }
+                p.setFont(font);
+                p.setPen(color);
+                p.drawText(QRect(x, rect.top(), room, kRoundtableTagHeight),
+                           Qt::AlignVCenter | Qt::AlignLeft | Qt::TextSingleLine, piece);
+                return x + width;
+            };
+            int x = drawPiece(textLeft, first->label, labelFont, word, labelMetrics.horizontalAdvance(first->label));
+            for (int k = 0; k < names; ++k) {
+                const QString& name = first->keyed.at(k);
+                x = drawPiece(x + kRoundtableTagLineGap, name, labelFont, text, labelMetrics.horizontalAdvance(name));
+            }
+            if (!members.isEmpty()) {
+                drawPiece(x + kRoundtableTagLineGap, members, countFont, count, countWidth);
+            }
+            continue;
+        }
         const int labelRoom = std::max(0, textRight - textLeft - (members.isEmpty() ? 0 : space + countWidth));
         const QString label = labelMetrics.elidedText(first->label, Qt::ElideRight, labelRoom);
         p.setFont(labelFont);
         p.setPen(isDouble && !stale ? QColor(0xe0, 0x6c, 0x6e) : text);
         p.drawText(QRect(textLeft, rect.top(), labelRoom, kRoundtableTagHeight), Qt::AlignVCenter | Qt::AlignLeft,
                    label);
-        if (names > 0) {
-            p.setPen(text);
-            for (int k = 0; k < names; ++k) {
-                const int nameLeft = rect.left() + 1 + kRoundtableTagPadLeft + kRoundtableTagNameIndent;
-                const int nameTop = rect.top() + kRoundtableTagHeight + k * kRoundtableTagNameLine - 2;
-                p.drawText(QRect(nameLeft, nameTop, std::max(0, textRight - nameLeft), kRoundtableTagNameLine),
-                           Qt::AlignVCenter | Qt::AlignLeft | Qt::TextSingleLine, first->keyed.at(k));
-            }
-            continue;
-        }
         p.setFont(countFont);
         p.setPen(count);
         const int countLeft = textLeft + labelMetrics.horizontalAdvance(label) + space;
@@ -13391,30 +14487,22 @@ std::optional<double> SpectrumWidget::roundtablePanLevel(quint64 hz, const QStri
     return peak + static_cast<double>(fftTraceShiftDb());
 }
 
-QVector<QRect> SpectrumWidget::roundtableControlRects() const
-{
-    // Every flag, and the pan's toolbar down its left side, is kept clear.
-    QVector<QRect> controls;
-    for (const QRect& flag : m_receiverFlagRegion) {
-        controls.append(flag);
-    }
-    for (const QWidget* child : findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {
-        if (child->isVisible() && child->inherits("NereusSDR::SpectrumOverlayPanel")) {
-            controls.append(child->geometry());
-        }
-    }
-    return controls;
-}
-
 SpectrumWidget::RoundtableInspectorSpot SpectrumWidget::roundtableInspectorSpot(int sliceId, qint64 fallbackHz) const
 {
-    const QRect spec = spectrumLayout().spectrum;
-    const int bandTop = spec.bottom() + 1 - bandPlanStripHeight();
-    const int panTop = spec.top() + kRoundtableCardTopGap;
+    const SpectrumLayout layout = spectrumLayout();
+    const QRect spec = layout.spectrum;
     RoundtableInspectorSpot spot;
-    spot.pan = QRect(spec.left() + kRoundtableTagGap, panTop, spec.width() - 2 * kRoundtableTagGap,
-                     bandTop - kRoundtableTagFootGap - panTop);
-    spot.flags = roundtableControlRects();
+    // Below: the waterfall, cut clear of the time scale down its right edge.
+    QRect below = layout.waterfall;
+    if (!below.isEmpty()) {
+        const QRect timeScale = waterfallTimeScaleRect(layout.waterfallChrome);
+        below.setRight(std::min(below.right(), timeScale.left() - 1));
+    }
+    spot.below = below;
+    // Above: the spectrum from its top to the divider's top edge, so the
+    // divider's grab stays free.
+    spot.above = QRect(spec.left(), spec.top(), spec.width(), std::max(0, layout.divider.top() - spec.top()));
+
     const VfoWidget* flag = m_vfoWidgets.value(sliceId, nullptr);
     if (flag == nullptr && !m_vfoWidgets.isEmpty()) {
         flag = m_vfoWidgets.first();
@@ -13424,6 +14512,39 @@ SpectrumWidget::RoundtableInspectorSpot SpectrumWidget::roundtableInspectorSpot(
         spot.flagFlipped = flag->geometry().center().x() < spot.dialX;
     } else {
         spot.dialX = hzToX(static_cast<double>(fallbackHz), spec);
+    }
+    // Lined up with your line when it is drawn here, whatever the details show;
+    // else beside the dial on the flag's far side (strip design 5).
+    const bool lineDrawn = !layout.roundtableStrip.isNull() && !m_roundtableStripLineDrawn.line.isNull();
+    if (lineDrawn) {
+        spot.anchorLeft = m_roundtableStripLineDrawn.line.left();
+    } else if (spot.flagFlipped) {
+        const int width = std::min(kRoundtableInspectorWidth, std::max(0, below.width()));
+        spot.anchorLeft = spot.dialX - kRoundtableDetailsDialGap - width;
+    } else {
+        spot.anchorLeft = spot.dialX + kRoundtableDetailsDialGap;
+    }
+    // Upward, over the spectrum, the flag stands there: past its outer edge,
+    // else on the dial's other side, when the details fit; else as below.
+    spot.upwardAnchorLeft = spot.anchorLeft;
+    const int upWidth = std::min(kRoundtableInspectorWidth, std::max(0, spot.above.width()));
+    const int upLow = spot.above.left();
+    const int upHigh = spot.above.left() + spot.above.width() - upWidth;
+    const auto fitsUp = [upLow, upHigh](int left) { return left >= upLow && left <= upHigh; };
+    std::optional<int> pastFlag;
+    if (flag != nullptr) {
+        const QRect flagRect = flag->occupiedRegion().boundingRect();
+        if (!flagRect.isEmpty()) {
+            pastFlag = spot.flagFlipped ? flagRect.left() - kRoundtableDetailsDialGap - upWidth
+                                        : flagRect.right() + 1 + kRoundtableDetailsDialGap;
+        }
+    }
+    const int otherSide = spot.flagFlipped ? spot.dialX + kRoundtableDetailsDialGap
+                                           : spot.dialX - kRoundtableDetailsDialGap - upWidth;
+    if (pastFlag.has_value() && fitsUp(*pastFlag)) {
+        spot.upwardAnchorLeft = *pastFlag;
+    } else if (fitsUp(otherSide)) {
+        spot.upwardAnchorLeft = otherSide;
     }
     return spot;
 }
@@ -14074,9 +15195,9 @@ bool SpectrumWidget::eventFilter(QObject* obj, QEvent* ev)
         return false;
     }
 
-    // Roundtable plan Task 15: the room tags keep clear of the pan's
-    // toolbar (drawRoundtableTags), so when it collapses, moves, shows or
-    // hides they are laid out again; the GPU path's overlay is cached.
+    // Roundtable plan Task 15: when the pan's toolbar collapses, moves,
+    // shows or hides, the Roundtable layer is drawn again; the GPU path's
+    // overlay is cached. (The tags in the strip no longer keep clear of it.)
     switch (ev->type()) {
     case QEvent::Move:
     case QEvent::Resize:
@@ -15036,6 +16157,8 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
         if (waterfallLiveButtonRect(wfRect).contains(event->position().toPoint())
             && event->button() == Qt::LeftButton) {
             setWaterfallLive(true);
+            // Rewind (Task 24): live sound on the frequency before rewinding.
+            emit dsrLiveRequested();
             event->accept();
             return;
         }
@@ -15044,6 +16167,15 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
         m_bwDragStartX = mx;
         m_bwDragStartBw = m_bandwidthHz;
         setCursor(Qt::SizeHorCursor);
+        return;
+    }
+
+    // The Roundtable strip: its card and tags took their presses above
+    // (roundtableTagClick). The rest of it tunes nothing and starts no
+    // filter, passband, waterfall or time-scale drag.
+    if (layout.roundtableStripChrome.contains(QPoint(mx, my))) {
+        setCursor(Qt::ArrowCursor);
+        event->accept();
         return;
     }
 
@@ -15098,6 +16230,8 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
     if (waterfallLiveButtonRect(wfRect).contains(event->position().toPoint())
         && event->button() == Qt::LeftButton) {
         setWaterfallLive(true);
+        // Rewind (Task 24): live sound on the frequency before rewinding.
+        emit dsrLiveRequested();
         event->accept();
         return;
     }
@@ -15110,6 +16244,7 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
             m_draggingTimeScale = true;
             m_timeScaleDragStartY = my;
             m_timeScaleDragStartOffsetRows = m_wfHistoryOffsetRows;
+            m_timeScaleDragMoved = false;
             setCursor(Qt::SizeVerCursor);
             event->accept();
             return;
@@ -15206,10 +16341,18 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         const int dragHeight = std::max(1, timeScaleRect.height());
         const int maxOffset = maxWaterfallHistoryOffsetRows();
         const int dy = m_timeScaleDragStartY - my;  // pull up = scroll back
-        const int deltaRows = (maxOffset > 0)
+        // Rewind (Task 24): with the recorder the strip still moves 20
+        // minutes per height, however far back the Core keeps.
+        const int perHeight = waterfallStripRowsPerHeight(maxOffset);
+        const int deltaRows = (perHeight > 0)
             ? static_cast<int>(std::round(
-                (static_cast<double>(dy) / dragHeight) * maxOffset))
+                (static_cast<double>(dy) / dragHeight) * perHeight))
             : 0;
+        if (std::abs(dy) > 3) {
+            m_timeScaleDragMoved = true;
+            m_dsrRowsRefusal.clear();
+            m_dsrPlayRefusal.clear();
+        }
         const int newOffset = std::clamp(
             m_timeScaleDragStartOffsetRows + deltaRows, 0, maxOffset);
 
@@ -15484,6 +16627,9 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
             / std::max(1, layout.contentHeight);
         m_spectrumFrac = std::clamp(frac, 0.10f, 0.90f);
         refreshWfTimestampLabel();
+        // The waterfall's room changed: open details re-place (strip design 5).
+        emit roundtableInspectorSpotChanged();
+        emit waterfallTopChanged();
 #ifdef NEREUS_GPU_SPECTRUM
         markOverlayDirty();
 #else
@@ -15518,7 +16664,7 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
     // From AetherSDR SpectrumWidget.cpp:2200-2225 [@0cd4559]
     {
         const int wfY = layout.waterfall.top();
-        if (my >= freqBarY && my < wfY) {
+        if (my >= freqBarY && my < freqBarY + freqScaleHeight()) {
             // In the freq-scale row — LIVE button overlaps here.
             const QRect wfRect = layout.waterfallChrome;
             if (waterfallLiveButtonRect(wfRect).contains(event->position().toPoint())) {
@@ -15720,6 +16866,9 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         setCursor(Qt::SplitVCursor);
     } else if (my >= freqBarY && my < freqBarY + freqScaleHeight()) {
         setCursor(Qt::SizeHorCursor);
+    } else if (layout.roundtableStripChrome.contains(QPoint(mx, my))) {
+        // The Roundtable strip is neither the scale nor the waterfall.
+        setCursor(Qt::ArrowCursor);
     } else {
         // Check filter edges and passband: the press's own hit test.
         if (receiverGrabAt(mx, my, specRect).part != ReceiverGrabPart::None) {
@@ -15931,6 +17080,14 @@ void SpectrumWidget::contextMenuEvent(QContextMenuEvent* event)
             }
         }
     }
+    // A detached spectrum is its own window, so ignoring this event walks to
+    // the host window and never reaches the pan applet. Keyed on the pan's
+    // detach, not isWindow(): a parentless spectrum is not detached.
+    if (m_detachedIntoOwnWindow && isWindow()) {
+        event->accept();
+        emit panContextMenuRequested(event->globalPos());
+        return;
+    }
     // Anywhere else, let it reach the pan applet as before.
     event->ignore();
     // SpectrumBaseClass, not QRhiWidget: the CPU-only build
@@ -15965,6 +17122,20 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
     if (m_draggingTimeScale) {
         m_draggingTimeScale = false;
         setCursor(Qt::CrossCursor);
+        if (!m_timeScaleDragMoved && !m_wfLive) {
+            // Rewind (Task 24): a click on a strip time opens the box to
+            // type one.
+            const SpectrumLayout layout = spectrumLayout();
+            const QRect wf = layout.waterfall;
+            const int y = static_cast<int>(event->position().y());
+            const int rows = m_waterfall.height();
+            const int row = wf.height() > 0 ? (y - wf.top()) * rows / wf.height() : 0;
+            openDsrGoto(waterfallUtcMsForAge(m_wfHistoryOffsetRows + std::max(0, row)), y);
+        } else if (m_timeScaleDragMoved) {
+            // Rewind plays on release (JJ, 2026-11-16): the slice plays from
+            // the top row, or, already playing, the sound follows there.
+            dsrPlayFromTop();
+        }
         event->accept();
         return;
     }
@@ -15977,6 +17148,9 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
         if (m_draggingVfo) {
             recallTick = m_bandStackPressTick;
         }
+        // Rewind plays on release: a tune in the past while the slice does
+        // not play it yet (a refusal, say) plays from the top row.
+        bool tunedInPast = m_draggingVfo && !m_wfLive;
         // If pan drag was short (click, not real drag), treat as click-to-tune
         // From AetherSDR SpectrumWidget.cpp:1427-1457 — 4px Manhattan threshold
         if (m_draggingPan) {
@@ -16001,6 +17175,9 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
             if (dx <= 4 && !m_bandStackPressTick.isEmpty()) {
                 recallTick = m_bandStackPressTick;
             } else if (dx <= 4 && !m_moxOverlay) {
+                // In the past a click tunes as a live click does (JJ,
+                // 2026-11-16); while rewound the sound follows the slice.
+                tunedInPast = !m_wfLive;
                 const QRect specRect = spectrumLayout().spectrum;
                 double hz = xToHz(static_cast<int>(event->position().x()), specRect);
                 hz = std::round(hz / m_stepHz) * m_stepHz;
@@ -16081,6 +17258,9 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
         setCursor(Qt::CrossCursor);
         m_bandStackPressTick.clear();
         m_bandStackPressActivates = false;
+        if (tunedInPast && !m_dsrRewound && !m_moxOverlay) {
+            dsrPlayFromTop();
+        }
         if (!recallTick.isEmpty()) {
             const QPointer<SpectrumWidget> guard(this);
             emit bandStackTickClicked(recallTick);
@@ -16195,6 +17375,12 @@ void SpectrumWidget::wheelEvent(QWheelEvent* event)
         return;
     }
 
+    // The Roundtable strip: a wheel over it tunes and zooms nothing.
+    if (spectrumLayout().roundtableStripChrome.contains(QPoint(mx, my))) {
+        event->accept();
+        return;
+    }
+
     // Plain scroll: tune VFO by step size (matches Thetis panadapter behavior)
     // Ctrl+scroll: adjust ref level
     // Ctrl+Shift+scroll: zoom bandwidth
@@ -16256,6 +17442,59 @@ void SpectrumWidget::wheelEvent(QWheelEvent* event)
 // ============================================================================
 
 #ifdef NEREUS_GPU_SPECTRUM
+
+static void noteSpectrumPaintMs(qint64 ms)
+{
+    static qint64 totalMs = 0;
+    static int paints = 0;
+    static qint64 worstMs = 0;
+    static QElapsedTimer window;
+    if (!window.isValid()) {
+        window.start();
+    }
+    totalMs += ms;
+    ++paints;
+#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
+    noteIntelSpectrumPainted(ms);
+#endif
+    worstMs = qMax(worstMs, ms);
+    if (window.elapsed() < 1000) {
+        return;
+    }
+    qDebug() << "SpectrumWidget: paint" << paints << "totalMs" << totalMs
+             << "worstMs" << worstMs;
+    totalMs = 0;
+    paints = 0;
+    worstMs = 0;
+    window.restart();
+}
+
+void SpectrumWidget::applySpectrumColorBufferSize()
+{
+#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
+    // This Mac's panel is 3072x1920, scaled so the window framebuffer is
+    // about twice the logical size. Shading the 3D trace and uploading the
+    // overlays at that device size kept a frame open past the 33 ms row
+    // period. Metal then blocked the GUI thread in the next beginFrame, and
+    // the row clock, which places at most two rows on a drawn frame, dropped
+    // the rest. Draw at logical pixels. The backing store scales the texture
+    // up to the widget. Apple silicon keeps device pixels.
+    const int w = width();
+    const int h = height();
+    if (w > 0 && h > 0) {
+        setFixedColorBufferSize(w, h);
+    }
+#endif
+}
+
+qreal SpectrumWidget::spectrumColorBufferRatio() const
+{
+#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
+    return 1.0;
+#else
+    return devicePixelRatioF();
+#endif
+}
 
 // Fullscreen quad: position (x,y) + texcoord (u,v)
 // From AetherSDR SpectrumWidget.cpp:1779
@@ -16371,7 +17610,7 @@ void SpectrumWidget::initOverlayPipeline()
 
     int w = qMax(width(), 64);
     int h = qMax(height(), 64);
-    const qreal dpr = devicePixelRatioF();
+    const qreal dpr = spectrumColorBufferRatio();
     const int pw = static_cast<int>(w * dpr);
     const int ph = static_cast<int>(h * dpr);
     m_ovGpuTex = r->newTexture(QRhiTexture::RGBA8, QSize(pw, ph));
@@ -17038,7 +18277,9 @@ void SpectrumWidget::initialize(QRhiCommandBuffer* cb)
         qWarning() << "SpectrumWidget: QRhi init failed — no GPU backend";
         return;
     }
-    qDebug() << "SpectrumWidget: QRhi backend:" << r->backendName();
+    qDebug() << "SpectrumWidget: QRhi backend:" << r->backendName()
+             << "color buffer" << fixedColorBufferSize()
+             << "logical" << size();
 
     auto* batch = r->nextResourceUpdateBatch();
 
@@ -17250,7 +18491,7 @@ bool SpectrumWidget::prepareBackgroundLayer(QRhiResourceUpdateBatch* batch,
         || specRect.isEmpty()) {
         return false;
     }
-    const qreal dpr = devicePixelRatioF();
+    const qreal dpr = spectrumColorBufferRatio();
     const QSize px(qMax(1, qRound(specRect.width() * dpr)),
                    qMax(1, qRound(specRect.height() * dpr)));
 
@@ -17332,7 +18573,8 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
     QRhi* r = rhi();
     const int w = width();
     const int h = height();
-    if (w <= 0 || h <= freqScaleHeight() + kDividerH + 2) { return; }
+    const int roundtableStripH = roundtableStripLaidOut() ? kRoundtableStripHeight : 0;
+    if (w <= 0 || h <= freqScaleHeight() + roundtableStripH + kDividerH + 2) { return; }
 
     const SpectrumLayout layout = spectrumLayout();
     const int specH = layout.spectrum.height();
@@ -17475,7 +18717,7 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
 
     // ---- Overlay texture (static, only on state change) ----
     {
-        const qreal dpr = devicePixelRatioF();
+        const qreal dpr = spectrumColorBufferRatio();
         const int pw = static_cast<int>(w * dpr);
         const int ph = static_cast<int>(h * dpr);
         if (m_overlayStatic.size() != QSize(pw, ph)) {
@@ -17587,6 +18829,10 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             p.fillRect(layout.divider, QColor(0x30, 0x40, 0x50));
             drawFreqScale(p, layout.frequency);
             drawTimeScale(p, wfRectFull);
+            // The Roundtable strip, before the VFO marker below so the dial's
+            // line runs through it, as in paintEvent; the whole width.
+            drawRoundtableStrip(p, layout.roundtableStripChrome);
+            drawDsrOverlay(p, specRect, wfRectFull);
             // TNF notch overlay, GPU static-overlay path.  Same relative
             // ordering as the CPU paintEvent above and as AetherSDR
             // src/gui/SpectrumWidget.cpp:12013-12016 [@c6481cbf], where
@@ -18386,6 +19632,16 @@ void SpectrumWidget::applyNativeWindowIsolationPolicy()
 #endif
 }
 
+void SpectrumWidget::applyIntelDetachedPresentFormat()
+{
+#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
+    // The swap interval stays at the display default. An unsynced present
+    // landed between panel refreshes, so the same row sat for two refreshes
+    // and the next one jumped.
+    Q_UNUSED(this);
+#endif
+}
+
 // ============================================================================
 // VFO Flag Widget Hosting (AetherSDR pattern)
 // ============================================================================
@@ -18731,10 +19987,13 @@ void SpectrumWidget::refreshReceiverFlagRegion()
         m_receiverFlagRegion = region;
         emit receiverFlagRegionChanged();
         emit roundtableInspectorSpotChanged();
-        // Roundtable keepouts belong to the tag child. The flag event
-        // filter separately invalidates static marker geometry as needed.
+        // The flags decide where your line and the tags go in the strip, which
+        // the tag child draws. The flag event filter separately invalidates
+        // static marker geometry as needed.
         if (m_roundtableTagDisplay != RoundtableTagDisplay::Hidden
-            && (!m_roundtableTags.isEmpty() || m_roundtableCard.kind != RoundtableCardModel::Kind::Quiet)) {
+            && (!m_roundtableTags.isEmpty() || m_roundtableCard.kind != RoundtableCardModel::Kind::Quiet
+                || !m_roundtableCard.note.isEmpty())) {
+            // A quiet line with only a link note moves aside for a flag too.
             refreshRoundtableTagLayer();
         }
     }

@@ -975,6 +975,18 @@
 //                Anthropic Claude Code.
 //   2026-11-05 - Hot keys plan Task 5: cwSoftPaddle. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-11-15 - Recording plan Task 3: recordingService(). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-15 - Recording plan Task 5: recordingsFacade() and recordings(),
+//                the access by role. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-11-16 - Recording plan Task 21: the Digital Spectrum Recorder's
+//                I/Q tap gate (m_dsrTap). J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
+//   2026-11-16 - Recording plan Task 22: setSliceReplay, rewind sound's
+//                switch handed to the DSP worker, and the replays it keeps
+//                alive while the worker may read them. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/MoxController.h"
@@ -1216,6 +1228,11 @@ class RoundtableModel;
 class StationTciController;
 class StationTciModel;
 class StationCatController;
+class RecordingService;
+class DsrRecorder;
+class DsrReplay;
+class RecordingsFacade;
+class RecordingsAccess;
 class StationCatModel;
 class CatControl;
 class SliceOwnership;
@@ -4208,6 +4225,27 @@ public:
     // construction; Qt children.
     RoundtableState*      roundtableState()     const { return m_roundtableState; }
     RoundtableModel*      roundtableModel()     const { return m_roundtableModel; }
+
+    /// Recording plan Task 3: the Core's recordings (contact recorders,
+    /// the store, start and stop from any device). Built only by a model
+    /// that runs its own radio (Role::Local); nullptr in a remote window.
+    RecordingService*     recordingService()    const { return m_recordingService.get(); }
+    /// Recording plan Task 22, rewind sound: feeds slice `sliceId`'s
+    /// demodulator from `replay` (the Digital Spectrum Recorder's past
+    /// I/Q), or (null) from the radio again, through the DSP worker's one
+    /// switch (RxDspWorker::setSliceReplay). Main thread. False when there
+    /// is no DSP worker (no radio streaming), and nothing changes. The
+    /// replay is kept alive here until the worker can no longer read it.
+    bool setSliceReplay(int sliceId, std::shared_ptr<DsrReplay> replay);
+    /// Recording plan Task 5: the `recordings` object. On a model that runs
+    /// its own radio it follows recordingService() once published (the
+    /// Core's StationServer or the window's access publishes it); in a
+    /// remote window it reads the mirror. Never null.
+    RecordingsFacade*     recordingsFacade()    const { return m_recordingsFacade; }
+    /// Recording plan Task 5: what a window talks to for recordings:
+    /// LocalRecordingsAccess where this model runs the radio, and
+    /// RemoteRecordingsAccess in a remote window. Never null.
+    RecordingsAccess*     recordings()          const { return m_recordingsAccess; }
 
     /// Parity Task 19 (R-IOS-25): a remote window applies the Core's
     /// `spots` stream (the Core's cluster, RBN, POTA and PSK Reporter
@@ -9997,6 +10035,20 @@ private:
     // the Core, its publisher (destroyed first in ~RadioModel).
     StationCatModel*                      m_stationCatModel{nullptr};
     std::unique_ptr<StationCatController> m_stationCat;
+    // Recording plan Task 3: Role::Local only; see recordingService().
+    std::unique_ptr<RecordingService> m_recordingService;
+    // Recording plan Task 21: the spectrum recorder forkIqToTaps copies
+    // into (connection thread). Cleared, and any copy in progress waited
+    // for, before the service goes.
+    std::atomic<DsrRecorder*> m_dsrTap{nullptr};
+    std::atomic<int> m_dsrTapInFlight{0};
+    // Recording plan Task 22: the replays the DSP worker may read, by slice
+    // id. Let go when replaced on a running worker, or once teardown has
+    // joined the DSP thread.
+    std::array<std::shared_ptr<DsrReplay>, 32> m_sliceReplays{};
+    // Recording plan Task 5: Qt children, in every placement.
+    RecordingsFacade*                     m_recordingsFacade{nullptr};
+    RecordingsAccess*                     m_recordingsAccess{nullptr};
     CatControl*                           m_catControl{nullptr};
     // Follow-up 3: accessory requests whose refusal their page shows.
     QHash<quint32, QPointer<QObject>> m_pageShownAccessoryRequests;

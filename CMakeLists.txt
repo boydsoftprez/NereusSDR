@@ -827,6 +827,53 @@ else()
 endif()
 
 # --------------------------------------------------------------------------
+# LAME (libmp3lame), the MP3 encoder for recordings on the Core
+# (src/core/recordings/AudioFileWriter.cpp). Optional: without it
+# AudioFileWriter::mp3Available() is false and recordings are WAV.
+# Linked as a shared library only (LGPL-2.0-or-later; see
+# docs/attribution/LAME-PROVENANCE.md and LGPL-COMPLIANCE.md).
+#   macOS:   Homebrew lame (brew install lame).
+#   Linux:   libmp3lame-dev (runtime libmp3lame0).
+#   Windows: MSYS2 mingw-w64-x86_64-lame; LAME_ROOT names the folder with
+#            include/lame/lame.h, lib/ and bin/libmp3lame-0.dll. The MSVC
+#            release build makes lib/mp3lame.lib from the DLL's exports.
+# NEREUS_WITH_LAME=OFF builds without it. The Intel macOS release row
+# builds LAME 3.100 from source for x86_64 and names it with LAME_ROOT.
+# MP3 decoding never uses LAME: minimp3 (third_party/minimp3) is the one
+# decoder on every platform.
+# --------------------------------------------------------------------------
+option(NEREUS_WITH_LAME "Build MP3 recording with LAME when it is found" ON)
+set(LAME_FOUND FALSE)
+if(NEREUS_WITH_LAME)
+    set(_lame_hints "")
+    if(DEFINED LAME_ROOT)
+        list(APPEND _lame_hints "${LAME_ROOT}")
+    endif()
+    find_path(LAME_INCLUDE_DIR lame/lame.h HINTS ${_lame_hints} PATH_SUFFIXES include)
+    # Shared library names first: never the static libmp3lame.a.
+    if(WIN32)
+        find_library(LAME_LIBRARY NAMES mp3lame.lib libmp3lame.dll.a mp3lame
+            HINTS ${_lame_hints} PATH_SUFFIXES lib)
+    elseif(APPLE)
+        find_library(LAME_LIBRARY NAMES libmp3lame.dylib mp3lame
+            HINTS ${_lame_hints} PATH_SUFFIXES lib)
+    else()
+        find_library(LAME_LIBRARY NAMES libmp3lame.so mp3lame
+            HINTS ${_lame_hints} PATH_SUFFIXES lib)
+    endif()
+    if(LAME_INCLUDE_DIR AND LAME_LIBRARY)
+        set(LAME_FOUND TRUE)
+        if(WIN32)
+            find_file(LAME_DLL NAMES libmp3lame-0.dll libmp3lame.dll
+                HINTS ${_lame_hints} PATH_SUFFIXES bin NO_DEFAULT_PATH)
+        endif()
+        message(STATUS "LAME found: ${LAME_LIBRARY} (MP3 recordings on)")
+    else()
+        message(STATUS "LAME not found: recordings are WAV only")
+    endif()
+endif()
+
+# --------------------------------------------------------------------------
 # libpipewire-0.3 — optional native Linux audio bridge (Phase 3O PipeWire).
 # Detection-only here; actual PipeWire sources land behind NEREUS_HAVE_PIPEWIRE
 # in follow-up tasks. If the dev package is absent the Linux audio path stays
@@ -939,6 +986,7 @@ if(NEREUS_GPU_SPECTRUM)
         # a single, context-rich failure message below instead of
         # multiple cryptic find_package warnings.
         find_package(Qt6 QUIET COMPONENTS ShaderTools GuiPrivate)
+        find_package(Qt6 QUIET COMPONENTS WidgetsPrivate)
 
         # Belt-and-braces detection: accept either the _FOUND variable
         # or the imported target. install-qt-action on Windows has
@@ -1100,6 +1148,27 @@ set(CORE_SOURCES
     src/core/session/media/WaveformCodec.cpp
     src/core/audio/WaveformPublisher.cpp
     src/core/audio/WaveformHistory.cpp
+    # Recordings on the Core: WAV and MP3 files.
+    src/core/recordings/AudioFileWriter.cpp
+    src/core/recordings/AudioFileReader.cpp
+    # The recording store, its names, disks and settings.
+    src/core/recordings/RecordingNames.cpp
+    src/core/recordings/RecordingStore.cpp
+    src/core/recordings/RecordingDisks.cpp
+    src/core/recordings/RecordingSettings.cpp
+    # The contact recorder and the recording service.
+    src/core/recordings/ContactRecorder.cpp
+    src/core/recordings/RecordingService.cpp
+    src/core/recordings/RecordingPlayer.cpp
+    # A recording on the air: the transmitter's input while it goes out.
+    src/core/recordings/OnAirSource.cpp
+    # The voice keyer: M1 to M8, which key the radio by themselves.
+    src/core/recordings/VoiceKeyer.cpp
+    # The Digital Spectrum Recorder: every receiver's I/Q in one ring file.
+    src/core/recordings/dsr/DsrRingFile.cpp
+    src/core/recordings/dsr/DsrRecorder.cpp
+    # Rewind sound: a slice fed from the ring file (recording plan Task 22).
+    src/core/recordings/dsr/DsrReplay.cpp
     src/core/RadeChannel.cpp
     src/core/RadeV2Feature.cpp
     src/core/RadeRxWorker.cpp
@@ -1642,6 +1711,8 @@ list(APPEND CORE_SOURCES
     # R-R3-49 / R-IOS-18: the Core's PA Gain profiles for a phone.
     src/core/session/PaProfilesFacade.cpp
     src/core/session/BandStackFacade.cpp
+    # Recording plan Task 5 (recordingsVersion 1): the Core's recordings.
+    src/core/session/RecordingsFacade.cpp
     # iPhone app Task 25 (D41): the unbuilt features list the catalogue's
     # tools read (the desktop's hide helpers stay in src/gui).
     src/core/UnbuiltFeatureList.cpp
@@ -1784,6 +1855,10 @@ set(MODEL_SOURCES
     src/models/bandstack/BandStackCommand.cpp
     src/models/bandstack/LocalBandStackAccess.cpp
     src/models/bandstack/RemoteBandStackAccess.cpp
+    # Recording plan Task 5: what a window talks to for recordings.
+    src/models/recordings/RecordingsAccess.h
+    src/models/recordings/LocalRecordingsAccess.cpp
+    src/models/recordings/RemoteRecordingsAccess.cpp
     src/models/BandPlanManager.cpp
     src/models/PureSignalSettings.cpp
     src/models/PureSignalSettings.h
@@ -1935,6 +2010,7 @@ set(GUI_SOURCES
     src/gui/VaxFirstRunDialog.cpp
     src/gui/VaxFirstRunCheck.cpp
     src/gui/SpectrumWidget.cpp
+    src/gui/SpectrumIntelPresent.cpp
     src/gui/WaterfallImpulseBlanker.cpp
     src/gui/WheelStepAccumulator.cpp
     src/gui/hotkeys/HotKeyDispatcher.cpp
@@ -2012,6 +2088,24 @@ set(GUI_SOURCES
     src/gui/widgets/RadioSpeakerWidget.h
     src/gui/widgets/VfoStyles.h
     src/gui/widgets/VfoWidget.cpp
+    src/gui/recordings/FlagRecordPlay.cpp
+    src/gui/recordings/FlagRecordPlay.h
+    src/gui/recordings/RevealFile.cpp
+    src/gui/recordings/RevealFile.h
+    src/gui/recordings/RecordingsPanel.cpp
+    src/gui/recordings/RecordingsPanel.h
+    src/gui/recordings/RecordingsWindow.cpp
+    src/gui/recordings/RecordingsWindow.h
+    src/gui/recordings/LocalMicClipRecorder.cpp
+    src/gui/recordings/LocalMicClipRecorder.h
+    src/gui/recordings/VoiceButton.cpp
+    src/gui/recordings/VoiceButton.h
+    src/gui/recordings/DsrHoursMap.cpp
+    src/gui/recordings/DsrHoursMap.h
+    src/gui/recordings/DsrSaveBox.cpp
+    src/gui/recordings/DsrSaveBox.h
+    src/gui/recordings/DsrRewindLink.cpp
+    src/gui/recordings/DsrRewindLink.h
     src/gui/widgets/MetricLabel.cpp
     src/gui/widgets/MetricLabel.h
     src/gui/widgets/SystemTile.cpp
@@ -2299,6 +2393,10 @@ set(GUI_SOURCES
     src/gui/setup/CoresSetupPage.cpp
     src/gui/setup/RfKitPage.cpp
     src/gui/setup/RotorSetupPage.cpp
+    # Recording plan Task 8: Setup > Cores > Recordings.
+    src/gui/setup/RecordingsSetupPage.cpp
+    # Recording plan Task 26: Setup > Cores > Digital Spectrum Recorder.
+    src/gui/setup/DsrSetupPage.cpp
     src/gui/setup/TciLogWindow.cpp
     src/gui/setup/HotKeySetupPages.cpp
     src/gui/setup/KeyboardMapWidget.cpp
@@ -2343,6 +2441,7 @@ set(GUI_SOURCES
     src/gui/applets/DiversityApplet.cpp
     src/gui/applets/CwxApplet.cpp
     src/gui/applets/DvkApplet.cpp
+    src/gui/applets/VoiceKeyerApplet.cpp
     src/gui/applets/CatApplet.cpp
     src/gui/applets/AccessoryReadouts.cpp
     src/gui/applets/TunerApplet.cpp
@@ -2366,6 +2465,9 @@ if(APPLE)
     list(APPEND GUI_SOURCES src/gui/bandstack/BandStackReducedMotion.mm)
     set_source_files_properties(src/gui/bandstack/BandStackReducedMotion.mm
         PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    # The Intel present path talks to AppKit. The rest of the file is C++.
+    set_source_files_properties(src/gui/SpectrumIntelPresent.cpp
+        PROPERTIES LANGUAGE OBJCXX SKIP_PRECOMPILE_HEADERS ON)
 endif()
 # RtMidi: desktop only, never NereusCore or nereusd (R-HK-18). On Linux it needs
 # ALSA (found above); without it the build has no MIDI support and the device
@@ -2822,6 +2924,15 @@ function(nereus_apply_core_deps target)
         target_compile_definitions(${target} PUBLIC HAVE_FFTW3)
     endif()
 
+    # Recordings: LAME encodes MP3 when found (NEREUS_HAVE_LAME); minimp3,
+    # header only, decodes it. Their headers reach only the two files that
+    # include them (set below the function), so a Homebrew or MSYS2 include
+    # folder never sits on the path of the rest of the Core.
+    if(LAME_FOUND)
+        target_link_libraries(${target} PRIVATE ${LAME_LIBRARY})
+        target_compile_definitions(${target} PRIVATE NEREUS_HAVE_LAME)
+    endif()
+
     # R2 Task 17: OpenSSL libcrypto for CertificateStore. PUBLIC so it
     # reaches nereusd (links NereusCore PRIVATE, but PRIVATE only controls
     # whether nereusd's own PUBLIC deps propagate further downstream -- the
@@ -2971,6 +3082,12 @@ endfunction()
 function(nereus_apply_gui_deps target)
     if(APPLE)
         target_link_libraries(${target} PUBLIC "-framework Cocoa")
+    endif()
+    # Intel waterfall present reads QWidgetRepaintManager. The header is
+    # private; the core library does not need it.
+    if(TARGET Qt6::WidgetsPrivate)
+        target_link_libraries(${target} PRIVATE Qt6::WidgetsPrivate)
+        target_compile_definitions(${target} PRIVATE NEREUS_HAVE_WIDGETS_PRIVATE)
     endif()
     # Qt6::Widgets and Qt6::GuiPrivate are NOT listed here: both are
     # NereusCore dependencies for now (see the comments in
@@ -3232,7 +3349,61 @@ elseif(ENABLE_MNR)
     message(STATUS "MNR (Apple Accelerate) disabled — macOS only")
 endif()
 
+# The recordings files' third-party headers, as SYSTEM-style -isystem paths
+# would not be per source: minimp3 on both, lame.h on the writer. Without the
+# shared precompiled header, so the extra include paths do not differ from
+# the ones it was built with.
+set_source_files_properties(
+    ${CMAKE_SOURCE_DIR}/src/core/recordings/AudioFileReader.cpp
+    PROPERTIES INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party/minimp3"
+               SKIP_PRECOMPILE_HEADERS ON)
+if(LAME_FOUND)
+    # When lame.h sits in one of the compiler's own include directories
+    # (libmp3lame-dev on Linux puts it in /usr/include), it is reachable
+    # already, and naming that directory again moves it ahead of libstdc++'s
+    # wrappers and breaks their #include_next <math.h>. Add the path only
+    # when it is somewhere else: Homebrew, MSYS2, a source-built LAME_ROOT.
+    get_filename_component(_lame_include_real "${LAME_INCLUDE_DIR}" REALPATH)
+    set(_lame_include_is_implicit FALSE)
+    foreach(_implicit_dir IN LISTS CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES)
+        get_filename_component(_implicit_real "${_implicit_dir}" REALPATH)
+        if(_implicit_real STREQUAL _lame_include_real)
+            set(_lame_include_is_implicit TRUE)
+        endif()
+    endforeach()
+    if(_lame_include_is_implicit)
+        set_source_files_properties(
+            ${CMAKE_SOURCE_DIR}/src/core/recordings/AudioFileWriter.cpp
+            PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    else()
+        set_source_files_properties(
+            ${CMAKE_SOURCE_DIR}/src/core/recordings/AudioFileWriter.cpp
+            PROPERTIES INCLUDE_DIRECTORIES "${LAME_INCLUDE_DIR}"
+                       SKIP_PRECOMPILE_HEADERS ON)
+    endif()
+endif()
 nereus_apply_core_deps(NereusCore)
+# NereusCore.dll imports LAME's DLL on Windows, so without it beside the
+# Core, NereusSDR.exe, nereusd.exe and every test that loads the Core fail
+# to start (0xc0000135). Copy it next to NereusCore.dll, where the programs
+# live and where ctest's PATH points the tests (path_list_prepend of the
+# library directory in tests/CMakeLists.txt). Same pattern as rade.dll and
+# deepfilter.dll above. MSYS2's libmp3lame-0.dll in turn imports
+# libmpg123-0.dll from the same bin folder, so that comes too when it is
+# there; the release build's staged LAME folder has no such file.
+if(WIN32 AND LAME_FOUND AND LAME_DLL)
+    get_filename_component(_lame_dll_dir "${LAME_DLL}" DIRECTORY)
+    find_file(LAME_MPG123_DLL NAMES libmpg123-0.dll
+        HINTS "${_lame_dll_dir}" NO_DEFAULT_PATH)
+    set(_lame_runtime_dlls "${LAME_DLL}")
+    if(LAME_MPG123_DLL)
+        list(APPEND _lame_runtime_dlls "${LAME_MPG123_DLL}")
+    endif()
+    add_custom_command(TARGET NereusCore POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${_lame_runtime_dlls} "$<TARGET_FILE_DIR:NereusCore>"
+        COMMENT "Copying LAME's DLL next to NereusCore.dll")
+endif()
 nereus_apply_gui_deps(NereusSDRLib)
 target_link_libraries(NereusSDRLib PUBLIC NereusCore)
 

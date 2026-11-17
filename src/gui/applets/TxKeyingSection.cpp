@@ -24,6 +24,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16 - VOICE, the third button in the TUNE / MOX row (the voice
+//                 keyer, recording plan Task 12; VoiceButton drives it).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - The row's parts (SectionParts), which a container copy
 //                 hides and orders from its entry config. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -146,6 +149,18 @@ m_moxBtn->setAccessibleName(QStringLiteral("MOX transmit"));
 m_moxBtn->setToolTip(QStringLiteral("Manual transmit (MOX)"));
 row->addWidget(m_moxBtn, 1);
 
+// Recording plan Task 12 (spec 6.6, Desktop VOICE): the voice keyer's
+// button, the third in the row, the same height and stretch as TUNE and
+// MOX. VoiceButton opens its box and shows a message going out.
+m_voiceBtn = new QPushButton(QStringLiteral("VOICE"), this);
+m_voiceBtn->setObjectName(QStringLiteral("TxVoiceButton"));
+m_voiceBtn->setFixedHeight(22);
+m_voiceBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+m_voiceBtn->setStyleSheet(btnStyle);
+m_voiceBtn->setAccessibleName(QStringLiteral("Voice keyer"));
+m_voiceBtn->setToolTip(QStringLiteral("Voice keyer: send one of your eight recorded messages"));
+row->addWidget(m_voiceBtn, 1);
+
 vbox->addLayout(row);
 
 // Slice control plan Task 11 (U8): which slice transmits, one letter
@@ -187,6 +202,7 @@ vbox->addWidget(m_takeTransmitBtn);
 // together, as setSliceIndicatorsHidden hides them.
 m_parts.add(QStringLiteral("tune"), QStringLiteral("TUNE button"), 0, {m_tuneBtn});
 m_parts.add(QStringLiteral("mox"), QStringLiteral("MOX button"), 0, {m_moxBtn});
+m_parts.add(QStringLiteral("voice"), QStringLiteral("VOICE button"), 0, {m_voiceBtn});
 m_parts.add(QStringLiteral("sliceIndicators"), QStringLiteral("Slice indicators"), -1,
             {m_sliceIndicatorRow, m_holderLabel, m_takeTransmitBtn});
 }

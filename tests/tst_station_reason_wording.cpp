@@ -58,6 +58,34 @@
 // cwQskUnavailableReason is placed. J.J. Boyd (KG4VCF), AI-assisted via
 // Claude Code.
 //
+// 2026-11-16: Recording plan final review fix: VoiceKeyer's kCwModeReason,
+// passed on as text(kCwModeReason). J.J. Boyd (KG4VCF), AI-assisted via
+// Anthropic Claude Code.
+// 2026-11-16: Recording plan Task 11 placed: the voiceKeyer.* refusals
+// (VoiceKeyer.h and .cpp), the play refusal words of RecordingService.h, and
+// the dispatcher's playRefusal forward. J.J. Boyd (KG4VCF), AI-assisted via
+// Anthropic Claude Code.
+// 2026-11-16: Recording plan Task 22 placed: rewind sound's refusals
+// (RecordingService rewind, goLive, seekRewind). J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code.
+// 2026-11-16: Recording plan Task 23 placed: the past picture's refusals
+// (RecordingService checkPastRequest, pastRows, pastSpectrum; the words in
+// RecordingService.h). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+// Claude Code.
+// 2026-11-16: Recording plan Task 25 placed: saving a stretch's refusals
+// (RecordingService saveStretch, saveSoundOnly, startSave, openStretch).
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-16: A recording's name refused as a Windows reserved name
+// inserts the name typed (stem). J.J. Boyd (KG4VCF), AI-assisted via
+// Anthropic Claude Code.
+//
+// 2026-11-16: Recording plan Task 21: the recorder's size refusal in
+// RecordingsFacade::applySettingsChange.
+// 2026-11-15: Recording plan Task 5: the recordings.* refusals worded in
+// RecordingsFacade, RecordingStore and RecordingNames, and the window's
+// RecordingsAccess words, are placed. J.J. Boyd (KG4VCF), AI-assisted via
+// Anthropic Claude Code.
+//
 // 2026-11-05: The SSB Mod Monitor's ssbModMonitorUnavailableReason is
 // placed. Corrections for review findings. J.J. Boyd (KG4VCF), AI-assisted
 // via Anthropic Claude Code.
@@ -104,6 +132,9 @@
 //                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16  J.J. Boyd / KG4VCF  workerServeSpectra (the past spectrum's
+//                                    refusal, moved there) is scanned too.
+//                                    AI tooling: Claude Code.
 //   2026-11-08  J.J. Boyd / KG4VCF  Hot keys: HotKeyDeviceBindings.cpp's
 //                                    turnRefusal is app-side (Knobs page).
 //                                    AI tooling: Claude Code.
@@ -1347,7 +1378,9 @@ const QList<ReasonSource>& reasonSources()
         {"src/core/session/SessionCommandDispatcher.cpp", {},
          {QStringLiteral("bandStack.")}, 30,
          {QStringLiteral("device"), QStringLiteral("what"),
-          QStringLiteral("QChar(QLatin1Char('A').unicode() + sliceId)")},
+          QStringLiteral("QChar(QLatin1Char('A').unicode() + sliceId)"),
+          // Recording plan Task 5: a slice letter in recordings.start's refusal.
+          QStringLiteral("QChar(QLatin1Char('A').unicode() + id)")},
          {// Out-parameters and results of the scanned model, facade and
           // allocator functions each verb calls (RadioModel, the PureSignal
           // facade, SliceModel, AlexAntennaFacade, DspAssetService,
@@ -1355,6 +1388,10 @@ const QList<ReasonSource>& reasonSources()
           QStringLiteral("reason"), QStringLiteral("result.reason"),
           QStringLiteral("refusal"), QStringLiteral("facade->lastActionError()"),
           QStringLiteral("slice->nnrLastError()"), QStringLiteral("accepted ? QString() : reason"),
+          // Recording plan Task 11: voiceKeyer.listen's at-once refusal from
+          // RecordingService::playbackRefused (RecordingService.h's words,
+          // scanned below), as recordings.play passes on `refusal`.
+          QStringLiteral("playRefusal"),
           QStringLiteral("rejectionReason"), QStringLiteral("outcome.reason"),
           // slice.selectBand: RadioModel::onBandButtonClicked's refusal,
           // scanned in RadioModel.cpp's entry.
@@ -1800,6 +1837,102 @@ const QList<ReasonSource>& reasonSources()
         // that they are checked like the Core's.
         {"src/core/session/IStationLink.h", {QStringLiteral("sendBandStackCommand")}, {}, 1},
         {"src/models/bandstack/BandStackAccess.h",
+         {QStringLiteral("needsNewerCoreReason"), QStringLiteral("notConnectedReason")}, {}, 2},
+        // Recording plan Task 5: the recordings.* refusals worded outside the
+        // dispatcher (the facade's settings change, a recording's name) and
+        // a window's own words for a Core without recordings.
+        {"src/core/session/RecordingsFacade.cpp", {QStringLiteral("applySettingsChange")}, {}, 2,
+         {QStringLiteral("RecordingSettings::kQuietMinutesMin"),
+          QStringLiteral("RecordingSettings::kQuietMinutesMax"),
+          // Recording plan Task 21: the recorder's size limit.
+          QStringLiteral("RecordingSettings::kDsrSizeLimitGbMin"),
+          QStringLiteral("RecordingSettings::kDsrSizeLimitGbMax")},
+         // The refuse helper's parameter: this function's literals.
+         {QStringLiteral("why")}},
+        // recordings.rename and recordings.delete pass the store's words on.
+        // The system's own words for a file it could not rename, and the
+        // recordings' names, are inserted; ", " joins the names.
+        {"src/core/recordings/RecordingStore.cpp", {QStringLiteral("rename"), QStringLiteral("remove")},
+         {QStringLiteral(", ")}, 4,
+         {QStringLiteral("file.errorString()"), QStringLiteral("failed.join(QStringLiteral(\", \"))")},
+         {QStringLiteral("reason")}},
+        {"src/core/recordings/RecordingNames.cpp", {QStringLiteral("isValidRecordingName")}, {}, 4,
+         {QStringLiteral("ch"), QStringLiteral("stem")}, {QStringLiteral("why")}},
+        // Recording plan Task 21: why the Digital Spectrum Recorder is off,
+        // as the recordings document carries it.
+        {"src/core/recordings/RecordingService.cpp", {QStringLiteral("dsrReasonWords")}, {}, 4},
+        // Recording plan Task 22: dsr.rewind, dsr.live and dsr.seek's
+        // refusals. Each refuse() passes on one of RecordingService.h's
+        // kRewind... sentences (scanned in that file's entry below).
+        {"src/core/recordings/RecordingService.cpp",
+         {QStringLiteral("rewind"), QStringLiteral("goLive"), QStringLiteral("seekRewind")}, {}, 0, {},
+         {QStringLiteral("QString::fromLatin1(why)")}},
+        // Recording plan Task 23: dsr.rows and dsr.spectrum's refusals. Each
+        // passes on one of RecordingService.h's kPast... or kRewind...
+        // sentences (scanned in that file's entry below).
+        {"src/core/recordings/RecordingService.cpp",
+         {QStringLiteral("checkPastRequest"), QStringLiteral("pastRows"), QStringLiteral("pastSpectrum"),
+          QStringLiteral("workerServeSpectra")},
+         {}, 0,
+         {},
+         {QStringLiteral("QString::fromLatin1(why)"), QStringLiteral("QString::fromLatin1(kPastRowsReason)"),
+          QStringLiteral("kept ? QString() : QString::fromLatin1(kRewindGoneReason)"),
+          QStringLiteral("refusal")}},
+        // Recording plan Task 25: dsr.saveStretch, recordings.saveSoundOnly
+        // and recordings.openStretch's refusals. Each passes on one of
+        // RecordingService.h's kSave..., kPlay... or kRewind... sentences
+        // (scanned in that file's entry below), openStretch rewind's own
+        // (scanned above), and startSave words one of its own.
+        {"src/core/recordings/RecordingService.cpp",
+         {QStringLiteral("saveStretch"), QStringLiteral("saveSoundOnly"), QStringLiteral("startSave"),
+          QStringLiteral("openStretch")},
+         {}, 1,
+         {// What is being saved: its UTC times, "whole pan" or the
+          // format's name, and a frequency.
+          QStringLiteral("utcText(extent.fromUtcNs), utcText(extent.toUtcNs), what"),
+          QStringLiteral("format"), QStringLiteral("recordingFrequencyText(sound.frequencyHz), format")},
+         {QStringLiteral("QString::fromLatin1(why)"), QStringLiteral("QString::fromLatin1(kPlayFailedReason)"),
+          QStringLiteral("QString::fromLatin1(kPlayGoneReason)"),
+          QStringLiteral("QString::fromLatin1(kSaveNoFolderReason)"),
+          QStringLiteral("QString::fromLatin1(kSaveNotWholePanReason)"),
+          QStringLiteral("QString::fromLatin1(kSaveSliceReason)"), QStringLiteral("why")}},
+        // Recording plan Task 11: what a refused recordings.play or
+        // voiceKeyer.listen says (RecordingService::playbackRefused). The
+        // recorder's file name is a file name, never a reason. A kept
+        // recording's KeptReason is an enum value, not words.
+        {"src/core/recordings/RecordingService.h", {}, {QStringLiteral("Spectrum Recorder.ndsr")}, 4, {},
+         {QStringLiteral("KeptReason::StoppedHere")}},
+        // Recording plan Task 11: the voiceKeyer.* refusals. VoiceKeyer.h's
+        // sentences, and VoiceKeyer.cpp, which words the rest and passes
+        // them on through its setRefusal helper and its out-parameters.
+        {"src/core/recordings/VoiceKeyer.h", {}, {}, 10},
+        // "Voice keyer" is the messages' folder on the Core, not a reason.
+        // A message number and the name and wait limits are inserted.
+        {"src/core/recordings/VoiceKeyer.cpp", {}, {QStringLiteral("Voice keyer")}, 8,
+         {QStringLiteral("n"), QStringLiteral("kNameMaxChars"), QStringLiteral("kRepeatDelayMinSec"),
+          QStringLiteral("kRepeatDelayMaxSec")},
+         {// setRefusal's own parameter, and the conversion's fail(): the
+          // sentences of VoiceKeyer.h, passed in.
+          QStringLiteral("words"), QStringLiteral("const char* reason"), QStringLiteral("text(reason)"),
+          QStringLiteral("VoiceKeyer::kUnreadableReason"), QStringLiteral("VoiceKeyer::kTooLongReason"),
+          QStringLiteral("VoiceKeyer::kCannotKeepReason"),
+          QStringLiteral("text(kSlotRangeReason)"), QStringLiteral("text(kNoRadioReason)"),
+          QStringLiteral("text(kTransmittingReason)"), QStringLiteral("text(kNotKeyedReason)"),
+          QStringLiteral("text(kCwModeReason)"),
+          QStringLiteral("text(kCannotKeepReason)"), QStringLiteral("text(kUnreadableReason)"),
+          QStringLiteral("text(kTooLargeReason)"), QStringLiteral("text(kNoImportReason)"),
+          QStringLiteral("text(kNotWholeReason)"),
+          // This file's emptyReason and onAirReason, their literals
+          // scanned here.
+          QStringLiteral("emptyReason(n)"), QStringLiteral("onAirReason(n)"),
+          // The transmit holder's and the transmit switch's refusals
+          // (TxRefusal.cpp's words, scanned there).
+          QStringLiteral("held.text"), QStringLiteral("refused.text"),
+          QStringLiteral("refused.isEmpty() ? text(kNotKeyedReason) : refused"),
+          QStringLiteral("TxRefusals::notReady().text"),
+          QStringLiteral("TxRefusals::otherDeviceHoldsStop(held.has_value() ? held->name : m_who.name)")}},
+        {"src/core/session/IStationLink.h", {QStringLiteral("sendRecordingsCommand")}, {}, 1},
+        {"src/models/recordings/RecordingsAccess.h",
          {QStringLiteral("needsNewerCoreReason"), QStringLiteral("notConnectedReason")}, {}, 2},
         // Remote rotor control: a window's rotor commands. They pass on the
         // controller's refusal (scanned above) or the Core's command.result
@@ -2379,6 +2512,12 @@ const QList<AppSideReason>& appSideReasons()
          "the reason shown on a disabled control, in BandStackAccess.h's words"},
         {"src/models/bandstack/LocalBandStackAccess.cpp", "reportInvokerRefusal",
          "a window shows the refusal the band press's invoker gave it"},
+        // Recording plan Task 5: the window's recordings access classes. Their
+        // words are RecordingsAccess.h's (scanned).
+        {"src/models/recordings/LocalRecordingsAccess.cpp", "unavailableReason",
+         "the reason shown on a disabled control, in RecordingsAccess.h's words"},
+        {"src/models/recordings/RemoteRecordingsAccess.cpp", "unavailableReason",
+         "the reason shown on a disabled control, in RecordingsAccess.h's words"},
         // R-R3-49 (parity Task 22): the Core's log, logging and bundle. The
         // Core also answers a coreLog subscribe with it when it keeps no
         // log stream; tst_remote_core_log checks it is plain.

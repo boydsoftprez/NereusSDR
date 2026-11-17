@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Desktop Flag Record</title>
+<style>
+:root{ --bg:#08080a; --ink:#e8e8ec; --dim:#9a9aa2; }
+@media (prefers-color-scheme: light){ :root:not([data-theme="light"]){ --bg:#08080a; --ink:#e8e8ec; } }
+:root[data-theme="dark"]{ --bg:#08080a; }
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:14px -apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;-webkit-text-size-adjust:100%}
+.top{max-width:1100px;margin:0 auto;padding:12px 16px 4px}
+.top h1{font-size:17px;margin:0 0 6px;font-weight:600}
+.top p{margin:4px 0;color:var(--dim);font-size:13px;line-height:1.4}
+.bar{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 4px;align-items:center}
+.bar button,.bar select{background:#1c1c1f;color:var(--ink);border:1px solid #333338;border-radius:8px;padding:7px 10px;font:inherit;font-size:13px}
+.bar button.on{background:#2b4a75;border-color:#4a76b0}
+.bar label{color:var(--dim);font-size:13px;margin-left:4px}
+details{margin:4px 0 8px;color:var(--dim);font-size:13px}
+details summary{cursor:pointer;color:var(--ink)}
+details li{margin:3px 0;line-height:1.35}
+.view{position:relative;overflow:hidden;margin:6px auto 24px;border-radius:10px;border:1px solid #222;background:#000}
+#stage{position:absolute;left:0;top:0;width:3024px;height:1738px;transform-origin:0 0}
+#stage > img{position:absolute;left:0;top:0;width:3024px;height:1738px;display:block;user-select:none;-webkit-user-drag:none}
+/* everything below is in the capture's own pixels (2x the app's points) */
+.fb{position:absolute;left:1097px;width:40px;height:40px;border-radius:50%;background:#18191e;border:2px solid #2e2f36;color:#c8c8d0;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
+.fb:hover{background:#262830;border-color:#45474f}
+.fb svg{width:20px;height:20px}
+#bRec{top:108px} #bPlay{top:152px} #bMore{top:196px}
+#bMore{font:700 26px -apple-system,sans-serif;line-height:1;padding-bottom:6px}
+#bRec.on{border-color:#ff453a;color:#ff453a}
+#bRec.on svg{animation:rp 1.1s ease-in-out infinite}
+@keyframes rp{50%{opacity:.35}}
+#bPlay.on{border-color:#3a9cff;color:#3a9cff}
+.fb.off{opacity:.38;cursor:default}
+.fb.off:hover{background:#18191e;border-color:#2e2f36}
+.pill{position:absolute;right:calc(3024px - 1091px);height:34px;border-radius:17px;padding:0 14px;display:none;align-items:center;gap:8px;white-space:nowrap;font:600 21px ui-monospace,"SF Mono",Menlo,monospace;background:rgba(12,12,14,.94);border:2px solid #333}
+.pill.on{display:flex}
+#pRec{top:111px;color:#ff8a84;border-color:#7a2a26}
+#pPlay{top:155px;color:#8cc4ff;border-color:#24507e}
+#pPlay b{font:600 21px -apple-system,sans-serif;color:#dcdce1}
+#menu{position:absolute;display:none;width:680px;background:#1b1b1f;border:2px solid #3a3a42;border-radius:12px;padding:8px 0;box-shadow:0 14px 44px rgba(0,0,0,.75);z-index:9;font:24px -apple-system,sans-serif;color:#dcdce1}
+#menu.on{display:block}
+#menu .h{padding:8px 22px 10px;font-size:20px;color:#8e8e96}
+#menu .it{display:flex;align-items:baseline;gap:14px;padding:9px 22px;cursor:pointer}
+#menu .it:hover{background:#2f5f92;color:#fff}
+#menu .it .a{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#menu .it .s{font:20px ui-monospace,"SF Mono",Menlo,monospace;color:#8e8e96;white-space:nowrap}
+#menu .it:hover .s{color:#dbe8f6}
+#menu .it.now .a::before{content:"\25B6  ";color:#3a9cff}
+#menu .it.dis{color:#5e5e66;cursor:default}
+#menu .it.dis .s{font:20px -apple-system,sans-serif;color:#5e5e66}
+#menu .it.dis:hover{background:none;color:#5e5e66}
+#menu .sep{height:2px;background:#2c2c31;margin:7px 0}
+#tip{position:absolute;display:none;max-width:560px;background:#26262b;border:2px solid #444;border-radius:8px;padding:8px 12px;font:21px -apple-system,sans-serif;color:#ddd;z-index:8;line-height:1.3}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:rgba(44,44,48,.97);color:#fff;border-radius:12px;padding:10px 14px;font-size:13px;max-width:360px;text-align:center;z-index:90;opacity:0;transition:opacity .2s;pointer-events:none;border:1px solid #444}
+.toast.on{opacity:1}
+#txTag{position:absolute;left:1538px;top:68px;width:58px;height:38px;border-radius:8px;background:#c4312b;color:#fff;font:700 24px -apple-system,sans-serif;display:none;align-items:center;justify-content:center}
+#txTag.on{display:flex}
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>Record and Play on the desktop slice flag</h1>
+  <p>Built on a real capture of the desktop. Record and Play are round buttons in the flag's side column, the same as the lock, in the order you picked on the phone: lock, Record, Play, then &middot;&middot;&middot; at the bottom. On slices B to D the close button sits on top, as it does today.</p>
+  <div class="bar">
+    <button data-z="flag" class="on">Close up on the flag</button>
+    <button data-z="full">Whole window</button>
+    <button id="mox">Transmit (MOX)</button>
+    <label>Core:</label>
+    <select id="core"><option value="local">On this Mac</option><option value="remote">On the Pi in the shack</option><option value="off">Not connected</option></select>
+  </div>
+  <details open>
+    <summary>Things to try</summary>
+    <ul>
+      <li>Click Record (the dot). It blinks red and the time counts beside it. Click Transmit (MOX) while it records: your own voice goes in too. Click Record again to stop; the recording is kept on the Core.</li>
+      <li>Click Play (the triangle): your latest recording plays on this computer's speaker. Transmit while it plays and it goes out on the air instead of your mic. The button becomes a blue stop square, with the time beside it. Click it to stop.</li>
+      <li>Right-click Play: your last eight recordings, then All recordings&hellip;, Show in Finder and Recording settings&hellip;.</li>
+      <li>Set Core to "On the Pi in the shack": Show in Finder stays in the menu but is dimmed, since the files are on the Pi. "Not connected" dims Record and Play.</li>
+      <li>Rest the pointer on a button for its tip.</li>
+    </ul>
+  </details>
+</div>
+<div class="view" id="view">
+  <div id="stage">
+    <img src="../shared/desk.jpg" alt="NereusSDR desktop window">
+    <div id="txTag">TX</div>
+    <button class="fb" id="bRec" aria-label="Record"><svg viewBox="0 0 20 20" id="iRec"><circle cx="10" cy="10" r="6.5" fill="currentColor"/></svg></button>
+    <button class="fb" id="bPlay" aria-label="Play"><svg viewBox="0 0 20 20" id="iPlay"></svg></button>
+    <button class="fb" id="bMore" aria-label="More">&#8943;</button>
+    <div class="pill" id="pRec"></div>
+    <div class="pill" id="pPlay"></div>
+    <div id="menu"></div>
+    <div id="tip"></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+(() => {
+const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const pad = n => String(n).padStart(2,'0'); const mm = s => Math.floor(s/60) + ':' + pad(Math.floor(s%60));
+let tt = 0; function toast(m){ const el = $('#toast'); el.textContent = m; el.classList.add('on'); clearTimeout(tt); tt = setTimeout(() => el.classList.remove('on'), 2800); }
+
+/* ---------- view ---------- */
+let zoom = 'flag';
+const CROP = {x:560, y:0, w:1180, h:830};
+function fit(){
+  const view = $('#view'), vw = Math.min(document.documentElement.clientWidth - 16, 1100);
+  view.style.width = vw + 'px';
+  if (zoom === 'full'){ const s = vw / 3024; view.style.height = (1738*s) + 'px'; $('#stage').style.transform = 'scale(' + s + ')'; }
+  else { const s = vw / CROP.w; view.style.height = (CROP.h*s) + 'px';
+    $('#stage').style.transform = 'scale(' + s + ') translate(' + (-CROP.x) + 'px,' + (-CROP.y) + 'px)'; }
+}
+$$('[data-z]').forEach(b => b.onclick = () => { zoom = b.dataset.z; $$('[data-z]').forEach(x => x.classList.toggle('on', x === b)); fit(); });
+addEventListener('resize', fit); fit();
+
+/* ---------- recordings ---------- */
+const NOW = Date.now() / 1000;
+let RECS = [
+  {f:'7.185.000', m:'LSB', call:'K4ABC', when:NOW-1800, len:312},
+  {f:'7.236.400', m:'LSB', call:'W1XYZ', when:NOW-5400, len:205},
+  {f:'14.250.000', m:'USB', call:'', when:NOW-9000, len:64},
+  {f:'7.200.000', m:'LSB', call:'N4QQ', when:NOW-86400, len:540},
+  {f:'3.880.000', m:'LSB', call:'', when:NOW-90000, len:1210},
+  {f:'14.313.000', m:'USB', call:'VE3ABC', when:NOW-170000, len:188},
+  {f:'7.188.000', m:'LSB', call:'', when:NOW-200000, len:95},
+  {f:'21.300.000', m:'USB', call:'EA8XX', when:NOW-260000, len:402},
+  {f:'7.191.000', m:'LSB', call:'KD4Z', when:NOW-400000, len:150}
+];
+const hm = t => { const d = new Date(t*1000); return pad(d.getUTCHours()) + pad(d.getUTCMinutes()) + 'Z'; };
+const day = t => (NOW - t) < 20*3600 ? 'today' : (NOW - t) < 44*3600 ? 'yesterday' : Math.round((NOW - t)/86400) + ' days ago';
+const label = r => r.f + ' ' + r.m + (r.call ? '  ' + r.call : '');
+
+let rec = null, play = null, tx = false, core = 'local';
+function render(){
+  const off = core === 'off';
+  $('#bRec').classList.toggle('on', !!rec); $('#bRec').classList.toggle('off', off);
+  $('#bPlay').classList.toggle('on', !!play); $('#bPlay').classList.toggle('off', off);
+  $('#iPlay').innerHTML = play ? '<rect x="4.5" y="4.5" width="11" height="11" rx="1.5" fill="currentColor"/>' : '<path d="M6 3.5l10 6.5-10 6.5z" fill="currentColor"/>';
+  $('#pRec').classList.toggle('on', !!rec);
+  if (rec) $('#pRec').textContent = '● ' + mm(rec.t) + (tx ? '  + your voice' : '');
+  $('#pPlay').classList.toggle('on', !!play);
+  if (play) $('#pPlay').innerHTML = '<b>' + esc(label(play.r)) + '</b> ' + mm(play.pos) + ' / ' + mm(play.r.len);
+  $('#txTag').classList.toggle('on', tx); $('#mox').classList.toggle('on', tx);
+}
+function closeMenu(){ $('#menu').classList.remove('on'); }
+function hideTip(){ $('#tip').style.display = 'none'; }
+
+$('#bRec').onclick = e => {
+  e.stopPropagation(); closeMenu(); hideTip();
+  if (core === 'off'){ toast('Not connected to a Core. Connect to record.'); return; }
+  if (!rec){ rec = {t:0}; render(); toast('Recording slice A on the Core: what you hear, and your voice when you transmit.'); return; }
+  const len = Math.max(1, Math.round(rec.t));
+  RECS.unshift({f:'7.185.000', m:'LSB', call:'K4ABC', when:Date.now()/1000, len}); rec = null; render();
+  toast('Kept: 7.185.000 LSB K4ABC, ' + mm(len) + '. Play plays it now.');
+};
+$('#bPlay').onclick = e => {
+  e.stopPropagation(); closeMenu(); hideTip();
+  if (core === 'off'){ toast('Not connected to a Core. Connect to play recordings.'); return; }
+  if (play){ play = null; render(); return; }
+  play = {r:RECS[0], pos:0}; render();
+};
+$('#bPlay').oncontextmenu = e => {
+  e.preventDefault(); e.stopPropagation(); hideTip();
+  if (core === 'off'){ toast('Not connected to a Core.'); return; }
+  const m = $('#menu');
+  let h = '<div class="h">Play on this computer’s speaker</div>';
+  RECS.slice(0, 8).forEach((r, i) => {
+    h += '<div class="it' + (play && play.r === r ? ' now' : '') + '" data-i="' + i + '"><span class="a">' + esc(label(r)) + '</span><span class="s">' + day(r.when) + ' ' + hm(r.when) + ' · ' + mm(r.len) + '</span></div>';
+  });
+  h += '<div class="sep"></div><div class="it" data-a="all"><span class="a">All recordings…</span></div>';
+  h += core === 'local' ? '<div class="it" data-a="finder"><span class="a">Show in Finder</span></div>'
+                        : '<div class="it dis"><span class="a">Show in Finder</span><span class="s">files are on the Pi</span></div>';
+  h += '<div class="it" data-a="set"><span class="a">Recording settings…</span></div>';
+  m.innerHTML = h;
+  m.style.left = '1120px'; m.style.top = '176px';
+  m.classList.add('on');
+  $$('#menu .it[data-i]').forEach(it => it.onclick = ev => { ev.stopPropagation(); play = {r:RECS[+it.dataset.i], pos:0}; closeMenu(); render(); });
+  $$('#menu .it[data-a]').forEach(it => it.onclick = ev => { ev.stopPropagation(); closeMenu();
+    toast({all:'Mockup: opens the Recordings window (approved earlier).', finder:'Mockup: opens the Core’s recordings folder in Finder.', set:'Mockup: opens Setup, Cores, Recordings (approved earlier).'}[it.dataset.a]); });
+};
+$('#bMore').onclick = e => { e.stopPropagation(); closeMenu(); toast('The flag’s usual menu, unchanged. Only its place moves, to the bottom.'); };
+$('#menu').onclick = e => e.stopPropagation();
+document.addEventListener('click', closeMenu);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenu(); });
+$('#mox').onclick = () => { tx = !tx; render(); if (tx && rec) toast('Transmitting: your own voice goes into the recording too.'); };
+$('#core').onchange = e => { core = e.target.value; if (core === 'off'){ rec = null; play = null; } closeMenu(); render(); };
+
+const TIPS = {
+  bRec: () => core === 'off' ? 'Not connected to a Core' : rec ? 'Stop recording' : 'Record slice A: what you hear, and your own voice when you transmit',
+  bPlay: () => core === 'off' ? 'Not connected to a Core' : play ? 'Stop playing' : 'Play your latest recording on this computer’s speaker. Right-click for others.',
+  bMore: () => 'More for this slice'
+};
+Object.keys(TIPS).forEach(id => {
+  const b = $('#' + id);
+  b.onmouseenter = () => { if ($('#menu').classList.contains('on')) return; const t = $('#tip'); t.textContent = TIPS[id](); t.style.display = 'block';
+    t.style.left = '1150px'; t.style.top = (parseFloat(getComputedStyle(b).top) + 44) + 'px'; t.style.right = 'auto'; };
+  b.onmouseleave = hideTip;
+});
+
+setInterval(() => {
+  if (rec) rec.t += .25;
+  if (play){ play.pos += .25; if (play.pos >= play.r.len) play = null; }
+  if (rec || play) render();
+}, 250);
+render();
+})();
+</script>
+</body>
+</html>
