@@ -20,6 +20,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16 — Roundtable pauses for a slice playing the past: presence
+//                 keeps the frequency it had live (RecordingService::
+//                 rewoundLiveFrequencyHz) and it sends no readings until it
+//                 is live again. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-11-16 — Recording plan Task 22: setSliceReplay, rewind sound's one
 //                 switch on the receive path, handed to the DSP worker; the
 //                 replays are let go once the DSP thread is joined. J.J.
@@ -6686,6 +6691,12 @@ void RadioModel::wireRoundtable()
         connect(m_moxController, &MoxController::moxStateChanged, this,
                 &RadioModel::pushRoundtableSlices);
     }
+    // A slice playing the past pauses: no readings, presence where it was
+    // live, through the rewind's retune and any tune in the past.
+    if (m_recordingService) {
+        connect(m_recordingService.get(), &RecordingService::rewoundSlicesChanged, this,
+                &RadioModel::pushRoundtableSlices);
+    }
     pushRoundtableSlices();
     updateRoundtableAtRadio();
 }
@@ -6698,13 +6709,21 @@ void RadioModel::pushRoundtableSlices()
     SliceModel* active = activeSlice();
     SliceModel* keyedSlice = (m_moxController != nullptr && m_moxController->isMox()) ? txBoundSlice() : nullptr;
     QList<RoundtableSliceState> states;
-    const auto add = [&states, keyedSlice](SliceModel* slice) {
+    const RecordingService* recordings = m_recordingService.get();
+    const auto add = [&states, keyedSlice, recordings](SliceModel* slice) {
         RoundtableSliceState state;
         state.id = slice->sliceIndex();
         state.hz = std::llround(slice->frequency());
         state.mode = roundtableModeOf(slice->dspMode());
         state.filterHz = qAbs(slice->filterHigh() - slice->filterLow());
         state.keyed = slice == keyedSlice;
+        // Playing the past: paused, and still where it was live.
+        const std::optional<qint64> liveHz =
+            recordings != nullptr ? recordings->rewoundLiveFrequencyHz(state.id) : std::nullopt;
+        if (liveHz.has_value()) {
+            state.hz = *liveHz;
+            state.paused = true;
+        }
         states.append(state);
     };
     if (active != nullptr) {

@@ -61,6 +61,9 @@
 // 2026-11-16  J.J. Boyd / KG4VCF; a rewound slice keeps what was kept at
 //             the moment it plays from (Rewound::keptCentreHz, keptSpanHz)
 //             for rewound(). AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; Roundtable pauses for a slice playing
+//             the past: rewoundLiveFrequencyHz, rewoundSlicesChanged. AI
+//             tooling: Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -306,6 +309,10 @@ public:
     bool seekRewind(int slice, qint64 utcNs, QString* refusal);
     // The slices playing the past, by slice.
     QList<DsrRewoundSlice> rewound() const;
+    // The frequency `slice` had live, while it plays the past (from the
+    // rewind's own retune on); nothing for a live slice. Roundtable keeps
+    // the slice's presence there and sends no readings for it meanwhile.
+    std::optional<qint64> rewoundLiveFrequencyHz(int slice) const;
     // PTT while rewound (spec 3): every rewound slice goes live on the
     // frequency it plays, then the key goes on as usual; LIVE afterwards
     // still returns to the frequency before rewinding. Followed from
@@ -416,6 +423,9 @@ signals:
     void playbackRefused(const NereusSDR::ListenerId& who, const QString& reason);
     // The recorder went on or off, its reason changed, or its figures moved.
     void dsrChanged();
+    // A slice started or stopped playing the past, or a rewind's retune
+    // ended (rewoundLiveFrequencyHz may have changed).
+    void rewoundSlicesChanged();
     // A saved stretch (Task 25) is in the store, or could not be saved.
     void stretchSaved(const QString& recordingId);
     void stretchSaveFailed(const QString& reason);
@@ -675,6 +685,10 @@ private:
     QHash<int, Rewound> m_rewound;
     // After PTT took a rewound slice live: the frequency LIVE returns it to.
     QHash<int, qint64> m_liveAfterKey;
+    // While rewind() retunes a slice not yet listed in m_rewound: that
+    // slice and the frequency it had live (rewoundLiveFrequencyHz).
+    int m_rewindRetuneSlice = -1;
+    qint64 m_rewindRetuneLiveHz = 0;
     quint64 m_nextRewindToken = 1;
     struct WorkerReplay {
         int slice = -1;

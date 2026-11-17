@@ -29,6 +29,10 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code. A rewound slice says what was kept at the moment it
 //                 plays from (keptCentreHz, keptSpanHz), in the document too.
+//   2026-11-16 - J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. Roundtable's live frequency for a slice playing the
+//                 past holds through the rewind's retune and any tune in
+//                 the past, and lets go on LIVE and on PTT.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -38,6 +42,7 @@
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTimeZone>
 
@@ -53,6 +58,8 @@
 #include "models/RxDspWorker.h"
 
 #include <algorithm>
+#include <functional>
+#include <optional>
 #include <cmath>
 #include <memory>
 #include <numbers>
@@ -129,7 +136,15 @@ public:
 
     bool sliceOpen(int slice) const override { return frequency.contains(slice); }
     qint64 sliceFrequencyHz(int slice) const override { return frequency.value(slice); }
-    void setSliceFrequencyHz(int slice, qint64 hz) override { frequency[slice] = hz; }
+    // Called after each retune, as the radio's slice would signal it.
+    std::function<void(int, qint64)> onTune;
+    void setSliceFrequencyHz(int slice, qint64 hz) override
+    {
+        frequency[slice] = hz;
+        if (onTune) {
+            onTune(slice, hz);
+        }
+    }
     int sliceReceiver(int slice) const override { return frequency.contains(slice) ? 0 : -1; }
     qint64 receiverCentreHz(int receiver) const override { return receiver == 0 ? centreHz : 0; }
     int receiverRateHz(int receiver) const override { return receiver == 0 ? rateHz : 0; }
@@ -430,6 +445,78 @@ private slots:
 
         QVERIFY(svc.goLive(0, &why));
         QCOMPARE(radio->frequency.value(0), kSliceAHz);
+        radio->worker = nullptr;
+    }
+
+    // Roundtable keeps a slice playing the past where it was live
+    // (rewoundLiveFrequencyHz): already during the rewind's own retune, and
+    // through a tune in the past and a second rewind. LIVE lets go before
+    // its retune back, so that retune is live; PTT lets go on the played
+    // frequency; a refused rewind lets go as well. Each change is signalled.
+    void roundtableKeepsTheLiveFrequencyWhilePlayingThePast()
+    {
+        RecordingService svc(nullptr);
+        FakeRadio* radio = prepare(svc);
+        RxDspWorker worker;
+        prepareWorker(worker);
+        radio->worker = &worker;
+        keepCarrier(svc, 5);
+        const DsrRingFile& ring = svc.dsrRecorder()->ring();
+        QSignalSpy changed(&svc, &RecordingService::rewoundSlicesChanged);
+        QList<std::optional<qint64>> heldAtTune;
+        radio->onTune = [&svc, &heldAtTune](int slice, qint64) {
+            heldAtTune.append(svc.rewoundLiveFrequencyHz(slice));
+        };
+        QVERIFY(!svc.rewoundLiveFrequencyHz(0).has_value());
+
+        QString why;
+        QVERIFY2(svc.rewind(0, ring.oldestUtcNs(0) + kNs, kPlayHz, &why), qPrintable(why));
+        QCOMPARE(heldAtTune, (QList<std::optional<qint64>>{kSliceAHz}));
+        QCOMPARE(svc.rewoundLiveFrequencyHz(0), std::optional<qint64>(kSliceAHz));
+        QVERIFY(!svc.rewoundLiveFrequencyHz(1).has_value());
+        QCOMPARE(changed.count(), 1);
+        svc.pumpForTest();
+        QCOMPARE(svc.rewoundLiveFrequencyHz(0), std::optional<qint64>(kSliceAHz));
+
+        // A tune in the past, then the rewind it plays from.
+        heldAtTune.clear();
+        radio->setSliceFrequencyHz(0, kPlayHz + 300);
+        QVERIFY2(svc.rewind(0, ring.oldestUtcNs(0) + 2 * kNs, kCarrierHz - 500, &why), qPrintable(why));
+        QCOMPARE(heldAtTune, (QList<std::optional<qint64>>{kSliceAHz, kSliceAHz}));
+        QCOMPARE(svc.rewoundLiveFrequencyHz(0), std::optional<qint64>(kSliceAHz));
+
+        // LIVE: the retune back to the live frequency is already live.
+        heldAtTune.clear();
+        const int beforeLive = changed.count();
+        QVERIFY(svc.goLive(0, &why));
+        QCOMPARE(heldAtTune, (QList<std::optional<qint64>>{std::nullopt}));
+        QCOMPARE(radio->frequency.value(0), kSliceAHz);
+        QVERIFY(!svc.rewoundLiveFrequencyHz(0).has_value());
+        QCOMPARE(changed.count(), beforeLive + 1);
+
+        // PTT while rewound: live at once, on the frequency played.
+        QVERIFY2(svc.rewind(0, ring.oldestUtcNs(0) + kNs, kPlayHz, &why), qPrintable(why));
+        svc.pumpForTest();
+        const int beforeKey = changed.count();
+        svc.rewoundSlicesLiveForTransmit();
+        QVERIFY(!svc.rewoundLiveFrequencyHz(0).has_value());
+        QCOMPARE(radio->frequency.value(0), kPlayHz);
+        QCOMPARE(changed.count(), beforeKey + 1);
+        QVERIFY(svc.goLive(0, &why));
+        QCOMPARE(radio->frequency.value(0), kSliceAHz);
+
+        // A rewind refused after its retune (the receiver's rate moved) is
+        // held during that retune and its retune back, then let go.
+        heldAtTune.clear();
+        radio->rateHz = kRate / 2;
+        const int beforeRefusal = changed.count();
+        QVERIFY(!svc.rewind(0, ring.oldestUtcNs(0) + kNs, kPlayHz, &why));
+        QCOMPARE(why, QString::fromLatin1(RecordingService::kRewindRateReason));
+        QCOMPARE(heldAtTune, (QList<std::optional<qint64>>{kSliceAHz, kSliceAHz}));
+        QVERIFY(!svc.rewoundLiveFrequencyHz(0).has_value());
+        QCOMPARE(radio->frequency.value(0), kSliceAHz);
+        QCOMPARE(changed.count(), beforeRefusal + 1);
+        radio->onTune = nullptr;
         radio->worker = nullptr;
     }
 

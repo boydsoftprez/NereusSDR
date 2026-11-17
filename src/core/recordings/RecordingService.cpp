@@ -60,6 +60,10 @@
 //             moment of the rewind or last seek (keptCentreHz, keptSpanHz),
 //             so a tune outside it can say why there is no sound. AI
 //             tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; Roundtable pauses for a slice playing
+//             the past: rewoundLiveFrequencyHz holds the live frequency
+//             from the rewind's own retune on, rewoundSlicesChanged says
+//             when it changes. AI tooling: Anthropic Claude Code.
 
 #include "RecordingService.h"
 
@@ -1878,6 +1882,10 @@ bool RecordingService::rewind(int slice, qint64 utcNs, qint64 frequencyHz, QStri
     const qint64 before = m_rewindHost->sliceFrequencyHz(slice);
     const auto existing = m_rewound.constFind(slice);
     const qint64 liveHz = existing != m_rewound.cend() ? existing->liveFrequencyHz : before;
+    // Roundtable keeps the slice where it was live through this retune too
+    // (rewoundLiveFrequencyHz), before the slice is listed as rewound.
+    m_rewindRetuneSlice = slice;
+    m_rewindRetuneLiveHz = liveHz;
     if (before != frequencyHz) {
         m_rewindHost->setSliceFrequencyHz(slice, frequencyHz);
     }
@@ -1886,8 +1894,11 @@ bool RecordingService::rewind(int slice, qint64 utcNs, qint64 frequencyHz, QStri
         if (before != frequencyHz) {
             m_rewindHost->setSliceFrequencyHz(slice, before);
         }
+        m_rewindRetuneSlice = -1;
+        emit rewoundSlicesChanged();
         return refuse(kRewindRateReason);
     }
+    m_rewindRetuneSlice = -1;
     m_liveAfterKey.remove(slice);
     Rewound& entry = m_rewound[slice];
     entry.liveFrequencyHz = liveHz;
@@ -1900,6 +1911,7 @@ bool RecordingService::rewind(int slice, qint64 utcNs, qint64 frequencyHz, QStri
     entry.keptSpanHz = kept.sampleRateHz;
     entry.pending = startReplay(slice, receiver, kept.sampleRateHz, utcNs, entry.pendingToken, stretch);
     emit dsrChanged();
+    emit rewoundSlicesChanged();
     return true;
 }
 
@@ -1978,6 +1990,18 @@ QList<DsrRewoundSlice> RecordingService::rewound() const
         out.append(r);
     }
     return out;
+}
+
+std::optional<qint64> RecordingService::rewoundLiveFrequencyHz(int slice) const
+{
+    if (slice >= 0 && slice == m_rewindRetuneSlice) {
+        return m_rewindRetuneLiveHz;
+    }
+    const auto it = m_rewound.constFind(slice);
+    if (it == m_rewound.cend()) {
+        return std::nullopt;
+    }
+    return it->liveFrequencyHz;
 }
 
 void RecordingService::rewoundSlicesLiveForTransmit()
@@ -2090,6 +2114,7 @@ void RecordingService::endRewind(int slice, bool restoreFrequency)
         m_rewindHost->setSliceFrequencyHz(slice, entry.liveFrequencyHz);
     }
     emit dsrChanged();
+    emit rewoundSlicesChanged();
 }
 
 void RecordingService::endAllRewinds(bool restoreFrequency)
