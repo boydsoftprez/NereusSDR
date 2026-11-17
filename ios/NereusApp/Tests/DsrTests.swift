@@ -11,7 +11,9 @@ import Testing
 /// Recording plan Task 28 (design sections 6.7, 6.8, A11, A12, A16): the
 /// strip dragged back draws the Core's rows in chunks with "Drawing" while
 /// they come; letting go in the past plays Slice A from the top at its
-/// frequency, a tap there tunes, and LIVE returns it;
+/// frequency, a tap there tunes, and LIVE returns it; any tune in the
+/// past plays from the top when it is not playing yet, and playing, a
+/// frequency outside what was kept then says so;
 /// a key while rewound takes it live; the hours map jumps; SAVE's bracket
 /// and panel; the Setup page's SD card warning, its one-field changes and
 /// erase; an older Core or the recorder off leaves every control disabled
@@ -196,6 +198,65 @@ struct DsrTests {
         #expect(Self.argument(again, "frequencyHz") == .i64(7_238_000))
         await RecordingFlagTests.answer(rig, second)
         #expect(await Eventually.holds { model.mine.contains(0) })
+    }
+
+    /// After a refusal, any tune of the active slice (a drag, the knob, a
+    /// typed frequency, as AppModel feeds them) plays from the picture's top
+    /// at the tuned frequency, one rewind at a time. Another slice becoming
+    /// active is not a tune; live, a tune is only a tune.
+    @Test func aTuneInThePastPlaysFromTheTop() async throws {
+        let (rig, model, _) = await Self.pan()
+        model.sliceTuned(slice: 0, hz: 7_240_500)
+        model.sliceTuned(slice: 0, hz: 7_240_600)
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(!rig.sent.invokes.contains { $0.verb == "dsr.rewind" })
+        model.drag(from: model.top, by: -1_000)
+        model.dragEnded()
+        let (index, _) = try #require(await Self.invoke(rig, "dsr.rewind"))
+        await RecordingFlagTests.answer(rig, index, accepted: false, reason: DsrPanModel.noFrequencyReason)
+        #expect(await Eventually.holds { model.note == DsrPanModel.noFrequencyReason })
+        #expect(model.inPast && model.mine.isEmpty)
+        let top = model.top
+        model.sliceTuned(slice: 0, hz: 7_238_100)
+        model.sliceTuned(slice: 0, hz: 7_238_200)
+        let (second, again) = try #require(await Self.invoke(rig, "dsr.rewind", after: index + 1))
+        #expect(Self.argument(again, "utcNs") == .i64(Int64((top * 1e9).rounded())))
+        #expect(Self.argument(again, "frequencyHz") == .i64(7_238_100))
+        // The knob went on while the Core had the rewind: no second one.
+        #expect(rig.sent.invokes.dropFirst(second + 1).allSatisfy { $0.verb != "dsr.rewind" })
+        await RecordingFlagTests.answer(rig, second)
+        #expect(await Eventually.holds { model.mine.contains(0) })
+    }
+
+    /// Playing this device's rewind, a tune outside what was kept at that
+    /// moment says so on the waterfall at once; back inside, the words go.
+    /// An older Core that does not say what was kept shows nothing.
+    @Test func tuningOutsideWhatWasKeptSaysSo() async throws {
+        let (rig, model, _) = await Self.pan()
+        var hz = 7_240_500.0
+        model.activeSliceHz = { hz }
+        let moment = Self.now - 600
+        try await Self.rewindHere(rig, model, moment: moment, revision: 2)
+        // Kept then: 7.236 MHz, 48 kHz wide (7.212 to 7.260 MHz).
+        let kept: [String: Any] = ["slice": 0, "utcNs": Int64((moment * 1e9).rounded()), "frequencyHz": 7_240_500,
+                                   "liveFrequencyHz": 7_236_400, "keptCentreHz": 7_236_000, "keptSpanHz": 48_000]
+        RecordingFlagTests.publish(rig, Self.document(dsr: Self.dsrPart(rewound: [kept])), revision: 3)
+        model.documentChanged()
+        #expect(model.followsSound && model.keptNote == nil)
+        model.sliceTuned(slice: 0, hz: hz)
+        hz = 7_270_000
+        model.sliceTuned(slice: 0, hz: hz)
+        #expect(model.keptNote == DsrPanModel.noFrequencyReason)
+        model.documentChanged()
+        #expect(model.keptNote == DsrPanModel.noFrequencyReason)
+        hz = 7_250_000
+        model.sliceTuned(slice: 0, hz: hz)
+        #expect(model.keptNote == nil)
+        // An older Core: nothing said about what was kept.
+        try await Self.rewindHere(rig, model, moment: moment, revision: 4)
+        hz = 14_074_000
+        model.sliceTuned(slice: 0, hz: hz)
+        #expect(model.keptNote == nil)
     }
 
     /// Rewinds Slice A from this device at `moment` and publishes it rewound.

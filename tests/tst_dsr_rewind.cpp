@@ -26,6 +26,9 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code. A moment kept, but not at the frequency asked, has
 //                 its own reason (rewind plays on release).
+//   2026-11-16 - J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. A rewound slice says what was kept at the moment it
+//                 plays from (keptCentreHz, keptSpanHz), in the document too.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -33,6 +36,8 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QHash>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QTemporaryDir>
 #include <QTimeZone>
 
@@ -44,6 +49,7 @@
 #include "core/recordings/RecordingSettings.h"
 #include "core/recordings/dsr/DsrRecorder.h"
 #include "core/recordings/dsr/DsrReplay.h"
+#include "core/session/RecordingsFacade.h"
 #include "models/RxDspWorker.h"
 
 #include <algorithm>
@@ -279,6 +285,13 @@ private slots:
         QCOMPARE(rewound.first().frequencyHz, kPlayHz);
         QCOMPARE(rewound.first().liveFrequencyHz, kSliceAHz);
         QCOMPARE(rewound.first().utcNs, t);
+        // What was kept at that moment: the pan's centre then, at its rate.
+        QCOMPARE(rewound.first().keptCentreHz, kKeptCentreHz);
+        QCOMPARE(rewound.first().keptSpanHz, qint64(kRate));
+        const QJsonObject entry = RecordingsFacade::dsrJson(svc.dsrStatus())
+                                      .value(QStringLiteral("rewound")).toArray().first().toObject();
+        QCOMPARE(entry.value(QStringLiteral("keptCentreHz")).toInteger(), kKeptCentreHz);
+        QCOMPARE(entry.value(QStringLiteral("keptSpanHz")).toInteger(), qint64(kRate));
 
         // The kept I/Q from t, as the ring holds it (the centre has not
         // moved, so nothing is moved).
@@ -382,6 +395,8 @@ private slots:
         svc.pumpForTest();
         QCOMPARE(svc.replayForTest(0)->fromUtcNs(), to);
         QCOMPARE(worker.sliceReplay(0), svc.replayForTest(0).get());
+        QCOMPARE(svc.rewound().first().keptCentreHz, kKeptCentreHz);
+        QCOMPARE(svc.rewound().first().keptSpanHz, qint64(kRate));
         QCOMPARE(radio->frequency.value(0), kPlayHz);
         QVERIFY(!svc.seekRewind(0, ring.newestUtcNs(0) + 60 * kNs, &why));
         QCOMPARE(why, QString::fromLatin1(RecordingService::kRewindGoneReason));

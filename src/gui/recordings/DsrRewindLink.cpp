@@ -15,6 +15,10 @@
 //                 change); the past click is gone, refusals show on the
 //                 waterfall. AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF): any tune of the slice in the past
+//                 plays from the top row (sliceTuned); playing, a frequency
+//                 outside what was kept then says so on the waterfall.
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/recordings/DsrRewindLink.h"
@@ -22,6 +26,7 @@
 #include "core/AppSettings.h"
 #include "core/ControlRanges.h"
 #include "core/FFTEngine.h"
+#include "core/recordings/RecordingService.h"
 #include "gui/SpectrumWidget.h"
 #include "models/recordings/RecordingsAccess.h"
 
@@ -76,6 +81,9 @@ void DsrRewindLink::setAccess(RecordingsAccess* access)
     m_rowsAsked = false;
     m_spectrumAsked = false;
     m_saveAsked = false;
+    m_keptCentreHz = 0;
+    m_keptSpanHz = 0;
+    m_outsideKept = false;
     if (access != nullptr) {
         m_accessConnections = {
             connect(access, &RecordingsAccess::documentChanged, this, &DsrRewindLink::refresh),
@@ -120,6 +128,45 @@ void DsrRewindLink::setAccess(RecordingsAccess* access)
 int DsrRewindLink::slice() const
 {
     return m_sliceForPan ? m_sliceForPan() : -1;
+}
+
+qint64 DsrRewindLink::sliceHz() const
+{
+    if (m_sliceHz) {
+        return std::llround(m_sliceHz());
+    }
+    return m_spectrum ? std::llround(m_spectrum->vfoFrequency()) : 0;
+}
+
+void DsrRewindLink::sliceTuned()
+{
+    if (!m_spectrum || m_spectrum->wfLive()) {
+        return;
+    }
+    if (!m_spectrum->dsrRewound()) {
+        // In the past and not playing (a refusal, or the picture moved
+        // without playing yet): play from the top row at the new frequency.
+        m_spectrum->dsrPlayFromTop();
+        return;
+    }
+    showWhetherKeptHere();
+}
+
+void DsrRewindLink::showWhetherKeptHere()
+{
+    if (!m_spectrum) {
+        return;
+    }
+    // As the Core's rewind tests a receiver's span (RecordingService::rewind).
+    const bool outside = m_rewoundSlice >= 0 && m_rewoundSlice == slice() && !m_rewindAsked
+        && m_keptSpanHz > 0 && m_spectrum->dsrRewound()
+        && std::llabs(sliceHz() - m_keptCentreHz) * 2 > m_keptSpanHz;
+    if (outside) {
+        m_spectrum->dsrPlayRefused(QString::fromLatin1(RecordingService::kRewindNoFrequencyReason));
+    } else if (m_outsideKept) {
+        m_spectrum->dsrPlayRefused(QString());
+    }
+    m_outsideKept = outside;
 }
 
 QString DsrRewindLink::unavailableReason() const
@@ -202,12 +249,16 @@ void DsrRewindLink::refresh()
     const int s = slice();
     bool listed = false;
     qint64 playedNs = 0;
+    m_keptCentreHz = 0;
+    m_keptSpanHz = 0;
     if (s >= 0) {
         for (const QJsonValue& v : dsr.value(QStringLiteral("rewound")).toArray()) {
             const QJsonObject o = v.toObject();
             if (o.value(QStringLiteral("slice")).toInt(-1) == s) {
                 listed = true;
                 playedNs = o.value(QStringLiteral("utcNs")).toInteger(0);
+                m_keptCentreHz = o.value(QStringLiteral("keptCentreHz")).toInteger(0);
+                m_keptSpanHz = o.value(QStringLiteral("keptSpanHz")).toInteger(0);
             }
         }
     }
@@ -217,8 +268,13 @@ void DsrRewindLink::refresh()
         m_rewoundSlice = s;
         m_spectrum->setDsrLiveReturnPending(false);
         m_spectrum->setDsrRewound(true, playedNs / kNsPerMs);
+        // setDsrRewound clears the words on the waterfall; a frequency
+        // outside what was kept then puts them back.
+        m_outsideKept = false;
+        showWhetherKeptHere();
         return;
     }
+    m_outsideKept = false;
     if (m_rewoundSlice >= 0 && !m_rewindAsked) {
         // Rewound before, live now: LIVE, or PTT took it live on the
         // frequency played. After PTT, LIVE still returns to the frequency
@@ -270,7 +326,7 @@ void DsrRewindLink::onPlayWanted(qint64 utcMs)
         m_spectrum->setDsrRewound(false);
         return;
     }
-    const qint64 hz = std::llround(m_sliceHz ? m_sliceHz() : m_spectrum->vfoFrequency());
+    const qint64 hz = sliceHz();
     if (s < 0 || hz <= 0) {
         m_spectrum->setDsrRewound(false);
         m_spectrum->dsrPlayRefused(noSliceReason());

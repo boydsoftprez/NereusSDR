@@ -24,6 +24,9 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 26: `receivers`
 //                 and `bytesPerHour` in the `dsr` part, for Setup's hours.
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF): `keptCentreHz` and `keptSpanHz` on
+//                 each rewound slice, what was kept at the moment it plays
+//                 from. AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/RecordingsFacade.h"
@@ -343,7 +346,9 @@ QJsonObject RecordingsFacade::dsrJson(const DsrStatus& status)
         rewound.append(QJsonObject{{QStringLiteral("slice"), r.slice},
                                    {QStringLiteral("utcNs"), r.utcNs},
                                    {QStringLiteral("frequencyHz"), r.frequencyHz},
-                                   {QStringLiteral("liveFrequencyHz"), r.liveFrequencyHz}});
+                                   {QStringLiteral("liveFrequencyHz"), r.liveFrequencyHz},
+                                   {QStringLiteral("keptCentreHz"), r.keptCentreHz},
+                                   {QStringLiteral("keptSpanHz"), r.keptSpanHz}});
     }
     QJsonArray receivers;
     for (const DsrReceiverRate& r : status.receivers) {

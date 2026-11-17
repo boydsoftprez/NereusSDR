@@ -5,6 +5,9 @@
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-16: Recording plan Task 28, the document's `dsr` part (version 4)
 //   and the recorder's three settings. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: A rewound slice's `keptCentreHz` and `keptSpanHz`, what was kept
+//   at the moment it plays from (nil from an older Core). J.J. Boyd (KG4VCF),
+//   AI-assisted via Claude Code.
 
 import Foundation
 
@@ -177,12 +180,29 @@ public struct RecordingsDocument: Equatable, Sendable {
         public let frequencyHz: Int64
         /// The frequency LIVE returns it to.
         public let liveFrequencyHz: Int64
+        /// What its receiver kept at the moment it plays from: the centre and
+        /// the width in Hz. A frequency more than half the width from the
+        /// centre was not kept. Nil from an older Core.
+        public let keptCentreHz: Int64?
+        public let keptSpanHz: Int64?
 
-        public init(slice: Int, utcNs: Int64, frequencyHz: Int64, liveFrequencyHz: Int64) {
+        public init(slice: Int, utcNs: Int64, frequencyHz: Int64, liveFrequencyHz: Int64,
+                    keptCentreHz: Int64? = nil, keptSpanHz: Int64? = nil) {
             self.slice = slice
             self.utcNs = utcNs
             self.frequencyHz = frequencyHz
             self.liveFrequencyHz = liveFrequencyHz
+            self.keptCentreHz = keptCentreHz
+            self.keptSpanHz = keptSpanHz
+        }
+
+        /// The slice at `hz` hears nothing kept at that moment (the Core's
+        /// own test when it rewinds); false when the Core does not say.
+        public func outsideKept(hz: Double) -> Bool {
+            guard let centre = keptCentreHz, let span = keptSpanHz, span > 0 else {
+                return false
+            }
+            return abs(Int64(hz.rounded()) - centre) * 2 > span
         }
     }
 

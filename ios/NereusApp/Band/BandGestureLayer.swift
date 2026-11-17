@@ -18,6 +18,9 @@
 // rewinds. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-16: Rewind plays on release: a tap in the recorder's past tunes as
 // live. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: A tap in the recorder's past plays at the frequency the tap
+// tunes to (on the step), not the raw tapped one. J.J. Boyd (KG4VCF),
+// AI-assisted via Claude Code.
 
 import Combine
 import NereusBand
@@ -801,13 +804,12 @@ struct BandGestureLayer: View {
         let action = settings.doubleTapAction
         let single = SpatialTapGesture(count: 1).onEnded { value in
             // In the recorder's past a tap tunes as live, and plays the
-            // active slice from the picture's top when it is not playing yet.
-            if let dsr, layout.waterfall.contains(value.location),
-               dsr.tapWaterfall(pointsDown: Double(value.location.y - layout.waterfall.minY),
-                                hz: geometry.hz(forX: Double(value.location.x))) {
-                return
+            // active slice from the picture's top when it is not playing
+            // yet, at the frequency the tap tuned it to.
+            let tuned = tap(atX: value.location.x, geometry: geometry)
+            if let dsr, let tuned, layout.waterfall.contains(value.location) {
+                dsr.tapWaterfall(pointsDown: Double(value.location.y - layout.waterfall.minY), hz: tuned)
             }
-            tap(atX: value.location.x, geometry: geometry)
         }
         let double = SpatialTapGesture(count: 2).onEnded { value in
             doubleTap(action, atX: value.location.x, geometry: geometry)
@@ -852,21 +854,25 @@ struct BandGestureLayer: View {
                                              spanLimits: spanLimits), byHand: ended)
     }
 
-    private func tap(atX x: CGFloat, geometry: BandGeometry) {
+    /// The frequency the tap tuned the active slice to, nil when it tuned nothing.
+    @discardableResult
+    private func tap(atX x: CGFloat, geometry: BandGeometry) -> Double? {
         // The lift that ends the hold opening the band menu tunes nothing.
         guard !menuOpen else {
-            return
+            return nil
         }
         if foreign.openNote != nil {
             // A touch on the band closes an open note, and tunes nothing.
             foreign.openNote = nil
-            return
+            return nil
         }
         guard settings.tapToTune, let active = slices.active else {
-            return
+            return nil
         }
-        slices.tap(to: TuneGestures.tapped(atX: x, geometry: geometry, snap: settings.snapTapToStep,
-                                           stepHz: snapStep(active)))
+        let hz = TuneGestures.tapped(atX: x, geometry: geometry, snap: settings.snapTapToStep,
+                                     stepHz: snapStep(active))
+        slices.tap(to: hz)
+        return slices.isTunable(active) ? hz : nil
     }
 
     /// Tune writes to the active slice, even with tap-to-tune off; Center

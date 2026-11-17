@@ -3861,8 +3861,11 @@ Notes on the keys:
   most every 5 seconds. `rewound` lists the slices playing the past (the
   `dsr.*` verbs): `slice`, `utcNs` (the moment played when the document
   was built, ns since 1970 UTC), `frequencyHz` (the slice's frequency) and
-  `liveFrequencyHz` (the frequency LIVE returns it to); it changes when a
-  slice is rewound, moved or goes live. `stretch` is the saved whole-pan
+  `liveFrequencyHz` (the frequency LIVE returns it to), and `keptCentreHz`
+  and `keptSpanHz` (what its receiver kept at the moment of the rewind or
+  the last seek, in Hz: a frequency more than half the span from the centre
+  was not kept, and a client says so; absent from an older Core); it
+  changes when a slice is rewound, moved or goes live. `stretch` is the saved whole-pan
   stretch Slice A plays (`recordings.openStretch`), null when none: `id`,
   `fromUtcNs` and `toUtcNs`, the moments it keeps. `saving` counts the
   stretches being saved now. `receivers` are the receivers streaming now,

@@ -18,6 +18,8 @@
 //   and its Setup page. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-16: Rewind plays on release at the active slice's frequency
 //   (DsrPanModel.activeSliceHz). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Every tune of the active slice reaches the recorder
+//   (DsrPanModel.sliceTuned). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -1281,6 +1283,19 @@ final class AppModel: ObservableObject {
         }
         model.activeSlice = { [weak slices] in slices?.activeSliceId }
         model.activeSliceHz = { [weak slices] in slices?.active?.slice.frequencyHz }
+        // Every tune of the active slice, however made: in the past it plays
+        // from the picture's top. The publishers send the new values before
+        // the model holds them, so the values are passed on.
+        model.tunedFeed = slices.$entries.combineLatest(slices.$activeSliceId)
+            .compactMap { entries, id -> (Int, Double)? in
+                guard let id, let entry = entries.first(where: { $0.id == id }) else {
+                    return nil
+                }
+                return (id, entry.slice.frequencyHz)
+            }
+            .sink { [weak model] tuned in
+                model?.sliceTuned(slice: tuned.0, hz: tuned.1)
+            }
         model.ownSeconds = { [weak band] in band?.mostLookBackSeconds ?? 0 }
         model.lookBack = { [weak band] seconds in band?.lookBack(seconds: seconds) }
     }

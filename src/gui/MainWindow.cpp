@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Any tune of a pan's slice reaches its DsrRewindLink
+//               (sliceTuned): in the past it plays from the top row, or
+//               says nothing was kept at that frequency then. J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-16: Rewind plays on release at the frequency of the pan's slice
 //               (DsrRewindLink::setSliceFrequency), JJ's design change.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
@@ -9555,6 +9559,25 @@ void MainWindow::wireSpectrumSliceControls(SpectrumWidget* sw,
             return s != nullptr ? s->frequency() : 0.0;
         });
         rewind->setAccess(m_radioModel->recordings());
+        // Any tune of the pan's slice (its flag, the VFO knob, a typed
+        // frequency, a click): in the past it plays from the top row, or,
+        // playing, says when nothing was kept at the new frequency then.
+        const QPointer<DsrRewindLink> link(rewind);
+        const auto watchTune = [this, sw, panId, link](int sliceId) {
+            if (m_shuttingDown || !m_radioModel) { return; }
+            if (SliceModel* slice = m_radioModel->sliceById(sliceId)) {
+                connect(slice, &SliceModel::frequencyChanged, sw,
+                        [this, panId, link, slice](double) {
+                    if (link && !m_shuttingDown && sliceForPan(panId) == slice) {
+                        link->sliceTuned();
+                    }
+                });
+            }
+        };
+        for (SliceModel* slice : m_radioModel->slices()) {
+            if (slice) { watchTune(slice->sliceIndex()); }
+        }
+        connect(m_radioModel, &RadioModel::sliceAdded, sw, watchTune);
     }
 
     // Click on the spectrum tunes this pan's slice.

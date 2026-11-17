@@ -20,6 +20,11 @@
 //                frequency it is on: rewind(slice, moment, frequency). A
 //                click in the past tunes as live; when the slice is not
 //                playing the past yet it then plays from the top row too.
+//   Tuning       any tune of the slice while the picture is in the past
+//                (flag, knob, typed frequency, a click) plays from the top
+//                row when it is not playing yet; playing, a frequency
+//                outside what was kept at that moment shows "Nothing was
+//                kept at this frequency then." until it is back inside.
 //   Moving       while rewound a jump on the strip, the hours map or a
 //                typed time moves the sound too (seekPast).
 //   LIVE         live(slice): live sound on the frequency before rewinding.
@@ -50,6 +55,10 @@
 //                 change); the past click is gone, refusals show on the
 //                 waterfall. AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF): any tune of the slice in the past
+//                 plays from the top row (sliceTuned); playing, a frequency
+//                 outside what was kept then says so on the waterfall.
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QList>
@@ -93,6 +102,12 @@ public:
     /// rewind goes out. Without one the pan's own VFO is used.
     void setSliceFrequency(std::function<double()> sliceHz) { m_sliceHz = std::move(sliceHz); }
 
+    /// The pan's slice changed frequency, however it was tuned. With the
+    /// picture in the past it plays from the top row when it is not
+    /// playing yet; playing, why there is no sound shows on the waterfall
+    /// while the frequency is outside what was kept at that moment.
+    void sliceTuned();
+
 private:
     void refresh();
     void onRowsWanted(qint64 fromUtcMs, qint64 toUtcMs, int rowCount);
@@ -103,6 +118,8 @@ private:
     void onRefused(const QString& reason);
     void onSaveWanted(qint64 fromUtcMs, qint64 toUtcMs, bool wholePan);
     int slice() const;
+    qint64 sliceHz() const;
+    void showWhetherKeptHere();
 
     QPointer<SpectrumWidget> m_spectrum;
     std::function<int()> m_sliceForPan;
@@ -116,6 +133,11 @@ private:
     bool m_spectrumAsked = false;
     int m_askedSlice = -1;
     bool m_saveAsked = false;      // saveStretch sent, not yet answered
+    // What was kept at the moment the slice plays from (the document's
+    // rewound entry), 0 when not playing or from an older Core.
+    qint64 m_keptCentreHz = 0;
+    qint64 m_keptSpanHz = 0;
+    bool m_outsideKept = false;    // the waterfall says nothing was kept here
 };
 
 } // namespace NereusSDR

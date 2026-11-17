@@ -1,4 +1,7 @@
 // Modification history (NereusSDR):
+//   2026-11-16: dsrPlayFromTop is public: any tune of the slice in the past
+//               plays from the top row (DsrRewindLink::sliceTuned). J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: Rewind plays on release (JJ's design change): letting go of
 //               the waterfall in the past plays the pan's slice from the
 //               top row at its own frequency (dsrPastPlayWanted); a click
@@ -1797,6 +1800,11 @@ public:
     void dsrPlayRefused(const QString& reason);
     /// The words the waterfall shows over the past picture, or empty.
     QString dsrWaterfallReason() const;
+    /// In the past, the slice plays from the top row (dsrPastPlayWanted),
+    /// or while rewound the sound follows there (dsrPastSeekWanted). Live,
+    /// nothing. Letting go of the picture runs it, and so does any tune of
+    /// the slice while the picture is in the past (DsrRewindLink::sliceTuned).
+    void dsrPlayFromTop();
     /// The past spectrum frame at the moment played (empty clears it).
     void setDsrPastSpectrum(const NereusSDR::DsrPastFrames& frame);
     void dsrPastSpectrumRefused();
@@ -3845,7 +3853,6 @@ private:
     void  substituteDsrPastTrace();
     void  askDsrPastSpectrum();
     qint64 dsrPlayingUtcMs();
-    void  dsrPlayFromTop();
     void  dsrGotoSubmit();
     void  placeDsrSaveBox();
     void  takeDownDsrSave();

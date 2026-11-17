@@ -13,7 +13,13 @@
 //   the strip, a pick on the hours map or a typed time plays the active
 //   slice from the picture's top at the frequency it is on; a tap in the
 //   past tunes as live. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Any tune of the active slice in the past (a tap, a drag, the
+//   knob, a typed frequency) plays from the picture's top when it is not
+//   playing yet, a tap at the frequency it tunes to; playing, a frequency
+//   outside what was kept then says so on the waterfall (keptNote).
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
+import Combine
 import Foundation
 import NereusMirror
 import NereusModels
@@ -49,6 +55,9 @@ final class DsrPanModel {
     nonisolated static let offReason = "The Digital Spectrum Recorder is off. Turn it on in Setup."
     nonisolated static let nothingKeptReason = "The Digital Spectrum Recorder has kept nothing."
     nonisolated static let noSliceReason = "No slice on this pan to play."
+    /// The Core's words (RecordingService::kRewindNoFrequencyReason), also
+    /// shown while a slice playing the past is tuned outside what was kept.
+    nonisolated static let noFrequencyReason = "Nothing was kept at this frequency then."
     /// The bracket SAVE puts up, in points below the picture's top (the phone mockup).
     nonisolated static let bracketTopPoints = 70.0
     nonisolated static let bracketFootPoints = 250.0
@@ -82,6 +91,8 @@ final class DsrPanModel {
     @ObservationIgnored var activeSlice: () -> Int? = { nil }
     /// The active slice's frequency in Hz, which a release plays at.
     @ObservationIgnored var activeSliceHz: () -> Double? = { nil }
+    /// The active slice's tunes, as AppModel feeds them to ``sliceTuned(slice:hz:)``.
+    @ObservationIgnored var tunedFeed: AnyCancellable?
     /// How far back the band's own lines reach for a whole picture, in seconds.
     @ObservationIgnored var ownSeconds: () -> Double = { 0 }
     /// Moves the band's own waterfall back by seconds (0 is live).
@@ -113,6 +124,10 @@ final class DsrPanModel {
     private(set) var bracket: (Double, Double)?
     /// A note over the waterfall: the Core's words for a save, a refusal or a reason.
     private(set) var note: String?
+    /// "Nothing was kept at this frequency then." while the active slice
+    /// plays this device's rewind on a frequency outside what was kept at
+    /// that moment; nil otherwise. Shown on the waterfall until it is back inside.
+    private(set) var keptNote: String?
     /// The slices this device rewound and the Core still plays from the past.
     /// Only these move the picture with their sound, and LIVE returns each.
     private(set) var mine: Set<Int> = []
@@ -129,6 +144,10 @@ final class DsrPanModel {
     @ObservationIgnored private var spectrumAskedAt: Double?
     @ObservationIgnored private var noteTask: Task<Void, Never>?
     @ObservationIgnored private var hoursTask: Task<Void, Never>?
+    /// A rewind from ``playFromTop(hz:)`` is with the Core: a tune meanwhile asks for no other.
+    @ObservationIgnored private var playAsked = false
+    /// The slice and frequency last told to ``sliceTuned(slice:hz:)``.
+    @ObservationIgnored private var lastTuned: (slice: Int, hz: Double)?
     /// What the hours were last asked for: the oldest kept hour, the newest
     /// hour and how many erases there have been; nil before any ask.
     @ObservationIgnored private var hoursKey: String?
@@ -338,7 +357,7 @@ final class DsrPanModel {
     /// Rewind plays on release: the active slice plays from the picture's
     /// top at the frequency it is on, or, playing this device's rewind
     /// already, the sound moves there. Why it cannot shows as a note.
-    private func playFromTop() {
+    private func playFromTop(hz tunedHz: Double? = nil) {
         guard let viewTop else {
             return
         }
@@ -346,7 +365,7 @@ final class DsrPanModel {
             showReasonNote()
             return
         }
-        guard let slice = activeSlice(), let hz = activeSliceHz(), hz > 0 else {
+        guard let slice = activeSlice(), let hz = tunedHz ?? activeSliceHz(), hz > 0 else {
             showNote(Self.noSliceReason)
             return
         }
@@ -354,8 +373,39 @@ final class DsrPanModel {
         if followsSound {
             Task { await self.seek(slice: slice, to: moment) }
         } else {
-            Task { await self.rewind(slice: slice, moment: moment, hz: hz) }
+            playAsked = true
+            Task {
+                await self.rewind(slice: slice, moment: moment, hz: hz)
+                self.playAsked = false
+                self.showWhetherKeptHere()
+            }
         }
+    }
+
+    /// The active slice changed frequency, however it was tuned (a drag on
+    /// the band or its flag, the knob, a typed frequency, a tap). In the
+    /// past and not playing yet, it plays from the picture's top at `hz`;
+    /// playing, the words for a frequency outside what was kept then show
+    /// or go. Another slice becoming active is not a tune.
+    func sliceTuned(slice: Int, hz: Double) {
+        let last = lastTuned
+        lastTuned = (slice, hz)
+        guard let last, last.slice == slice, last.hz != hz, slice == activeSlice() else {
+            return
+        }
+        if inPast, usable, !followsSound, !playAsked, !dragging {
+            playFromTop(hz: hz)
+        }
+        showWhetherKeptHere(hz: hz)
+    }
+
+    /// ``keptNote`` for the active slice at `hz` (or its frequency now).
+    private func showWhetherKeptHere(hz: Double? = nil) {
+        guard inPast, followsSound, let entry = rewound, let hz = hz ?? activeSliceHz() else {
+            keptNote = nil
+            return
+        }
+        keptNote = entry.outsideKept(hz: hz) ? Self.noFrequencyReason : nil
     }
 
     /// The hours map: `fraction` 0 at its top (now) to 1 at its foot (the oldest kept).
@@ -404,17 +454,17 @@ final class DsrPanModel {
 
     // MARK: Rewind and LIVE
 
-    /// A tap on the waterfall at `hz`. It always tunes as a live tap does
-    /// (false: the tap is left to tune). In the past, when the active slice
-    /// is not playing this device's rewind yet, the slice then plays from
-    /// the picture's top at `hz`; playing, the sound follows the tune.
+    /// A tap on the waterfall that tuned the active slice to `hz` (the
+    /// frequency the tap tunes to, on the step when the tap snaps). In the
+    /// past, when the active slice is not playing this device's rewind yet,
+    /// it then plays from the picture's top at `hz`; playing, the sound
+    /// follows the tune. Always false: the tap is the band's.
     @discardableResult
     func tapWaterfall(pointsDown: Double, hz: Double) -> Bool {
-        guard inPast, usable, !followsSound, let slice = activeSlice() else {
+        guard inPast, usable, !followsSound, !playAsked, activeSlice() != nil else {
             return false
         }
-        let moment = top
-        Task { await self.rewind(slice: slice, moment: moment, hz: hz) }
+        playFromTop(hz: hz)
         return false
     }
 
@@ -449,6 +499,7 @@ final class DsrPanModel {
         followSession()
         viewTop = nil
         pastSpectrum = nil
+        keptNote = nil
         lookBack(0)
         var slices = mine.union(owed)
         if let active = activeSlice(), rewound != nil || client.dsr?.stretch != nil {
@@ -514,6 +565,7 @@ final class DsrPanModel {
         }
         lastRewound = now
         followRecorder()
+        showWhetherKeptHere()
     }
 
     /// Called a few times a second: while the sound plays the picture

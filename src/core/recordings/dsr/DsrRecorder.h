@@ -16,6 +16,10 @@
 //             now and the bytes they take an hour, for the Setup page's
 //             hours (recording plan Task 26). AI tooling: Anthropic Claude
 //             Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; a rewound slice carries what was kept at
+//             the moment it plays from (keptCentreHz, keptSpanHz), so a tune
+//             outside it can say why there is no sound. AI tooling:
+//             Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -41,6 +45,11 @@ struct DsrRewoundSlice {
     qint64 utcNs = 0;
     qint64 frequencyHz = 0;
     qint64 liveFrequencyHz = 0;
+    // What its receiver kept at the moment it started playing from (the
+    // rewind's or the last seek's): the centre and the width, in Hz. A
+    // frequency more than half the width from the centre was not kept.
+    qint64 keptCentreHz = 0;
+    qint64 keptSpanHz = 0;
 };
 
 // One receiver the recorder keeps now, at its own rate (Task 26).

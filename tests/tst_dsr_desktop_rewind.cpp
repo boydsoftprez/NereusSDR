@@ -16,6 +16,9 @@
 // transmit rows are marked; the hours map and a typed time jump; an older
 // Core or the recorder off keeps the strip as it was, with the hours map
 // disabled with the reason, which the waterfall shows where it was let go.
+// Any tune of the slice in the past plays from the top row when it is not
+// playing yet; playing, a frequency outside what was kept then says so on
+// the waterfall until it is back inside.
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -30,6 +33,9 @@
 //                 no slice, a Core refusal and the recorder off show on the
 //                 waterfall. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-11-16 - A tune in the past plays from the top row; outside what
+//                 was kept, the waterfall says so. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -80,12 +86,18 @@ QJsonObject dsrDocument(bool enabled, const QJsonArray& rewound = {}, const QStr
     return doc;
 }
 
-QJsonArray rewoundSlice(int slice, qint64 utcMs, qint64 hz, qint64 liveHz)
+QJsonArray rewoundSlice(int slice, qint64 utcMs, qint64 hz, qint64 liveHz, qint64 keptCentreHz = 0,
+                        qint64 keptSpanHz = 0)
 {
-    return QJsonArray{QJsonObject{{QStringLiteral("slice"), slice},
-                                  {QStringLiteral("utcNs"), utcMs * 1000000LL},
-                                  {QStringLiteral("frequencyHz"), hz},
-                                  {QStringLiteral("liveFrequencyHz"), liveHz}}};
+    QJsonObject o{{QStringLiteral("slice"), slice},
+                  {QStringLiteral("utcNs"), utcMs * 1000000LL},
+                  {QStringLiteral("frequencyHz"), hz},
+                  {QStringLiteral("liveFrequencyHz"), liveHz}};
+    if (keptSpanHz > 0) {
+        o.insert(QStringLiteral("keptCentreHz"), keptCentreHz);
+        o.insert(QStringLiteral("keptSpanHz"), keptSpanHz);
+    }
+    return QJsonArray{o};
 }
 
 void mouse(QWidget* w, QEvent::Type type, const QPoint& pos, Qt::MouseButtons buttons)
@@ -397,6 +409,93 @@ private slots:
         QCOMPARE(rewinds.last().hz, std::llround(tuned.first().first().toDouble()));
         QVERIFY(w.dsrRewound());
         QCOMPARE(w.dsrWaterfallReason(), QString());
+    }
+
+    // After a refusal, any tune of the slice (the flag, the knob, a typed
+    // frequency reach the link as sliceTuned) plays from the same top row at
+    // the new frequency. One rewind at a time; live, a tune does nothing.
+    void aTuneInThePastPlaysFromTheTop()
+    {
+        SpectrumWidget w;
+        FakeRecordingsAccess fake;
+        DsrRewindLink link(&w, [] { return 0; });
+        prepare(w, link, fake);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        // Live: a tune is only a tune.
+        link.sliceTuned();
+        QCOMPARE(callsOf(fake, QStringLiteral("rewind")).size(), 0);
+
+        m_sliceHz = 14074000.0;
+        drag(&w, stripPoint(w, 0.9), stripPoint(w, 0.85));
+        QCOMPARE(callsOf(fake, QStringLiteral("rewind")).size(), 1);
+        const QString notHere = QString::fromLatin1(RecordingService::kRewindNoFrequencyReason);
+        emit fake.refused(notHere);
+        QVERIFY(!w.dsrRewound());
+        QCOMPARE(w.dsrWaterfallReason(), notHere);
+        const qint64 topMs = w.waterfallTopUtcMs();
+
+        m_sliceHz = 7180000.0;
+        link.sliceTuned();
+        auto rewinds = callsOf(fake, QStringLiteral("rewind"));
+        QCOMPARE(rewinds.size(), 2);
+        QCOMPARE(rewinds.last().utcNs, topMs * 1000000LL);
+        QCOMPARE(rewinds.last().hz, qint64(7180000));
+        QVERIFY(w.dsrRewound());
+        QCOMPARE(w.dsrWaterfallReason(), QString());
+
+        // The knob turns on before the Core answers: no second rewind, no seek.
+        m_sliceHz = 7180100.0;
+        link.sliceTuned();
+        QCOMPARE(callsOf(fake, QStringLiteral("rewind")).size(), 2);
+        QCOMPARE(callsOf(fake, QStringLiteral("seekPast")).size(), 0);
+    }
+
+    // Playing the past, a tune outside what was kept at that moment says so
+    // on the waterfall at once and stays rewound; back inside, the words go.
+    // An older Core that does not say what was kept shows nothing.
+    void tuningOutsideWhatWasKeptSaysSo()
+    {
+        SpectrumWidget w;
+        FakeRecordingsAccess fake;
+        DsrRewindLink link(&w, [] { return 0; });
+        prepare(w, link, fake);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        drag(&w, stripPoint(w, 0.9), stripPoint(w, 0.85));
+        QCOMPARE(callsOf(fake, QStringLiteral("rewind")).size(), 1);
+        const qint64 topMs = w.waterfallTopUtcMs();
+        // Kept then: 7.185 MHz, 192 kHz wide (7.089 to 7.281 MHz).
+        fake.setDocument(dsrDocument(true, rewoundSlice(0, topMs, 7190000, 7190000, 7185000, 192000)));
+        QVERIFY(w.dsrRewound());
+        QCOMPARE(w.dsrWaterfallReason(), QString());
+
+        const QString notHere = QString::fromLatin1(RecordingService::kRewindNoFrequencyReason);
+        m_sliceHz = 7290000.0;
+        link.sliceTuned();
+        QCOMPARE(w.dsrWaterfallReason(), notHere);
+        QVERIFY(w.dsrRewound());
+        QVERIFY(!w.wfLive());
+        QCOMPARE(callsOf(fake, QStringLiteral("rewind")).size(), 1);
+        QCOMPARE(callsOf(fake, QStringLiteral("seekPast")).size(), 0);
+        // The Core's next document (the slice's new frequency) keeps them.
+        fake.setDocument(dsrDocument(true, rewoundSlice(0, topMs, 7290000, 7190000, 7185000, 192000)));
+        QCOMPARE(w.dsrWaterfallReason(), notHere);
+
+        // Back inside: the words go.
+        m_sliceHz = 7200000.0;
+        link.sliceTuned();
+        QCOMPARE(w.dsrWaterfallReason(), QString());
+        QVERIFY(w.dsrRewound());
+
+        // An older Core: nothing said about what was kept, nothing shown.
+        fake.setDocument(dsrDocument(true, rewoundSlice(0, topMs, 7200000, 7190000)));
+        m_sliceHz = 14074000.0;
+        link.sliceTuned();
+        QCOMPARE(w.dsrWaterfallReason(), QString());
+        QVERIFY(w.dsrRewound());
     }
 
     // Rewound, the past spectrum is asked for on every display frame, not

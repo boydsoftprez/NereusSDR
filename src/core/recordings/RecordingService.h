@@ -58,6 +58,9 @@
 // 2026-11-16  J.J. Boyd / KG4VCF; a rewind to a moment kept at other
 //             frequencies says so (kRewindNoFrequencyReason). AI tooling:
 //             Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; a rewound slice keeps what was kept at
+//             the moment it plays from (Rewound::keptCentreHz, keptSpanHz)
+//             for rewound(). AI tooling: Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -544,6 +547,9 @@ private:
         // Task 25: an opened stretch's file it plays from; null for the
         // recorder's ring.
         std::shared_ptr<DsrRingFile> source;
+        // What the receiver kept at the moment of the rewind or last seek.
+        qint64 keptCentreHz = 0;
+        qint64 keptSpanHz = 0;
     };
     std::shared_ptr<DsrReplay> startReplay(int slice, int receiver, int rateHz, qint64 utcNs, quint64 token,
                                            std::shared_ptr<DsrRingFile> source = nullptr);

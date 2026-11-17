@@ -56,6 +56,10 @@
 // 2026-11-16  J.J. Boyd / KG4VCF; a rewind to a moment kept at other
 //             frequencies says so (kRewindNoFrequencyReason). AI tooling:
 //             Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; rewound() carries what was kept at the
+//             moment of the rewind or last seek (keptCentreHz, keptSpanHz),
+//             so a tune outside it can say why there is no sound. AI
+//             tooling: Anthropic Claude Code.
 
 #include "RecordingService.h"
 
@@ -1892,6 +1896,8 @@ bool RecordingService::rewind(int slice, qint64 utcNs, qint64 frequencyHz, QStri
     }
     entry.pendingToken = m_nextRewindToken++;
     entry.source = stretch;
+    entry.keptCentreHz = kept.centreHz;
+    entry.keptSpanHz = kept.sampleRateHz;
     entry.pending = startReplay(slice, receiver, kept.sampleRateHz, utcNs, entry.pendingToken, stretch);
     emit dsrChanged();
     return true;
@@ -1947,6 +1953,8 @@ bool RecordingService::seekRewind(int slice, qint64 utcNs, QString* refusal)
         dropReplayOnWorker(it->pending);
     }
     it->pendingToken = m_nextRewindToken++;
+    it->keptCentreHz = h.centreHz;
+    it->keptSpanHz = h.sampleRateHz;
     it->pending = startReplay(slice, receiver, rate, utcNs, it->pendingToken, it->source);
     emit dsrChanged();
     return true;
@@ -1965,6 +1973,8 @@ QList<DsrRewoundSlice> RecordingService::rewound() const
         r.utcNs = playing ? (entry.pending ? playing->fromUtcNs() : playing->positionUtcNs()) : 0;
         r.frequencyHz = m_rewindHost ? m_rewindHost->sliceFrequencyHz(slice) : 0;
         r.liveFrequencyHz = entry.liveFrequencyHz;
+        r.keptCentreHz = entry.keptCentreHz;
+        r.keptSpanHz = entry.keptSpanHz;
         out.append(r);
     }
     return out;

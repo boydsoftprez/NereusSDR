@@ -6,6 +6,9 @@
 // 2026-11-16: Recording plan fix round: SAVE's handles move by a step for
 //   VoiceOver, the hours are asked as the recorder changes, the play line
 //   shows only for this device's own rewind. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: The note shows "Nothing was kept at this frequency then." while
+//   the slice plays the past outside what was kept (DsrPanModel.keptNote).
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import CoreGraphics
 import NereusBand
@@ -412,7 +415,7 @@ struct DsrPictureLayer: View {
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier("dsr.drawing")
             }
-            if let note = model.note {
+            if let note = model.note ?? model.keptNote {
                 DsrNote(text: note)
                     .frame(width: place.picture.width)
                     .offset(x: place.picture.minX, y: place.picture.minY + 40)
