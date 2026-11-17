@@ -231,7 +231,12 @@ VoiceButton::VoiceButton(TxKeyingSection* section, RecordingsAccess* access)
             applyShownSetting();
         }
     });
-    applyShownSetting();
+    // Switched off, VOICE leaves the row now. Left on (the default), the row
+    // is built exactly as it was before the switch: nothing touches the part,
+    // so a row and its container copies lay out the same.
+    if (!shownSetting()) {
+        applyShownSetting();
+    }
 }
 
 VoiceButton::~VoiceButton()
