@@ -7,6 +7,8 @@
 //   2026-11-04 — Created. Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 //   2026-11-05 - Corrections for review findings.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-14 - The vintage scope marks the OVER threshold on the envelope
+//                scale. Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 // =================================================================
 #include "gui/applets/SsbModMonitorApplet.h"
 
@@ -47,9 +49,19 @@ QString paFeedbackToolTip()
     return QStringLiteral("Measure the PA output through PureSignal's feedback.");
 }
 
+// Inverse of SsbModulationAnalyzer::toDbfs. 100 percent is 0 dBFS, which is
+// linear 1.0, the level the DAC clips. The lamp, this line, and the meter
+// face's decibel ticks all use it.
 double percentForDbfs(double dbfs)
 {
     return 100.0 * std::pow(10.0, dbfs / 20.0);
+}
+
+// Share of full-scale deflection. 0 dBFS is the full swing. Past that,
+// the vintage trace stays on the edge of the screen.
+double envelopeFraction(double pct)
+{
+    return std::clamp(pct / 100.0, 0.0, 1.0);
 }
 }
 
@@ -88,7 +100,8 @@ void SsbModScopeWidget::paintEvent(QPaintEvent*)
     if (m_vintage) {
         // Same screen as the AM monitor's VU scope: dark green, an orange
         // graticule of 10 columns by 6 rows, and the envelope mirrored
-        // about the centre line. 100% of full scale fills the screen.
+        // about the centre line. 100% of full scale is full deflection.
+        // The dashed pair is the OVER threshold on that same scale.
         p.fillRect(r, QColor(0x10, 0x30, 0x18));
         p.setPen(QPen(QColor(0xc0, 0x70, 0x30, 170), 1.0));
         constexpr int kCols = 10;
@@ -103,14 +116,14 @@ void SsbModScopeWidget::paintEvent(QPaintEvent*)
         }
         p.setPen(QPen(QColor(0x90, 0x90, 0xa0), 1.0));
         p.drawRect(r);
+        const double mid = r.center().y();
+        const double half = r.height() / 2.0 * 0.92;
         if (m_trace.size() >= 2) {
-            const double mid = r.center().y();
-            const double half = r.height() / 2.0 * 0.92;
             const double dx = r.width() / static_cast<double>(m_trace.size() - 1);
             QPainterPath top;
             top.moveTo(r.left(), mid);
             for (std::size_t i = 0; i < m_trace.size(); ++i) {
-                const double amp = std::clamp(static_cast<double>(m_trace[i]) / 100.0, 0.0, 1.0);
+                const double amp = envelopeFraction(m_trace[i]);
                 const double x = r.left() + dx * static_cast<double>(i);
                 if (i == 0) {
                     top.moveTo(x, mid - amp * half);
@@ -120,7 +133,7 @@ void SsbModScopeWidget::paintEvent(QPaintEvent*)
             }
             QPainterPath fill = top;
             for (std::size_t i = m_trace.size(); i-- > 0;) {
-                const double amp = std::clamp(static_cast<double>(m_trace[i]) / 100.0, 0.0, 1.0);
+                const double amp = envelopeFraction(m_trace[i]);
                 fill.lineTo(r.left() + dx * static_cast<double>(i), mid + amp * half);
             }
             fill.closeSubpath();
@@ -129,7 +142,7 @@ void SsbModScopeWidget::paintEvent(QPaintEvent*)
             p.drawPath(top);
             QPainterPath bottom;
             for (std::size_t i = 0; i < m_trace.size(); ++i) {
-                const double amp = std::clamp(static_cast<double>(m_trace[i]) / 100.0, 0.0, 1.0);
+                const double amp = envelopeFraction(m_trace[i]);
                 const double x = r.left() + dx * static_cast<double>(i);
                 const double y = mid + amp * half;
                 if (i == 0) {
@@ -140,6 +153,10 @@ void SsbModScopeWidget::paintEvent(QPaintEvent*)
             }
             p.drawPath(bottom);
         }
+        const double overAmp = envelopeFraction(m_overPct);
+        p.setPen(QPen(QColor(Style::kRedBorder), 1.0, Qt::DashLine));
+        p.drawLine(QPointF(r.left(), mid - overAmp * half), QPointF(r.right(), mid - overAmp * half));
+        p.drawLine(QPointF(r.left(), mid + overAmp * half), QPointF(r.right(), mid + overAmp * half));
         return;
     }
 
@@ -273,6 +290,23 @@ std::size_t SsbModMonitorApplet::scopePointsForTest() const
 double SsbModMonitorApplet::overThresholdDbfs() const
 {
     return m_overSpin ? m_overSpin->value() : -1.0;
+}
+
+void SsbModMonitorApplet::setOverThresholdDbForTest(int db)
+{
+    if (m_overSpin == nullptr) {
+        return;
+    }
+    const QSignalBlocker block(m_overSpin);
+    m_overSpin->setValue(db);
+    if (m_scope != nullptr) {
+        m_scope->setOverThresholdPct(percentForDbfs(db));
+    }
+}
+
+double SsbModMonitorApplet::scopeOverPercentForTest() const
+{
+    return m_scope != nullptr ? m_scope->overThresholdPct() : 0.0;
 }
 
 void SsbModMonitorApplet::updateRemoteAvailability()
