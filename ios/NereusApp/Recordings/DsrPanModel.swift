@@ -9,6 +9,10 @@
 //   the past spectrum keeps up while the sound plays, the hours are asked
 //   again as the recorder changes, one save at a time.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Rewind plays on release (JJ's design change): letting go of
+//   the strip, a pick on the hours map or a typed time plays the active
+//   slice from the picture's top at the frequency it is on; a tap in the
+//   past tunes as live. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusMirror
@@ -25,9 +29,12 @@ import Observation
 /// its own lines (``BandModel/lookBack(seconds:)``); further back the Core
 /// draws the rows from its disk with the pan's own display (`dsr.rows`),
 /// in chunks, and "Drawing" dims the picture while a quarter or more of it
-/// waits. A tap on a signal in the past rewinds the active slice there: it
-/// moves to the frequency, plays from that moment, and the picture moves
-/// with the sound. LIVE returns it to the radio at the frequency before.
+/// waits. Letting go of the picture in the past (the strip, the hours map,
+/// a typed time) plays the active slice from the picture's top at the
+/// frequency it is on, and the picture moves with the sound; already
+/// playing, the sound moves there. A tap in the past tunes as live; when
+/// the slice is not playing the past yet, it then plays from the top.
+/// LIVE returns it to the radio at the frequency before.
 /// A key while rewound is the Core's: it takes the slice live on the
 /// frequency it plays, the picture goes live, and LIVE stays red until it
 /// is pressed, which still returns to the frequency before.
@@ -41,6 +48,7 @@ final class DsrPanModel {
     nonisolated static let notConnectedReason = "Not connected to a Core."
     nonisolated static let offReason = "The Digital Spectrum Recorder is off. Turn it on in Setup."
     nonisolated static let nothingKeptReason = "The Digital Spectrum Recorder has kept nothing."
+    nonisolated static let noSliceReason = "No slice on this pan to play."
     /// The bracket SAVE puts up, in points below the picture's top (the phone mockup).
     nonisolated static let bracketTopPoints = 70.0
     nonisolated static let bracketFootPoints = 250.0
@@ -72,6 +80,8 @@ final class DsrPanModel {
     @ObservationIgnored var panView: () -> DsrPanView? = { nil }
     /// The slice that rewinds: the pan's active slice.
     @ObservationIgnored var activeSlice: () -> Int? = { nil }
+    /// The active slice's frequency in Hz, which a release plays at.
+    @ObservationIgnored var activeSliceHz: () -> Double? = { nil }
     /// How far back the band's own lines reach for a whole picture, in seconds.
     @ObservationIgnored var ownSeconds: () -> Double = { 0 }
     /// Moves the band's own waterfall back by seconds (0 is live).
@@ -318,13 +328,33 @@ final class DsrPanModel {
         setTop(startTop + points * secondsPerPoint, commit: false)
     }
 
-    /// The finger lifted: the rows are asked for and, while rewound, the sound moves there.
+    /// The finger lifted: the rows are asked for and the active slice plays from the top.
     func dragEnded() {
         dragging = false
         commit()
-        if let viewTop, let slice = activeSlice(), followsSound {
-            let moment = viewTop
+        playFromTop()
+    }
+
+    /// Rewind plays on release: the active slice plays from the picture's
+    /// top at the frequency it is on, or, playing this device's rewind
+    /// already, the sound moves there. Why it cannot shows as a note.
+    private func playFromTop() {
+        guard let viewTop else {
+            return
+        }
+        guard usable else {
+            showReasonNote()
+            return
+        }
+        guard let slice = activeSlice(), let hz = activeSliceHz(), hz > 0 else {
+            showNote(Self.noSliceReason)
+            return
+        }
+        let moment = viewTop
+        if followsSound {
             Task { await self.seek(slice: slice, to: moment) }
+        } else {
+            Task { await self.rewind(slice: slice, moment: moment, hz: hz) }
         }
     }
 
@@ -337,9 +367,8 @@ final class DsrPanModel {
         let newest = self.newest
         let moment = newest - min(1, max(0, fraction)) * (newest - oldest)
         setTop(moment + pictureSeconds / 2, commit: commit)
-        if commit, let viewTop, let slice = activeSlice(), followsSound {
-            let moment = viewTop
-            Task { await self.seek(slice: slice, to: moment) }
+        if commit {
+            playFromTop()
         }
     }
 
@@ -375,24 +404,18 @@ final class DsrPanModel {
 
     // MARK: Rewind and LIVE
 
-    /// A tap on the waterfall at `pointsDown` from its top, at `hz`. In the
-    /// past it rewinds the active slice there and returns true; live it
-    /// leaves the tap to tune, and returns false.
+    /// A tap on the waterfall at `hz`. It always tunes as a live tap does
+    /// (false: the tap is left to tune). In the past, when the active slice
+    /// is not playing this device's rewind yet, the slice then plays from
+    /// the picture's top at `hz`; playing, the sound follows the tune.
     @discardableResult
     func tapWaterfall(pointsDown: Double, hz: Double) -> Bool {
-        guard inPast else {
+        guard inPast, usable, !followsSound, let slice = activeSlice() else {
             return false
         }
-        guard usable else {
-            showReasonNote()
-            return true
-        }
-        guard let slice = activeSlice() else {
-            return true
-        }
-        let moment = top - pointsDown * secondsPerPoint
+        let moment = top
         Task { await self.rewind(slice: slice, moment: moment, hz: hz) }
-        return true
+        return false
     }
 
     /// Rewinds `slice`. A refusal (a slice another device owns, the Core's
@@ -407,8 +430,11 @@ final class DsrPanModel {
             owed.remove(slice)
             // A LIVE asked before this rewind is done with (the desktop's DsrRewindLink m_liveAsked).
             liveAsked.remove(slice)
-            // The clicked row slides to the top; the picture then moves with the sound.
-            setTop(moment, commit: true)
+            // That moment is the picture's top (already, after a release:
+            // nothing more to ask); the picture then moves with the sound.
+            if viewTop != moment {
+                setTop(moment, commit: true)
+            }
         } catch {
             show(error)
         }
@@ -603,6 +629,7 @@ final class DsrPanModel {
         }
         timeSheetOpen = false
         setTop(moment + pictureSeconds / 2, commit: true)
+        playFromTop()
         return nil
     }
 

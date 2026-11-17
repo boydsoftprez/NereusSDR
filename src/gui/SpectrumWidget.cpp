@@ -8,6 +8,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16 J.J. Boyd / KG4VCF : rewind plays on release (JJ's design
+//                 change): letting go of the picture in the past plays the
+//                 pan's slice from the top row at its own frequency; a
+//                 click in the past tunes as a live click does, and plays
+//                 from the top row when the slice is not playing yet; why
+//                 it cannot play shows on the waterfall. AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-11-16 J.J. Boyd / KG4VCF : rewound, the past spectrum is asked
 //                 for on the paint timer's tick, at the display's frame
 //                 rate, for the moment playing; an answer that comes late
@@ -9891,6 +9898,7 @@ void SpectrumWidget::setWaterfallLive(bool live)
         m_dsrSpectrumInFlight = false;
         m_dsrDrawing = false;
         m_dsrRowsRefusal.clear();
+        m_dsrPlayRefusal.clear();
     }
     m_wfLive = live;
     rebuildWaterfallViewport();
@@ -10164,6 +10172,26 @@ void SpectrumWidget::dsrPastRowsRefused(const QString& reason)
     markOverlayDirty();
 }
 
+void SpectrumWidget::dsrPlayRefused(const QString& reason)
+{
+    m_dsrPlayRefusal = reason;
+    markOverlayDirty();
+}
+
+QString SpectrumWidget::dsrWaterfallReason() const
+{
+    if (m_wfLive) {
+        return {};
+    }
+    if (!m_dsrAvailable) {
+        return m_dsrReason;
+    }
+    if (!m_dsrRowsRefusal.isEmpty()) {
+        return m_dsrRowsRefusal;
+    }
+    return !m_dsrPlayRefusal.isEmpty() ? m_dsrPlayRefusal : m_dsrNote;
+}
+
 void SpectrumWidget::setDsrRewindAvailable(bool available, const QString& reason, qint64 oldestUtcMs)
 {
     const bool changed = available != m_dsrAvailable || reason != m_dsrReason
@@ -10201,6 +10229,7 @@ void SpectrumWidget::setDsrRewound(bool rewound, qint64 playedUtcMs)
             }
         }
         m_wfLive = false;
+        m_dsrPlayRefusal.clear();
         rebuildWaterfallViewport();
         askDsrPastSpectrum();
     } else {
@@ -10312,38 +10341,31 @@ void SpectrumWidget::jumpWaterfallTo(qint64 utcMs)
     m_wfLive = false;
     rebuildWaterfallViewport();
     markOverlayDirty();
-    if (m_dsrRewound) {
-        emit dsrPastSeekWanted(waterfallTopUtcMs());
-        askDsrPastSpectrum();
-    }
+    dsrPlayFromTop();
 }
 
-bool SpectrumWidget::dsrPastClick(const QPoint& pos)
+void SpectrumWidget::dsrPlayFromTop()
 {
-    if (m_wfLive || !m_dsrAvailable || m_waterfall.isNull()) {
-        return false;   // live, or no recorder: the click tunes as before
+    if (m_wfLive) {
+        return;
     }
-    const SpectrumLayout layout = spectrumLayout();
-    const QRect wf = layout.waterfall;
-    if (!wf.contains(pos) || waterfallTimeScaleRect(layout.waterfallChrome).contains(pos)
-        || wf.height() <= 0) {
-        return false;
+    m_dsrPlayRefusal.clear();
+    markOverlayDirty();
+    if (m_dsrRewound) {
+        // Already playing the past: the sound follows the picture's top.
+        emit dsrPastSeekWanted(waterfallTopUtcMs());
+        askDsrPastSpectrum();
+        return;
     }
-    const int row = (pos.y() - wf.top()) * m_waterfall.height() / wf.height();
-    const int age = std::clamp(m_wfHistoryOffsetRows + row, 0, maxWaterfallHistoryOffsetRows());
-    const qint64 utcMs = waterfallUtcMsForAge(m_wfHistoryOffsetRows + row);
-    // The same frequency a click-to-tune here would give.
-    double hz = xToHz(pos.x(), layout.spectrum);
-    hz = std::round(hz / m_stepHz) * m_stepHz;
-    // The picture moves with the sound from here: the clicked row to the top.
-    m_wfHistoryOffsetRows = age;
+    if (!m_dsrAvailable) {
+        return;   // the waterfall already shows why (recorder off, older Core)
+    }
+    // The picture moves with the sound from here (its top row is the moment
+    // heard); a refusal takes this back and shows why.
     m_dsrRewound = true;
     m_dsrLiveReturnPending = false;
-    rebuildWaterfallViewport();
-    markOverlayDirty();
-    emit dsrPastSignalClicked(utcMs, hz);
+    emit dsrPastPlayWanted(waterfallTopUtcMs());
     askDsrPastSpectrum();
-    return true;
 }
 
 QWidget* SpectrumWidget::dsrHoursMapForTest() const
@@ -10705,9 +10727,8 @@ void SpectrumWidget::drawDsrOverlay(QPainter& p, const QRect& specRect, const QR
         p.drawText(picture, Qt::AlignCenter,
                    QStringLiteral("Digital Spectrum Recorder: drawing %1…").arg(at));
     }
-    // Why the past past this window cannot be reached, in words.
-    const QString why = !m_dsrAvailable ? m_dsrReason
-                        : !m_dsrRowsRefusal.isEmpty() ? m_dsrRowsRefusal : m_dsrNote;
+    // Why the past past this window cannot be reached or played, in words.
+    const QString why = dsrWaterfallReason();
     if (!why.isEmpty()) {
         QFont f = WorkspacePreview::readableFont(p.font(), p.device());
         f.setPixelSize(12);
@@ -16198,6 +16219,7 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         if (std::abs(dy) > 3) {
             m_timeScaleDragMoved = true;
             m_dsrRowsRefusal.clear();
+            m_dsrPlayRefusal.clear();
         }
         const int newOffset = std::clamp(
             m_timeScaleDragStartOffsetRows + deltaRows, 0, maxOffset);
@@ -16971,10 +16993,10 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
             const int rows = m_waterfall.height();
             const int row = wf.height() > 0 ? (y - wf.top()) * rows / wf.height() : 0;
             openDsrGoto(waterfallUtcMsForAge(m_wfHistoryOffsetRows + std::max(0, row)), y);
-        } else if (m_timeScaleDragMoved && m_dsrRewound) {
-            // Rewound, the sound follows the picture to its top row.
-            emit dsrPastSeekWanted(waterfallTopUtcMs());
-            askDsrPastSpectrum();
+        } else if (m_timeScaleDragMoved) {
+            // Rewind plays on release (JJ, 2026-11-16): the slice plays from
+            // the top row, or, already playing, the sound follows there.
+            dsrPlayFromTop();
         }
         event->accept();
         return;
@@ -16988,6 +17010,9 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
         if (m_draggingVfo) {
             recallTick = m_bandStackPressTick;
         }
+        // Rewind plays on release: a tune in the past while the slice does
+        // not play it yet (a refusal, say) plays from the top row.
+        bool tunedInPast = m_draggingVfo && !m_wfLive;
         // If pan drag was short (click, not real drag), treat as click-to-tune
         // From AetherSDR SpectrumWidget.cpp:1427-1457 — 4px Manhattan threshold
         if (m_draggingPan) {
@@ -17011,10 +17036,10 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
             // that MainWindow forwards it to slice frequency.
             if (dx <= 4 && !m_bandStackPressTick.isEmpty()) {
                 recallTick = m_bandStackPressTick;
-            } else if (dx <= 4 && !m_moxOverlay
-                       && dsrPastClick(event->position().toPoint())) {
-                // Rewind (Task 24): a click on a past signal plays it.
             } else if (dx <= 4 && !m_moxOverlay) {
+                // In the past a click tunes as a live click does (JJ,
+                // 2026-11-16); while rewound the sound follows the slice.
+                tunedInPast = !m_wfLive;
                 const QRect specRect = spectrumLayout().spectrum;
                 double hz = xToHz(static_cast<int>(event->position().x()), specRect);
                 hz = std::round(hz / m_stepHz) * m_stepHz;
@@ -17095,6 +17120,9 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
         setCursor(Qt::CrossCursor);
         m_bandStackPressTick.clear();
         m_bandStackPressActivates = false;
+        if (tunedInPast && !m_dsrRewound && !m_moxOverlay) {
+            dsrPlayFromTop();
+        }
         if (!recallTick.isEmpty()) {
             const QPointer<SpectrumWidget> guard(this);
             emit bandStackTickClicked(recallTick);

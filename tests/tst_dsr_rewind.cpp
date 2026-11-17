@@ -23,6 +23,9 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code. The rewound sound stays read ahead while the past
 //                 picture is drawn on the same worker.
+//   2026-11-16 - J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. A moment kept, but not at the frequency asked, has
+//                 its own reason (rewind plays on release).
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -564,8 +567,9 @@ private slots:
         radio->worker = nullptr;
     }
 
-    // A rewind outside the ring's range, or to a frequency no receiver kept
-    // then, is refused with the brief's words, and nothing moves.
+    // A rewind outside the ring's range is refused as no longer kept; one to
+    // a frequency no receiver kept then, as nothing kept at that frequency
+    // (so the flag can be moved into what was); nothing moves.
     void aMomentNoLongerKeptIsRefused()
     {
         RecordingService svc(nullptr);
@@ -584,7 +588,8 @@ private slots:
         QCOMPARE(why, gone);
         why.clear();
         QVERIFY(!svc.rewind(0, ring.oldestUtcNs(0) + kNs, kKeptCentreHz + kRate, &why));
-        QCOMPARE(why, gone);
+        QCOMPARE(why, QStringLiteral("Nothing was kept at this frequency then."));
+        QCOMPARE(why, QString::fromLatin1(RecordingService::kRewindNoFrequencyReason));
         QCOMPARE(radio->frequency.value(0), kSliceAHz);
         QVERIFY(svc.rewound().isEmpty());
         QCOMPARE(worker.sliceReplay(0), nullptr);

@@ -55,6 +55,9 @@
 //             m_workerSpectra), the newest per slice and view; the
 //             recorder's drain runs between them too. AI tooling:
 //             Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; a rewind to a moment kept at other
+//             frequencies says so (kRewindNoFrequencyReason). AI tooling:
+//             Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -283,6 +286,8 @@ public:
     // and receivers keep playing the radio. The recorder goes on keeping
     // the live I/Q. Main thread.
     static constexpr const char* kRewindGoneReason = "That moment is no longer kept.";
+    // The moment is kept, but no receiver had this frequency in its span then.
+    static constexpr const char* kRewindNoFrequencyReason = "Nothing was kept at this frequency then.";
     static constexpr const char* kRewindNoSliceReason = "That slice is not open.";
     static constexpr const char* kRewindNotRewoundReason = "That slice is not playing the past.";
     static constexpr const char* kRewindRateReason = "That moment was kept at another sample rate.";

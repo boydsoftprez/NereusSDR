@@ -1,4 +1,10 @@
 // Modification history (NereusSDR):
+//   2026-11-16: Rewind plays on release (JJ's design change): letting go of
+//               the waterfall in the past plays the pan's slice from the
+//               top row at its own frequency (dsrPastPlayWanted); a click
+//               in the past tunes as a live click does; why it cannot play
+//               shows on the waterfall (dsrPlayRefused). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: Rewound, the past spectrum is asked for at the display's
 //               frame rate (the paint timer) for the moment playing, not
 //               once a waterfall row at most ten a second;
@@ -1755,11 +1761,16 @@ public:
     // A12). With the Digital Spectrum Recorder in use the time strip
     // reaches past this window's own history into rows the Core draws
     // (dsrPastRowsWanted), still 20 minutes per strip height; the picture
-    // dims with "Drawing" until they come. A click on a past signal asks to
-    // rewind there (dsrPastSignalClicked); while rewound the picture moves
-    // with the sound (its top row is the moment heard) and the spectrum
-    // shows the past with PAST. Without it the strip works as before and
-    // the hours map and the past click stay disabled with the reason.
+    // dims with "Drawing" until they come. Letting go of the picture in the
+    // past (strip drag, hours map, typed time) plays the pan's slice from
+    // the top row at its own frequency (dsrPastPlayWanted), or moves the
+    // sound there when it already plays (dsrPastSeekWanted). A click in the
+    // past tunes as a live click does; when the slice does not play the
+    // past yet, it then plays from the top row. While rewound the picture
+    // moves with the sound (its top row is the moment heard) and the
+    // spectrum shows the past with PAST. Without it the strip works as
+    // before and the hours map stays disabled with the reason, which the
+    // waterfall shows too.
     /// The recorder can be used (`reason` empty) or why not; the oldest
     /// moment it keeps, ms since 1970 UTC.
     void setDsrRewindAvailable(bool available, const QString& reason, qint64 oldestUtcMs);
@@ -1780,12 +1791,19 @@ public:
     /// The Core refused the rows: no more are asked for until the view
     /// moves, and the reason is shown.
     void dsrPastRowsRefused(const QString& reason);
+    /// The slice could not play the past (the Core's words, or no slice
+    /// on the pan): the picture stays where it is and the reason shows on
+    /// the waterfall until the picture moves or plays.
+    void dsrPlayRefused(const QString& reason);
+    /// The words the waterfall shows over the past picture, or empty.
+    QString dsrWaterfallReason() const;
     /// The past spectrum frame at the moment played (empty clears it).
     void setDsrPastSpectrum(const NereusSDR::DsrPastFrames& frame);
     void dsrPastSpectrumRefused();
     void setDsrHours(const QList<NereusSDR::DsrHour>& hours);
-    /// Moves the picture's top row to `utcMs` (typed time, the hours map);
-    /// while rewound the sound follows (dsrPastSeekWanted).
+    /// Moves the picture's top row to `utcMs` (typed time, the hours map)
+    /// and plays from there (dsrPastPlayWanted), or while rewound the sound
+    /// follows (dsrPastSeekWanted).
     void jumpWaterfallTo(qint64 utcMs);
     /// The top row's moment and any row's, ms since 1970 UTC.
     qint64 waterfallTopUtcMs() const { return waterfallUtcMsForAge(m_wfHistoryOffsetRows); }
@@ -2472,6 +2490,7 @@ public:
 
     // ---- VFO / filter overlay ----
     void setVfoFrequency(double hz);
+    double vfoFrequency() const { return m_vfoHz; }
     void setFilterOffset(int lowHz, int highHz);  // updates filter passband overlay
     /// R-CW-24 (D5): the station CW pitch, cached here so a drawer never
     /// reads settings per frame. In CWU and CWL a passband is drawn from the
@@ -3402,8 +3421,9 @@ signals:
     void dsrPastRowsWanted(qint64 fromUtcMs, qint64 toUtcMs, int rowCount);
     /// The spectrum at the moment played, while rewound.
     void dsrPastSpectrumWanted(qint64 utcMs);
-    /// A click on a past signal: play `hz` from `utcMs`.
-    void dsrPastSignalClicked(qint64 utcMs, double hz);
+    /// The picture was let go of in the past, or a click tuned there: the
+    /// pan's slice plays from `utcMs` at the frequency it is on.
+    void dsrPastPlayWanted(qint64 utcMs);
     /// While rewound the picture moved (strip drag, hours map, typed time):
     /// the sound follows to `utcMs`.
     void dsrPastSeekWanted(qint64 utcMs);
@@ -3825,7 +3845,7 @@ private:
     void  substituteDsrPastTrace();
     void  askDsrPastSpectrum();
     qint64 dsrPlayingUtcMs();
-    bool  dsrPastClick(const QPoint& pos);
+    void  dsrPlayFromTop();
     void  dsrGotoSubmit();
     void  placeDsrSaveBox();
     void  takeDownDsrSave();
@@ -4221,6 +4241,7 @@ private:
     double          m_dsrPanBytesPerMs{0.0};
     bool            m_dsrSoundAsWav{false};
     QString         m_dsrNote;
+    QString         m_dsrPlayRefusal;   // why the slice could not play the past
     quint64         m_dsrNoteSerial{0};
     std::function<qint64()> m_wfClockForTest;
     qint64 wfNowMs() const;

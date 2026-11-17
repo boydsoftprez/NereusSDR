@@ -15,8 +15,11 @@
 //   Past rows    the waterfall's dsrPastRowsWanted asks the Core with the
 //                pan's own FFT size, window, centre, span and pixel width
 //                (requestPastRows); the answers come back to the waterfall.
-//   Past click   rewind(slice, moment, frequency): the slice moves there and
-//                plays from that moment.
+//   Release      letting go of the picture in the past (strip drag, hours
+//                map, typed time) plays the slice from the top row at the
+//                frequency it is on: rewind(slice, moment, frequency). A
+//                click in the past tunes as live; when the slice is not
+//                playing the past yet it then plays from the top row too.
 //   Moving       while rewound a jump on the strip, the hours map or a
 //                typed time moves the sound too (seekPast).
 //   LIVE         live(slice): live sound on the frequency before rewinding.
@@ -29,8 +32,9 @@
 //   Saved        a saved whole-pan stretch opened on the waterfall plays
 //                like rewind even with the recorder off.
 //   Not usable   an older Core, no connection or the recorder off: the
-//                waterfall keeps its own minutes and the hours map and the
-//                past click are disabled with the reason.
+//                waterfall keeps its own minutes, nothing plays, and the
+//                hours map is disabled with the reason, which the
+//                waterfall shows too.
 //
 // None of it keys the radio.
 //
@@ -42,6 +46,10 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 25: saving a
 //                 stretch, sound only and opening a saved stretch.
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF): rewind plays on release (his design
+//                 change); the past click is gone, refusals show on the
+//                 waterfall. AI-assisted implementation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include <QList>
@@ -79,12 +87,17 @@ public:
     {
         return QStringLiteral("The Digital Spectrum Recorder is off. Turn it on in Setup.");
     }
+    static QString noSliceReason() { return QStringLiteral("No slice on this pan to play."); }
+
+    /// The frequency of the slice this pan tunes, in Hz, asked each time a
+    /// rewind goes out. Without one the pan's own VFO is used.
+    void setSliceFrequency(std::function<double()> sliceHz) { m_sliceHz = std::move(sliceHz); }
 
 private:
     void refresh();
     void onRowsWanted(qint64 fromUtcMs, qint64 toUtcMs, int rowCount);
     void onSpectrumWanted(qint64 utcMs);
-    void onSignalClicked(qint64 utcMs, double hz);
+    void onPlayWanted(qint64 utcMs);
     void onSeekWanted(qint64 utcMs);
     void onLiveRequested();
     void onRefused(const QString& reason);
@@ -93,6 +106,7 @@ private:
 
     QPointer<SpectrumWidget> m_spectrum;
     std::function<int()> m_sliceForPan;
+    std::function<double()> m_sliceHz;
     QPointer<RecordingsAccess> m_access;
     QList<QMetaObject::Connection> m_accessConnections;
     int m_rewoundSlice = -1;       // the slice the document says is rewound, -1 none

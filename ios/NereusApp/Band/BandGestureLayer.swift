@@ -16,6 +16,8 @@
 // 2026-11-16: Recording plan Task 28, the Digital Spectrum Recorder on Pan 1:
 // the time strip, the hours map, LIVE, SAVE, the past picture and a tap that
 // rewinds. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Rewind plays on release: a tap in the recorder's past tunes as
+// live. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import NereusBand
@@ -798,7 +800,8 @@ struct BandGestureLayer: View {
     private func taps(layout: BandLayout, geometry: BandGeometry) -> AnyGesture<Void> {
         let action = settings.doubleTapAction
         let single = SpatialTapGesture(count: 1).onEnded { value in
-            // In the recorder's past a tap on the waterfall rewinds the active slice there.
+            // In the recorder's past a tap tunes as live, and plays the
+            // active slice from the picture's top when it is not playing yet.
             if let dsr, layout.waterfall.contains(value.location),
                dsr.tapWaterfall(pointsDown: Double(value.location.y - layout.waterfall.minY),
                                 hz: geometry.hz(forX: Double(value.location.x))) {

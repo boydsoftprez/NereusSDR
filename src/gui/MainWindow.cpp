@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Rewind plays on release at the frequency of the pan's slice
+//               (DsrRewindLink::setSliceFrequency), JJ's design change.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-06: A pan raises the wideband flag only for a slice this window
 //               controls, not one it only listens to, JJ's decision.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
@@ -9546,6 +9549,11 @@ void MainWindow::wireSpectrumSliceControls(SpectrumWidget* sw,
             const SliceModel* s = m_shuttingDown ? nullptr : sliceForPan(panId);
             return s != nullptr ? s->sliceIndex() : -1;
         }, sw);
+        // Rewind plays on release at the frequency the slice is on.
+        rewind->setSliceFrequency([this, panId]() {
+            const SliceModel* s = m_shuttingDown ? nullptr : sliceForPan(panId);
+            return s != nullptr ? s->frequency() : 0.0;
+        });
         rewind->setAccess(m_radioModel->recordings());
     }
 

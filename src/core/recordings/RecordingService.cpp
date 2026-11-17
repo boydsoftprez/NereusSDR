@@ -53,6 +53,9 @@
 //             drawn is drawn and answered between their transforms, the
 //             newest per slice and view; the recorder drains between
 //             them too. AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; a rewind to a moment kept at other
+//             frequencies says so (kRewindNoFrequencyReason). AI tooling:
+//             Anthropic Claude Code.
 
 #include "RecordingService.h"
 
@@ -1846,12 +1849,14 @@ bool RecordingService::rewind(int slice, qint64 utcNs, qint64 frequencyHz, QStri
         receivers.prepend(own);
     }
     int receiver = -1;
+    bool momentKept = false;
     DsrBlockHeader kept;
     for (const int r : std::as_const(receivers)) {
         DsrBlockHeader h;
         if (!ring.blockAt(r, utcNs, &h) || h.sampleRateHz <= 0) {
             continue;
         }
+        momentKept = true;
         if (std::llabs(frequencyHz - h.centreHz) * 2 > qint64(h.sampleRateHz)) {
             continue;
         }
@@ -1860,7 +1865,9 @@ bool RecordingService::rewind(int slice, qint64 utcNs, qint64 frequencyHz, QStri
         break;
     }
     if (receiver < 0) {
-        return refuse(kRewindGoneReason);
+        // Kept then, but not at this frequency: a different reason, so the
+        // flag can be moved into what was kept.
+        return refuse(momentKept ? kRewindNoFrequencyReason : kRewindGoneReason);
     }
     // The slice moves to the moment's frequency. Its demodulator runs at its
     // receiver's rate, which must be the rate that moment was kept at.

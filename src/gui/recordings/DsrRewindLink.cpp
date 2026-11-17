@@ -11,6 +11,10 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 25: saving a
 //                 stretch, sound only and opening a saved stretch.
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF): rewind plays on release (his design
+//                 change); the past click is gone, refusals show on the
+//                 waterfall. AI-assisted implementation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "gui/recordings/DsrRewindLink.h"
@@ -48,7 +52,7 @@ DsrRewindLink::DsrRewindLink(SpectrumWidget* spectrum, std::function<int()> slic
     }
     connect(spectrum, &SpectrumWidget::dsrPastRowsWanted, this, &DsrRewindLink::onRowsWanted);
     connect(spectrum, &SpectrumWidget::dsrPastSpectrumWanted, this, &DsrRewindLink::onSpectrumWanted);
-    connect(spectrum, &SpectrumWidget::dsrPastSignalClicked, this, &DsrRewindLink::onSignalClicked);
+    connect(spectrum, &SpectrumWidget::dsrPastPlayWanted, this, &DsrRewindLink::onPlayWanted);
     connect(spectrum, &SpectrumWidget::dsrPastSeekWanted, this, &DsrRewindLink::onSeekWanted);
     connect(spectrum, &SpectrumWidget::dsrLiveRequested, this, &DsrRewindLink::onLiveRequested);
     connect(spectrum, &SpectrumWidget::dsrSaveStretchWanted, this, &DsrRewindLink::onSaveWanted);
@@ -255,18 +259,26 @@ void DsrRewindLink::onSpectrumWanted(qint64 utcMs)
     m_access->requestPastSpectrum(s, panView(), utcMs * kNsPerMs);
 }
 
-void DsrRewindLink::onSignalClicked(qint64 utcMs, double hz)
+void DsrRewindLink::onPlayWanted(qint64 utcMs)
 {
+    if (!m_spectrum) {
+        return;
+    }
     const int s = slice();
-    if (!m_access || s < 0) {
-        if (m_spectrum) {
-            m_spectrum->setDsrRewound(false);
-        }
+    if (!m_access || !unavailableReason().isEmpty()) {
+        // The waterfall shows why already.
+        m_spectrum->setDsrRewound(false);
+        return;
+    }
+    const qint64 hz = std::llround(m_sliceHz ? m_sliceHz() : m_spectrum->vfoFrequency());
+    if (s < 0 || hz <= 0) {
+        m_spectrum->setDsrRewound(false);
+        m_spectrum->dsrPlayRefused(noSliceReason());
         return;
     }
     m_rewindAsked = true;
     m_rewoundSlice = s;
-    m_access->rewind(s, utcMs * kNsPerMs, std::llround(hz));
+    m_access->rewind(s, utcMs * kNsPerMs, hz);
 }
 
 void DsrRewindLink::onSeekWanted(qint64 utcMs)
@@ -318,11 +330,12 @@ void DsrRewindLink::onRefused(const QString& reason)
         return;
     }
     if (m_rewindAsked) {
-        // The click could not rewind: the picture stays where it is.
+        // It could not play: the picture stays where it is, in the past,
+        // with why on the waterfall.
         m_rewindAsked = false;
         m_rewoundSlice = -1;
         m_spectrum->setDsrRewound(false);
-        m_spectrum->dsrPastRowsRefused(reason);
+        m_spectrum->dsrPlayRefused(reason);
         return;
     }
     if (m_rowsAsked) {

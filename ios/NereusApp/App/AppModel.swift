@@ -16,6 +16,8 @@
 //   screens are rebuilt. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-16: Recording plan Task 28, the Digital Spectrum Recorder on Pan 1
 //   and its Setup page. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Rewind plays on release at the active slice's frequency
+//   (DsrPanModel.activeSliceHz). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -1278,6 +1280,7 @@ final class AppModel: ObservableObject {
                               pixels: shown.pixels)
         }
         model.activeSlice = { [weak slices] in slices?.activeSliceId }
+        model.activeSliceHz = { [weak slices] in slices?.active?.slice.frequencyHz }
         model.ownSeconds = { [weak band] in band?.mostLookBackSeconds ?? 0 }
         model.lookBack = { [weak band] seconds in band?.lookBack(seconds: seconds) }
     }

@@ -6,13 +6,16 @@
 // (spec 3 "Rewind sound", "Rewind picture", "PTT while rewound", "Moving
 // through hours", 6.7, A11, A12; recording plan Task 24), against a fake
 // recordings access: a strip drag past the window's own history asks the
-// Core for rows and dims with "Drawing" until they come; a click on a past
-// signal rewinds with the clicked moment and frequency and the picture then
-// moves with the sound; the past spectrum replaces the trace; LIVE asks for
+// Core for rows and dims with "Drawing" until they come; letting go plays
+// the pan's slice from the top row at its own frequency and the picture
+// then moves with the sound; a click in the past tunes as live, and while
+// the slice is not playing yet it then plays from the top row; why it
+// cannot play (no slice, the Core's words) shows on the waterfall; the
+// past spectrum replaces the trace; LIVE asks for
 // live sound, and after PTT took the slice live it still does; your
 // transmit rows are marked; the hours map and a typed time jump; an older
 // Core or the recorder off keeps the strip as it was, with the hours map
-// and the past click disabled with the reason.
+// disabled with the reason, which the waterfall shows where it was let go.
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -22,6 +25,11 @@
 //                 frame for the moment playing, one at a time, and a late
 //                 answer asks again at once. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-11-16 - Rewind plays on release (JJ's design change): the past
+//                 click test became a release test and a click-tunes test;
+//                 no slice, a Core refusal and the recorder off show on the
+//                 waterfall. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -37,6 +45,7 @@
 #include <QTimeZone>
 
 #include "core/ConnectionState.h"
+#include "core/recordings/RecordingService.h"
 #include "core/recordings/dsr/DsrReplay.h"
 #include "fakes/FakeRecordingsAccess.h"
 #include "gui/SpectrumWidget.h"
@@ -136,6 +145,7 @@ class TestDsrDesktopRewind : public QObject {
 
 private:
     qint64 m_clockMs = kNowMs;
+    double m_sliceHz = 7190000.0;   // the pan's slice
 
     // A shown pan with fixed levels, a held ticker, a 20 s history of rows
     // 50 ms apart ending now, slice A (0) on a fake access with the
@@ -166,6 +176,7 @@ private:
         QCOMPARE(w.waterfallUtcMsForAge(0), kNowMs - kRowMs);
         fake.version = 4;
         fake.setDocument(dsrDocument(true));
+        link.setSliceFrequency([this] { return m_sliceHz; });
         link.setAccess(&fake);
         QVERIFY(w.dsrRewindAvailable());
     }
@@ -256,10 +267,12 @@ private slots:
         QCOMPARE(w.dsrCachedRowsForTest(), cached);
     }
 
-    // A click on a past signal rewinds slice A there: the clicked moment and
-    // frequency, the clicked row to the top, and from then the picture
-    // moves with the sound; the past spectrum replaces the trace.
-    void aClickOnAPastSignalRewinds()
+    // Letting go of the strip in the past plays slice A from the top row at
+    // the frequency it is on; from then the picture moves with the sound
+    // and the past spectrum replaces the trace. A click while rewound tunes
+    // as a live click does and asks for no rewind; the sound follows the
+    // slice.
+    void lettingGoPlaysFromTheTopAndAClickTunes()
     {
         SpectrumWidget w;
         FakeRecordingsAccess fake;
@@ -269,33 +282,25 @@ private slots:
             return;
         }
         QSignalSpy tuned(&w, &SpectrumWidget::frequencyClicked);
-        w.setWaterfallHistoryOffsetForTest(20);
-        const int row = 30;
-        const QPoint at = waterfallPoint(w, 0.25, row);
-        const qint64 expectedMs = w.waterfallUtcMsForAge(20 + row);
-        const QRect spec = w.spectrumRectForTest();
-        const double expectedHz = 7185000.0 - 96000.0 + double(at.x() - spec.left()) / spec.width() * 192000.0;
-        click(&w, at);
-
-        QCOMPARE(tuned.count(), 0);
+        drag(&w, stripPoint(w, 0.9), stripPoint(w, 0.85));
+        QVERIFY(!w.wfLive());
+        const qint64 topMs = w.waterfallTopUtcMs();
         const auto rewinds = callsOf(fake, QStringLiteral("rewind"));
         QCOMPARE(rewinds.size(), 1);
         QCOMPARE(rewinds.first().sliceId, 0);
-        QCOMPARE(rewinds.first().utcNs, expectedMs * 1000000LL);
-        QVERIFY2(std::abs(double(rewinds.first().hz) - expectedHz) <= 100.0,
-                 qPrintable(QStringLiteral("%1 vs %2").arg(rewinds.first().hz).arg(expectedHz)));
-        QCOMPARE(rewinds.first().hz % 100, 0);
+        QCOMPARE(rewinds.first().utcNs, topMs * 1000000LL);
+        QCOMPARE(rewinds.first().hz, qint64(7190000));
+        QCOMPARE(tuned.count(), 0);
         QVERIFY(w.dsrRewound());
-        QCOMPARE(w.waterfallTopUtcMs(), expectedMs);
         const auto spectra = callsOf(fake, QStringLiteral("requestPastSpectrum"));
         QCOMPARE(spectra.size(), 1);
-        QCOMPARE(spectra.first().utcNs, expectedMs * 1000000LL);
+        QCOMPARE(spectra.first().utcNs, topMs * 1000000LL);
 
         // The Core plays it: the document lists slice A.
-        fake.setDocument(dsrDocument(true, rewoundSlice(0, expectedMs, rewinds.first().hz, 7185000)));
+        fake.setDocument(dsrDocument(true, rewoundSlice(0, topMs, 7190000, 7190000)));
         QVERIFY(w.dsrRewound());
         const int offset = w.waterfallHistoryOffsetRowsForTest();
-        QCOMPARE(offset, 20 + row);
+        QCOMPARE(w.waterfallTopUtcMs(), topMs);
 
         // The past spectrum: the trace is the moment played, at -50 dBm.
         DsrPastFrames frame;
@@ -303,7 +308,7 @@ private slots:
         frame.firstBinHz = 7185000.0 - 96000.0;
         frame.hzPerBin = 192000.0 / 800.0;
         frame.binCount = 800;
-        frame.utcNs = {expectedMs * 1000000LL};
+        frame.utcNs = {topMs * 1000000LL};
         frame.rows = {QVector<float>(800, -50.0f)};
         emit fake.pastSpectrumReady(frame);
         QVERIFY(!w.renderedPixelsForTest().isEmpty());
@@ -311,17 +316,87 @@ private slots:
             QCOMPARE(v, -50.0f);
         }
 
+        // A click on a past signal tunes there, as live; no rewind, and the
+        // picture stays on the moment playing.
+        const int row = 30;
+        const QPoint at = waterfallPoint(w, 0.25, row);
+        const QRect spec = w.spectrumRectForTest();
+        const double expectedHz = 7185000.0 - 96000.0 + double(at.x() - spec.left()) / spec.width() * 192000.0;
+        click(&w, at);
+        QCOMPARE(tuned.count(), 1);
+        QVERIFY2(std::abs(tuned.first().first().toDouble() - expectedHz) <= 100.0,
+                 qPrintable(QStringLiteral("%1 vs %2").arg(tuned.first().first().toDouble()).arg(expectedHz)));
+        QCOMPARE(callsOf(fake, QStringLiteral("rewind")).size(), 1);
+        QCOMPARE(callsOf(fake, QStringLiteral("seekPast")).size(), 0);
+        QVERIFY(w.dsrRewound());
+        QCOMPARE(w.waterfallHistoryOffsetRowsForTest(), offset);
+
         // A new row: the picture moves with the sound, the offset holds and
         // the top row is still a moment the sound has reached.
         m_clockMs += kRowMs;
         w.pushWaterfallRowForTest(flatRow(-130.0f));
         QCOMPARE(w.waterfallHistoryOffsetRowsForTest(), offset);
-        QCOMPARE(w.waterfallTopUtcMs(), expectedMs + kRowMs);
+        QCOMPARE(w.waterfallTopUtcMs(), topMs + kRowMs);
+        // Let go again further back while rewound: the sound follows there.
+        drag(&w, stripPoint(w, 0.85), stripPoint(w, 0.8));
+        const auto seeks = callsOf(fake, QStringLiteral("seekPast"));
+        QCOMPARE(seeks.size(), 1);
+        QCOMPARE(seeks.first().utcNs, w.waterfallTopUtcMs() * 1000000LL);
+        QCOMPARE(callsOf(fake, QStringLiteral("rewind")).size(), 1);
         // Paused but not rewound, the picture holds still instead (as before).
+        const int held = w.waterfallHistoryOffsetRowsForTest();
         w.setDsrRewound(false);
         m_clockMs += kRowMs;
         w.pushWaterfallRowForTest(flatRow(-130.0f));
-        QCOMPARE(w.waterfallHistoryOffsetRowsForTest(), offset + 1);
+        QCOMPARE(w.waterfallHistoryOffsetRowsForTest(), held + 1);
+    }
+
+    // No slice on the pan: nothing plays and the waterfall says so. The
+    // Core's refusal (nothing kept at the slice's frequency then) leaves the
+    // picture in the past with its words on the waterfall; a click on a
+    // signal kept then tunes there and plays from the top row.
+    void whyItCannotPlayShowsOnTheWaterfall()
+    {
+        SpectrumWidget w;
+        FakeRecordingsAccess fake;
+        int sliceIndex = -1;
+        DsrRewindLink link(&w, [&sliceIndex] { return sliceIndex; });
+        prepare(w, link, fake);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        drag(&w, stripPoint(w, 0.9), stripPoint(w, 0.85));
+        QCOMPARE(callsOf(fake, QStringLiteral("rewind")).size(), 0);
+        QVERIFY(!w.wfLive());
+        QVERIFY(!w.dsrRewound());
+        QCOMPARE(w.dsrWaterfallReason(), DsrRewindLink::noSliceReason());
+
+        // A slice outside what was kept then.
+        sliceIndex = 0;
+        m_sliceHz = 14074000.0;
+        drag(&w, stripPoint(w, 0.85), stripPoint(w, 0.8));
+        QCOMPARE(w.dsrWaterfallReason(), QString());
+        auto rewinds = callsOf(fake, QStringLiteral("rewind"));
+        QCOMPARE(rewinds.size(), 1);
+        QCOMPARE(rewinds.first().hz, qint64(14074000));
+        const QString notHere = QString::fromLatin1(RecordingService::kRewindNoFrequencyReason);
+        emit fake.refused(notHere);
+        QVERIFY(!w.dsrRewound());
+        QVERIFY(!w.wfLive());
+        QCOMPARE(w.dsrWaterfallReason(), notHere);
+        const qint64 topMs = w.waterfallTopUtcMs();
+
+        // A click on a signal there tunes the slice, then plays from the top.
+        QSignalSpy tuned(&w, &SpectrumWidget::frequencyClicked);
+        connect(&w, &SpectrumWidget::frequencyClicked, this, [this](double hz) { m_sliceHz = hz; });
+        click(&w, waterfallPoint(w, 0.25, 30));
+        QCOMPARE(tuned.count(), 1);
+        rewinds = callsOf(fake, QStringLiteral("rewind"));
+        QCOMPARE(rewinds.size(), 2);
+        QCOMPARE(rewinds.last().utcNs, topMs * 1000000LL);
+        QCOMPARE(rewinds.last().hz, std::llround(tuned.first().first().toDouble()));
+        QVERIFY(w.dsrRewound());
+        QCOMPARE(w.dsrWaterfallReason(), QString());
     }
 
     // Rewound, the past spectrum is asked for on every display frame, not
@@ -609,10 +684,18 @@ private slots:
         QCOMPARE(map->toolTip(), reason);
         QCOMPARE(callsOf(fake, QStringLiteral("requestHours")).size(), 0);
 
+        // Let go in the past: nothing plays, and why shows on the
+        // waterfall where it was let go.
+        QVERIFY(!w.wfLive());
+        QCOMPARE(callsOf(fake, QStringLiteral("rewind")).size(), 0);
+        QVERIFY(!w.dsrRewound());
+        QCOMPARE(w.dsrWaterfallReason(), reason);
+
         QSignalSpy tuned(&w, &SpectrumWidget::frequencyClicked);
         click(&w, waterfallPoint(w, 0.4, 20));
         QCOMPARE(callsOf(fake, QStringLiteral("rewind")).size(), 0);
         QCOMPARE(tuned.count(), 1);
+        QCOMPARE(w.dsrWaterfallReason(), reason);
     }
 };
 

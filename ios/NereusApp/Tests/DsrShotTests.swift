@@ -103,6 +103,7 @@ struct DsrShotTests {
             // Half an hour back, Slice A playing from a signal there.
             model.drag(from: model.top, by: -1_800 / model.secondsPerPoint)
             model.dragEnded()
+            try await answerRelease(rig, model)
             try await answerRows(rig, model, geometry: geometry, share: 1)
             let (spectrumIndex, _) = try #require(await DsrTests.invoke(rig, "dsr.spectrum"))
             await Flag.answer(rig, spectrumIndex, values: Self.frames([model.top], geometry: geometry))
@@ -116,6 +117,7 @@ struct DsrShotTests {
         case .drawing:
             model.drag(from: model.top, by: -3_600 / model.secondsPerPoint)
             model.dragEnded()
+            try await answerRelease(rig, model)
             try await answerRows(rig, model, geometry: geometry, share: 0.3)
             #expect(await ShotWait.until { model.drawingText != nil && !model.rows.isEmpty })
         case .save:
@@ -127,6 +129,14 @@ struct DsrShotTests {
         }
         await ShotWait.laidOut(window)
         try RadeFlagShotTests.write(window, name: frame.description)
+    }
+
+    /// Letting go plays Slice A from the top (rewind plays on release): the
+    /// Core takes it, so no unanswered call ends in a note on the picture.
+    private func answerRelease(_ rig: Flag.Rig, _ model: DsrPanModel) async throws {
+        let (index, _) = try #require(await DsrTests.invoke(rig, "dsr.rewind"))
+        await Flag.answer(rig, index)
+        #expect(await ShotWait.until { model.mine.contains(0) })
     }
 
     /// Answers the picture's `dsr.rows` with `share` of its rows, newest first.

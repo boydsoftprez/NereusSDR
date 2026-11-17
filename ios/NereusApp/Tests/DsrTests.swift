@@ -10,7 +10,8 @@ import Testing
 
 /// Recording plan Task 28 (design sections 6.7, 6.8, A11, A12, A16): the
 /// strip dragged back draws the Core's rows in chunks with "Drawing" while
-/// they come; a tap in the past rewinds Slice A there and LIVE returns it;
+/// they come; letting go in the past plays Slice A from the top at its
+/// frequency, a tap there tunes, and LIVE returns it;
 /// a key while rewound takes it live; the hours map jumps; SAVE's bracket
 /// and panel; the Setup page's SD card warning, its one-field changes and
 /// erase; an older Core or the recorder off leaves every control disabled
@@ -64,6 +65,7 @@ struct DsrTests {
         model.clock = { now }
         model.panView = { view }
         model.activeSlice = { 0 }
+        model.activeSliceHz = { 7_240_500 }
         model.ownSeconds = { 60 }
         model.lookBack = { looks.seconds.append($0) }
         model.secondsPerPoint = spp
@@ -131,26 +133,32 @@ struct DsrTests {
         #expect(model.missingShare == 0 && model.rowsLayout?.count == 3)
     }
 
-    /// A tap on a signal in the past rewinds Slice A to that moment and
-    /// frequency; LIVE returns it to the radio.
-    @Test func aTapInThePastRewindsAndLiveReturns() async throws {
+    /// Letting go of the strip in the past plays Slice A from the picture's
+    /// top at the frequency it is on; a tap while it plays tunes and asks
+    /// for no rewind; LIVE returns it to the radio.
+    @Test func lettingGoPlaysFromTheTopAndLiveReturns() async throws {
         let (rig, model, _) = await Self.pan()
         // Live, a tap is the band's: it tunes as ever.
         #expect(!model.tapWaterfall(pointsDown: 20, hz: 7_240_500))
         model.drag(from: model.top, by: -1_000)
         model.dragEnded()
         let top = model.top
-        #expect(model.tapWaterfall(pointsDown: 20, hz: 7_240_500))
         let (index, rewind) = try #require(await Self.invoke(rig, "dsr.rewind"))
         #expect(Self.argument(rewind, "slice") == .i64(0))
-        #expect(Self.argument(rewind, "utcNs") == .i64(Int64(((top - 10) * 1e9).rounded())))
+        #expect(Self.argument(rewind, "utcNs") == .i64(Int64((top * 1e9).rounded())))
         #expect(Self.argument(rewind, "frequencyHz") == .i64(7_240_500))
         await RecordingFlagTests.answer(rig, index)
-        #expect(await Eventually.holds { model.viewTop == top - 10 })
-        RecordingFlagTests.publish(rig, Self.document(dsr: Self.dsrPart(rewound: Self.rewound(Int64((top - 10) * 1e9)))),
+        #expect(await Eventually.holds { model.mine.contains(0) })
+        #expect(model.viewTop == top)
+        RecordingFlagTests.publish(rig, Self.document(dsr: Self.dsrPart(rewound: Self.rewound(Int64(top * 1e9)))),
                                    revision: 2)
         model.documentChanged()
-        #expect(model.rewound?.frequencyHz == 7_240_500 && model.playedMoment == top - 10 && model.liveLit)
+        #expect(model.rewound?.frequencyHz == 7_240_500 && model.playedMoment == top && model.liveLit)
+        // Playing, a tap tunes as live: no second rewind.
+        let before = rig.sent.invokes.count
+        #expect(!model.tapWaterfall(pointsDown: 20, hz: 7_238_000))
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(!rig.sent.invokes.dropFirst(before).contains { $0.verb == "dsr.rewind" })
 
         let live = Task { await model.goLive() }
         let (liveIndex, goLive) = try #require(await Self.invoke(rig, "dsr.live"))
@@ -161,6 +169,33 @@ struct DsrTests {
         RecordingFlagTests.publish(rig, Self.document(dsr: Self.dsrPart()), revision: 3)
         model.documentChanged()
         #expect(!model.liveLit)
+    }
+
+    /// No active slice: letting go plays nothing and says so. The Core's
+    /// refusal (nothing kept at that frequency then) shows its words and
+    /// leaves the picture in the past; a tap on a signal there then plays
+    /// from the picture's top at the tapped frequency.
+    @Test func whyItCannotPlayShowsAndATapThenPlays() async throws {
+        let (rig, model, _) = await Self.pan()
+        var slice: Int?
+        model.activeSlice = { slice }
+        model.drag(from: model.top, by: -1_000)
+        model.dragEnded()
+        #expect(model.note == DsrPanModel.noSliceReason)
+        slice = 0
+        model.dragEnded()
+        let (index, _) = try #require(await Self.invoke(rig, "dsr.rewind"))
+        let notHere = "Nothing was kept at this frequency then."
+        await RecordingFlagTests.answer(rig, index, accepted: false, reason: notHere)
+        #expect(await Eventually.holds { model.note == notHere })
+        #expect(model.inPast && model.mine.isEmpty)
+        let top = model.top
+        #expect(!model.tapWaterfall(pointsDown: 20, hz: 7_238_000))
+        let (second, again) = try #require(await Self.invoke(rig, "dsr.rewind", after: index + 1))
+        #expect(Self.argument(again, "utcNs") == .i64(Int64((top * 1e9).rounded())))
+        #expect(Self.argument(again, "frequencyHz") == .i64(7_238_000))
+        await RecordingFlagTests.answer(rig, second)
+        #expect(await Eventually.holds { model.mine.contains(0) })
     }
 
     /// Rewinds Slice A from this device at `moment` and publishes it rewound.
@@ -199,8 +234,9 @@ struct DsrTests {
     }
 
     /// Another device's rewind of the active slice never moves this picture;
-    /// the Core's refusals of a rewind or LIVE on a slice this device does
-    /// not own show its words and leave the picture where it was put.
+    /// the Core's refusals of a rewind (letting go plays) or LIVE on a slice
+    /// this device does not own show its words and leave the picture where
+    /// it was put.
     @Test func anotherDevicesRewindLeavesThePictureAlone() async throws {
         let theirs = Self.rewound(Int64((Self.now - 600) * 1e9))
         let (rig, model, _) = await Self.pan(dsr: Self.dsrPart(rewound: theirs))
@@ -213,7 +249,6 @@ struct DsrTests {
         model.tick()
         #expect(model.viewTop == put)
         let refusal = "Slice A belongs to another device."
-        #expect(model.tapWaterfall(pointsDown: 20, hz: 7_240_500))
         let (index, _) = try #require(await Self.invoke(rig, "dsr.rewind"))
         await RecordingFlagTests.answer(rig, index, accepted: false, reason: refusal)
         #expect(await Eventually.holds { model.note == refusal })
