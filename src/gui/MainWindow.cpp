@@ -1348,24 +1348,52 @@ MainWindow::MainWindow(QWidget* parent)
     // NACH dem Profil: erst muessen die Panels dort liegen, wo das
     // Profil sie haben will, dann holt das Kombi-Feld seine zurueck.
     //
-    // 2026-11-17: nur noch, wenn das Startprofil zum Feld SCHWEIGT (eine
-    // Aufnahme von vor dem 2026-11-01, ohne `kombiInhalt`). Traegt es
-    // den Schluessel, hat das Profil das Feld oben schon gefuellt, und
-    // die globale Liste -- der Inhalt des Feldes beim letzten BEENDEN,
-    // gleich in welchem Profil -- hat hier nichts zu sagen. Sonst legte
-    // ein Beenden im Contest-Profil dessen Panels beim naechsten Start
-    // in das Feld von Profil 1.
+    // ── Der zweite Durchgang, und warum es ihn BRAUCHT (2026-11-17) ──
+    //
+    // Am Mittag des 17.11. (#462) habe ich diesen Durchgang gestrichen,
+    // sobald das Startprofil den Schluessel `kombiInhalt` traegt -- das
+    // Profil habe das Feld ja schon gefuellt. Am Abend, Betreiber mit
+    // Bild: „das rotor fenster gehört dort nicht hin". Rotor/Log stand
+    // in Profil N angedockt rechts im Hauptfenster, obwohl das Profil es
+    // im Kombi-Feld fuehrt.
+    //
+    // Der Durchgang war nie Zierde. Zwischen dem Profil und dieser
+    // Stelle laeuft der Rest des Konstruktors, und der stellt den Rotor
+    // noch einmal nach seinen EIGENEN Schluesseln auf (RotorFloating /
+    // RotorPanelBelow, „Profil laeuft VOR diesem Block") -- also wieder
+    // aus dem Feld heraus. Erst dieser Durchgang holte ihn zurueck; im
+    // Protokoll vom 15.11. steht „Kombi: 3 von 3 gemerkten Panels
+    // zurueckgeholt" darum zweimal, in dem vom 17.11. nur noch einmal.
+    //
+    // Was am Streichen RICHTIG war, bleibt: gefuellt wird aus der Liste
+    // des PROFILS, nicht aus der globalen (dem Inhalt des Feldes beim
+    // letzten Beenden, gleich in welchem Profil) -- sonst legt ein
+    // Beenden im Contest-Profil dessen Panels beim naechsten Start in
+    // das Feld von Profil 1. Und was das Profil als eigenes Fenster
+    // fuehrt, bleibt draussen. Nur wenn das Profil zum Feld schweigt
+    // (Aufnahme von vor dem 2026-11-01), gilt die globale Liste.
     QTimer::singleShot(0, this, [this]() {
         QVariantMap start;
         if (m_layoutProfiles && !m_layoutProfiles->current().isEmpty()) {
             start = m_layoutProfiles->snapshot(m_layoutProfiles->current());
         }
-        if (m_kombiApplet && !start.contains(QStringLiteral("kombiInhalt"))) {
-            holeKombiInhaltZurueck(m_kombiApplet);
-        }
-        if (m_kombiApplet2 && !start.contains(QStringLiteral("kombiInhalt2"))) {
-            holeKombiInhaltZurueck(m_kombiApplet2);
-        }
+        const QStringList schwebend =
+            start.value(QStringLiteral("floatingApplets")).toMap().keys();
+        const auto nochmal = [this, &start, &schwebend](KombiApplet* feld,
+                                                       const QString& schluessel) {
+            if (!feld) { return; }
+            if (!start.contains(schluessel)) {
+                holeKombiInhaltZurueck(feld);          // Profil schweigt
+                return;
+            }
+            holeKombiInhaltZurueck(
+                feld,
+                AppletKeys::kombiInhaltOhneEigeneFenster(
+                    start.value(schluessel).toStringList(), schwebend),
+                true);
+        };
+        nochmal(m_kombiApplet,  QStringLiteral("kombiInhalt"));
+        nochmal(m_kombiApplet2, QStringLiteral("kombiInhalt2"));
     });
 
     // Phase 3J-2 + 3R M3: restore each spot client's auto-connect /
@@ -19489,6 +19517,38 @@ void MainWindow::detachRotorPanel()
         m_rotorWindow->show();
         m_rotorWindow->raise();
         return;
+    }
+
+    // ── Liegt es in einem Kombi-Feld, bleibt es dort (2026-11-17) ────
+    //
+    // Betreiber, mit Bild: „das rotor fenster gehört dort nicht hin."
+    // Rotor/Log stand in Profil N als eigenes Stueck neben der
+    // Anordnung, obwohl sein Profil es im Kombi-Feld fuehrt.
+    //
+    // Diese Funktion baute dem Panel ein eigenes Fenster, GLEICH wo es
+    // gerade lag -- auch mitten aus einem Kombi-Feld heraus, und ohne
+    // es dem Feld zu sagen. Beim Start geschieht genau das: erst legt
+    // das Profil den Rotor ins Feld, dann stellt der Rest des
+    // Konstruktors ihn nach `RotorFloating` noch einmal auf (Vorgabe
+    // „True") und reisst ihn wieder heraus. Im Feld blieb ein Eintrag
+    // ohne Inhalt zurueck.
+    //
+    // Mit seinen echten Einstellungen in einer Sandkiste gemessen
+    // (Widget-Baum ueber die Automationsbruecke):
+    //   vorher:  ToolWindow[sichtbar] > RotorLogbookPanel -- eigenes
+    //            Fenster, das Feld fuehrt nur noch TX und RX
+    //   und mit dem blossen Wiedereinsetzen des zweiten Durchgangs
+    //   (mein erster Anlauf): RotorLogbookPanel OHNE Elternteil und
+    //   verborgen -- ganz weg, weil das Feld ihn noch in der Liste
+    //   hatte und darum nicht wieder aufnahm.
+    //
+    // Ein Panel liegt an EINEM Ort (AppletKeys.h). Wer es aus dem Feld
+    // haben will, zieht es dort heraus (KombiApplet::herausgezogen) --
+    // das ist der Weg, den das Feld kennt.
+    for (KombiApplet* feld : kombiFelder()) {
+        if (feld && feld->seiten().contains(panel)) {
+            return;
+        }
     }
 
     // Wo stand es? Das Fenster geht dort auf — der Klick liest sich

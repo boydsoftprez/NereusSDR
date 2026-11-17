@@ -434,6 +434,38 @@ private slots:
         QCOMPARE(k.aktuelleSeiteForTest(), static_cast<QWidget*>(dritte));
     }
 
+    // ── Ein Eintrag ohne Inhalt ist kein Grund abzulehnen (2026-11-17) ─
+    //
+    // Gemessen mit den Einstellungen des Betreibers: jemand nahm das
+    // Rotor-Panel per Elternwechsel aus dem Feld, ohne gibFrei() zu
+    // rufen. Die Liste fuehrte es weiter, nimmAuf() sagte „ist schon
+    // da", und das Panel blieb ohne Elternteil und unsichtbar liegen --
+    // der Rotor war ganz weg.
+    void einHerausgerissenesPanelWirdWiederAufgenommen()
+    {
+        KombiApplet k(nullptr);
+        auto* rotor = new Probepanel(QStringLiteral("RotorLog"), QStringLiteral("Rotor / Log"));
+        k.nimmAuf(rotor);
+        QCOMPARE(k.seiten().size(), 1);
+        QVERIFY(k.isAncestorOf(rotor));
+
+        // Herausgerissen, am Feld vorbei.
+        rotor->setParent(nullptr);
+        QVERIFY(!k.isAncestorOf(rotor));
+
+        // Wieder aufnehmen: es muss wirklich wieder DARIN liegen, und
+        // genau einmal in der Liste stehen.
+        k.nimmAuf(rotor);
+        QVERIFY2(k.isAncestorOf(rotor),
+                 "das Feld hat ein Panel abgelehnt, das es nur noch in der "
+                 "Liste fuehrte -- es liegt jetzt nirgends");
+        QCOMPARE(k.seiten().size(), 1);
+
+        // Und der gewoehnliche Fall bleibt: zweimal aufnehmen aendert nichts.
+        k.nimmAuf(rotor);
+        QCOMPARE(k.seiten().size(), 1);
+    }
+
     void derInhaltStehtImProfil()
     {
         const QByteArray root = qgetenv("LONGPATH_SOURCE_DIR");

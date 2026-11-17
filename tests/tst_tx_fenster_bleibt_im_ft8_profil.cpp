@@ -41,6 +41,7 @@
 #include <QtTest>
 #include <QApplication>
 #include <QDialog>
+#include <QDockWidget>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -51,6 +52,7 @@
 #include "gui/LayoutProfiles.h"
 #include "gui/MainWindow.h"
 #include "gui/applets/AppletKeys.h"
+#include "gui/applets/KombiApplet.h"
 #include "FensterFrist.h"
 
 using namespace Longpath;
@@ -147,6 +149,14 @@ private slots:
         // ueber den der Widerspruch ins Profil kam.
         AppSettings::instance().setValue(QStringLiteral("Kombi/Inhalt"),
                                          QStringLiteral("RotorLog,Tx,Rx"));
+        // Und die zwei Rotor-Schluessel, wie sie in seiner Datei stehen.
+        // Ohne sie blieb dieser Lauf gruen, obwohl sein Bildschirm das
+        // eigene Rotor-Fenster zeigte: erst `RotorFloating` schickt beim
+        // Start jemanden los, der dem Rotor ein eigenes Fenster baut.
+        AppSettings::instance().setValue(QStringLiteral("RotorFloating"),
+                                         QStringLiteral("True"));
+        AppSettings::instance().setValue(QStringLiteral("AppletWinRotorLogVisible"),
+                                         QStringLiteral("True"));
 
         // Das Contestprogramm fragt im leeren Pruefordner nach seinen
         // Einstellungen (modaler Dialog) -- jeden gleich wieder zumachen.
@@ -168,6 +178,80 @@ private slots:
         QVERIFY(m_profile);
         QCOMPARE(m_profile->current(), QStringLiteral("Neu"));
         QVERIFY(m_profile->exists(QStringLiteral("FT8")));
+    }
+
+    // 0. Gleich nach dem Start, in „Neu": Rotor/Log gehoert ins Kombi-Feld
+    //    (kombiInhalt = RotorLog, Tx, Rx) -- und NIRGENDS sonst.
+    //
+    //    Betreiber am 2026-11-17, mit Bild: „das rotor fenster gehört dort
+    //    nicht hin". Rechts im Hauptfenster stand ein eigenes „Rotor /
+    //    Log", obwohl sein Profil es im Feld fuehrt. Mein Fehler vom
+    //    selben Tag (#462): ich hatte den Durchgang beim Start
+    //    gestrichen, der den Rotor ins Feld ZURUECKholte -- und nicht
+    //    gesehen, dass er das brauchte, weil eine andere Stelle ihn nach
+    //    dem Profil wieder herausriss (detachRotorPanel baut dem Panel
+    //    ein eigenes Fenster, gleich wo es gerade liegt).
+    void nachDemStartLiegtDerRotorNurImKombiFeld()
+    {
+        const QVariantMap neu = aufnahme(QStringLiteral("Neu"));
+        QVERIFY2(neu.value(QStringLiteral("kombiInhalt")).toStringList()
+                     .contains(QStringLiteral("RotorLog")),
+                 qPrintable(QStringLiteral("Rotor/Log liegt nicht im Kombi-Feld: ")
+                            + text(neu)));
+
+        // Und es liegt WIRKLICH darin -- nicht bloss in der Liste des
+        // Feldes. Die Aufnahme oben liest `seiten()`, und die fuehrte den
+        // Rotor am 17.11. weiter, nachdem ihn jemand per Elternwechsel
+        // herausgenommen hatte: gruen, obwohl das Feld leer war.
+        bool imFeld = false;
+        for (KombiApplet* feld : m_mw->findChildren<KombiApplet*>()) {
+            for (QWidget* seite : feld->seiten()) {
+                if (seite && seite->objectName() == QStringLiteral("RotorLog")) {
+                    QVERIFY2(feld->isAncestorOf(seite),
+                             "das Kombi-Feld fuehrt Rotor/Log in seiner Liste, "
+                             "aber das Panel haengt nicht mehr darin");
+                    imFeld = true;
+                }
+            }
+        }
+        // Die Felder schweben; findChildren am Hauptfenster findet sie
+        // nur, solange sie Kinder sind. Darum auch ueber alle Fenster.
+        for (QWidget* w : QApplication::allWidgets()) {
+            auto* feld = qobject_cast<KombiApplet*>(w);
+            if (!feld) { continue; }
+            for (QWidget* seite : feld->seiten()) {
+                if (seite && seite->objectName() == QStringLiteral("RotorLog")) {
+                    QVERIFY2(feld->isAncestorOf(seite),
+                             "das Kombi-Feld fuehrt Rotor/Log in seiner Liste, "
+                             "aber das Panel haengt nicht mehr darin");
+                    imFeld = true;
+                }
+            }
+        }
+        QVERIFY2(imFeld, "Rotor/Log haengt in keinem Kombi-Feld");
+
+        // Kein eigenes Rotor-Fenster daneben.
+        QStringList fremde;
+        for (QWidget* w : QApplication::topLevelWidgets()) {
+            if (!w || w == m_mw || !w->isVisible()) { continue; }
+            if (w->windowTitle() == QStringLiteral("Rotor / Log")) {
+                fremde << QStringLiteral("%1 %2x%3")
+                              .arg(QString::fromLatin1(w->metaObject()->className()))
+                              .arg(w->width()).arg(w->height());
+            }
+        }
+        QVERIFY2(fremde.isEmpty(),
+                 qPrintable(QStringLiteral("eigenes Rotor-Fenster neben dem Feld: ")
+                            + fremde.join(QStringLiteral(", "))));
+
+        // Und kein Rotor-Dock im Hauptfenster.
+        for (QDockWidget* d : m_mw->findChildren<QDockWidget*>()) {
+            if (d->windowTitle().contains(QStringLiteral("Rotor"))) {
+                QVERIFY2(!d->isVisible(),
+                         "das Rotor-Dock steht im Hauptfenster, obwohl der "
+                         "Rotor im Kombi-Feld liegt");
+            }
+        }
     }
 
     // 1. Sein erster Griff nach dem Start: FT8. TX ist dort ein eigenes

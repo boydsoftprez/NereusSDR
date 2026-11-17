@@ -219,8 +219,19 @@ QString KombiApplet::appletTitle() const
 void KombiApplet::nimmAuf(QWidget* panel)
 {
     if (!panel || !m_stapel) { return; }
-    for (const QPointer<QWidget>& w : m_inhalte) {
-        if (w == panel) { return; }
+    for (int i = 0; i < m_inhalte.size(); ++i) {
+        if (m_inhalte.at(i) != panel) { continue; }
+        // Schon aufgenommen -- aber nur, wenn es auch wirklich noch im
+        // Stapel liegt. Am 2026-11-17 gemessen: jemand hatte das
+        // Rotor-Panel per Elternwechsel aus dem Feld genommen, ohne
+        // gibFrei() zu rufen. Die Liste fuehrte es weiter, dieser
+        // Vergleich sagte „ist schon da", und das Panel blieb ohne
+        // Elternteil und unsichtbar liegen. Ein Eintrag, der etwas
+        // behauptet, was nicht stimmt, ist kein Grund abzulehnen: er
+        // fliegt hinaus, und das Panel wird neu aufgenommen.
+        if (m_stapel->indexOf(panel) >= 0) { return; }
+        m_inhalte.removeAt(i);
+        break;
     }
     m_inhalte.append(panel);
     m_stapel->addWidget(panel);   // Elternwechsel, kein Neubau
