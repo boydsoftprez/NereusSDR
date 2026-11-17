@@ -35,6 +35,9 @@
 #include <QPushButton>
 #include <QRandomGenerator>
 #include <QSpinBox>
+#include <QTextBlock>
+#include <QTextCursor>
+#include <QTextDocument>
 #include <QTimeZone>
 
 #include <algorithm>
@@ -49,6 +52,7 @@
 #include "core/MoxController.h"
 #include "gui/Ft8KartenBruecke.h"
 #include "gui/QsoMapWindow.h"
+#include "gui/StyleConstants.h"
 #include "gui/widgets/LocatorJagdZeichen.h"
 #include <QTableWidget>
 #include "gui/applets/Ft8Applet.h"
@@ -958,11 +962,35 @@ private slots:
         fund(QStringLiteral("CQ OK1JRD JN79"), 800.0);   // hat er -- nur nicht auf 20 m
         fund(QStringLiteral("CQ JS6TWW PL55"), 1200.0);  // hat er nie
 
-        // Die FARBE unterscheidet beide weiterhin.
         QVERIFY(applet.listForTest());
         const QString alles = applet.listForTest()->toPlainText();
         QVERIFY2(alles.contains(QStringLiteral("OK1JRD")), qPrintable(alles));
         QVERIFY2(alles.contains(QStringLiteral("JS6TWW")), qPrintable(alles));
+
+        // ── EINE Farbe, EINE Bedeutung (2026-11-17) ───────────────
+        //
+        // Bis heute war auch die Bandstufe blau, nur dunkler. Am Geraet
+        // auf 17 m: „jn75 habe ich schon gearbeitet, ist aber hellblau"
+        // -- und dann: „ich will eine farbe haben, die mir zeigt, welche
+        // locator ich noch nicht gearbeitet habe." Blau ist jetzt allein
+        // das Feld, das ganz fehlt; was er auf einem anderen Band hat,
+        // sieht aus wie jedes andere CQ.
+        const auto farbeVon = [&applet](const QString& ruf) {
+            QTextDocument* doc = applet.listForTest()->document();
+            for (QTextBlock b = doc->begin(); b.isValid(); b = b.next()) {
+                if (!b.text().contains(ruf)) { continue; }
+                QTextCursor c(b);
+                c.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, 1);
+                return c.charFormat().foreground().color();
+            }
+            return QColor();
+        };
+        const QColor blau(QString::fromLatin1(Style::kAccent));
+        QCOMPARE(farbeVon(QStringLiteral("JS6TWW")), blau);
+        QCOMPARE(farbeVon(QStringLiteral("OK1JRD")),
+                 QColor(QString::fromLatin1(Style::kAmberText)));
+        // Und kein drittes, abgedunkeltes Blau irgendwo in der Liste.
+        QVERIFY(farbeVon(QStringLiteral("OK1JRD")) != blau.darker(145));
 
         // Und jetzt die Jagd.
         QPushButton* jagd = applet.sichtNeuesGridButtonForTest();

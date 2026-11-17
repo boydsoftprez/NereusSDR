@@ -3791,16 +3791,24 @@ void Ft8Applet::haengeAn(const Fundzeile& z)
             // Stufen gegenseitig auf.
             f.setForeground(QColor(QString::fromLatin1(Style::kAccent)));
         } else if (art == Zeilenart::NeuesGridBand) {
-            // ── Dasselbe Blau, leiser (2026-11-12) ──────────────
+            // ── Keine eigene Farbe mehr (2026-11-17) ───────────────
             //
-            // Das Feld fehlt nur auf DIESEM Band. Keine zweite Farbe
-            // dafuer: zwei Blaus nebeneinander waeren schon zwei zu
-            // viel, und die Stufe soll man sehen, ohne sie zu lesen.
-            // Also dieselbe Farbe, dunkler gestellt -- genau die
-            // Rangfolge, die „nicht fett" schon zwischen Land und
-            // Feld herstellt.
-            f.setForeground(
-                QColor(QString::fromLatin1(Style::kAccent)).darker(145));
+            // Hier stand dasselbe Blau, um ein Drittel dunkler: „das
+            // Feld fehlt nur auf DIESEM Band". Am Geraet, 17 m:
+            // 9A7BB JN75 war blau, und der Betreiber hatte JN75 auf
+            // 15 m und 40 m im Log. „jn75 habe ich schon gearbeitet,
+            // ist aber hellblau" -- und auf die Erklaerung: „ich will
+            // eine farbe haben, die mir zeigt, welche locator ich noch
+            // nicht gearbeitet habe."
+            //
+            // Zwei Blaus, die man nur nebeneinander unterscheiden
+            // kann, sind eine Farbe mit zwei Bedeutungen. Blau heisst
+            // jetzt genau eines: dieses Feld fehlt ganz. Die Bandstufe
+            // bleibt gerechnet (`Zeilenart::NeuesGridBand`, die Karte
+            // im Logbuch faerbt je Band), nur die Liste zeigt sie nicht
+            // mehr -- die Zeile sieht aus wie jede andere ihrer Art.
+            f.setForeground(QColor(QString::fromLatin1(
+                z.istCq ? Style::kAmberText : Style::kTextPrimary)));
         } else if (art == Zeilenart::Cq) {
             f.setForeground(QColor(QString::fromLatin1(Style::kAmberText)));
         } else {
