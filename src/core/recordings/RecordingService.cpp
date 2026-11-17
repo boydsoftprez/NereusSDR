@@ -484,7 +484,7 @@ void RecordingService::startRecording(int sliceId, const QString& byDeviceName)
 
     rec.state = RecordState::Recording;
     rec.startMs = now();
-    rec.startUtc = QDateTime::fromMSecsSinceEpoch(rec.startMs, QTimeZone::UTC);
+    rec.startUtc = QDateTime::fromMSecsSinceEpoch(rec.startMs, QTimeZone::utc());
     rec.startedBy = byDeviceName;
     rec.frequencyHz = std::llround(slice->frequency());
     rec.mode = SliceModel::modeName(slice->dspMode());
@@ -2414,7 +2414,7 @@ namespace {
 
 QString utcText(qint64 utcNs)
 {
-    return QDateTime::fromMSecsSinceEpoch(utcNs / kNsPerMs, QTimeZone::UTC).toString(QStringLiteral("HH:mm"));
+    return QDateTime::fromMSecsSinceEpoch(utcNs / kNsPerMs, QTimeZone::utc()).toString(QStringLiteral("HH:mm"));
 }
 
 }  // namespace
@@ -2551,7 +2551,7 @@ bool RecordingService::saveStretch(qint64 fromUtcNs, qint64 toUtcNs, bool wholeP
     RecordingEntry entry;
     entry.kind = wholePan ? RecordingKind::WholePan : RecordingKind::Sound;
     entry.sliceId = wholePan ? -1 : kStretchSlice;
-    entry.startUtc = QDateTime::fromMSecsSinceEpoch(extent.fromUtcNs / kNsPerMs, QTimeZone::UTC);
+    entry.startUtc = QDateTime::fromMSecsSinceEpoch(extent.fromUtcNs / kNsPerMs, QTimeZone::utc());
     entry.frequencyHz = sound.frequencyHz;
     entry.mode = sliceOpen ? SliceModel::modeName(static_cast<DSPMode>(sound.dspMode)) : QString();
     if (wholePan) {
@@ -2620,7 +2620,7 @@ bool RecordingService::saveSoundOnly(const QString& recordingId, QString* note, 
     RecordingEntry out;
     out.kind = RecordingKind::Sound;
     out.sliceId = kStretchSlice;
-    out.startUtc = QDateTime::fromMSecsSinceEpoch(extent.fromUtcNs / kNsPerMs, QTimeZone::UTC);
+    out.startUtc = QDateTime::fromMSecsSinceEpoch(extent.fromUtcNs / kNsPerMs, QTimeZone::utc());
     out.frequencyHz = sound.frequencyHz;
     out.mode = entry->mode;
     out.call = entry->call;
