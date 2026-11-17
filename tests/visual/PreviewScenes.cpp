@@ -356,6 +356,11 @@
 //                warning) and dsr-setup--erase-confirm pose Setup > Cores > Digital Spectrum
 //                Recorder against a fake recordings access, as the dsr-setup mockup does.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-17 - J.J. Boyd (KG4VCF), PR 808 screen walk: dsr-rewind--reason-off, --gone,
+//                --rate, --diversity and --no-frequency (each reason's note on the waterfall),
+//                dsr-rewind--roundtable (rewind with the Roundtable strip and panel paused) and
+//                voice-button--switched-off (VOICE off, TUNE and MOX close up).
+//                AI-assisted implementation via Anthropic Claude Code.
 
 #include "models/MainPowerMeter.h"
 #include "models/AmplifierModel.h"
@@ -9488,6 +9493,33 @@ void sceneVoiceButton(SceneContext& ctx, const QString& name, VoiceButtonPose po
     }
 }
 
+// PR 808 screen walk: Setup > Cores > Recordings' "Show the VOICE button"
+// switch off. VOICE leaves the TX row and TUNE and MOX close up; the
+// switch is put back on after the capture.
+void sceneVoiceButtonOff(SceneContext& ctx, const QString& name)
+{
+    ctx.provenance = provProposed();
+    VoiceButton* voice = nullptr;
+    runWindowScene(ctx, recPlayPoses(), 0,
+                   [&voice](SceneContext& c) { voice = poseVoiceButton(c, VoiceButtonPose::Idle); });
+    if (!ctx.failure.isEmpty() || voice == nullptr) {
+        return;
+    }
+    VoiceButton::setShownSetting(false);
+    pump(kFinalSettleMs);
+    if (voice->button() != nullptr && voice->button()->isVisible()) {
+        ctx.failure = QStringLiteral("VOICE is still in the TX row with the switch off");
+    } else {
+        captureWindow(ctx, name);
+        if (auto* tx = ctx.window->findChild<TxApplet*>(); tx != nullptr) {
+            addDetail(ctx, name + QStringLiteral("--tx"), tx);
+        }
+    }
+    VoiceButton::setShownSetting(true);
+    pump(kSettleMs);
+    ctx.notes.append(QStringLiteral("this computer's VoiceButtonShown switched off for the capture, then back on"));
+}
+
 // ---- Recording plan Task 24: rewind on the waterfall ----
 // Slice A at 7.185.000 LSB on one pan, as the dsr-rewind mockups show it,
 // the waterfall's clock on the mockup's afternoon (14:32 UTC on 14 November
@@ -9664,7 +9696,7 @@ void poseDsrRewind(SceneContext& ctx, DsrRewindPose pose, const PanSpectrum& ban
                                     "rows are drawn from the pose's band"));
 }
 
-void sceneDsrRewind(SceneContext& ctx, const QString& name, DsrRewindPose pose)
+void sceneDsrRewind(SceneContext& ctx, const QString& name, DsrRewindPose pose, const QString& note = QString())
 {
     ctx.provenance = provProposed();
     const QVector<PanPose> poses = dsrRewindPoses();
@@ -9683,11 +9715,82 @@ void sceneDsrRewind(SceneContext& ctx, const QString& name, DsrRewindPose pose)
             sw->setWaterfallClockForTest(
                 [started] { return kDsrSceneNowMs + (QDateTime::currentMSecsSinceEpoch() - started); });
         },
-        [pose, band](SceneContext& c) { poseDsrRewind(c, pose, band); });
+        [pose, band, note](SceneContext& c) {
+            poseDsrRewind(c, pose, band);
+            // PR 808 screen walk: a reason the past cannot play, as its note on the waterfall.
+            if (c.failure.isEmpty() && !note.isEmpty()) {
+                if (SpectrumWidget* sw = spectrumFor(c.window, panIdAt(0)); sw != nullptr) {
+                    sw->showDsrNote(note);
+                    pump(kSettleMs);
+                }
+            }
+        });
     if (!ctx.failure.isEmpty()) {
         return;
     }
     captureWindow(ctx, name);
+}
+
+// PR 808 screen walk: rewind and main's Roundtable strip (PRs 804 and 805)
+// on the same pan: W1TLK talking on 7.185 LSB with listeners, Slice A
+// playing 13:05 from this window, and the docked Roundtable panel paused
+// while the slice plays the past.
+void sceneDsrRewindRoundtable(SceneContext& ctx, const QString& name)
+{
+    ctx.provenance = provProposed();
+    const QVector<PanPose> poses = dsrRewindPoses();
+    const PanSpectrum band = poses.constFirst().spectrum;
+    const qint64 started = QDateTime::currentMSecsSinceEpoch();
+    onRoundtableClock([&] {
+        WindowRoundtable rt(ctx.model, true);
+        if (rt.model == nullptr) {
+            ctx.failure = QStringLiteral("the window has no Roundtable model");
+            return;
+        }
+        runWindowScene(
+            ctx, poses, 0,
+            [&rt, started](SceneContext& c) {
+                rt.strip(WindowRoundtable::StripTalk::Talking, 5);
+                if (SpectrumWidget* sw = spectrumFor(c.window, panIdAt(0)); sw != nullptr) {
+                    sw->setWaterfallClockForTest(
+                        [started] { return kDsrSceneNowMs + (QDateTime::currentMSecsSinceEpoch() - started); });
+                }
+            },
+            [band](SceneContext& c) { poseDsrRewind(c, DsrRewindPose::Past, band); });
+        if (!ctx.failure.isEmpty()) {
+            return;
+        }
+        auto* applet = ctx.window->findChild<RoundtableApplet*>();
+        if (applet != nullptr && applet->panel() != nullptr) {
+            const qint64 rewoundMs =
+                QDateTime(QDate(2026, 11, 14), QTime(13, 5, 12), QTimeZone::utc()).toMSecsSinceEpoch();
+            QJsonArray rewound;
+            rewound.append(QJsonObject{{QStringLiteral("slice"), 0},
+                                       {QStringLiteral("utcNs"), rewoundMs * 1000000LL},
+                                       {QStringLiteral("frequencyHz"), 7185000},
+                                       {QStringLiteral("liveFrequencyHz"), 7185000}});
+            applet->notePastDocument(QJsonObject{{QStringLiteral("dsr"),
+                                                  QJsonObject{{QStringLiteral("rewound"), rewound}}}});
+            for (QWidget* up = applet->parentWidget(); up != nullptr; up = up->parentWidget()) {
+                if (auto* area = qobject_cast<QScrollArea*>(up)) {
+                    area->ensureWidgetVisible(applet, 0, 0);
+                    break;
+                }
+            }
+        } else {
+            ctx.notes.append(QStringLiteral("no Roundtable applet in the window to pause"));
+        }
+        pump(kFinalSettleMs);
+        captureWindow(ctx, name);
+        if (applet != nullptr) {
+            addDetail(ctx, name + QStringLiteral("--applet"), applet);
+            ctx.checks.append(QJsonObject{{QStringLiteral("check"), QStringLiteral("roundtable-paused-for-past")},
+                                          {QStringLiteral("paused"), applet->panel()->pausedForPast()}});
+            applet->notePastDocument(QJsonObject{});
+        }
+        ctx.notes.append(QStringLiteral("the Roundtable strip from a frequency-first server and the first pan's "
+                                        "rewind from a fake recordings access, on one pan"));
+    });
 }
 
 void sceneFlagFoldTwoBand(SceneContext& ctx, const QString& name)
@@ -11750,6 +11853,25 @@ QVector<Scene> fixedScenes()
         scenes.append({name, QStringLiteral("1"), false,
                        [name, p](SceneContext& ctx) { sceneDsrRewind(ctx, name, p); }, true});
     }
+    // ---- PR 808 screen walk: the reasons on the waterfall, Roundtable and rewind, VOICE off ----
+    for (const auto& [suffix, note] : std::initializer_list<std::pair<const char*, const char*>>{
+             {"reason-off", "The Digital Spectrum Recorder is off. Turn it on in Setup."},
+             {"reason-gone", "That moment is no longer kept."},
+             {"reason-rate", "That moment was kept at another sample rate."},
+             {"reason-diversity", "Turn diversity off to rewind that slice."},
+             {"reason-no-frequency", "Nothing was kept at this frequency then."}}) {
+        const QString name = QStringLiteral("dsr-rewind--") + QLatin1String(suffix);
+        const QString text = QString::fromUtf8(note);
+        scenes.append({name, QStringLiteral("1"), false,
+                       [name, text](SceneContext& ctx) { sceneDsrRewind(ctx, name, DsrRewindPose::Past, text); },
+                       true});
+    }
+    scenes.append({QStringLiteral("dsr-rewind--roundtable"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) { sceneDsrRewindRoundtable(ctx, QStringLiteral("dsr-rewind--roundtable")); },
+                   true});
+    scenes.append({QStringLiteral("voice-button--switched-off"), QStringLiteral("1"), false,
+                   [](SceneContext& ctx) { sceneVoiceButtonOff(ctx, QStringLiteral("voice-button--switched-off")); },
+                   true});
     // ---- Recording plan Task 25: saving a stretch ----
     for (const auto& [suffix, pose] : std::initializer_list<std::pair<const char*, DsrRewindPose>>{
              {"bracket", DsrRewindPose::SaveBracket}, {"box", DsrRewindPose::SaveBox}}) {

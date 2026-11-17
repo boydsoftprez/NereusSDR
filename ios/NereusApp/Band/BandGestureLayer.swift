@@ -26,6 +26,9 @@
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-17: The recorder strip's LIVE is red while the band's own waterfall
 // looks back. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: Screen walk for PR 808, SAVE's panel stops left of the time
+//   strip, so its handles stay free. J.J. Boyd (KG4VCF), AI-assisted via
+//   Claude Code.
 
 import Combine
 import NereusBand
@@ -203,8 +206,11 @@ struct BandGestureLayer: View {
         }
         .overlay(alignment: .bottom) {
             if let dsr, dsr.saving {
-                // SAVE's panel; the handles on the strip stay free above it.
+                // SAVE's panel, left of the strip and the hours map, so the
+                // handles on the strip stay free beside it: on a short pan
+                // (a small phone, or sideways) the panel stood over them.
                 DsrSavePanel(model: dsr, sliceFrequencyHz: slices.entries.first { $0.id == 0 }?.slice.frequencyHz)
+                    .padding(.trailing, trailingInset + DsrStripPlace.stripWidth + DsrStripPlace.mapWidth)
             }
         }
         .sheet(isPresented: Binding(get: { dsr?.timeSheetOpen ?? false },

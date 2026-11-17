@@ -22,6 +22,8 @@
 // 2026-11-17: The time strip redraws every display frame only in the past or
 //   while a rewind plays; live it is back to its old pace (the phone's heat).
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: Screen walk for PR 808, the strip's times are written below
+//   SAVE, never over it. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import CoreGraphics
 import NereusBand
@@ -277,6 +279,11 @@ struct DsrStripLayer: View {
     /// same on every radio.
     static let tickSteps: [Double] = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600]
 
+    /// The highest a time is written on the strip, in points from its top:
+    /// under SAVE (31 down, 22 tall) with half a label's height to spare.
+    /// It was 16, under LIVE only, so a time could be written over SAVE.
+    static let labelTop: CGFloat = 31 + DsrStripPlace.buttonSize.height + 6
+
     /// The strip's ticks and times: a tick each step, the time on every
     /// minute (or every other tick when the picture is short), the moments
     /// you transmitted as a red edge and SAVE's bracket in yellow.
@@ -295,7 +302,8 @@ struct DsrStripLayer: View {
             let full = (moment / labelEvery).rounded() * labelEvery == moment
             context.fill(Path(CGRect(x: 1, y: y, width: full ? 7 : 4, height: 1)),
                          with: .color(full ? Color(white: 0.6) : Color(white: 0.33)))
-            if full, y > 16, y < Double(size.height) - 34 {
+            // Clear of LIVE and SAVE at the strip's top and the clock at its foot.
+            if full, y > Double(labelTop), y < Double(size.height) - 34 {
                 let text = labelEvery >= 60 ? DsrPanModel.hm(moment) : ":" + String(DsrPanModel.hms(moment).suffix(2))
                 context.draw(Text(text)
                     .font(.system(size: 10, design: .monospaced))

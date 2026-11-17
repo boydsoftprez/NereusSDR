@@ -5,6 +5,9 @@
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-17: VoiceButtonGate, the switch on Tools > Voice Keyer that takes VOICE
 //   off the main screen. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: Screen walk for PR 808, the Voice keyer panel scrolls when it
+//   is taller than the screen (a phone sideways). J.J. Boyd (KG4VCF), AI-
+//   assisted via Claude Code.
 
 import NereusLink
 import NereusModels
@@ -138,7 +141,17 @@ struct VoiceKeyerPanel: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.2, paused: model.client.voiceKeyer?.sending == nil)) { timeline in
-            panel(model.progress(now: timeline.date))
+            let progress = model.progress(now: timeline.date)
+            // Whole when it fits; on a short screen (a phone sideways) it
+            // scrolls, where its title and Repeat ran off the screen.
+            ViewThatFits(in: .vertical) {
+                panel(progress)
+                ScrollView {
+                    panel(progress)
+                }
+                .scrollBounceBehavior(.basedOnSize)
+                .modifier(PanelTopScrollEdge())
+            }
         }
     }
 
@@ -293,5 +306,17 @@ struct VoiceKeyerPanel: View {
         .accessibilityHint(sending ? "Stops it" : slot.empty ? "Opens the voice keyer page to record it"
                            : model.held?.reason ?? "Sends it on the air")
         .accessibilityIdentifier("voiceKeyer.tile\(n)")
+    }
+}
+
+/// The Voice keyer panel's title sits at the top of its scroll, at the very
+/// top of a phone held sideways: the system's soft scroll edge would blur it.
+private struct PanelTopScrollEdge: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.scrollEdgeEffectHidden(true, for: .top)
+        } else {
+            content
+        }
     }
 }

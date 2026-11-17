@@ -8,6 +8,9 @@
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-16: Recording plan Task 19, on an iPad the switch for the
 //   Recordings panel in its column. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: Screen walk for PR 808, the Disk row of its own: "Disk" at its
+//   width beside a compact menu. J.J. Boyd (KG4VCF), AI-assisted via Claude
+//   Code.
 
 import Foundation
 import NereusMirror
@@ -193,6 +196,17 @@ final class RecordingSettingsModel {
             return disk.name.isEmpty ? "The Core's own disk (\(free) free)" : "The Core's own disk (\(disk.name), \(free) free)"
         }
         return "\(disk.name.isEmpty ? disk.root : disk.name) (\(free) free)"
+    }
+
+    /// The chosen disk as the closed menu names it: short, so the row
+    /// stays compact (as Setup > Digital Spectrum Recorder names it); the
+    /// open menu's choices carry the free space.
+    var diskShortText: String {
+        let shown = settings
+        if let disk = chosenDisk {
+            return DsrSetupModel.diskShortText(disk)
+        }
+        return shown.disk.isEmpty ? "Core's own disk" : shown.disk
     }
 
     /// The picker's choices: each disk the Core lists, by the root the
@@ -403,15 +417,7 @@ struct RecordingSettingsPage: View {
     private func whereKept(_ shown: RecordingsDocument.Settings) -> some View {
         SetupPanelSection("Where they are kept", tag: .core,
                           note: "Recordings are never erased by themselves. Only you delete them.") {
-            Picker("Disk", selection: Binding(get: { shown.disk }, set: { root in
-                Task { await model.setDisk(root) }
-            })) {
-                ForEach(model.diskChoices, id: \.root) { choice in
-                    Text(choice.text).tag(choice.root)
-                }
-            }
-            .setupMenuRow("Disk")
-            .accessibilityIdentifier("recordingSettings.disk")
+            diskRow(shown)
             if model.chosenDisk?.sd == true {
                 Text("The SD card is fine for these. Recordings are only written while one is running, so they "
                      + "do not wear the card the way the Digital Spectrum Recorder would.")
@@ -436,6 +442,43 @@ struct RecordingSettingsPage: View {
             .buttonStyle(SetupLinkStyle())
             .accessibilityIdentifier("recordingSettings.recordings")
         }
+    }
+
+    /// "Disk" at its own width beside a compact menu, as Setup > Digital
+    /// Spectrum Recorder has it: closed, it names the disk; open, each choice
+    /// carries its free space. The full choice text in the closed menu took
+    /// the row and left "Disk" one letter per line on a small phone.
+    private func diskRow(_ shown: RecordingsDocument.Settings) -> some View {
+        SetupValueRowLayout(probe: "Disk") {
+            Text("Disk")
+                .fixedSize()
+        } value: {
+            Menu {
+                Picker("Disk", selection: Binding(get: { shown.disk }, set: { root in
+                    Task { await model.setDisk(root) }
+                })) {
+                    ForEach(model.diskChoices, id: \.root) { choice in
+                        Text(choice.text).tag(choice.root)
+                    }
+                }
+                .pickerStyle(.inline)
+            } label: {
+                HStack(spacing: 4) {
+                    Text(model.diskShortText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.footnote.weight(.semibold))
+                }
+                .foregroundStyle(WorkspacePalette.textPrimary)
+                .padding(.horizontal, 10)
+                .frame(minHeight: SetupStepButton.height)
+                .background { WorkspaceFace(.raised) }
+            }
+            .accessibilityLabel("Disk")
+            .accessibilityValue(model.diskShortText)
+        }
+        .accessibilityIdentifier("recordingSettings.disk")
     }
 
     private func playingBack(_ shown: RecordingsDocument.Settings) -> some View {

@@ -99,6 +99,50 @@ struct DialShotTests {
         await model.disconnect()
     }
 
+    /// The screen walk (PR 808): the main screen with VOICE beside PTT
+    /// (no dial), above PTT (the thumbwheel), and with VOICE switched off
+    /// (PTT and the step box closed up), at each phone shape, written as
+    /// `dial-walk-<state>-<shape>.png`.
+    @Test(arguments: WalkShape.all)
+    func voiceAtEachShape(_ shape: WalkShape) async throws {
+        let suite = "DialShotTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = PhoneSettings(defaults: defaults)
+        let model = AppModel(phoneSettings: settings, mediaPeerFactory: { QuietDialPeer() },
+                             displaySettings: BandDisplaySettingsStore(defaults: defaults))
+        let station = try FakeStation(additions: .all)
+        await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
+                            transportFactory: station.transportFactory, clock: HeartbeatSoonLinkClock())
+        #expect(await station.waitUntilLive())
+        try await MainScreenShotTests.fill(station)
+        await station.deliver(.delta(LinkMessage.Delta(key: "slice:0", properties: [
+            .init(ordinal: 6, name: "stepHz", value: .i64(100)),
+        ])))
+        let main = model.main
+        #expect(await settle(seconds: 30) {
+            main.slices.entries.count == 2 && main.coreName != nil && main.slices.entries.first?.stepHz == 100
+                && main.band.catalog != nil
+        })
+        let band = main.band
+        band.endpointId = 1
+        band.receive(.context(try #require(BandFlagShotTests.context())))
+        let upright = shape.sideways ? CGSize(width: shape.screen.height, height: shape.screen.width) : shape.screen
+        for (state, dial, voice) in [("voice-beside", DialKind.off, true), ("voice-above", DialKind.thumbwheel, true),
+                                     ("no-voice", DialKind.off, false), ("no-voice-thumbwheel", DialKind.thumbwheel, false)] {
+            settings.dialKind = dial
+            settings.voiceButtonShown = voice
+            let frames = try await shoot("dial-walk-\(state)-\(shape)", model: model, sideways: shape.sideways,
+                                         size: upright, probe: true, type: shape.type, insets: shape.safeArea)
+            #expect((frames[Self.voiceId] != nil) == voice, "\(state) \(shape)")
+            // VOICE and PTT side by side or one above the other, never overlapping, and on screen.
+            if let ptt = frames[Self.pttId], let button = frames[Self.voiceId] {
+                #expect(!ptt.intersects(button), "\(state) \(shape)")
+            }
+        }
+        await model.disconnect()
+    }
+
     /// Task 61, fix round 1: a flick on the pop-up knob at 30 rad/s, then
     /// the coast drawn at nine moments on a test clock, `coast-0.png` at
     /// the release to `coast-8.png` where it has stopped: the grip keeps
@@ -190,7 +234,8 @@ struct DialShotTests {
     @discardableResult
     private func shoot(_ name: String, model: AppModel, sideways: Bool = false,
                        size upright: CGSize = CGSize(width: 402, height: 874),
-                       probe: Bool = false) async throws -> [String: CGRect] {
+                       probe: Bool = false, type: DynamicTypeSize = .large,
+                       insets: UIEdgeInsets? = nil) async throws -> [String: CGRect] {
         // SwiftUI builds its accessibility elements only with accessibility on (SetupTypedEntryTests).
         let accessibility = SetupTypedEntryTests.applicationAccessibility()
         if probe {
@@ -202,9 +247,11 @@ struct DialShotTests {
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(origin: CGPoint(x: 0, y: sideways ? 120 : 0), size: size)
         window.windowLevel = .alert + 1
-        let root = DialShotRoot(model: model, sideways: sideways).preferredColorScheme(.dark)
+        let root = DialShotRoot(model: model, sideways: sideways).preferredColorScheme(.dark).dynamicTypeSize(type)
         let host = ShotHosting.host(root)
-        if sideways {
+        if let insets {
+            host.additionalSafeAreaInsets = insets
+        } else if sideways {
             host.additionalSafeAreaInsets = UIEdgeInsets(top: 0, left: 62, bottom: 21, right: 62)
         }
         host.view.frame = CGRect(origin: .zero, size: size)

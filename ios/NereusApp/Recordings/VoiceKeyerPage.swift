@@ -8,6 +8,8 @@
 //   AI-assisted via Claude Code.
 // 2026-11-17: The switch that takes VOICE off the main screen (JJ's request),
 //   kept on this device. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: Screen walk for PR 808, Record's "Recording 0:03" keeps to one
+//   line on a small phone. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -803,6 +805,9 @@ private struct RecordCard: View {
                             Text(recording ? "Recording " + RecordingFlagModel.lengthText(model.recorder.elapsedMs)
                                  : "Record")
                                 .monospacedDigit()
+                                // One line on a small phone, where "0:03" wrapped under "Recording".
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
                         }
                         .font(.system(size: 16, weight: .semibold))
                         .frame(maxWidth: .infinity)

@@ -9,6 +9,8 @@
 // 2026-11-17: The Disk row keeps "Disk" on one line and its menu compact:
 //   the closed menu names the disk only (diskShortText), the open menu keeps
 //   each disk's free space. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: Screen walk for PR 808, the page's title is drawn inline, where
+//   it wraps, not cut short. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusMirror
@@ -360,7 +362,8 @@ struct DsrSetupPage: View {
                 .setupGreyed(!usable)
             erase
         }
-        .setupPageTitle(DsrSetupModel.title)
+        // Inline, where it wraps: the bar's large title cut it short on every phone.
+        .setupPageTitle(DsrSetupModel.title, wraps: true)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 SetupTagBadge(tag: .core)

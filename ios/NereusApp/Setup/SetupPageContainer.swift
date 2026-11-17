@@ -316,10 +316,13 @@ private struct SetupLayoutProbeKey: EnvironmentKey {
 /// frame draws it. The bar keeps the title for the system's own use.
 struct SetupPageTitle: ViewModifier {
     let title: String
+    /// Drawn inline on a phone too, where it wraps: a title too long for the
+    /// bar's large title, which cut it short ("Digital Spectrum Rec...").
+    var wraps = false
     @Environment(\.setupInlineTitles) private var inline
 
     func body(content: Content) -> some View {
-        if inline {
+        if inline || wraps {
             content
                 .environment(\.setupPageTitle, title)
                 .navigationTitle(title)
@@ -341,8 +344,8 @@ struct SetupPageTitle: ViewModifier {
 
 extension View {
     /// The page's title: the navigation title, or inline at the root of the iPad's split.
-    func setupPageTitle(_ title: String) -> some View {
-        modifier(SetupPageTitle(title: title))
+    func setupPageTitle(_ title: String, wraps: Bool = false) -> some View {
+        modifier(SetupPageTitle(title: title, wraps: wraps))
     }
 }
 

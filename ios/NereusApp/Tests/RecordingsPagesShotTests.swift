@@ -99,6 +99,35 @@ struct RecordingsPagesShotTests {
         }
     }
 
+    /// The screen walk (PR 808): Tools > Recordings (the list, one playing)
+    /// at each phone shape at the screen's own height, and Setup > Recording
+    /// settings drawn whole at each shape's width, connected and not, written
+    /// as `tools-recordings-walk-<page>-<shape>.png` and
+    /// `setup-recording-settings-walk-<page>-<shape>.png`.
+    @Test(arguments: WalkShape.all)
+    func pagesAtEachShape(_ shape: WalkShape) async throws {
+        let screen = shape.screen
+        let (rig, model) = await Self.listModel(version: 3)
+        try await shoot("tools-recordings-walk-list-\(shape)", height: screen.height, width: screen.width,
+                        type: shape.type, sideways: shape.sideways) { Self.page(model) }
+        Flag.playback(rig, id: "r-4", positionMs: 12_000, lengthMs: 205_000, playing: true, onAir: false)
+        try await shoot("tools-recordings-walk-playing-\(shape)", height: screen.height, width: screen.width,
+                        type: shape.type, sideways: shape.sideways) { Self.page(model) }
+        for (name, connected) in [("connected", true), ("not-connected", false)] {
+            let settingsRig = await Flag.rig(version: 3, connected: connected)
+            if connected {
+                Flag.publish(settingsRig, Self.document(), revision: 1)
+            }
+            let settings = RecordingSettingsModel(client: settingsRig.client)
+            try await shoot("setup-recording-settings-walk-\(name)-\(shape)", height: 1900, width: screen.width,
+                            type: shape.type, sideways: shape.sideways, tab: .setup) {
+                NavigationStack {
+                    RecordingSettingsPage(model: settings)
+                }
+            }
+        }
+    }
+
     /// The page under the Tools tab's bar, as ToolsTab draws it.
     private static func page(_ model: RecordingsListModel) -> some View {
         VStack(spacing: 0) {
@@ -110,19 +139,22 @@ struct RecordingsPagesShotTests {
     }
 
     /// One page over the tab bar on an upright phone, written with `NEREUS_MAIN_SHOTS` set.
-    private func shoot<Content: View>(_ name: String, height: CGFloat = 874, scheme: ColorScheme = .dark,
-                                      tab: AppTab = .tools, @ViewBuilder content: () -> Content) async throws {
-        let size = CGSize(width: 402, height: height)
+    private func shoot<Content: View>(_ name: String, height: CGFloat = 874, width: CGFloat = 402,
+                                      scheme: ColorScheme = .dark, type: DynamicTypeSize = .large,
+                                      sideways: Bool = false, tab: AppTab = .tools,
+                                      @ViewBuilder content: () -> Content) async throws {
+        let size = CGSize(width: width, height: height)
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(origin: .zero, size: size)
         window.windowLevel = .alert + 1
         let root = VStack(spacing: 0) {
             content()
-            TabBar(selection: .constant(tab), sideways: false)
+            TabBar(selection: .constant(tab), sideways: sideways)
         }
         .background(ChromeColours.page)
         .preferredColorScheme(scheme)
+        .dynamicTypeSize(type)
         let host = ShotHosting.host(root)
         host.view.frame = CGRect(origin: .zero, size: size)
         window.rootViewController = host

@@ -36,6 +36,18 @@ struct RecordingFlagShotTests {
 
     @Test(arguments: Frame.allCases)
     func theFrameShowsRecordAndPlay(_ frame: Frame) async throws {
+        try await shoot(frame, size: Frame.size, type: .large, name: frame.description)
+    }
+
+    /// The screen walk (PR 808): the flag's Record and Play, recording, the
+    /// playing bar and the Kept notice at each phone shape, written as
+    /// `flagbtn-rec-walk-<frame>-<shape>.png`.
+    @Test(arguments: [Frame.idle, .recording, .playing, .onair, .kept], WalkShape.all)
+    func theFrameAtEachShape(_ frame: Frame, _ shape: WalkShape) async throws {
+        try await shoot(frame, size: shape.pan, type: shape.type, name: "flagbtn-rec-walk-\(frame.rawValue)-\(shape)")
+    }
+
+    private func shoot(_ frame: Frame, size: CGSize, type: DynamicTypeSize, name: String) async throws {
         let mirror = MirrorStore(send: { _ in })
         mirror.apply(.hello(LinkMessage.Hello(major: 1, minor: 11, settingsSchema: 0, peer: "nereusd")))
         var capabilities: [LinkMessage.PropertyEntry] = [
@@ -107,17 +119,18 @@ struct RecordingFlagShotTests {
         #expect(await ShotWait.until { main.slices.entries.count == 1 && main.slices.catalog != nil })
         let settings = PhoneSettings(defaults: UserDefaults(suiteName: "RecordingFlagShotTests") ?? .standard)
 
-        let window = try BandFlagShotTests.window(size: Frame.size)
+        let window = try BandFlagShotTests.window(size: size)
         let root = ZStack {
             BandView(model: band)
             BandGestureLayer(band: band, slices: main.slices, settings: settings, tuning: main.tuning,
                              foreign: main.foreign, flagControls: main.flagControls, recordings: model)
         }
-        .frame(width: Frame.size.width, height: Frame.size.height)
+        .frame(width: size.width, height: size.height)
         .background(Color.black)
+        .dynamicTypeSize(type)
         let host = UIHostingController(rootView: root)
         host.safeAreaRegions = []
-        host.view.frame = CGRect(origin: .zero, size: Frame.size)
+        host.view.frame = CGRect(origin: .zero, size: size)
         window.rootViewController = host
         window.isHidden = false
         defer {
@@ -125,7 +138,7 @@ struct RecordingFlagShotTests {
             window.rootViewController = nil
         }
         let bandDraw = try await ShotWait.requireBandLaidOut(band, in: window)
-        BandFlagShotTests.feed(band, width: bandDraw.requestedPixels, lines: Int(Frame.size.height * 3))
+        BandFlagShotTests.feed(band, width: bandDraw.requestedPixels, lines: Int(size.height * 3))
         try await ShotWait.requireBandShown(band, in: window, after: bandDraw)
         #expect(await ShotWait.until { main.slices.flagRects.count == 1 })
 
@@ -149,6 +162,6 @@ struct RecordingFlagShotTests {
             #expect(model.notice(slice: 0) == .reason(RecordingsClient.updateReason))
         }
         await ShotWait.laidOut(window)
-        try RadeFlagShotTests.write(window, name: frame.description)
+        try RadeFlagShotTests.write(window, name: name)
     }
 }
