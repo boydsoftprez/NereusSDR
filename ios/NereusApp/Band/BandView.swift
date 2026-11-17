@@ -1,5 +1,7 @@
 // NereusSDR for iOS: the band on screen, a Metal view drawn by the band's renderer
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-11-15: J.J. Boyd (KG4VCF), AI-assisted via Claude Code:
+//   draw nothing while the band's tab is hidden behind another.
 
 import Combine
 import MetalKit
@@ -45,8 +47,17 @@ struct BandView: UIViewRepresentable {
     }
 
     func updateUIView(_ view: MTKView, context: Context) {
+        // Each change the band draws asks for its own draw (``BandModel``'s
+        // `draws`): an update of the screen draws the band only the first
+        // time and when its tab comes on screen or goes, not each time the
+        // flags, readouts or settings over it move.
+        let first = !context.coordinator.updated
+        context.coordinator.updated = true
+        let shown = context.coordinator.onScreen != onScreen
         context.coordinator.onScreen = onScreen
-        view.setNeedsDisplay()
+        if first || shown {
+            view.setNeedsDisplay()
+        }
     }
 
     static func dismantleUIView(_ view: MTKView, coordinator: Coordinator) {
@@ -78,6 +89,8 @@ struct BandView: UIViewRepresentable {
         private var lineDraws = BandLineDraws()
         /// The band changed since the view last drew.
         private var dirty = false
+        /// The view has had its first update from SwiftUI.
+        var updated = false
         /// The display link is drawing the band now (``step(_:)``).
         private var drawingFromLink = false
         /// Frames in a row with nothing to draw and no line flowing.
@@ -186,6 +199,15 @@ struct BandView: UIViewRepresentable {
             guard let view else {
                 return
             }
+            // Behind another tab the band cannot be seen: the view's own
+            // draw, at its deferred time, keeps up without drawing
+            // (``drawBand(in:)``). Kept up here, inside the model's change,
+            // the waiting frame would go in before its extras came, and the
+            // extras would be lost.
+            guard onScreen else {
+                view.setNeedsDisplay()
+                return
+            }
             if model.pacingLines, let link {
                 dirty = true
                 restingFrames = 0
@@ -282,6 +304,18 @@ struct BandView: UIViewRepresentable {
             }
         }
 
+        /// A draw left out while the band's tab is hidden still keeps what a
+        /// draw keeps besides its picture: the model's waiting frame goes in
+        /// and its waterfall keeps its size, and the renderer holds the
+        /// frame's extras. When the tab shows again its update draws at
+        /// once, and that draw uploads every line put in meanwhile, so no
+        /// line is missed.
+        private func keepUpWhileHidden(_ view: MTKView) {
+            dirty = true
+            let state = model.prepareToDraw(size: view.drawableSize, scale: view.contentScaleFactor)
+            renderer?.skipDraw(frame: state.frame, extras: state.frameExtras)
+        }
+
         nonisolated func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
             MainActor.assumeIsolated {
                 view.setNeedsDisplay()
@@ -299,6 +333,12 @@ struct BandView: UIViewRepresentable {
             let drawStart = CACurrentMediaTime()
             #endif
             guard let renderer else {
+                return
+            }
+            // Behind another tab (the tab's own update still asks for a
+            // draw): nothing is drawn.
+            guard onScreen else {
+                keepUpWhileHidden(view)
                 return
             }
             // While the display link runs, it draws each change on its next

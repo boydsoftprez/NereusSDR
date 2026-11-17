@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // 2026-10-28: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
 //   snapshot exact capture-row IDs in each in-flight time map.
+// 2026-11-15: J.J. Boyd (KG4VCF), AI-assisted via Claude Code:
+//   keep the grid and trace on the GPU between draws, and give each
+//   label its own picture that moves with the view.
 
 import CoreGraphics
 import Foundation
@@ -185,6 +188,13 @@ public final class BandRenderer {
     /// The colour under the waterfall's low level the palette was drawn with.
     private var lowColourDrawn: String?
     private var labelLayers: [String: LabelLayer] = [:]
+    /// Each label's own picture, made once for its text and look and moved
+    /// wherever the label goes: a pan or zoom draws no text again.
+    private var labelGlyphs: [GlyphKey: LabelGlyph] = [:]
+    static let labelGlyphsKept = 256
+    /// The labels' widths, measured once for each text and look.
+    private var labelWidths: [GlyphKey: CGFloat] = [:]
+    static let labelWidthsKept = 1024
     /// The values drawn on the spectrum (the floor's, the blobs'), each a
     /// small texture made once for its text and kept while it is drawn.
     private var valueTextures: [ValueKey: ValueTexture] = [:]
@@ -195,15 +205,102 @@ public final class BandRenderer {
     private var underVertices: [ColourVertex] = []
     private var overVertices: [ColourVertex] = []
     private var tracePoints: [SIMD2<Float>] = []
-    /// The grid's vertices, and what they were built for.
-    private var gridVertices: [ColourVertex] = []
+    /// Where the grid's and the trace's vertices are built before they go
+    /// to the graphics processor, kept so their storage is reused.
+    private var builtVertices: [ColourVertex] = []
+    /// The grid's vertices on the graphics processor, and what they were
+    /// built for: built again only when that changes.
+    private var gridVertices = KeptVertices()
     private var gridKey: GridKey?
+    /// The trace and its fill on the graphics processor, and what they were
+    /// built for: built again only for a new frame, view or look.
+    private var traceVertices = KeptVertices()
+    private var traceKey: TraceKey?
+    /// Draws begun, for knowing when a kept buffer is free again.
+    private var frameNumber: UInt64 = 0
 
     private struct GridKey: Equatable {
         var layout: BandLayout
         var geometry: BandGeometry
         var step: Double
+        var spacingHz: Int
         var colours: [String]
+    }
+
+    /// Everything the trace and its fill are built from.
+    private struct TraceKey: Equatable {
+        /// Compared by its storage first, so the same frame costs nothing.
+        var trace: [Float]
+        var coverage: BandCoverage?
+        var geometry: BandGeometry
+        var colour: String
+        var lineColour: String
+        var fill: Bool
+        var gradient: Bool
+        var fillAlpha: Float
+        var width: CGFloat
+    }
+
+    /// Vertices kept on the graphics processor between frames, drawn from
+    /// their own buffer on every frame until what they show changes. New
+    /// vertices go into a buffer no frame in flight draws from: one last
+    /// drawn ``BandRenderer/framesInFlight`` frames ago or more, as the
+    /// ring's buffers are reused.
+    private struct KeptVertices {
+        private var buffers: [(buffer: any MTLBuffer, drawnFrame: UInt64)] = []
+        private var current: Int?
+        private(set) var count = 0
+
+        /// The buffer holding the vertices, nil when there are none.
+        var buffer: (any MTLBuffer)? {
+            current.map { buffers[$0].buffer }
+        }
+
+        /// Puts `vertices` in a free buffer, for frame `frame` to draw.
+        mutating func store(_ vertices: [ColourVertex], frame: UInt64, device: any MTLDevice) {
+            count = vertices.count
+            guard !vertices.isEmpty else {
+                current = nil
+                return
+            }
+            let length = vertices.count * MemoryLayout<ColourVertex>.stride
+            let held = current
+            let free = buffers.indices.first { index in
+                index != held && buffers[index].drawnFrame + UInt64(BandRenderer.framesInFlight) <= frame
+            }
+            let index: Int
+            if let free, buffers[free].buffer.length >= length {
+                index = free
+            } else {
+                // Grown with room to spare, so a busier frame does not reallocate.
+                guard let made = device.makeBuffer(length: length * 3 / 2, options: .storageModeShared) else {
+                    current = nil
+                    count = 0
+                    return
+                }
+                if let free {
+                    buffers[free].buffer = made
+                    index = free
+                } else {
+                    buffers.append((made, frame))
+                    index = buffers.count - 1
+                }
+            }
+            vertices.withUnsafeBytes { raw in
+                if let base = raw.baseAddress {
+                    buffers[index].buffer.contents().copyMemory(from: base, byteCount: raw.count)
+                }
+            }
+            buffers[index].drawnFrame = frame
+            current = index
+        }
+
+        /// Frame `frame` draws the vertices held.
+        mutating func drawn(in frame: UInt64) {
+            if let current {
+                buffers[current].drawnFrame = frame
+            }
+        }
     }
     /// The rows new since the last frame, staged for a copy on the
     /// graphics processor (``RowUploads``): one staging buffer a frame in
@@ -251,9 +348,34 @@ public final class BandRenderer {
         }
     }
 
+    /// A layer of labels: where it is, clipping its labels as a picture of
+    /// its size would, and each label's own picture with its top-left.
     private struct LabelLayer {
         var key: LabelKey
         var rect: CGRect
+        var placed: [PlacedGlyph]
+    }
+
+    private struct PlacedGlyph {
+        var origin: CGPoint
+        var size: CGSize
+        var texture: any MTLTexture
+        /// The pixels its ink can touch, in the target's pixels.
+        var ink: CGRect = .null
+    }
+
+    /// One label's text and look.
+    private struct GlyphKey: Hashable {
+        var text: String
+        var points: CGFloat
+        var scale: CGFloat
+        var colour: SIMD4<Float>
+        var bold: Bool
+    }
+
+    /// A label's own picture: its measures, and its texture (nil where none could be made).
+    private struct LabelGlyph {
+        var glyph: BandLabels.Glyph
         var texture: (any MTLTexture)?
     }
 
@@ -405,6 +527,7 @@ public final class BandRenderer {
             completed?()
         }
         ring = (ring + 1) % Self.framesInFlight
+        frameNumber &+= 1
         rowUploads.begin(with: stagingBuffers[ring])
         let settings = overlays.settings
         let layout = BandLayout(size: size, scale: overlays.scale, settings: settings)
@@ -469,26 +592,33 @@ public final class BandRenderer {
         }
 
         // The spectrum: grid, fill, trace, the Core's extras, the strip.
+        // The grid and the trace are kept on the graphics processor between
+        // frames and drawn in their turn between this frame's own vertices,
+        // so the order, and so the picture, is as one list drawn whole.
         var over = overVertices
         overVertices = []
         over.removeAll(keepingCapacity: true)
         defer { overVertices = over }
         addWaterfallOverlays(layout: layout, geometry: geometry, settings: settings, markers: overlays.markers,
                              scale: overlays.scale, to: &over)
+        let beforeGrid = over.count
         // In 3D the stack takes the flat spectrum's place: no grid, trace,
         // peak hold, zero line or extras over it.
         let flat = stacked == nil
-        if flat, settings.grid {
-            // The grid changes only with the view, the scale and its colours: kept between frames.
+        let drawsGrid = flat && settings.grid
+        if drawsGrid {
+            // The grid changes only with the view, the scale, its spacing and its colours: kept between frames.
             let key = GridKey(layout: layout, geometry: geometry, step: Self.gridStep(settings),
+                              spacingHz: settings.frequencyGridSpacingHz,
                               colours: [settings.gridColour, settings.gridFineColour, settings.hGridColour])
             if gridKey != key {
-                gridVertices.removeAll(keepingCapacity: true)
+                builtVertices.removeAll(keepingCapacity: true)
                 addGrid(layout: layout, geometry: geometry, settings: settings, scale: overlays.scale,
-                        to: &gridVertices)
+                        to: &builtVertices)
+                gridVertices.store(builtVertices, frame: frameNumber, device: device)
                 gridKey = key
             }
-            over.append(contentsOf: gridVertices)
+            gridVertices.drawn(in: frameNumber)
         }
         if flat {
             let edgeColour = BandPalette.rgbaWithAlpha(settings.bandEdgeColour)
@@ -503,9 +633,24 @@ public final class BandRenderer {
             addPeakHold(hold, coverage: overlays.frameCoverage, geometry: geometry, settings: settings,
                         scale: overlays.scale, to: &over)
         }
+        let beforeTrace = over.count
+        var drawsTrace = false
         if flat, let frame, !frame.traceDbm.isEmpty {
-            addTrace(frame.traceDbm, coverage: overlays.frameCoverage, geometry: geometry, settings: settings,
-                     scale: overlays.scale, to: &over)
+            // The trace changes with each frame the Core sends, about half
+            // the draws: kept between frames until a new frame, view or look.
+            let key = TraceKey(trace: frame.traceDbm, coverage: overlays.frameCoverage, geometry: geometry,
+                               colour: settings.traceColour, lineColour: settings.traceLineColourDrawn,
+                               fill: settings.traceFill, gradient: settings.traceGradient,
+                               fillAlpha: Self.fillAlpha(settings), width: settings.traceWidthPixels(scale: overlays.scale))
+            if traceKey != key {
+                builtVertices.removeAll(keepingCapacity: true)
+                addTrace(frame.traceDbm, coverage: overlays.frameCoverage, geometry: geometry, settings: settings,
+                         scale: overlays.scale, to: &builtVertices)
+                traceVertices.store(builtVertices, frame: frameNumber, device: device)
+                traceKey = key
+            }
+            traceVertices.drawn(in: frameNumber)
+            drawsTrace = true
         }
         if flat, settings.showZeroLine {
             addZeroLine(geometry: geometry, settings: settings, scale: overlays.scale, to: &over)
@@ -533,17 +678,18 @@ public final class BandRenderer {
         if overlays.paused {
             Self.addRect(CGRect(origin: .zero, size: size), Self.pausedDim, to: &over)
         }
-        drawColour(over, slot: ring * 2 + 1, encoder: encoder, viewport: &viewport)
-
-        for name in labelLayers.keys.sorted() {
-            if let layer = labelLayers[name], let texture = layer.texture {
-                var uniforms = RectUniforms(rect: Self.vector(layer.rect), viewport: viewport)
-                encoder.setRenderPipelineState(labelPipeline)
-                encoder.setVertexBytes(&uniforms, length: MemoryLayout<RectUniforms>.stride, index: 0)
-                encoder.setFragmentTexture(texture, index: 0)
-                encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
-            }
+        let overBuffer = fillVertices(over, slot: ring * 2 + 1)
+        drawColour(overBuffer, range: 0..<beforeGrid, encoder: encoder, viewport: &viewport)
+        if drawsGrid {
+            drawColour(gridVertices.buffer, range: 0..<gridVertices.count, encoder: encoder, viewport: &viewport)
         }
+        drawColour(overBuffer, range: beforeGrid..<beforeTrace, encoder: encoder, viewport: &viewport)
+        if drawsTrace {
+            drawColour(traceVertices.buffer, range: 0..<traceVertices.count, encoder: encoder, viewport: &viewport)
+        }
+        drawColour(overBuffer, range: beforeTrace..<over.count, encoder: encoder, viewport: &viewport)
+
+        drawLabels(target: size, encoder: encoder, viewport: viewport)
         drawValues(encoder: encoder, viewport: viewport)
         encoder.endEncoding()
         if let drawable {
@@ -557,6 +703,13 @@ public final class BandRenderer {
     /// Forgets the held extras (a new session or a new endpoint).
     public func forgetExtras() {
         heldExtras = nil
+    }
+
+    /// A draw left out while the band cannot be seen: the frame's extras
+    /// are held as a draw would hold them. Nothing else is kept from a
+    /// draw, and the next one uploads every line put in since the last.
+    public func skipDraw(frame: DisplayFrame?, extras: DisplayExtras?) {
+        hold(extras, for: frame)
     }
 
     // MARK: The Core's extras
@@ -1130,7 +1283,7 @@ public final class BandRenderer {
                 return ticks.ticks.compactMap { hz -> BandLabels.Item? in
                     let text = BandGeometry.frequencyLabel(hz: hz, stepHz: ticks.stepHz)
                     let x = CGFloat(geometry.x(forHz: hz))
-                    let width = BandLabels.width(of: text, points: CGFloat(settings.frequencyScaleFontPoints), scale: scale)
+                    let width = self.labelWidth(of: text, points: CGFloat(settings.frequencyScaleFontPoints), scale: scale)
                     let gap = 3 * scale
                     // Where the text starts and ends for its alignment on the tick.
                     let (start, labelAlignment, anchor): (CGFloat, BandLabels.Alignment, CGFloat)
@@ -1163,7 +1316,7 @@ public final class BandRenderer {
                 let strip = BandPlanStrip(plan: overlays.bandPlan, geometry: geometry, rightX: Double(stripRect.maxX))
                 return strip.pieces.compactMap { piece -> BandLabels.Item? in
                     let fitting = piece.text(scale: scale) { text in
-                        BandLabels.width(of: text, points: points, scale: scale, bold: true) + 2 * scale
+                        self.labelWidth(of: text, points: points, scale: scale, bold: true) + 2 * scale
                             <= CGFloat(piece.width)
                     }
                     guard let text = fitting else {
@@ -1186,6 +1339,14 @@ public final class BandRenderer {
         return sets
     }
 
+    /// Places a layer's labels when its key changed. Each label's picture
+    /// is made the first time its text and look are drawn, then moved: a
+    /// pan or zoom draws no text again, only labels new to the view. Each
+    /// goes at the whole pixel its line starts at in a layer drawn whole,
+    /// and the layer clips them, so the picture is the same. Where two
+    /// labels' ink would overlap (a tight forced grid spacing), the layer is
+    /// drawn whole as before: the graphics blend overlapping text with
+    /// rounding a shade off Core Text's.
     private func syncLabels(name: String, key: LabelKey, items: () -> [BandLabels.Item]) {
         if let layer = labelLayers[name], layer.key == key {
             return
@@ -1193,24 +1354,138 @@ public final class BandRenderer {
         let rect = key.rect
         let width = Int(rect.width.rounded())
         let height = Int(rect.height.rounded())
+        let layerRect = CGRect(x: rect.minX, y: rect.minY, width: CGFloat(width), height: CGFloat(height))
         guard width > 0, height > 0 else {
-            labelLayers[name] = LabelLayer(key: key, rect: rect, texture: nil)
+            labelLayers[name] = LabelLayer(key: key, rect: rect, placed: [])
             return
         }
+        let labels = items()
+        var used = Set<GlyphKey>()
+        var placed: [PlacedGlyph] = []
+        placed.reserveCapacity(labels.count)
+        for item in labels {
+            let glyphKey = GlyphKey(text: item.text, points: item.points, scale: key.scale, colour: item.colour,
+                                    bold: item.bold)
+            used.insert(glyphKey)
+            let made = labelGlyph(glyphKey, keeping: used)
+            guard let texture = made.texture else {
+                continue
+            }
+            let origin = made.glyph.origin(for: item)
+            let at = CGPoint(x: layerRect.minX + origin.x, y: layerRect.minY + origin.y)
+            placed.append(PlacedGlyph(origin: at, size: CGSize(width: made.glyph.width, height: made.glyph.height),
+                                      texture: texture, ink: made.glyph.ink.offsetBy(dx: at.x, dy: at.y)))
+        }
+        if Self.inkOverlaps(placed) {
+            placed = wholeLayer(layerRect, scale: key.scale, items: labels).map { [$0] } ?? []
+        }
+        labelLayers[name] = LabelLayer(key: key, rect: layerRect, placed: placed)
+    }
+
+    /// Whether any two labels' ink would touch the same pixel.
+    private static func inkOverlaps(_ placed: [PlacedGlyph]) -> Bool {
+        for (index, glyph) in placed.enumerated() where !glyph.ink.isNull {
+            for other in placed[(index + 1)...] where glyph.ink.intersects(other.ink) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// A layer's labels drawn together into one picture of its size.
+    private func wholeLayer(_ rect: CGRect, scale: CGFloat, items: [BandLabels.Item]) -> PlacedGlyph? {
+        let width = Int(rect.width)
+        let height = Int(rect.height)
         // A new texture each time, so a frame still in flight keeps the old one.
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: width,
                                                                   height: height, mipmapped: false)
         descriptor.usage = .shaderRead
-        let texture = device.makeTexture(descriptor: descriptor)
-        let bytes = BandLabels.render(width: width, height: height, scale: key.scale, items: items())
+        guard let texture = device.makeTexture(descriptor: descriptor) else {
+            return nil
+        }
+        let bytes = BandLabels.render(width: width, height: height, scale: scale, items: items)
         bytes.withUnsafeBytes { raw in
             if let base = raw.baseAddress {
-                texture?.replace(region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0, withBytes: base,
-                                 bytesPerRow: width * 4)
+                texture.replace(region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0, withBytes: base,
+                                bytesPerRow: width * 4)
             }
         }
-        labelLayers[name] = LabelLayer(key: key, rect: CGRect(x: rect.minX, y: rect.minY, width: CGFloat(width),
-                                                              height: CGFloat(height)), texture: texture)
+        return PlacedGlyph(origin: rect.origin, size: rect.size, texture: texture)
+    }
+
+    /// The picture of a label `key`, made the first time it is drawn. Past
+    /// ``labelGlyphsKept`` only the ones in `kept` stay; a layer already
+    /// placed holds its own pictures.
+    private func labelGlyph(_ key: GlyphKey, keeping kept: Set<GlyphKey>) -> LabelGlyph {
+        if let made = labelGlyphs[key] {
+            return made
+        }
+        if labelGlyphs.count >= Self.labelGlyphsKept {
+            labelGlyphs = labelGlyphs.filter { kept.contains($0.key) }
+        }
+        let glyph = BandLabels.glyph(key.text, points: key.points, scale: key.scale, colour: key.colour,
+                                     bold: key.bold)
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: glyph.width,
+                                                                  height: glyph.height, mipmapped: false)
+        descriptor.usage = .shaderRead
+        let texture = device.makeTexture(descriptor: descriptor)
+        glyph.bytes.withUnsafeBytes { raw in
+            if let base = raw.baseAddress {
+                texture?.replace(region: MTLRegionMake2D(0, 0, glyph.width, glyph.height), mipmapLevel: 0,
+                                 withBytes: base, bytesPerRow: glyph.width * 4)
+            }
+        }
+        var made = LabelGlyph(glyph: glyph, texture: texture)
+        // The texture holds the pixels now.
+        made.glyph.bytes = []
+        labelGlyphs[key] = made
+        return made
+    }
+
+    /// The width `text` takes in a look, in pixels, measured once.
+    private func labelWidth(of text: String, points: CGFloat, scale: CGFloat, bold: Bool = false) -> CGFloat {
+        let key = GlyphKey(text: text, points: points, scale: scale, colour: SIMD4(1, 1, 1, 1), bold: bold)
+        if let width = labelWidths[key] {
+            return width
+        }
+        if labelWidths.count >= Self.labelWidthsKept {
+            labelWidths.removeAll(keepingCapacity: true)
+        }
+        let width = BandLabels.width(of: text, points: points, scale: scale, bold: bold)
+        labelWidths[key] = width
+        return width
+    }
+
+    /// Each layer's labels in turn, clipped to the layer.
+    private func drawLabels(target: CGSize, encoder: any MTLRenderCommandEncoder, viewport: SIMD2<Float>) {
+        let targetWidth = Int(target.width)
+        let targetHeight = Int(target.height)
+        var clipped = false
+        for name in labelLayers.keys.sorted() {
+            guard let layer = labelLayers[name], !layer.placed.isEmpty else {
+                continue
+            }
+            let left = max(0, min(Int(layer.rect.minX.rounded()), targetWidth))
+            let top = max(0, min(Int(layer.rect.minY.rounded()), targetHeight))
+            let right = max(left, min(Int(layer.rect.maxX.rounded()), targetWidth))
+            let bottom = max(top, min(Int(layer.rect.maxY.rounded()), targetHeight))
+            guard right > left, bottom > top else {
+                continue
+            }
+            encoder.setScissorRect(MTLScissorRect(x: left, y: top, width: right - left, height: bottom - top))
+            clipped = true
+            encoder.setRenderPipelineState(labelPipeline)
+            for glyph in layer.placed {
+                var uniforms = RectUniforms(rect: Self.vector(CGRect(origin: glyph.origin, size: glyph.size)),
+                                            viewport: viewport)
+                encoder.setVertexBytes(&uniforms, length: MemoryLayout<RectUniforms>.stride, index: 0)
+                encoder.setFragmentTexture(glyph.texture, index: 0)
+                encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+            }
+        }
+        if clipped {
+            encoder.setScissorRect(MTLScissorRect(x: 0, y: 0, width: targetWidth, height: targetHeight))
+        }
     }
 
     /// `key`'s value texture, made the first time the text is drawn. The
@@ -1738,8 +2013,15 @@ public final class BandRenderer {
 
     private func drawColour(_ vertices: [ColourVertex], slot: Int, encoder: any MTLRenderCommandEncoder,
                             viewport: inout SIMD2<Float>) {
+        drawColour(fillVertices(vertices, slot: slot), range: 0..<vertices.count, encoder: encoder,
+                   viewport: &viewport)
+    }
+
+    /// This frame's `vertices` in the ring's buffer `slot`, nil when there
+    /// are none.
+    private func fillVertices(_ vertices: [ColourVertex], slot: Int) -> (any MTLBuffer)? {
         guard !vertices.isEmpty else {
-            return
+            return nil
         }
         let length = vertices.count * MemoryLayout<ColourVertex>.stride
         if (vertexBuffers[slot]?.length ?? 0) < length {
@@ -1747,17 +2029,26 @@ public final class BandRenderer {
             vertexBuffers[slot] = device.makeBuffer(length: length * 3 / 2, options: .storageModeShared)
         }
         guard let buffer = vertexBuffers[slot] else {
-            return
+            return nil
         }
         vertices.withUnsafeBytes { raw in
             if let base = raw.baseAddress {
                 buffer.contents().copyMemory(from: base, byteCount: raw.count)
             }
         }
+        return buffer
+    }
+
+    /// Draws the vertices `range` of `buffer`.
+    private func drawColour(_ buffer: (any MTLBuffer)?, range: Range<Int>, encoder: any MTLRenderCommandEncoder,
+                            viewport: inout SIMD2<Float>) {
+        guard let buffer, !range.isEmpty else {
+            return
+        }
         encoder.setRenderPipelineState(colourPipeline)
         encoder.setVertexBuffer(buffer, offset: 0, index: 0)
         encoder.setVertexBytes(&viewport, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
-        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: vertices.count)
+        encoder.drawPrimitives(type: .triangle, vertexStart: range.lowerBound, vertexCount: range.count)
     }
 
     private static func addRect(_ rect: CGRect, _ colour: SIMD4<Float>, to vertices: inout [ColourVertex]) {

@@ -1,6 +1,9 @@
 // NereusSDR for iOS: the band's slices come from the mirror, and its touches reach the Core as writes and commands
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-11-16: J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//   a slice's new meter reading publishes the readings alone, never the slice list.
 
+import Combine
 import Foundation
 import NereusBand
 import NereusLink
@@ -98,6 +101,37 @@ struct BandSlicesModelTests {
         #expect(model.entries[0].slice.bandwidthText == "2.9K")
         // No catalogue yet: no colour is assumed.
         #expect(model.entries.allSatisfy { $0.slice.colour == BandSlice.colourUnknown })
+    }
+
+    @Test("a slice's new meter reading publishes the readings and leaves the slice list alone")
+    func aReadingLeavesTheSliceList() async {
+        let (model, store, _, _, _) = makeModel()
+        #expect(await settle { model.entries.count == 2 })
+        let entries = model.entries
+        var listed = 0
+        var read = 0
+        let watches = [model.$entries.dropFirst().sink { _ in listed += 1 },
+                       model.readings.$bySlice.dropFirst().sink { _ in read += 1 }]
+        defer { watches.forEach { $0.cancel() } }
+        store.apply(.delta(LinkMessage.Delta(key: "slice:0", properties: [
+            LinkMessage.PropertyEntry(ordinal: 40, name: "signalStrengthDbm", value: .f64(-84)),
+            LinkMessage.PropertyEntry(ordinal: 41, name: "signalPeakDbm", value: .f64(-85)),
+            LinkMessage.PropertyEntry(ordinal: 42, name: "signalAverageDbm", value: .f64(-90)),
+            LinkMessage.PropertyEntry(ordinal: 43, name: "meterReadingNs", value: .i64(1_000)),
+        ])))
+        #expect(await settle { model.reading(0).signalPeakDbm == -85 })
+        #expect(model.reading(0) == BandSlicesModel.Reading(signalDbm: -84, signalPeakDbm: -85, signalAverageDbm: -90))
+        #expect(read >= 1)
+        #expect(listed == 0, "a reading alone rebuilt the slice list")
+        #expect(model.entries == entries)
+        // A setting with it still builds the slices again.
+        store.apply(.delta(LinkMessage.Delta(key: "slice:0", properties: [
+            LinkMessage.PropertyEntry(ordinal: 1, name: "frequency", value: .f64(7_240_000)),
+            LinkMessage.PropertyEntry(ordinal: 41, name: "signalPeakDbm", value: .f64(-80)),
+        ])))
+        #expect(await settle { model.entries.first?.slice.frequencyHz == 7_240_000 })
+        #expect(model.reading(0).signalPeakDbm == -80)
+        #expect(listed >= 1)
     }
 
     @Test("a drag writes the active slice's frequency at most every 50 ms, then its final value")
