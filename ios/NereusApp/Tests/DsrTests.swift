@@ -501,27 +501,95 @@ struct DsrTests {
         #expect(Self.count(rig, "dsr.rows") == 2)
     }
 
-    /// While the sound plays the past spectrum is asked again at the
-    /// desktop's interval, one ask at a time.
-    @Test func thePastSpectrumKeepsUpWhileTheSoundPlays() async throws {
+    /// While the sound plays the picture's top moves every display frame
+    /// and the past spectrum is asked once a frame, never two at a time;
+    /// an answer that comes a frame or more late asks again at once, for the
+    /// moment playing then. The 250 ms tick asks for none.
+    @Test func thePastSpectrumFollowsTheDisplayFrames() async throws {
         let (rig, model, _) = await Self.pan()
         var now = Self.now
         model.clock = { now }
+        let period = 1.0 / 60
         try await Self.rewindHere(rig, model, moment: Self.now - 600, revision: 2)
         let (first, _) = try #require(await Self.invoke(rig, "dsr.spectrum"))
+        // The first ask is still with the Core: no second.
+        model.frame(periodSeconds: period)
         model.tick()
         try? await Task.sleep(for: .milliseconds(50))
         #expect(Self.count(rig, "dsr.spectrum") == 1)
         await RecordingFlagTests.answer(rig, first, values: Self.rows([Self.now - 600], rowsLeft: 0, next: 0))
         #expect(await Eventually.holds { model.pastSpectrum != nil })
-        now += 0.25
-        model.tick()
-        #expect(model.viewTop == Self.now - 599.75)
-        #expect(await Eventually.holds { Self.count(rig, "dsr.spectrum") == 2 })
-        now += 0.25
-        model.tick()
+        // Answered within the frame: nothing more until the next frame.
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(Self.count(rig, "dsr.spectrum") == 1)
+        now += period
+        model.frame(periodSeconds: period)
+        #expect(abs((model.viewTop ?? 0) - (Self.now - 600 + period)) < 1e-6)
+        let (second, ask) = try #require(await Self.invoke(rig, "dsr.spectrum", after: first + 1))
+        #expect(Self.argument(ask, "utcNs") == .i64(Int64(((Self.now - 600 + period) * 1e9).rounded())))
+        // Frames go on while it is with the Core: the picture moves, no second ask.
+        for _ in 0..<5 {
+            now += period
+            model.frame(periodSeconds: period)
+        }
+        #expect(abs((model.viewTop ?? 0) - (Self.now - 600 + 6 * period)) < 1e-6)
         try? await Task.sleep(for: .milliseconds(50))
         #expect(Self.count(rig, "dsr.spectrum") == 2)
+        // Late: the next is asked at once, for the moment playing now, without waiting for a frame.
+        await RecordingFlagTests.answer(rig, second, values: Self.rows([Self.now - 600], rowsLeft: 0, next: 0))
+        let (_, again) = try #require(await Self.invoke(rig, "dsr.spectrum", after: second + 1))
+        #expect(Self.argument(again, "utcNs") == .i64(Int64(((Self.now - 600 + 6 * period) * 1e9).rounded())))
+        // The tick never asks for the spectrum.
+        let asked = Self.count(rig, "dsr.spectrum")
+        now += period / 2
+        model.tick()
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(Self.count(rig, "dsr.spectrum") == asked)
+    }
+
+    /// Playing at a steady pace near the edge of the band's own minute,
+    /// whose reach moves by a line as lines come and go, the picture stays
+    /// with whoever drew it: the Core's rows never swap with the band's own.
+    /// Brought well inside the band's own minute, the band draws it again.
+    @Test func whoDrawsThePictureDoesNotFlipWhilePlaying() async throws {
+        let (rig, model, _) = await Self.pan()
+        var now = Self.now
+        model.clock = { now }
+        var reach = 60.0
+        model.ownSeconds = { reach }
+        // Just past the band's own reach (a quarter of a point of slack, at 0.5 s a point).
+        try await Self.rewindHere(rig, model, moment: Self.now - 60.3, revision: 2)
+        #expect(model.coreDraws && model.followsSound)
+        var seen: Set<Bool> = []
+        for step in 0..<120 {
+            now += 1.0 / 60
+            // The band's reach steps by a line either way as its lines arrive and drop.
+            reach = step % 2 == 0 ? 60 + Self.spp : 60 - Self.spp
+            model.frame(periodSeconds: 1.0 / 60)
+            if step % 15 == 0 {
+                model.tick()
+            }
+            seen.insert(model.coreDraws)
+        }
+        #expect(seen == [true])
+        // Within the band's own minute by more than the slack, the band draws it.
+        reach = 60
+        model.drag(from: model.top, by: 30 / Self.spp)
+        #expect(!model.coreDraws && model.inPast)
+    }
+
+    /// While the past shows the live spectrum is hidden, also before the
+    /// first past answer; live again it shows.
+    @Test func theLiveSpectrumHidesWhileThePastShows() async throws {
+        let (rig, model, _) = await Self.pan()
+        #expect(!model.hidesLiveSpectrum)
+        try await Self.rewindHere(rig, model, moment: Self.now - 600, revision: 2)
+        #expect(model.hidesLiveSpectrum && model.pastSpectrum == nil)
+        let live = Task { await model.goLive() }
+        let (index, _) = try #require(await Self.invoke(rig, "dsr.live"))
+        await RecordingFlagTests.answer(rig, index)
+        await live.value
+        #expect(!model.hidesLiveSpectrum)
     }
 
     /// The hours are asked once the recorder is usable, not again on every

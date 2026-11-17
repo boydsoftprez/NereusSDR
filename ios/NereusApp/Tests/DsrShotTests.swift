@@ -59,6 +59,7 @@ struct DsrShotTests {
         let band = main.band
         model.ownSeconds = { [weak band] in band?.mostLookBackSeconds ?? 0 }
         model.lookBack = { [weak band] seconds in band?.lookBack(seconds: seconds) }
+        band.liveSpectrumHidden = { [weak model] in model?.hidesLiveSpectrum ?? false }
         band.endpointId = 1
         let context = try #require(BandFlagShotTests.context())
         band.receive(.context(context))
@@ -71,6 +72,8 @@ struct DsrShotTests {
             BandView(model: band)
             BandGestureLayer(band: band, slices: main.slices, settings: settings, tuning: main.tuning,
                              foreign: main.foreign, flagControls: main.flagControls, dsr: model)
+            // As Pan 1 has it: the strip's LIVE is the only one.
+            BandReadouts(band: band, lookBackLive: false)
         }
         .frame(width: size.width, height: size.height)
         .background(Color.black)
@@ -220,12 +223,35 @@ struct DsrShotTests {
                 }
             }
         }
+        // The disk row at an iPhone 17 Pro's width upright and sideways, at
+        // the default text size and one step larger: "Disk" keeps its width
+        // and the menu stays compact.
+        for (width, way) in [(CGFloat(402), "upright"), (CGFloat(874), "sideways")] {
+            for (type, size) in [(DynamicTypeSize.large, "default"), (DynamicTypeSize.xLarge, "larger")] {
+                let (_, model) = await DsrTests.setup(dsr: DsrTests.dsrPart(disk: "/media/ssd"),
+                                                      disks: [DsrTests.sdCard, DsrTests.ssd])
+                let probe = SetupLayoutProbe()
+                try await shoot("dsr-phone-setup-\(way)-\(size)", height: 1500, width: width, type: type) {
+                    NavigationStack {
+                        DsrSetupPage(model: model)
+                    }
+                    .environment(\.setupLayoutProbe, probe)
+                }
+                let label = try #require(probe.frame("Disk", .label))
+                let value = try #require(probe.frame("Disk", .value))
+                // One line of "Disk", beside the menu, and the menu no wider than half the row.
+                #expect(label.height < 2 * UIFont.preferredFont(forTextStyle: .body).lineHeight, "\(way) \(size)")
+                #expect(label.width >= 28, "\(way) \(size): Disk is \(label.width) wide")
+                #expect(value.width <= width * 0.6, "\(way) \(size): the menu is \(value.width) wide")
+            }
+        }
     }
 
     /// One page on an upright phone, over the Setup tab's bar, written with `NEREUS_MAIN_SHOTS` set.
-    private func shoot<Content: View>(_ name: String, height: CGFloat, tabBar: Bool = true,
+    private func shoot<Content: View>(_ name: String, height: CGFloat, tabBar: Bool = true, width: CGFloat = 402,
+                                      type: DynamicTypeSize = .large,
                                       @ViewBuilder content: () -> Content) async throws {
-        let size = CGSize(width: 402, height: height)
+        let size = CGSize(width: width, height: height)
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(origin: .zero, size: size)
@@ -238,6 +264,7 @@ struct DsrShotTests {
         }
         .background(ChromeColours.page)
         .preferredColorScheme(.dark)
+        .dynamicTypeSize(type)
         let host = ShotHosting.host(root)
         host.view.frame = CGRect(origin: .zero, size: size)
         window.rootViewController = host

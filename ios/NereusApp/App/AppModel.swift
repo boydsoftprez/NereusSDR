@@ -20,6 +20,9 @@
 //   (DsrPanModel.activeSliceHz). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-16: Every tune of the active slice reaches the recorder
 //   (DsrPanModel.sliceTuned). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: The band leaves its live spectrum out while the recorder
+//   shows the past (DsrPanModel.hidesLiveSpectrum). J.J. Boyd (KG4VCF),
+//   AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -1298,6 +1301,8 @@ final class AppModel: ObservableObject {
             }
         model.ownSeconds = { [weak band] in band?.mostLookBackSeconds ?? 0 }
         model.lookBack = { [weak band] seconds in band?.lookBack(seconds: seconds) }
+        // While the past shows, only the past spectrum is drawn.
+        band.liveSpectrumHidden = { [weak model] in model?.hidesLiveSpectrum ?? false }
     }
 
     /// The Core's transmit state, which ``expectedTransmitSilence()`` reads.

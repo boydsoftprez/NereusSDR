@@ -12,10 +12,18 @@
 // 2026-11-16: A drag in from the right edge over the strip is the band's
 //   edge swipe (spec 11.3), not time (DsrStripEdge). J.J. Boyd (KG4VCF),
 //   AI-assisted via Claude Code.
+// 2026-11-17: Fixes after JJ's phone run of PR 797: the picture and the past
+//   spectrum follow the sound every display frame (DsrFrameLink), the strip's
+//   LIVE is red while the band's own waterfall looks back (the band's own
+//   LIVE no longer draws over it), and the past spectrum replaces the live
+//   one instead of veiling it; the time strip's ticks move every display
+//   frame, live and in the past, not on the 250 ms tick.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import CoreGraphics
 import NereusBand
 import NereusModels
+import QuartzCore
 import SwiftUI
 
 /// Where the recorder's controls sit on the waterfall (the phone mockup):
@@ -95,6 +103,11 @@ struct DsrStripLayer: View {
     var secondsPerPoint: Double = 0.1
     /// The band's edge zone; nil leaves every drag on the strip to time.
     var edge: DsrStripEdge?
+    /// The band's own waterfall looks back (the Display sheet's Look back):
+    /// LIVE is red, as the band's own LIVE was, and brings it back.
+    var bandLooksBack = false
+    /// Steps the picture with the sound every display frame while in the past.
+    @State private var frameLink = DsrFrameLink()
     @State private var dragStart: Double?
     @State private var mapFinger: CGFloat?
     /// What the drag on the strip is: not yet known, time, or the edge's.
@@ -164,13 +177,32 @@ struct DsrStripLayer: View {
                 try? await Task.sleep(for: .milliseconds(250))
             }
         }
+        .onChange(of: model.inPast, initial: true) { _, past in
+            if past {
+                // Stopped when the past ends or the strip goes away.
+                frameLink.start { [model] period in
+                    model.frame(periodSeconds: period)
+                }
+            } else {
+                frameLink.stop()
+            }
+        }
+        .onDisappear {
+            frameLink.stop()
+        }
     }
 
     // MARK: The strip
 
     private var strip: some View {
-        Canvas { context, size in
-            Self.drawStrip(context, size: size, model: model)
+        // Live, the strip runs on with the clock every display frame; in the
+        // past it moves as the picture's top does, which the display link
+        // steps every frame while the sound plays and the finger moves while it drags.
+        TimelineView(.animation(minimumInterval: DsrPanModel.defaultFrameSeconds, paused: model.inPast)) { _ in
+            let top = model.top
+            Canvas { context, size in
+                Self.drawStrip(context, size: size, model: model, top: top)
+            }
         }
         .frame(width: place.strip.width, height: place.strip.height)
         .contentShape(Rectangle())
@@ -242,13 +274,12 @@ struct DsrStripLayer: View {
     /// The strip's ticks and times: a tick each step, the time on every
     /// minute (or every other tick when the picture is short), the moments
     /// you transmitted as a red edge and SAVE's bracket in yellow.
-    static func drawStrip(_ context: GraphicsContext, size: CGSize, model: DsrPanModel) {
+    static func drawStrip(_ context: GraphicsContext, size: CGSize, model: DsrPanModel, top: Double) {
         let past = model.inPast
         context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Color(red: 12 / 255, green: 13 / 255,
                                                                                  blue: 20 / 255, opacity: 0.86)))
         context.fill(Path(CGRect(x: 0, y: 0, width: 1, height: size.height)), with: .color(Color(white: 0.17)))
         let spp = max(model.secondsPerPoint, 0.001)
-        let top = model.top
         let bottom = top - Double(size.height) * spp
         let step = tickSteps.first { $0 / spp >= 30 } ?? 3600
         let labelEvery = step / spp >= 60 ? step : step * 2
@@ -293,12 +324,13 @@ struct DsrStripLayer: View {
             Button {
                 Task { await model.goLive() }
             } label: {
-                DsrButtonLabel(text: "LIVE", look: model.liveLit ? .red : .plain, size: DsrStripPlace.buttonSize)
+                DsrButtonLabel(text: "LIVE", look: model.liveLit || bandLooksBack ? .red : .plain,
+                               size: DsrStripPlace.buttonSize)
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("dsr.live")
             .accessibilityLabel("Live")
-            .accessibilityHint(model.liveLit ? "Back to live" : "Already live")
+            .accessibilityHint(model.liveLit || bandLooksBack ? "Back to live" : "Already live")
             .offset(x: place.live.minX, y: place.live.minY)
             Button {
                 model.toggleSave()
@@ -379,6 +411,43 @@ struct DsrStripLayer: View {
             return nil
         }
         return y
+    }
+}
+
+/// A display link for the recorder's picture: while the past shows it calls
+/// back once a display frame, at the band's own pace (30 to 60 a second),
+/// with the frame's length in seconds.
+@MainActor
+final class DsrFrameLink {
+    private var link: CADisplayLink?
+
+    func start(_ step: @escaping @MainActor (Double) -> Void) {
+        stop()
+        let link = CADisplayLink(target: Target(step), selector: #selector(Target.step(_:)))
+        // The band's own display link's range (BandView): never faster than 60 a second.
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+        link.add(to: .main, forMode: .common)
+        self.link = link
+    }
+
+    func stop() {
+        link?.invalidate()
+        link = nil
+    }
+
+    /// The display link holds its target strongly; the target holds only the step.
+    /// On the main actor, as the band's own link target is (BandView's LinkTarget): the link runs on the main run loop.
+    @MainActor
+    private final class Target: NSObject {
+        let call: @MainActor (Double) -> Void
+
+        init(_ call: @escaping @MainActor (Double) -> Void) {
+            self.call = call
+        }
+
+        @objc func step(_ link: CADisplayLink) {
+            call(link.targetTimestamp - link.timestamp)
+        }
     }
 }
 
@@ -507,8 +576,9 @@ struct DsrPictureLayer: View {
         let settings = band.drawnSettings
         let table = DsrPastPicture.table(settings: settings, catalog: band.catalog)
         let levels = band.effectiveWaterfallLevels ?? settings.manualLevels
-        guard let image = DsrPastPicture.image(model: model, width: rowsLayout.count,
-                                               height: Int(layout.waterfall.height), table: table, levels: levels) else {
+        guard let image = DsrPastPicture.cachedImage(model: model, width: rowsLayout.count,
+                                                     height: Int(layout.waterfall.height), table: table,
+                                                     levels: levels) else {
             return nil
         }
         let left = geometry.x(forHz: rowsLayout.firstHz - rowsLayout.hzPerBin / 2)
@@ -538,10 +608,10 @@ struct DsrPictureLayer: View {
         .accessibilityIdentifier("dsr.pastTag")
     }
 
-    /// The past spectrum over the live one, which dims under it.
+    /// The past spectrum in the live one's place: the band leaves its live
+    /// trace out while the past shows (``DsrPanModel/hidesLiveSpectrum``).
     private func pastSpectrum(_ frame: DsrPastFrames) -> some View {
         Canvas { context, size in
-            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.black.opacity(0.6)))
             guard frame.rowCount > 0, frame.binCount > 1 else {
                 return
             }
@@ -628,6 +698,30 @@ enum DsrPastPicture {
     static func index(dbm: Float, levels: WaterfallHistory.Levels) -> Int {
         let span = max(levels.highDbm - levels.lowDbm, 1)
         return Int(min(255, max(0, ((dbm - levels.lowDbm) / span * 255).rounded())))
+    }
+
+    /// ``image(model:width:height:table:levels:)``, drawn again only when the
+    /// rows, the top's line, the size, the colours or the levels change: the
+    /// picture's top moves every display frame while the sound plays, but
+    /// its lines change only as the top crosses into the next one.
+    @MainActor
+    static func cachedImage(model: DsrPanModel, width: Int, height: Int, table: [UInt8],
+                            levels: WaterfallHistory.Levels) -> CGImage? {
+        let spp = max(model.secondsPerPoint, 0.001)
+        let top = model.top
+        // The rows at the picture's top and foot stand for the lines between.
+        let ends = [top, top - Double(max(0, height - 1)) * spp].map { model.row(at: $0)?.utcNs ?? 0 }
+        let line = Int64((top / spp).rounded())
+        let key = "\(model.rowsRevision)|\(line)|\(ends[0])|\(ends[1])|\(spp)|\(width)|\(height)|\(table.hashValue)|"
+            + "\(levels.lowDbm)|\(levels.highDbm)"
+        if let cache = model.pictureCache, cache.key == key {
+            return cache.image
+        }
+        guard let image = image(model: model, width: width, height: height, table: table, levels: levels) else {
+            return nil
+        }
+        model.pictureCache = (key, image)
+        return image
     }
 
     @MainActor

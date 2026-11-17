@@ -5,6 +5,9 @@
 // 2026-11-15: J.J. Boyd (KG4VCF), AI-assisted via Claude Code:
 //   keep the grid and trace on the GPU between draws, and give each
 //   label its own picture that moves with the view.
+// 2026-11-17: J.J. Boyd (KG4VCF), AI-assisted via Claude Code:
+//   leave the live trace, peak hold and extras out while
+//   BandOverlays.liveSpectrumHidden (the recorder's past spectrum).
 
 import CoreGraphics
 import Foundation
@@ -629,13 +632,15 @@ public final class BandRenderer {
                              edgeColour, to: &over)
             }
         }
-        if flat, let hold = overlays.peakHold, hold.count > 1 {
+        // The recorder's past spectrum stands in for the live one.
+        let live = !overlays.liveSpectrumHidden
+        if flat, live, let hold = overlays.peakHold, hold.count > 1 {
             addPeakHold(hold, coverage: overlays.frameCoverage, geometry: geometry, settings: settings,
                         scale: overlays.scale, to: &over)
         }
         let beforeTrace = over.count
         var drawsTrace = false
-        if flat, let frame, !frame.traceDbm.isEmpty {
+        if flat, live, let frame, !frame.traceDbm.isEmpty {
             // The trace changes with each frame the Core sends, about half
             // the draws: kept between frames until a new frame, view or look.
             let key = TraceKey(trace: frame.traceDbm, coverage: overlays.frameCoverage, geometry: geometry,
@@ -656,7 +661,7 @@ public final class BandRenderer {
             addZeroLine(geometry: geometry, settings: settings, scale: overlays.scale, to: &over)
         }
         valuesDrawn.removeAll(keepingCapacity: true)
-        if flat, let extras = heldExtras {
+        if flat, live, let extras = heldExtras {
             addExtras(extras, frame: frame, coverage: overlays.frameCoverage, layout: layout, geometry: geometry,
                       settings: settings, scale: overlays.scale, to: &over)
         }

@@ -31,6 +31,8 @@
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-17: VOICE goes above PTT while the thumbwheel's step box is beside it.
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: Pan 1 shows only the recorder strip's LIVE, not the band's own
+// look-back LIVE over it. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -1180,7 +1182,8 @@ struct MainScreen: View {
                              recordings: app.recordingFlag, openAllRecordings: openAllRecordings,
                              openRecordingSettings: openRecordingSettings, dsr: first ? app.dsr : nil)
             DbmScaleArrows(display: controls.display, band: band, trailingInset: trailingInset)
-            BandReadouts(band: band, trailingInset: trailingInset)
+            // Pan 1's LIVE is the recorder strip's: the band's own would sit over it.
+            BandReadouts(band: band, trailingInset: trailingInset, lookBackLive: !first)
             TransmitDisplayBanner(band: band)
             StackNotice(band: band, sideways: sideways)
             PanDisplayRefusalNotice(stack: panStack, band: band, pan: controls.pan, sideways: sideways,

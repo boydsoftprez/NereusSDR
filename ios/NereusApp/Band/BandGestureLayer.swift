@@ -24,6 +24,8 @@
 // 2026-11-16: A drag in from the right edge over the recorder's time strip
 // is the edge's swipe again (or moves the band with the edge Off).
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: The recorder strip's LIVE is red while the band's own waterfall
+// looks back. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import NereusBand
@@ -464,7 +466,8 @@ struct BandGestureLayer: View {
                     DsrStripLayer(model: dsr, place: dsrPlace,
                                   secondsPerPoint: Double(band.settings.waterfallPeriodMs) / 1000,
                                   edge: stripEdge(layout: layout, geometry: geometry, entries: entries,
-                                                  placements: placements))
+                                                  placements: placements),
+                                  bandLooksBack: band.lookBackLines > 0)
                 }
             }
         }

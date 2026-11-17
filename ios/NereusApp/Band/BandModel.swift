@@ -4,6 +4,8 @@
 //   carry the accepted waterfall frame divider for capture-row continuity.
 // 2026-11-03: J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
 //   panLevel, the level Roundtable's frequency view shows as Your pan (overlay design D23).
+// 2026-11-17: J.J. Boyd (KG4VCF), AI-assisted via Claude Code:
+//   liveSpectrumHidden, so the recorder's past spectrum replaces the live one.
 
 import Combine
 import Foundation
@@ -437,6 +439,9 @@ final class BandModel: ObservableObject {
     /// How many lines back the waterfall is looked at: 0 is live. While
     /// looking back the view stays on the same lines as new ones arrive.
     @Published private(set) var lookBackLines = 0
+    /// The live spectrum is left out of the band (the recorder shows the
+    /// past one in its place); read on each draw.
+    var liveSpectrumHidden: () -> Bool = { false }
     /// Where the finger is on the band while it drags it, for the cursor
     /// frequency readout; nil when no finger is down.
     @Published var cursorHz: Double?
@@ -1060,6 +1065,7 @@ final class BandModel: ObservableObject {
                                     markers: markers, frameCoverage: state.frameCoverage)
         overlays.peakHold = state.peakHold
         overlays.lookBackLines = lookBackLines
+        overlays.liveSpectrumHidden = liveSpectrumHidden()
         overlays.waterfallTimeAxis = waterfallTimeAxis
         if drawsStack {
             overlays.stacked = StackedTraceOverlay(noiseFloorDbm: stackFloorDbm, glide: stackGlide(at: clock()),
