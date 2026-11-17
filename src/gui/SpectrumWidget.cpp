@@ -8,6 +8,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-17: The frequency row slimmed to 16 px with short ticks along
+//                 its top edge; its numbers plain weight, and the grid text
+//                 colour defaults to the workspace's bright white-grey
+//                 instead of yellow; the LIVE button fits the slim row.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: Review fixes: details opened upward stand past the flag, clear
 //                 of the divider, opaque; the strip is left out over a
 //                 waterfall share under 58 px; a flag hanging into the strip
@@ -692,6 +697,7 @@
 #include "SpectrumWidget.h"
 #include "gui/ScopedChildWidget.h"
 #include "gui/PureSignalViewStyle.h"
+#include "gui/styles/WorkspacePalette.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/PanadapterStack.h"
 #include "gui/RemoteDisplayPresenter.h"
@@ -1367,7 +1373,12 @@ const QColor kPanDefaultBackgroundColor{0x0a, 0x0a, 0x14};
 const QColor kPanDefaultGridColor{255, 255, 255, 40};
 const QColor kPanDefaultGridFineColor{255, 255, 255, 20};
 const QColor kPanDefaultHGridColor{255, 255, 255, 40};
-const QColor kPanDefaultGridTextColor{255, 255, 0};
+// NereusSDR differs here by the maintainer's design choice (2026-11-17):
+// the workspace's bright white-grey text, not Thetis's yellow
+// (display.cs:2003 grid_text_color, AetherSDR's {255, 255, 0}). A stored
+// yellow from before is forgotten once at startup, see
+// AppSettings::forgetOldDefaultGridTextColor().
+const QColor kPanDefaultGridTextColor = QColor::fromString(Workspace::kTextPrimary);
 const QColor kPanDefaultRxZeroLineColor{255, 0, 0};
 const QColor kPanDefaultTxZeroLineColor{255, 184, 0};
 const QColor kPanDefaultBandEdgeColor{255, 0, 0};
@@ -7000,15 +7011,19 @@ void SpectrumWidget::setFreqScaleFontPx(int px)
 }
 
 // From AetherSDR src/gui/SpectrumWidget.cpp:16989-16996 [@1e0718ad]
-// NereusSDR, based on AetherSDR: the default text is 10 px in a 28 px
+// NereusSDR, based on AetherSDR: the default text is 10 px in a 16 px
 // strip (AetherSDR: 8 pt in 20), so the strip only grows when the chosen
-// text plus AetherSDR's 6 px of padding is taller than 28.
+// text plus AetherSDR's 6 px of padding is taller than 16.
+// NereusSDR differs here by the maintainer's design choice (2026-11-17):
+// 16 px, was 28. At the default size the row still holds a whole line of
+// the text as drawn (the workspace look's 11 px minimum) under the ticks.
 int SpectrumWidget::freqScaleHeight() const
 {
-    if (m_freqScaleFontPx <= kPanDefaultFreqScaleFontPx) {
-        return kFreqScaleH;
-    }
     QFont f = font();
+    if (m_freqScaleFontPx <= kPanDefaultFreqScaleFontPx) {
+        f.setPixelSize(WorkspacePreview::readableTextPixelSize(kPanDefaultFreqScaleFontPx));
+        return std::max(kFreqScaleH, QFontMetrics(f).height() + kFreqScaleTickH);
+    }
     f.setPixelSize(m_freqScaleFontPx);
     return std::max(kFreqScaleH, QFontMetrics(f).height() + 6);
 }
@@ -7083,7 +7098,7 @@ void SpectrumWidget::resetDisplayColorsToDefaults()
     // m_gridColor default
     // m_gridFineColor default
     // m_hGridColor default
-    // m_gridTextColor default (yellow)
+    // m_gridTextColor default (white-grey since 2026-11-17, was yellow)
     // m_bandEdgeColor default (red)
     // Zero-line colours — Plan 4 D9c-1 (unchanged values, kept for test compat)
     // red — Thetis convention
@@ -8914,6 +8929,10 @@ void SpectrumWidget::drawFreqScale(QPainter& p, const QRect& r)
     // From AetherSDR src/gui/SpectrumWidget.cpp:17009-17011 [@1e0718ad]
     QFont font = WorkspacePreview::readableFont(p.font(), p.device());
     font.setPixelSize(WorkspacePreview::readableTextPixelSize(m_freqScaleFontPx));
+    // NereusSDR differs here by the maintainer's design choice (2026-11-17):
+    // plain weight. The painter arrives carrying the band plan's bold label
+    // font (drawBandPlan), which made these numbers bold.
+    font.setWeight(QFont::Normal);
     p.setFont(font);
     // From Thetis display.cs:2003 — grid_text_color (now configurable).
     p.setPen(m_gridTextColor);
@@ -8949,6 +8968,25 @@ void SpectrumWidget::drawFreqScale(QPainter& p, const QRect& r)
     // 25 kHz) needs the third decimal; Auto keeps the decimals it had.
     const bool fixedNeedsKhzDigit = m_freqGridSpacingHz > 0
         && (m_freqGridSpacingHz % 10000) != 0;
+
+    // NereusSDR differs here by the maintainer's design choice (2026-11-17):
+    // short ticks along the row's top edge, at every label position and
+    // evenly between neighbouring ones (kFreqScaleTicksPerLabel per label
+    // step), all the same length, in the label colour at about half opacity.
+    // They follow the labels' thinning: a thinned-out grid line gets a tick
+    // when it falls on one of the in-between marks.
+    {
+        const double tickStep = freqStep * labelEvery / kFreqScaleTicksPerLabel;
+        QColor tickColor = m_gridTextColor;
+        tickColor.setAlpha(kFreqScaleTickAlpha);
+        const double lowHz = m_centerHz - m_bandwidthHz / 2.0;
+        const double highHz = m_centerHz + m_bandwidthHz / 2.0;
+        if (tickStep > 0.0) {
+            for (double t = std::ceil(lowHz / tickStep) * tickStep; t < highHz; t += tickStep) {
+                p.fillRect(QRect(hzToX(t, r), r.top(), 1, kFreqScaleTickH), tickColor);
+            }
+        }
+    }
 
     double startFreq = std::ceil((m_centerHz - m_bandwidthHz / 2.0) / freqStep) * freqStep;
     for (double f = startFreq; f < m_centerHz + m_bandwidthHz / 2.0; f += freqStep) {
@@ -8986,7 +9024,9 @@ void SpectrumWidget::drawFreqScale(QPainter& p, const QRect& r)
         // Position the cached text inside the same 60-wide rect that
         // drawText was using, honoring the configured alignment.  The
         // rect itself isn't drawn; it's only used to anchor the label.
-        const QRectF textRect(x - 30, r.top() + 2, 60, r.height() - 2);
+        // The numbers sit below the ticks, centred in the room left.
+        const QRectF textRect(x - 30, r.top() + kFreqScaleTickH, 60,
+                              r.height() - kFreqScaleTickH);
         const QSizeF labelSize = cit.value().size();
         qreal lx = textRect.left();   // AlignLeft default
         if (baseFlags & Qt::AlignHCenter) {
@@ -9887,7 +9927,8 @@ QRect SpectrumWidget::waterfallTimeScaleRect(const QRect& wfRect) const
 }
 
 // From AetherSDR SpectrumWidget.cpp:728-735 [@0cd4559]
-//   adapter: NereusSDR uses kFreqScaleH = 28 (vs AetherSDR's 20),
+//   adapter: NereusSDR uses kFreqScaleH = 16 (vs AetherSDR's 20; 28 until
+//   2026-11-17),
 //   button Y inset adjusted accordingly.
 QRect SpectrumWidget::waterfallLiveButtonRect(const QRect& wfRect) const
 {
@@ -9897,12 +9938,19 @@ QRect SpectrumWidget::waterfallLiveButtonRect(const QRect& wfRect) const
     // when paused (strip widens to 72 px and the user is actively trying
     // to click it to resume — bigger target is friendlier).
     const int buttonW = m_wfLive ? 32 : 40;
-    const int buttonH = m_wfLive ? 16 : 20;
     const int padding = m_wfLive ? 2 : 4;
     const int buttonX = strip.right() - buttonW - 2;
     // Anchored to the frequency scale row, so the Roundtable strip between
     // the scale and the waterfall leaves it where it was.
-    const int buttonY = spectrumLayout().frequency.top() + padding;
+    // NereusSDR, 2026-11-17: the row is 16 px at the default text size, so
+    // the button keeps its height only while the row has room for it and
+    // its padding; otherwise it shrinks to the row less 1 px above and
+    // below (the maintainer's slim row), so it never reaches past the row.
+    constexpr int kLiveButtonMinInset = 1;
+    const QRect row = spectrumLayout().frequency;
+    const int rowH = row.height() > 0 ? row.height() : freqScaleHeight();
+    const int buttonH = std::min(m_wfLive ? 16 : 20, rowH - 2 * kLiveButtonMinInset);
+    const int buttonY = row.top() + std::min(padding, (rowH - buttonH) / 2);
     return QRect(buttonX, buttonY, buttonW, buttonH);
 }
 
