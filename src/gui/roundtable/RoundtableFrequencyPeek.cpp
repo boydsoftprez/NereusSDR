@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Review fixes: details opened upward line up with their own left
+//               edge (setInspectorSpot's upwardAnchorLeft) and paint opaque.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: The details stand by placeRoundtableDetails, over the waterfall
 //               under the strip or upward over the spectrum. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
@@ -154,14 +157,17 @@ void RoundtableFrequencyPeek::showOwn(quint64 hz, const QString& family)
     open(hz, family, true);
 }
 
-void RoundtableFrequencyPeek::setInspectorSpot(const QRect& below, const QRect& above, int anchorLeft)
+void RoundtableFrequencyPeek::setInspectorSpot(const QRect& below, const QRect& above, int anchorLeft,
+                                               std::optional<int> upwardAnchorLeft)
 {
-    if (below == m_spotBelow && above == m_spotAbove && anchorLeft == m_spotAnchorLeft) {
+    if (below == m_spotBelow && above == m_spotAbove && anchorLeft == m_spotAnchorLeft
+        && upwardAnchorLeft == m_spotUpwardAnchorLeft) {
         return;
     }
     m_spotBelow = below;
     m_spotAbove = above;
     m_spotAnchorLeft = anchorLeft;
+    m_spotUpwardAnchorLeft = upwardAnchorLeft;
     if (m_open) {
         if (m_listing) {
             fitList();
@@ -328,7 +334,7 @@ RoundtableDetailsPlacement RoundtableFrequencyPeek::placeFor(int height) const
     if (m_spotBelow.isEmpty() && m_spotAbove.isEmpty() && host != nullptr) {
         return placeRoundtableDetails(host->rect(), QRect(), host->rect().center().x() - kWidth / 2, height);
     }
-    return placeRoundtableDetails(m_spotBelow, m_spotAbove, m_spotAnchorLeft, height);
+    return placeRoundtableDetails(m_spotBelow, m_spotAbove, m_spotAnchorLeft, height, m_spotUpwardAnchorLeft);
 }
 
 void RoundtableFrequencyPeek::fitList()
@@ -400,6 +406,10 @@ void RoundtableFrequencyPeek::fitToContents()
 void RoundtableFrequencyPeek::paintEvent(QPaintEvent*)
 {
     QPainter painter(this);
+    // Over the spectrum a flag may stand under them: nothing shows through.
+    if (m_upward) {
+        paintRoundtableDetailsBacking(painter, rect());
+    }
     if (m_listing) {
         paintRoundtableFoldList(painter, m_rows, rect(), m_hoverRow, m_scroll);
         return;

@@ -99,7 +99,7 @@ Open **Tools > Spot Hub**, select the **Roundtable** tab and select **Start**. T
 
 ### Read the line on your frequency
 
-While Roundtable is on, each pan has a thin Roundtable strip between the frequency scale and the waterfall. The spectrum keeps its full height; the waterfall gives up the room. Each frequency with stations has a tag in the strip at its spot. Tags that would overlap fold into one `+N` tag. Click it to list its frequencies in a box over the waterfall, and click a row to look at that frequency.
+While Roundtable is on, each pan has a thin Roundtable strip between the frequency scale and the waterfall. The spectrum keeps its full height; the waterfall gives up the room. When the waterfall is too short to keep some of itself under the strip, the strip is left out; the Roundtable line on the slice's flag still opens the details. Each frequency with stations has a tag in the strip at its spot. Tags that would overlap fold into one `+N` tag. Click it to list its frequencies in a box over the waterfall, and click a row to look at that frequency.
 
 On the frequency your slice is tuned to, in its current mode, a line stands in the strip beside the slice's dial whenever someone is talking or has just talked. A quiet frequency shows only its tag. The line starts with who it is about, then one reading per listener side by side: callsign, signal and age, with a small meter under each reading. Listeners are listed nearest first. If the line cannot fit every reading, it ends with a count of the rest, such as **+2 more ›**.
 
@@ -110,13 +110,13 @@ On the frequency your slice is tuned to, in its current mode, a line stands in t
 | **You · on the air**, with **Hearing you** | You are transmitting. The rows are how others hear you. |
 | **Double**, the keyed callsigns and a clock, with **Combined RF** | Two or more stations are keyed together in the same Roundtable room. Each reading measures the signals together, not any one station, so there is no distance or bearing, and the keyed stations are left out of the list. Three or more read **Double · 3**. |
 | **Last double**, with **Combined RF** | The overlap has ended. |
-| **Double ended 3s ago** | Shown for 8 seconds on the remaining talker's card. Its readings start fresh after the overlap. |
+| **Double ended 3s ago** | Shown for 8 seconds on the remaining talker's line. Its readings start fresh after the overlap. |
 | **Unknown** | A signal is on the air that nobody has been identified on. Roundtable does not guess who it is. |
-| **No readings** or **Waiting for readings** | Nobody has a report for this turn yet. It is not a reading of zero. |
+| **No readings** or **Waiting for readings**, in the details | Nobody has a report for this turn yet. It is not a reading of zero. |
 
 Two stations keyed a few kilohertz apart in different rooms are not a double.
 
-A reading older than 20 seconds turns gray and its age turns amber. Read each report alongside its age rather than assuming it is current. While Roundtable is connecting, the tags are hidden. While it is reconnecting or offline, the line and tags freeze in gray and the caption reads **Last known**, so nothing claims to be live. The line adds **Reconnecting** in amber, or **Offline since** and the time in UTC, and the slice's flag says **Reconnecting** or **Offline**. While you are hidden, everything is dimmed and the line says **You are hidden**.
+A reading older than 20 seconds turns gray and its age turns amber. Read each report alongside its age rather than assuming it is current. While Roundtable is connecting, the tags are hidden. While it is reconnecting or offline, the line and tags freeze in gray and the details read **Last known**, so nothing claims to be live. The line adds **Reconnecting** in amber, or **Offline since** and the time in UTC, and the slice's flag says **Reconnecting** or **Offline**. While you are hidden, everything is dimmed and the line says **You are hidden**.
 
 To change the units, open the **Roundtable** tab in Spot Hub and set **Signal format:** to **dBm**, **S-units** or **Both**, or right-click a tag and choose **Signal: dBm · Change**. The choice applies to this computer only.
 

@@ -9,7 +9,7 @@
 // tuning. Tune slice A here is the one thing in it that moves the radio.
 //
 // It hangs from the Roundtable strip over the waterfall, lined up with your line
-// (strip design 5), or stands on the frequency scale over the spectrum when the
+// (strip design 5), or stands on the divider over the spectrum when the
 // waterfall is too short. Short room folds everyone not keyed to "Also here", and
 // what still does not fit scrolls by the wheel between the head and the buttons,
 // which stay put.
@@ -27,6 +27,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Review fixes: details opened upward line up with their own left
+//               edge (setInspectorSpot's upwardAnchorLeft) and paint opaque.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: The details open over the waterfall under the strip, or upward
 //               over the spectrum when the waterfall is short:
 //               setInspectorSpot takes the two areas and the left edge
@@ -81,7 +84,10 @@ public:
     void setFoldRows(const QVector<RoundtableFoldRow>& rows);
     /// Where it may stand: see placeRoundtableDetails. `below` and `above` are in
     /// the parent's coordinates. Moves it only when something here changed.
-    void setInspectorSpot(const QRect& below, const QRect& above, int anchorLeft);
+    /// `upwardAnchorLeft` is the left edge when they open upward; none means
+    /// `anchorLeft` there too.
+    void setInspectorSpot(const QRect& below, const QRect& above, int anchorLeft,
+                          std::optional<int> upwardAnchorLeft = std::nullopt);
     /// The active slice, for the offset line and for "already there".
     void setSlice(quint64 hz, const QString& family, const QString& name);
     /// The station's distance and bearing preferences.
@@ -112,7 +118,7 @@ public:
     int scrollForTest() const { return m_scroll; }
     int maxScrollForTest() const;
     int bodyHeightForTest() const { return m_bodyHeight; }
-    /// Standing on the frequency scale over the spectrum, not hanging under the strip.
+    /// Standing on the divider over the spectrum, not hanging under the strip.
     bool upwardForTest() const { return m_upward; }
 
 signals:
@@ -156,6 +162,7 @@ private:
     QRect m_spotBelow;
     QRect m_spotAbove;
     int m_spotAnchorLeft{0};
+    std::optional<int> m_spotUpwardAnchorLeft;
     bool m_upward{false};
     RoundtableViewLayout m_layout;
     bool m_fold{false};

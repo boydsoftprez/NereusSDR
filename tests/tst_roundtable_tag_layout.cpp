@@ -20,6 +20,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Review fixes: details opened upward stand past the flag, under
+//               the divider, opaque; the strip left out over a waterfall share
+//               under 58 px; a flag hanging into the strip moves your line and
+//               the tags; the scale column's end of the strip takes presses;
+//               your own tag stays while its details are open. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: The details over the waterfall: placeRoundtableDetails cases,
 //               the spot's areas and left edge, a short waterfall opens them
 //               upward, and the line's width no longer follows its values. The
@@ -1498,8 +1504,9 @@ private slots:
         QVERIFY(!pan.widget.overlayStaticDirtyForTest());
     }
 
-    // D37: your compact tag goes while it shows your own, and stays while it shows another.
-    void yourCompactTagGoesOnlyWhileItShowsYourOwn()
+    // Your compact tag stays while the details show your own, outlined, so it can
+    // close them; and while they show another (D37).
+    void yourCompactTagStaysWhileTheDetailsShowYourOwn()
     {
         Pan pan;
         const QString room = QStringLiteral("frequency:lsb-7180000");
@@ -1515,9 +1522,12 @@ private slots:
         pan.draw();
         QVERIFY(hitFor(pan.widget, room) != nullptr);
         pan.widget.setRoundtableViewedRoom(room);
-        pan.draw();
-        QVERIFY(hitFor(pan.widget, room) == nullptr);
+        const QImage open = pan.draw();
+        const auto* own = hitFor(pan.widget, room);
+        QVERIFY(own != nullptr);
         QVERIFY(hitFor(pan.widget, other.roomId) != nullptr);
+        // With the viewed outline, 2 px outside its body.
+        QCOMPARE(QColor(open.pixel(own->rect.center().x(), own->rect.top() - 2)).name(), QStringLiteral("#5e8db8"));
     }
 
     // D37: a fold's list outlines its tag and hides none, even when your room leads it.
@@ -1533,10 +1543,10 @@ private slots:
         pan.widget.setRoundtableViewedRoom(room, true);
         pan.draw();
         QVERIFY(hitFor(pan.widget, room) != nullptr);
-        // Your own frequency in the inspector still takes it away.
+        // Your own frequency in the inspector keeps it too.
         pan.widget.setRoundtableViewedRoom(room);
         pan.draw();
-        QVERIFY(hitFor(pan.widget, room) == nullptr);
+        QVERIFY(hitFor(pan.widget, room) != nullptr);
     }
 
     // The inspector is no keep-out: a tag stays where it was under any inspector.
@@ -1576,7 +1586,7 @@ private slots:
         QCOMPARE(quiet.below.right(), std::min(layout.waterfall.right(), timeScale.left() - 1));
         QVERIFY(!quiet.below.intersects(timeScale));
         QCOMPARE(quiet.above.top(), spec.top());
-        QCOMPARE(quiet.above.bottom() + 1, layout.frequency.top());
+        QCOMPARE(quiet.above.bottom() + 1, layout.divider.top());
         QCOMPARE(quiet.above.left(), spec.left());
         QCOMPARE(quiet.above.width(), spec.width());
         QCOMPARE(quiet.dialX, spec.left() + spec.width() / 2);
@@ -1698,7 +1708,7 @@ private slots:
         const SpectrumWidget::RoundtableInspectorSpot spot = pan.widget.roundtableInspectorSpot(0, 0);
         auto* peek = new RoundtableFrequencyPeek(&pan.widget);
         peek->setSlice(7200000, QStringLiteral("lsb"), QStringLiteral("A"));
-        peek->setInspectorSpot(spot.below, spot.above, spot.anchorLeft);
+        peek->setInspectorSpot(spot.below, spot.above, spot.anchorLeft, spot.upwardAnchorLeft);
         peek->showFor(7188600, QStringLiteral("lsb"));
         RoundtableCardModel card = talkingCard(3);
         card.hz = 7188600;
@@ -1706,15 +1716,30 @@ private slots:
         pan.widget.setRoundtableInspectorRect(peek->inspectorRect());
         const QRect rect = peek->inspectorRect();
         QVERIFY(peek->upwardForTest());
-        QVERIFY(placeRoundtableDetails(spot.below, spot.above, spot.anchorLeft, 400).upward);
-        // On the frequency scale's top edge, over the spectrum, cut to its height.
-        QCOMPARE(rect.bottom() + 1, layout.frequency.top());
+        QVERIFY(placeRoundtableDetails(spot.below, spot.above, spot.anchorLeft, 400, spot.upwardAnchorLeft).upward);
+        // On the divider's top edge, over the spectrum, cut to its height: the
+        // divider's grab stays free.
+        QCOMPARE(rect.bottom() + 1, layout.divider.top());
+        QVERIFY(!rect.intersects(layout.divider));
         QVERIFY(spot.above.contains(rect));
         QVERIFY(rect.height() <= spot.above.height());
         QVERIFY(!rect.intersects(layout.frequency));
         QVERIFY(!rect.intersects(layout.roundtableStrip));
         QVERIFY(!rect.intersects(layout.waterfall));
-        QCOMPARE(rect.left(), spot.anchorLeft);
+        QCOMPARE(rect.left(), spot.upwardAnchorLeft);
+        // Clear of the flag: past its outer edge, or on the dial's other side.
+        const QRect flagRect = pan.flag->occupiedRegion().boundingRect();
+        QVERIFY(!flagRect.isEmpty());
+        QVERIFY2(!rect.intersects(flagRect), qPrintable(QStringLiteral("details %1,%2 %3x%4 flag %5,%6 %7x%8")
+            .arg(rect.x()).arg(rect.y()).arg(rect.width()).arg(rect.height())
+            .arg(flagRect.x()).arg(flagRect.y()).arg(flagRect.width()).arg(flagRect.height())));
+        // Opaque: nothing under them shows through.
+        {
+            QImage painted(peek->size(), QImage::Format_ARGB32_Premultiplied);
+            painted.fill(Qt::transparent);
+            peek->render(&painted, QPoint(), QRegion(), QWidget::RenderFlags(QWidget::DrawChildren));
+            QCOMPARE(qAlpha(painted.pixel(20, peek->height() / 2)), 255);
+        }
         const QString captures = qEnvironmentVariable("NEREUS_ROUNDTABLE_ROUTING_CAPTURES");
         if (!captures.isEmpty()) {
             // The fixture holds the pan's updates, and its children's with them.
@@ -3588,6 +3613,56 @@ private slots:
         QCOMPARE(widget.waterfallHeightForTest(), hidden.waterfall.height());
     }
 
+    void aWaterfallShareUnder58LeavesTheStripOut()
+    {
+        // Short enough that a 57 px share is inside the split's 10 % to 90 % range.
+        Pan pan(500);
+        const int contentH = pan.widget.spectrumLayout().contentHeight;
+        const auto shareOf = [&pan, contentH](int share) {
+            pan.widget.setSpectrumFrac((static_cast<float>(contentH - share) + 0.5f) / static_cast<float>(contentH));
+            return pan.widget.spectrumLayout();
+        };
+        QCOMPARE(kRoundtableStripMinWaterfall, 28);
+        // 58 px: the strip, and 28 px of waterfall under it.
+        const SpectrumWidget::SpectrumLayout at = shareOf(58);
+        QCOMPARE(at.spectrum.height(), contentH - 58);
+        QVERIFY(pan.widget.roundtableStripLaidOut());
+        QCOMPARE(at.roundtableStrip.height(), 30);
+        QCOMPARE(at.waterfall.height(), 28);
+        QCOMPARE(at.waterfall.top(), at.roundtableStrip.bottom() + 1);
+        QCOMPARE(pan.widget.waterfallTop(), at.waterfall.top());
+
+        // 57 px: no strip; the waterfall keeps its whole share.
+        const SpectrumWidget::SpectrumLayout under = shareOf(57);
+        QCOMPARE(under.spectrum.height(), contentH - 57);
+        QVERIFY(pan.widget.roundtableStripShown());
+        QVERIFY(!pan.widget.roundtableStripLaidOut());
+        QVERIFY(under.roundtableStrip.isNull());
+        QVERIFY(under.roundtableStripChrome.isNull());
+        QVERIFY(pan.widget.roundtableStripRectForTest().isNull());
+        QCOMPARE(under.waterfall.top(), under.frequency.bottom() + 1);
+        QCOMPARE(under.waterfall.height(), 57);
+        QCOMPARE(under.waterfall.bottom(), pan.widget.height() - 1);
+
+        // Nothing draws in a strip that is not there; the details open upward, beside the dial.
+        pan.widget.setRoundtableTags(panTags(), RoundtableTagDisplay::Live);
+        pan.widget.setRoundtableCard(talkingCard(), QStringLiteral("frequency:lsb-7200000"));
+        pan.draw();
+        QVERIFY(pan.widget.roundtableTagHitsForTest().isEmpty());
+        QVERIFY(pan.widget.roundtableStripLineForTest().line.isNull());
+        const SpectrumWidget::RoundtableInspectorSpot spot = pan.widget.roundtableInspectorSpot(0, 0);
+        QCOMPARE(spot.below.top(), under.waterfall.top());
+        const RoundtableDetailsPlacement placed
+            = placeRoundtableDetails(spot.below, spot.above, spot.anchorLeft, 300, spot.upwardAnchorLeft);
+        QVERIFY(placed.upward);
+        QCOMPARE(placed.rect.left(), spot.upwardAnchorLeft);
+        QVERIFY(!placed.rect.intersects(pan.flag->occupiedRegion().boundingRect()));
+
+        // Back to 58: the strip returns.
+        shareOf(58);
+        QVERIFY(pan.widget.roundtableStripLaidOut());
+    }
+
     void dividerDragGivesTheSameSplitWithTheStrip()
     {
         SpectrumWidget widget;
@@ -3617,28 +3692,33 @@ private slots:
         pan.widget.setRoundtableStripShown(true);
         const QRect strip = pan.widget.roundtableStripRectForTest();
         QVERIFY(!strip.isNull());
-        // Straight under the dial, where the passband would take the press.
+        // Straight under the dial, where the passband would take the press, and
+        // in the scale column at the strip's right-hand end, where a pan drag
+        // and a click-tune would.
         const int dialX = pan.widget.hzToX(kPanCenterHz, pan.widget.spectrumLayout().spectrum);
-        const QPoint at(dialX, strip.center().y());
-        QSignalSpy plainTune(&pan.widget, &SpectrumWidget::frequencyClicked);
-        QSignalSpy edges(&pan.widget, &SpectrumWidget::filterEdgeDragged);
-        QSignalSpy center(&pan.widget, &SpectrumWidget::centerChanged);
-        QTest::mousePress(&pan.widget, Qt::LeftButton, Qt::NoModifier, at);
-        QVERIFY(pan.widget.m_draggingFilter == SpectrumWidget::FilterEdge::None);
-        QVERIFY(!pan.widget.m_draggingVfo);
-        QVERIFY(!pan.widget.m_draggingPan);
-        QVERIFY(!pan.widget.m_draggingBandwidth);
-        QVERIFY(!pan.widget.m_draggingTimeScale);
-        QVERIFY(!pan.widget.m_draggingDivider);
-        QTest::mouseRelease(&pan.widget, Qt::LeftButton, Qt::NoModifier, at);
-        QCOMPARE(plainTune.size(), 0);
-        QCOMPARE(edges.size(), 0);
-        QCOMPARE(center.size(), 0);
-        // Hover there is neither the scale's zoom nor the waterfall's crosshair.
-        QMouseEvent hover(QEvent::MouseMove, QPointF(at), pan.widget.mapToGlobal(QPointF(at)),
-                          Qt::NoButton, Qt::NoButton, Qt::NoModifier);
-        QApplication::sendEvent(&pan.widget, &hover);
-        QCOMPARE(pan.widget.cursor().shape(), Qt::ArrowCursor);
+        const QPoint column(pan.widget.width() - 10, strip.center().y());
+        QVERIFY(column.x() > strip.right());
+        for (const QPoint& at : {QPoint(dialX, strip.center().y()), column}) {
+            QSignalSpy plainTune(&pan.widget, &SpectrumWidget::frequencyClicked);
+            QSignalSpy edges(&pan.widget, &SpectrumWidget::filterEdgeDragged);
+            QSignalSpy center(&pan.widget, &SpectrumWidget::centerChanged);
+            QTest::mousePress(&pan.widget, Qt::LeftButton, Qt::NoModifier, at);
+            QVERIFY(pan.widget.m_draggingFilter == SpectrumWidget::FilterEdge::None);
+            QVERIFY(!pan.widget.m_draggingVfo);
+            QVERIFY(!pan.widget.m_draggingPan);
+            QVERIFY(!pan.widget.m_draggingBandwidth);
+            QVERIFY(!pan.widget.m_draggingTimeScale);
+            QVERIFY(!pan.widget.m_draggingDivider);
+            QTest::mouseRelease(&pan.widget, Qt::LeftButton, Qt::NoModifier, at);
+            QCOMPARE(plainTune.size(), 0);
+            QCOMPARE(edges.size(), 0);
+            QCOMPARE(center.size(), 0);
+            // Hover there is neither the scale's zoom nor the waterfall's crosshair.
+            QMouseEvent hover(QEvent::MouseMove, QPointF(at), pan.widget.mapToGlobal(QPointF(at)),
+                              Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(&pan.widget, &hover);
+            QCOMPARE(pan.widget.cursor().shape(), Qt::ArrowCursor);
+        }
     }
 
     void initTestCase()
@@ -3685,19 +3765,70 @@ private slots:
         QVERIFY(!hitFor(pan.widget, QStringLiteral("lsb-7200000"))->folded);
     }
 
-    void aShortPansTagsSitAtTheirFrequenciesUnderTheFlag()
+    void aFlagHangingIntoTheStripMovesYourLineAndTheTags()
     {
-        // The flags stand on the spectrum; the strip has no flag to keep clear of.
-        Pan pan(300);
+        // On a short spectrum the flag hangs down into the strip: tags keep clear
+        // of it, and your line goes on the dial's other side.
+        Pan pan;
+        pan.widget.setSpectrumFrac(0.10f);
+        pan.widget.updateVfoPositions();
+        const QRect strip = pan.widget.roundtableStripRectForTest();
+        QVERIFY(!strip.isNull());
+        QList<QRect> flagInStrip;
+        for (const QRect& rect : pan.widget.receiverFlagRegion()) {
+            if (rect.intersects(QRect(rect.left(), strip.top(), rect.width(), strip.height()))) {
+                flagInStrip.append(rect);
+            }
+        }
+        const QRect flagRect = pan.flag->occupiedRegion().boundingRect();
+        QVERIFY2(!flagInStrip.isEmpty(), qPrintable(QStringLiteral("flag %1..%2, strip %3..%4")
+            .arg(flagRect.top()).arg(flagRect.bottom()).arg(strip.top()).arg(strip.bottom())));
+        const int dialX = pan.widget.hzToX(7200000.0, pan.widget.roundtableTagSpectrumRectForTest());
+
         pan.widget.setRoundtableTags(panTags(), RoundtableTagDisplay::Live);
         pan.draw();
         const auto& hits = pan.widget.roundtableTagHitsForTest();
         QCOMPARE(hits.size(), 4);
-        const auto* mine = hitFor(pan.widget, QStringLiteral("lsb-7200000"));
-        QVERIFY(mine != nullptr);
+        for (const auto& hit : hits) {
+            QVERIFY(strip.contains(hit.rect));
+            for (const QRect& rect : std::as_const(flagInStrip)) {
+                QVERIFY(hit.rect.right() < rect.left() || hit.rect.left() > rect.right());
+            }
+        }
+
+        const QString room = QStringLiteral("frequency:lsb-7200000");
+        pan.widget.setRoundtableTags({}, RoundtableTagDisplay::Live);
+        pan.widget.setRoundtableCard(talkingCard(), room);
+        pan.draw();
+        const auto* line = cardHit(pan.widget);
+        QVERIFY(line != nullptr);
+        QVERIFY(!pan.widget.receiverFlagRegion().intersects(line->rect));
+        // The other side of the dial from the flag's part in the strip.
+        if (flagInStrip.first().center().x() > dialX) {
+            QVERIFY(line->rect.right() < dialX);
+        } else {
+            QVERIFY(line->rect.left() > dialX);
+        }
+    }
+
+    void aTallPansFlagLeavesYourLineUnderIt()
+    {
+        // The flag stands on the spectrum: your line takes the flag's side, as before.
+        Pan pan;
+        const QRect strip = pan.widget.roundtableStripRectForTest();
+        const QRect flagRect = pan.flag->occupiedRegion().boundingRect();
+        QVERIFY(flagRect.bottom() < strip.top());
         const int dialX = pan.widget.hzToX(7200000.0, pan.widget.roundtableTagSpectrumRectForTest());
-        QVERIFY(mine->rect.left() <= dialX && mine->rect.right() >= dialX);
-        QVERIFY(pan.widget.roundtableStripRectForTest().contains(mine->rect));
+        pan.widget.setRoundtableTags({}, RoundtableTagDisplay::Live);
+        pan.widget.setRoundtableCard(talkingCard(), QStringLiteral("frequency:lsb-7200000"));
+        pan.draw();
+        const auto* line = cardHit(pan.widget);
+        QVERIFY(line != nullptr);
+        if (flagRect.center().x() > dialX) {
+            QVERIFY(line->rect.left() > dialX);
+        } else {
+            QVERIFY(line->rect.right() < dialX);
+        }
     }
 
     void modernFrequencyClickReadsDetailsWithoutTuningEvenDuringTx()

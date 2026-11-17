@@ -1,4 +1,9 @@
 // Modification history (NereusSDR):
+//   2026-11-16: Review fixes: roundtableStripLaidOut, waterfallTop and
+//               waterfallTopChanged for the zoom row, the details' upward
+//               anchor (RoundtableInspectorSpot::upwardAnchorLeft) and the
+//               line's side cached. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-11-16: The details stand over the waterfall: roundtableInspectorSpot
 //               gives the waterfall, the spectrum and the left edge to line up
 //               with; the divider and your line moving re-place them.
@@ -2935,13 +2940,17 @@ public:
     std::optional<double> roundtablePanLevel(quint64 hz, const QString& family) const;
     /// Where the details may stand on this pan: see placeRoundtableDetails.
     /// `below` is the waterfall cut clear of its time scale, `above` the spectrum
-    /// to the frequency scale's top edge, `anchorLeft` the left edge to line up
+    /// to the divider's top edge, `anchorLeft` the left edge to line up
     /// with: your line's when it is drawn here, else 8 px past the dial on the
     /// flag's far side.
     struct RoundtableInspectorSpot {
         QRect below;
         QRect above;
         int anchorLeft = 0;
+        /// The left edge when they open upward over the spectrum: past the
+        /// flag's outer edge, else the dial's other side, when 300 px fits
+        /// there; else anchorLeft.
+        int upwardAnchorLeft = 0;
         int dialX = 0;
         bool flagFlipped = false;
     };
@@ -3004,7 +3013,12 @@ public:
     /// (roundtableStripShownFor). Setting the current value does nothing.
     void setRoundtableStripShown(bool shown);
     bool roundtableStripShown() const { return m_roundtableStripShown; }
-    /// The strip's rect, null while it is hidden.
+    /// Shown and laid out: a waterfall share under kRoundtableStripHeight +
+    /// kRoundtableStripMinWaterfall leaves the strip out while it is shown.
+    bool roundtableStripLaidOut() const { return !spectrumLayout().roundtableStrip.isNull(); }
+    /// The waterfall's top edge, under the strip when it is laid out.
+    int waterfallTop() const { return spectrumLayout().waterfall.top(); }
+    /// The strip's rect, null while it is hidden or not laid out.
     QRect roundtableStripRectForTest() const;
     int bandPlanStripHeightForTest(const QPaintDevice* device = nullptr) const
     {
@@ -3314,6 +3328,8 @@ signals:
     // What roundtableInspectorSpot says may have changed: a resize, the divider,
     // the strip shown or hidden, a flag's move or your line moving.
     void roundtableInspectorSpotChanged();
+    // The waterfall's top edge may have moved: the split or the strip changed.
+    void waterfallTopChanged();
     // The card menu's Read reports.
     void roundtableReportsRequested();
     // The card menu's Signal: the shared format key just moved on.
@@ -4790,6 +4806,7 @@ private:
     QFont m_roundtableStripLinePlacedFont;
     int m_roundtableStripLinePlacedDialX = 0;
     bool m_roundtableStripLinePlacedFlipped = false;
+    RoundtableStripLineSide m_roundtableStripLinePlacedSide = RoundtableStripLineSide::Either;
     bool m_roundtableStripLinePlacedValid = false;
     RoundtableStripLinePlacement m_roundtableStripLineDrawn;
     int m_roundtableCardPlacements = 0;

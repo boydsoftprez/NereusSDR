@@ -32,6 +32,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Placement checks pass the details' upward left edge;
+//               your own tag stays while its details are open. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: The details open over the waterfall from your line, a tag, a
 //               fold and the flag's line (theDetailsOpenOverTheWaterfallFromEveryRoute);
 //               placement checks use placeRoundtableDetails. J.J. Boyd (KG4VCF),
@@ -2135,7 +2138,7 @@ private slots:
         QVERIFY(!panel->isReading());
         QVERIFY(nothingMoved());
 
-        // ── Your own compact tag: your own inspector, no read, and the tag goes ──
+        // ── Your own compact tag: your own inspector, no read, and the tag stays ──
         const qsizetype reads = link.reads.size();
         QVERIFY(!lineFlag->roundtableLineOpen());
         QVERIFY(click(mine));
@@ -2145,7 +2148,13 @@ private slots:
         QCOMPARE(link.reads.size(), reads);
         QVERIFY(!panel->isReading());
         SpectrumWidget::RoundtableTagHit gone;
-        QVERIFY(!hitOf(mine, &gone));
+        // It stays, outlined, so a click on it closes the details again.
+        QVERIFY(hitOf(mine, &gone));
+        QVERIFY(click(mine));
+        QVERIFY(!open());
+        QVERIFY(click(mine));
+        QVERIFY(open());
+        QVERIFY(peek()->showsOwn());
         QVERIFY(!button("roundtablePeekTune")->isEnabled());
         QVERIFY(button("roundtablePeekTune")->isVisible());
         QVERIFY(nothingMoved());
@@ -3044,12 +3053,14 @@ private slots:
         QVERIFY(peek != nullptr && peek->isOpen());
         const SpectrumWidget::RoundtableInspectorSpot spot = second->roundtableInspectorSpot(p.sliceId(), 14230000);
         QCOMPARE(second->roundtableInspectorRect(), peek->inspectorRect());
-        QCOMPARE(peek->inspectorRect(), placeRoundtableDetails(spot.below, spot.above, spot.anchorLeft, peek->height()).rect);
+        QCOMPARE(peek->inspectorRect(), placeRoundtableDetails(spot.below, spot.above, spot.anchorLeft, peek->height(),
+                                                               spot.upwardAnchorLeft).rect);
         // A resize moves it with the spot, not by the one it had.
         second->resize(second->width() - 60, second->height());
         settle();
         const SpectrumWidget::RoundtableInspectorSpot after = second->roundtableInspectorSpot(p.sliceId(), 14230000);
-        const RoundtableDetailsPlacement placed = placeRoundtableDetails(after.below, after.above, after.anchorLeft, 2000);
+        const RoundtableDetailsPlacement placed = placeRoundtableDetails(after.below, after.above, after.anchorLeft, 2000,
+                                                                        after.upwardAnchorLeft);
         QVERIFY((placed.upward ? after.above : after.below).contains(peek->inspectorRect()));
         QCOMPARE(second->roundtableInspectorRect(), peek->inspectorRect());
         // A view on another pan: a change of pan is a close and an open.

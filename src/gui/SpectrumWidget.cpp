@@ -8,6 +8,15 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Review fixes: details opened upward stand past the flag, clear
+//                 of the divider, opaque; the strip is left out over a
+//                 waterfall share under 58 px; a flag hanging into the strip
+//                 sends your line to the dial's other side and keeps tags
+//                 clear; the strip's scale column takes its presses; your own
+//                 tag stays while its details are open; the zoom row follows
+//                 the waterfall top (waterfallTopChanged); pausing re-places
+//                 the details. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-11-16: The details stand over the waterfall: roundtableInspectorSpot
 //                 gives the waterfall, the spectrum and the left edge to line up
 //                 with; the divider and your line moving re-place them.
@@ -4167,6 +4176,7 @@ void SpectrumWidget::setSpectrumFrac(float frac)
     refreshWfTimestampLabel();
     // The waterfall's room changed: open details re-place (strip design 5).
     emit roundtableInspectorSpotChanged();
+    emit waterfallTopChanged();
     markOverlayDirty();
     update();
     scheduleSettingsSave();
@@ -7780,18 +7790,24 @@ SpectrumWidget::SpectrumLayout SpectrumWidget::spectrumLayout() const
     const int freqY = specH + kDividerH;
     // The Roundtable strip comes out of the waterfall's share only: the
     // spectrum keeps the height the split gives it, shown or hidden.
-    const int stripH = m_roundtableStripShown ? kRoundtableStripHeight : 0;
+    // A waterfall share too short to keep kRoundtableStripMinWaterfall under
+    // the strip leaves the strip out: the waterfall keeps its whole share and
+    // the flag's Roundtable line is the way in.
+    const int wfShare = std::max(0, contentH - specH);
+    const bool stripLaidOut = m_roundtableStripShown
+        && wfShare >= kRoundtableStripHeight + kRoundtableStripMinWaterfall;
+    const int stripH = stripLaidOut ? kRoundtableStripHeight : 0;
     const int stripY = freqY + freqScaleH;
     const int wfY = stripY + stripH;
-    const int wfH = std::max(0, contentH - specH - stripH);
+    const int wfH = std::max(0, wfShare - stripH);
     return {contentH,
             QRect(0, 0, plotW, specH),
             QRect(0, specH, width(), kDividerH),
             QRect(0, freqY, plotW, freqScaleH),
             QRect(0, wfY, plotW, wfH),
             QRect(0, wfY, width(), wfH),
-            m_roundtableStripShown ? QRect(0, stripY, plotW, stripH) : QRect(),
-            m_roundtableStripShown ? QRect(0, stripY, width(), stripH) : QRect()};
+            stripLaidOut ? QRect(0, stripY, plotW, stripH) : QRect(),
+            stripLaidOut ? QRect(0, stripY, width(), stripH) : QRect()};
 }
 
 void SpectrumWidget::setRoundtableStripShown(bool shown)
@@ -7805,6 +7821,7 @@ void SpectrumWidget::setRoundtableStripShown(bool shown)
     updateVfoPositions();
     refreshWfTimestampLabel();
     emit roundtableInspectorSpotChanged();
+    emit waterfallTopChanged();
     markOverlayDirty();
     refreshRoundtableTagLayer();
     update();
@@ -9796,6 +9813,8 @@ void SpectrumWidget::setWaterfallLive(bool live)
     }
     m_wfLive = live;
     rebuildWaterfallViewport();
+    // Paused, the time scale widens: open details re-place clear of it.
+    emit roundtableInspectorSpotChanged();
     markOverlayDirty();
 }
 
@@ -13187,6 +13206,15 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
     const bool dimmed = m_roundtableTagDisplay == RoundtableTagDisplay::Dimmed;
     const bool inspecting = !m_roundtableInspectorRect.isNull();
 
+    // A flag taller than a short spectrum hangs down into the strip: tags keep
+    // clear of it, and your line goes on the dial's other side from it.
+    QList<QRect> flagsInStrip;
+    for (const QRect& rect : m_receiverFlagRegion) {
+        if (rect.top() <= strip.bottom() && rect.bottom() >= strip.top()) {
+            flagsInStrip.append(rect);
+        }
+    }
+
     // Your frequency's line, beside its dial (strip design 3), when the dial is here.
     RoundtableStripLinePlacement placed;
     if (wantsLine) {
@@ -13202,16 +13230,33 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
                     flipped = vfo->geometry().center().x() < dialX;
                 }
             }
+            // The flag hanging into the strip nearest the dial sends the line to
+            // the dial's other side, when at least its head fits there.
+            RoundtableStripLineSide side = RoundtableStripLineSide::Either;
+            int nearestFlag = -1;
+            for (const QRect& rect : std::as_const(flagsInStrip)) {
+                const int off = std::min(std::abs(rect.left() - dialX), std::abs(rect.right() - dialX));
+                if (nearestFlag < 0 || off < nearestFlag) {
+                    nearestFlag = off;
+                    side = rect.center().x() < dialX ? RoundtableStripLineSide::Right : RoundtableStripLineSide::Left;
+                }
+            }
             // The line's text size, which a workspace text size changes.
             const QFont lineFont = roundtableTagFont(p.device(), 12, QFont::Bold);
             if (!m_roundtableStripLinePlacedValid || strip != m_roundtableStripLinePlacedStrip
                 || dialX != m_roundtableStripLinePlacedDialX || flipped != m_roundtableStripLinePlacedFlipped
-                || lineFont != m_roundtableStripLinePlacedFont) {
+                || side != m_roundtableStripLinePlacedSide || lineFont != m_roundtableStripLinePlacedFont) {
                 m_roundtableStripLinePlaced = placeRoundtableStripLine(m_roundtableCard, strip, dialX, flipped,
-                                                                       m_roundtableCardFormat, p.device());
+                                                                       m_roundtableCardFormat, p.device(), side);
+                if (m_roundtableStripLinePlaced.line.isNull() && side != RoundtableStripLineSide::Either) {
+                    // Not even the head fits there: the rule as without the flag.
+                    m_roundtableStripLinePlaced = placeRoundtableStripLine(m_roundtableCard, strip, dialX, flipped,
+                                                                           m_roundtableCardFormat, p.device());
+                }
                 m_roundtableStripLinePlacedStrip = strip;
                 m_roundtableStripLinePlacedDialX = dialX;
                 m_roundtableStripLinePlacedFlipped = flipped;
+                m_roundtableStripLinePlacedSide = side;
                 m_roundtableStripLinePlacedFont = lineFont;
                 m_roundtableStripLinePlacedValid = true;
                 ++m_roundtableCardPlacements;
@@ -13232,11 +13277,9 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
         if (hasLine && (tag.active || tag.roomId == m_roundtableCardRoom)) {
             continue;
         }
-        // While it shows your own frequency your compact tag goes; while it shows
-        // another, the compact tag stays and a click on it goes to your own (D37).
-        if (inspecting && !m_roundtableViewedIsFold && tag.active && tag.roomId == m_roundtableViewedRoom) {
-            continue;
-        }
+        // Your compact tag stays while the details show your own frequency, with
+        // the viewed outline, so a click on it closes them; while they show
+        // another, a click on it goes to your own (D37).
         shown.append(tag);
     }
 
@@ -13244,13 +13287,17 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
     const QFontMetrics countMetrics(countFont, p.device());
     const int space = labelMetrics.horizontalAdvance(QLatin1Char(' '));
 
-    // Tags keep clear of your line, and of nothing else: flags and the toolbar
-    // stand on the spectrum, above the strip.
+    // Tags keep clear of your line and of a flag hanging into the strip; the
+    // toolbar and other flags stand on the spectrum, above it.
     QList<RoundtableKeepOut> keepOut;
     if (hasLine) {
         keepOut.append(RoundtableKeepOut{
             static_cast<double>(placed.line.left() - kRoundtableLineKeepOut - specRect.left()),
             static_cast<double>(placed.line.right() + 1 + kRoundtableLineKeepOut - specRect.left())});
+    }
+    for (const QRect& rect : std::as_const(flagsInStrip)) {
+        keepOut.append(RoundtableKeepOut{static_cast<double>(rect.left() - specRect.left()),
+                                         static_cast<double>(rect.right() + 1 - specRect.left())});
     }
 
     const double lowHz = m_centerHz - m_bandwidthHz / 2.0;
@@ -13452,8 +13499,9 @@ SpectrumWidget::RoundtableInspectorSpot SpectrumWidget::roundtableInspectorSpot(
         below.setRight(std::min(below.right(), timeScale.left() - 1));
     }
     spot.below = below;
-    // Above: the spectrum from its top to the frequency scale's top edge.
-    spot.above = QRect(spec.left(), spec.top(), spec.width(), std::max(0, layout.frequency.top() - spec.top()));
+    // Above: the spectrum from its top to the divider's top edge, so the
+    // divider's grab stays free.
+    spot.above = QRect(spec.left(), spec.top(), spec.width(), std::max(0, layout.divider.top() - spec.top()));
 
     const VfoWidget* flag = m_vfoWidgets.value(sliceId, nullptr);
     if (flag == nullptr && !m_vfoWidgets.isEmpty()) {
@@ -13467,13 +13515,36 @@ SpectrumWidget::RoundtableInspectorSpot SpectrumWidget::roundtableInspectorSpot(
     }
     // Lined up with your line when it is drawn here, whatever the details show;
     // else beside the dial on the flag's far side (strip design 5).
-    if (!m_roundtableStripLineDrawn.line.isNull()) {
+    const bool lineDrawn = !layout.roundtableStrip.isNull() && !m_roundtableStripLineDrawn.line.isNull();
+    if (lineDrawn) {
         spot.anchorLeft = m_roundtableStripLineDrawn.line.left();
     } else if (spot.flagFlipped) {
         const int width = std::min(kRoundtableInspectorWidth, std::max(0, below.width()));
         spot.anchorLeft = spot.dialX - kRoundtableDetailsDialGap - width;
     } else {
         spot.anchorLeft = spot.dialX + kRoundtableDetailsDialGap;
+    }
+    // Upward, over the spectrum, the flag stands there: past its outer edge,
+    // else on the dial's other side, when the details fit; else as below.
+    spot.upwardAnchorLeft = spot.anchorLeft;
+    const int upWidth = std::min(kRoundtableInspectorWidth, std::max(0, spot.above.width()));
+    const int upLow = spot.above.left();
+    const int upHigh = spot.above.left() + spot.above.width() - upWidth;
+    const auto fitsUp = [upLow, upHigh](int left) { return left >= upLow && left <= upHigh; };
+    std::optional<int> pastFlag;
+    if (flag != nullptr) {
+        const QRect flagRect = flag->occupiedRegion().boundingRect();
+        if (!flagRect.isEmpty()) {
+            pastFlag = spot.flagFlipped ? flagRect.left() - kRoundtableDetailsDialGap - upWidth
+                                        : flagRect.right() + 1 + kRoundtableDetailsDialGap;
+        }
+    }
+    const int otherSide = spot.flagFlipped ? spot.dialX + kRoundtableDetailsDialGap
+                                           : spot.dialX - kRoundtableDetailsDialGap - upWidth;
+    if (pastFlag.has_value() && fitsUp(*pastFlag)) {
+        spot.upwardAnchorLeft = *pastFlag;
+    } else if (fitsUp(otherSide)) {
+        spot.upwardAnchorLeft = otherSide;
     }
     return spot;
 }
@@ -15100,7 +15171,7 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
     // The Roundtable strip: its card and tags took their presses above
     // (roundtableTagClick). The rest of it tunes nothing and starts no
     // filter, passband, waterfall or time-scale drag.
-    if (layout.roundtableStrip.contains(QPoint(mx, my))) {
+    if (layout.roundtableStripChrome.contains(QPoint(mx, my))) {
         setCursor(Qt::ArrowCursor);
         event->accept();
         return;
@@ -15545,6 +15616,7 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         refreshWfTimestampLabel();
         // The waterfall's room changed: open details re-place (strip design 5).
         emit roundtableInspectorSpotChanged();
+        emit waterfallTopChanged();
 #ifdef NEREUS_GPU_SPECTRUM
         markOverlayDirty();
 #else
@@ -15781,7 +15853,7 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         setCursor(Qt::SplitVCursor);
     } else if (my >= freqBarY && my < freqBarY + freqScaleHeight()) {
         setCursor(Qt::SizeHorCursor);
-    } else if (layout.roundtableStrip.contains(QPoint(mx, my))) {
+    } else if (layout.roundtableStripChrome.contains(QPoint(mx, my))) {
         // The Roundtable strip is neither the scale nor the waterfall.
         setCursor(Qt::ArrowCursor);
     } else {
@@ -16260,7 +16332,7 @@ void SpectrumWidget::wheelEvent(QWheelEvent* event)
     }
 
     // The Roundtable strip: a wheel over it tunes and zooms nothing.
-    if (spectrumLayout().roundtableStrip.contains(QPoint(mx, my))) {
+    if (spectrumLayout().roundtableStripChrome.contains(QPoint(mx, my))) {
         event->accept();
         return;
     }
@@ -17402,7 +17474,7 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
     QRhi* r = rhi();
     const int w = width();
     const int h = height();
-    const int roundtableStripH = m_roundtableStripShown ? kRoundtableStripHeight : 0;
+    const int roundtableStripH = roundtableStripLaidOut() ? kRoundtableStripHeight : 0;
     if (w <= 0 || h <= freqScaleHeight() + roundtableStripH + kDividerH + 2) { return; }
 
     const SpectrumLayout layout = spectrumLayout();
@@ -18805,8 +18877,9 @@ void SpectrumWidget::refreshReceiverFlagRegion()
         m_receiverFlagRegion = region;
         emit receiverFlagRegionChanged();
         emit roundtableInspectorSpotChanged();
-        // Roundtable keepouts belong to the tag child. The flag event
-        // filter separately invalidates static marker geometry as needed.
+        // The flags decide where your line and the tags go in the strip, which
+        // the tag child draws. The flag event filter separately invalidates
+        // static marker geometry as needed.
         if (m_roundtableTagDisplay != RoundtableTagDisplay::Hidden
             && (!m_roundtableTags.isEmpty() || m_roundtableCard.kind != RoundtableCardModel::Kind::Quiet)) {
             refreshRoundtableTagLayer();

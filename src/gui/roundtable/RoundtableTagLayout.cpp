@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Review fixes: the line on one side only
+//               (RoundtableStripLineSide), the details' upward anchor and
+//               opaque backing, one "Last heard" text. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-11-16: The details open over the waterfall: placeRoundtableDetails
 //               replaces placeRoundtableInspector. A reading's width in the
 //               line no longer follows its live values. J.J. Boyd (KG4VCF),
@@ -1797,6 +1801,12 @@ QString cardHeadText(const RoundtableCardModel& card)
     return QStringLiteral("Unknown");
 }
 
+// A last talker's ended note, "Last heard 12s ago".
+QString lastHeardText(const QString& age)
+{
+    return QStringLiteral("Last heard %1 ago").arg(age);
+}
+
 QString cardCaptionText(const RoundtableCardModel& card)
 {
     using Kind = RoundtableCardModel::Kind;
@@ -1810,7 +1820,7 @@ QString cardCaptionText(const RoundtableCardModel& card)
     case Kind::You:
         return QStringLiteral("Hearing you");
     case Kind::LastTalker:
-        return QStringLiteral("Last heard %1 ago").arg(ageText(card.endedAgoMs));
+        return lastHeardText(ageText(card.endedAgoMs));
     default:
         return QStringLiteral("Heard by");
     }
@@ -2016,10 +2026,11 @@ bool roundtableCardSameStructure(const RoundtableCardModel& a, const RoundtableC
     return true;
 }
 
-RoundtableDetailsPlacement placeRoundtableDetails(const QRect& below, const QRect& above, int anchorLeft, int height)
+RoundtableDetailsPlacement placeRoundtableDetails(const QRect& below, const QRect& above, int anchorLeft, int height,
+                                                  std::optional<int> upwardAnchorLeft)
 {
     // Strip design 5 (V4, V5): hang from the strip over the waterfall, or stand on
-    // the frequency scale over the spectrum when the waterfall is too short.
+    // the divider over the spectrum when the waterfall is too short.
     RoundtableDetailsPlacement placed;
     const int belowRoom = below.isEmpty() ? 0 : below.height() - 2 * kRoundtableDetailsGap;
     const int aboveRoom = above.isEmpty() ? 0 : above.height();
@@ -2030,11 +2041,25 @@ RoundtableDetailsPlacement placeRoundtableDetails(const QRect& below, const QRec
         return placed;
     }
     const int width = std::min(kRoundtableInspectorWidth, area.width());
-    const int left = std::clamp(anchorLeft, area.left(), area.left() + area.width() - width);
+    const int anchor = placed.upward && upwardAnchorLeft.has_value() ? *upwardAnchorLeft : anchorLeft;
+    const int left = std::clamp(anchor, area.left(), area.left() + area.width() - width);
     const int tall = std::clamp(height, 0, std::max(0, placed.upward ? aboveRoom : belowRoom));
     const int top = placed.upward ? area.top() + area.height() - tall : area.top() + kRoundtableDetailsGap;
     placed.rect = QRect(left, top, width, tall);
     return placed;
+}
+
+void paintRoundtableDetailsBacking(QPainter& p, const QRect& rect)
+{
+    // The frame's own fill, with no see-through: nothing under it shows.
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setPen(Qt::NoPen);
+    QColor solid = kColorFill;
+    solid.setAlpha(255);
+    p.setBrush(solid);
+    p.drawRoundedRect(QRectF(rect).adjusted(0.5, 0.5, -0.5, -0.5), kCardRadius, kCardRadius);
+    p.restore();
 }
 
 void paintRoundtableStripes(QPainter& p, const QRectF& rect, const QColor& on, const QColor& off, qreal onWidth,
@@ -2173,7 +2198,7 @@ QString stripLineNoteText(const RoundtableCardModel& card)
 QString stripLineNoteMeasureText(const RoundtableCardModel& card, const QString& widestAge)
 {
     if (card.kind == RoundtableCardModel::Kind::LastTalker && card.note.isEmpty() && !card.frozen) {
-        return QStringLiteral("Last heard %1 ago").arg(widestAge);
+        return lastHeardText(widestAge);
     }
     return stripLineNoteText(card);
 }
@@ -2300,7 +2325,7 @@ int layoutStripLine(const RoundtableCardModel& card, int readings, const QString
 
 RoundtableStripLinePlacement placeRoundtableStripLine(const RoundtableCardModel& card, const QRect& strip, int dialX,
                                                       bool flagFlipped, const QString& format,
-                                                      const QPaintDevice* device)
+                                                      const QPaintDevice* device, RoundtableStripLineSide side)
 {
     RoundtableStripLinePlacement placed;
     if (strip.isEmpty() || !stripLineHasContent(card)) { return placed; }
@@ -2324,17 +2349,25 @@ RoundtableStripLinePlacement placeRoundtableStripLine(const RoundtableCardModel&
         }
         return -1;
     };
-    bool far = widthWith(all) <= farRoom || farRoom >= nearRoom;
-    int readings = readingsIn(far ? farRoom : nearRoom);
-    if (readings < 0) {
-        // No room for the head on that side: the other, else none.
-        far = !far;
+    bool goRight = false;
+    int readings = -1;
+    if (side != RoundtableStripLineSide::Either) {
+        // One side only: a flag hangs into the strip on the other.
+        goRight = side == RoundtableStripLineSide::Right;
+        readings = readingsIn(goRight ? rightRoom : leftRoom);
+    } else {
+        bool far = widthWith(all) <= farRoom || farRoom >= nearRoom;
         readings = readingsIn(far ? farRoom : nearRoom);
+        if (readings < 0) {
+            // No room for the head on that side: the other, else none.
+            far = !far;
+            readings = readingsIn(far ? farRoom : nearRoom);
+        }
+        goRight = far != flagFlipped;
     }
     if (readings < 0) { return placed; }
 
     const int width = widthWith(readings);
-    const bool goRight = far != flagFlipped;
     const int left = std::clamp(goRight ? dialX + kStripLineDialGap : dialX - kStripLineDialGap - width, lo, hi - width);
     placed.line = QRect(left, strip.top() + kStripLineInset, width, kStripLineHeight);
     placed.readings = readings;

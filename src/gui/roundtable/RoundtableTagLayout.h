@@ -31,6 +31,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Review fixes: kRoundtableStripMinWaterfall, the line's
+//               RoundtableStripLineSide, an upward anchor for
+//               placeRoundtableDetails and paintRoundtableDetailsBacking.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: The details open over the waterfall, under the strip:
 //               placeRoundtableDetails, RoundtableDetailsPlacement,
 //               kRoundtableDetailsMinBelow. placeRoundtableInspector and
@@ -203,8 +207,12 @@ NEREUS_GUI_EXPORT QList<RoundtableTag> roundtableTagsFor(const RoundtableModel* 
 NEREUS_GUI_EXPORT RoundtableTagDisplay roundtableTagDisplayFor(const RoundtableModel* model);
 
 /// How tall the Roundtable strip is: the row between the frequency scale and
-/// the waterfall that holds the card and the tags.
+/// the waterfall that holds your frequency's line and the tags.
 inline constexpr int kRoundtableStripHeight = 30;
+/// The least waterfall the strip leaves under it. When the waterfall's share
+/// (its height before the strip comes out) is under kRoundtableStripHeight +
+/// this, the strip is not laid out and the waterfall keeps its whole share.
+inline constexpr int kRoundtableStripMinWaterfall = 28;
 
 /// Whether the pans show the Roundtable strip: Roundtable is available and its
 /// link is anything but Off (Connecting, Reconnecting, Offline, Hidden and Live
@@ -275,20 +283,26 @@ inline constexpr int kRoundtableDetailsMinBelow = 140;
 
 /// Where the details stand with the strip (design V4, V5). Pure. `below` is the
 /// waterfall area the details may cover (already cut clear of the time strip on
-/// its right edge); `above` is the spectrum from its top to the frequency
-/// scale's top edge. `anchorLeft` is the left edge to line up with (your line's
+/// its right edge); `above` is the spectrum from its top to the divider's
+/// top edge. `anchorLeft` is the left edge to line up with (your line's
 /// left when it is drawn, else dialX + 8, or dialX - 8 - width when the flag
 /// side says left). `height` is what the details want. They hang from
 /// below.top() + 4, cut to below.bottom() - 4, 300 wide or the area's width if
 /// narrower, left clamped into the area. When below has under 140 px of room
 /// (below.height() - 8 < 140) and above has more room than below, they stand on
 /// above's bottom edge instead, cut to above's height. `upward` reports which.
+/// Upward they line up with `upwardAnchorLeft` when given, else `anchorLeft`.
 struct RoundtableDetailsPlacement {
     QRect rect;
     bool upward = false;
 };
 NEREUS_GUI_EXPORT RoundtableDetailsPlacement placeRoundtableDetails(
-    const QRect& below, const QRect& above, int anchorLeft, int height);
+    const QRect& below, const QRect& above, int anchorLeft, int height,
+    std::optional<int> upwardAnchorLeft = std::nullopt);
+
+/// An opaque base under the details' frame at `rect`, for details standing
+/// over the spectrum, where a flag may be under them.
+NEREUS_GUI_EXPORT void paintRoundtableDetailsBacking(QPainter& p, const QRect& rect);
 
 /// A reading in the chosen format: "dBm", "S-units" or "Both".
 NEREUS_GUI_EXPORT QString roundtableSignalText(double dbm, const QString& format);
@@ -317,9 +331,14 @@ struct RoundtableStripLinePlacement {
 /// -33 dBm) and an age column for two digits and the unit, at least 78 px, and
 /// the clock and a last talker's "Last heard" take their widest two digits, so
 /// new readings, ages and clocks move nothing.
+/// With `side` Left or Right the line goes on that side of the dial only,
+/// readings dropping until it fits, and is null when not even the head fits
+/// there (a flag hanging into the strip on the other side).
+enum class RoundtableStripLineSide { Either, Left, Right };
 NEREUS_GUI_EXPORT RoundtableStripLinePlacement placeRoundtableStripLine(
     const RoundtableCardModel& card, const QRect& strip, int dialX, bool flagFlipped,
-    const QString& format, const QPaintDevice* device);
+    const QString& format, const QPaintDevice* device,
+    RoundtableStripLineSide side = RoundtableStripLineSide::Either);
 
 /// Draws the line where `placed` says: the rail, the head, the clock, each
 /// reading with its meter, then "+N more". `dimmed` is true while you are

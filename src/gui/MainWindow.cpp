@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: The details get their own left edge for opening upward
+//               (updateRoundtableInspectorSpot). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-11-16: The Roundtable details stand over the waterfall under the
 //               strip, lined up with your line (updateRoundtableInspectorSpot).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -8138,8 +8141,9 @@ void MainWindow::refreshRoundtableTags()
             it.value()->setRoundtableLineMenuEnabled(roundtable && roundtable->frequencyAvailable());
         }
     }
-    // The card stands on the pan that hosts the active slice's flag. A legacy
-    // server has no frequency card and keeps its tags (overlay design D21).
+    // Your frequency's line sits in the strip of the pan that hosts the active
+    // slice's flag. A legacy server has no frequency card and keeps its tags
+    // (overlay design D21).
     RoundtableCardModel card;
     if (active && !activeContext.isEmpty() && roundtable && roundtable->frequencyAvailable()) {
         card = roundtableCardModelFor(roundtable, sliceIds, activeContext,
@@ -8358,7 +8362,7 @@ void MainWindow::updateRoundtableInspectorSpot()
     const SpectrumWidget::RoundtableInspectorSpot spot
         = pan->roundtableInspectorSpot(active ? active->sliceIndex() : -1, m_roundtablePeekAnchorHz);
     // Under the strip over the waterfall, lined up with your line (strip design 5).
-    m_roundtablePeek->setInspectorSpot(spot.below, spot.above, spot.anchorLeft);
+    m_roundtablePeek->setInspectorSpot(spot.below, spot.above, spot.anchorLeft, spot.upwardAnchorLeft);
     pan->setRoundtableInspectorRect(m_roundtablePeek->inspectorRect());
 }
 
