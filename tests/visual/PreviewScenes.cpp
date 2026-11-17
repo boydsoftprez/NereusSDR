@@ -11,6 +11,9 @@
 // transmit scene refuses to run if one exists).
 //
 // Modification history (NereusSDR):
+//   2026-11-16: Details opened upward are checked against their own left edge
+//               (past the flag, or the dial's other side) and the flags.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: The Roundtable strip: checkRoundtableTags checks the strip
 //               (every tag and your line inside it, off the spectrum and band
 //               plan, none overlapping, the spectrum kept with the strip
@@ -7320,7 +7323,8 @@ void checkRoundtableTags(SceneContext& ctx, const QString& name)
 
 // Pan 1's details (strip design 5, 6): open from your line, under the strip
 // over the waterfall, or upward over the spectrum when the waterfall has
-// under kRoundtableDetailsMinBelow px of room, clear of the strip.
+// under kRoundtableDetailsMinBelow px of room, clear of the strip. Upward they
+// line up with their own left edge and stand clear of the flags.
 void checkRoundtableDetails(SceneContext& ctx, const QString& name, bool upward)
 {
     SpectrumWidget* s = panOne(ctx);
@@ -7337,7 +7341,9 @@ void checkRoundtableDetails(SceneContext& ctx, const QString& name, bool upward)
     const bool sideRight = details->upwardForTest() == upward;
     const bool inside = area.contains(rect) && !rect.intersects(strip);
     const bool topRight = upward || rect.top() == strip.bottom() + 1 + kRoundtableDetailsGap;
-    const bool lined = !line.isNull() && rect.left() == line.left();
+    const bool lined = upward
+        ? rect.left() == spot.upwardAnchorLeft && !s->receiverFlagRegion().intersects(rect)
+        : !line.isNull() && rect.left() == line.left();
     ctx.checks.append(QJsonObject{{QStringLiteral("check"), QStringLiteral("roundtable-details")},
                                   {QStringLiteral("scene"), name},
                                   {QStringLiteral("upward"), details->upwardForTest()},
