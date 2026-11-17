@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Roundtable
+
+- **Roundtable moves off the spectrum on the desktop.** While Roundtable is on,
+  each pan has a thin strip between the frequency scale and the waterfall. Your
+  frequency's readings sit in one line there beside the slice's dial, and the
+  other frequencies' tags sit at their spots in the same strip. The spectrum
+  keeps its full height; the waterfall gives up the room. Click the line or a
+  tag and the details open over the waterfall, or upward over the spectrum when
+  the waterfall is too short.
+
 ## [2026.11.1] - 2026-11-08
 
 Changes since desktop/Core 2026.11.0. Update the Core and desktop together.

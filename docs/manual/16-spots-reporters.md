@@ -97,13 +97,13 @@ Roundtable is a public list of who is on each frequency and how each station hea
 
 Open **Tools > Spot Hub**, select the **Roundtable** tab and select **Start**. The Core holds this connection. The first time, **Roundtable is public** lists what your station will share. Choose **Go live**, or **Stay hidden** to keep reading while your station and your readings are not sent. Other stations can still hear you when you talk, and may name you. The status line reads **Connected as** and your callsign once it is up. **Hide my station from Roundtable** changes that choice later, and **Auto-Start** starts the connection with the Core. On iPhone or iPad, use **Tools > Roundtable**, which has its own **Start** and **Stop**.
 
-### Read the card on your frequency
+### Read the line on your frequency
 
-On a pan, each frequency with stations has a tag along the foot of the display. Tags that would overlap fold into one `+N` tag. Click it to list its frequencies in a box at the foot of the pan, and click a row to look at that frequency.
+While Roundtable is on, each pan has a thin Roundtable strip between the frequency scale and the waterfall. The spectrum keeps its full height; the waterfall gives up the room. Each frequency with stations has a tag in the strip at its spot. Tags that would overlap fold into one `+N` tag. Click it to list its frequencies in a box over the waterfall, and click a row to look at that frequency.
 
-On the frequency your slice is tuned to, in its current mode, a card stands at the foot of the pan beside the slice's flag whenever someone is talking or has just talked. A quiet frequency shows only its tag. The card's top line shows who it is about and the frequency. Under it, a caption heads one row per listener: callsign, signal and age, with a small meter under each reading. Listeners are listed nearest first. If the card cannot fit every row, its last line counts the rest, such as **+2 more ›**.
+On the frequency your slice is tuned to, in its current mode, a line stands in the strip beside the slice's dial whenever someone is talking or has just talked. A quiet frequency shows only its tag. The line starts with who it is about, then one reading per listener side by side: callsign, signal and age, with a small meter under each reading. Listeners are listed nearest first. If the line cannot fit every reading, it ends with a count of the rest, such as **+2 more ›**.
 
-| The card shows | What it means |
+| The line or its details show | What it means |
 | --- | --- |
 | A callsign, with **Heard by** | That station is on the air. The rows are its reports. |
 | A callsign, with **Last heard 6s ago** | The turn has ended. The reports stay, with their ages. |
@@ -116,13 +116,13 @@ On the frequency your slice is tuned to, in its current mode, a card stands at t
 
 Two stations keyed a few kilohertz apart in different rooms are not a double.
 
-A reading older than 20 seconds turns gray and its age turns amber. Read each report alongside its age rather than assuming it is current. While Roundtable is connecting, the tags are hidden. While it is reconnecting or offline, the card and tags freeze in gray and the caption reads **Last known**, so nothing claims to be live. The card adds **Reconnecting** in amber, or **Offline since** and the time in UTC, and the slice's flag says **Reconnecting** or **Offline**. While you are hidden, everything is dimmed and the card says **You are hidden**.
+A reading older than 20 seconds turns gray and its age turns amber. Read each report alongside its age rather than assuming it is current. While Roundtable is connecting, the tags are hidden. While it is reconnecting or offline, the line and tags freeze in gray and the caption reads **Last known**, so nothing claims to be live. The line adds **Reconnecting** in amber, or **Offline since** and the time in UTC, and the slice's flag says **Reconnecting** or **Offline**. While you are hidden, everything is dimmed and the line says **You are hidden**.
 
 To change the units, open the **Roundtable** tab in Spot Hub and set **Signal format:** to **dBm**, **S-units** or **Both**, or right-click a tag and choose **Signal: dBm · Change**. The choice applies to this computer only.
 
 ### Look at a frequency without tuning
 
-Click any tag, your own card, or the Roundtable line on any slice's flag. A box opens at the foot of the pan, in the card's place, showing that frequency. Your radio does not move. When it is not your frequency, the box says **Viewing** and how far away it is, with **‹ Back to my slice**. It lists who is **On frequency**, with **keyed** and each station's offset, then the readings with distance and bearing. When someone is on the air there, a **Your pan** row first shows the strongest signal your own panadapter sees in that sideband. It is blank while you transmit or when the frequency is off your pan.
+Click any tag, your own line in the strip, or the Roundtable line on any slice's flag. A box opens over the waterfall, just under the strip and lined up with your line, showing that frequency. When the waterfall is too short for it, the box opens upward over the spectrum instead. Your radio does not move. When it is not your frequency, the box says **Viewing** and how far away it is, with **‹ Back to my slice**. It lists who is **On frequency**, with **keyed** and each station's offset, then the readings with distance and bearing. When someone is on the air there, a **Your pan** row first shows the strongest signal your own panadapter sees in that sideband. It is blank while you transmit or when the frequency is off your pan.
 
 **Tune slice A here** moves your slice there and closes the box. It is grayed while you transmit, when no radio is connected, and when the slice is already there. **Messages** opens the Roundtable panel on that frequency. The **⋯** button offers the same choices plus **Read reports**. Click the same thing again, select **×**, or press Escape to close the box. Clicking another tag switches the box to it. Clicking or dragging the band still tunes as usual and leaves the box open. You can look at a frequency while you are transmitting.
 
