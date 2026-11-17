@@ -3263,6 +3263,34 @@ private slots:
         QCOMPARE(pan.widget.roundtableCardPlacementsForTest(), placements + 1);
     }
 
+    // A link note's new words are structure: the line is placed again at the new width.
+    void aNewLinkNotePlacesTheLineAgain()
+    {
+        Pan pan;
+        const QString room = QStringLiteral("frequency:lsb-7200000");
+        RoundtableCardModel card;
+        card.hz = 7200000;
+        card.frozen = true;
+        card.note = QStringLiteral("Reconnecting");
+        pan.widget.setRoundtableTags({}, RoundtableTagDisplay::Frozen);
+        pan.widget.setRoundtableCard(card, room);
+        pan.draw();
+        const QRect before = pan.widget.roundtableStripLineForTest().line;
+        QVERIFY(!before.isNull());
+        const int placements = pan.widget.roundtableCardPlacementsForTest();
+
+        RoundtableCardModel offline = card;
+        offline.note = QStringLiteral("Offline since 14:02 UTC");
+        QVERIFY(!roundtableCardSameStructure(offline, card));
+        pan.widget.setRoundtableCard(offline, room);
+        pan.draw();
+        QCOMPARE(pan.widget.roundtableCardPlacementsForTest(), placements + 1);
+        const RoundtableStripLinePlacement after = pan.widget.roundtableStripLineForTest();
+        QVERIFY2(after.line.width() > before.width(),
+                 qPrintable(QStringLiteral("line %1 wide, was %2").arg(after.line.width()).arg(before.width())));
+        QVERIFY(lineTexts(offline, after).join(QLatin1Char('|')).contains(QStringLiteral("Offline since 14:02 UTC")));
+    }
+
     void theTurnShownIsExactThenNearestThenLatest()
     {
         CardRig rig;
@@ -3809,6 +3837,73 @@ private slots:
         } else {
             QVERIFY(line->rect.left() > dialX);
         }
+    }
+
+    // A quiet line that shows only a link note follows a flag into the strip as
+    // a talking line does: it is drawn again, on the dial's other side.
+    void aQuietLinkNoteLineMovesAsideForAFlagInTheStrip()
+    {
+        RoundtableCardModel card;
+        card.hz = 7200000;
+        card.frozen = true;
+        card.note = QStringLiteral("Reconnecting");
+        const QString room = QStringLiteral("frequency:lsb-7200000");
+        {
+            Pan pan;
+            pan.widget.setSpectrumFrac(0.10f);
+            pan.widget.updateVfoPositions();
+            const QRect strip = pan.widget.roundtableStripRectForTest();
+            QVERIFY(!strip.isNull());
+            QList<QRect> flagInStrip;
+            for (const QRect& rect : pan.widget.receiverFlagRegion()) {
+                if (rect.intersects(QRect(rect.left(), strip.top(), rect.width(), strip.height()))) {
+                    flagInStrip.append(rect);
+                }
+            }
+            QVERIFY(!flagInStrip.isEmpty());
+            const int dialX = pan.widget.hzToX(7200000.0, pan.widget.roundtableTagSpectrumRectForTest());
+            pan.widget.setRoundtableTags({}, RoundtableTagDisplay::Frozen);
+            pan.widget.setRoundtableCard(card, room);
+            pan.draw();
+            const QRect line = pan.widget.roundtableStripLineForTest().line;
+            QVERIFY(!line.isNull());
+            QVERIFY(!pan.widget.receiverFlagRegion().intersects(line));
+            if (flagInStrip.first().center().x() > dialX) {
+                QVERIFY(line.right() < dialX);
+            } else {
+                QVERIFY(line.left() > dialX);
+            }
+        }
+#ifdef NEREUS_GPU_SPECTRUM
+        // The tag child draws the line: a flag that moves asks it to draw again.
+        class QuietSpectrum : public SpectrumWidget {
+            void paintEvent(QPaintEvent*) override {}
+        } widget;
+        class Paints : public QObject {
+        public:
+            int count = 0;
+            bool eventFilter(QObject*, QEvent* event) override {
+                if (event->type() == QEvent::Paint) { ++count; }
+                return false;
+            }
+        } paints;
+        widget.resize(1000, 700);
+        widget.setSampleRate(kPanSpanHz);
+        widget.setFrequencyRange(kPanCenterHz, kPanSpanHz);
+        widget.setConnectionState(ConnectionState::Connected);
+        widget.setRoundtableStripShown(true);
+        QVERIFY(widget.m_roundtableTagLayer);
+        widget.m_roundtableTagLayer->installEventFilter(&paints);
+        widget.setRoundtableTags({}, RoundtableTagDisplay::Frozen);
+        widget.setRoundtableCard(card, room);
+        widget.show();
+        QTRY_VERIFY(paints.count > 0);
+        QTRY_VERIFY(!widget.roundtableStripLineForTest().line.isNull());
+        const int before = paints.count;
+        widget.m_receiverFlagRegion = QRegion(QRect(-100, -100, 10, 10));
+        widget.refreshReceiverFlagRegion();
+        QTRY_VERIFY(paints.count > before);
+#endif
     }
 
     void aTallPansFlagLeavesYourLineUnderIt()

@@ -2013,8 +2013,10 @@ QColor roundtableCardColor(const RoundtableCardModel& card)
 
 bool roundtableCardSameStructure(const RoundtableCardModel& a, const RoundtableCardModel& b)
 {
+    // The note's words size the line ("Reconnecting", then "Offline since ..."):
+    // new words are structure, so the line is placed again.
     if (a.kind != b.kind || a.hz != b.hz || a.keyed != b.keyed || a.keyedYou != b.keyedYou || a.people != b.people
-        || a.frozen != b.frozen || a.note.isEmpty() != b.note.isEmpty() || a.rows.size() != b.rows.size()
+        || a.frozen != b.frozen || a.note != b.note || a.rows.size() != b.rows.size()
         || a.onFrequency.size() != b.onFrequency.size()) {
         return false;
     }
