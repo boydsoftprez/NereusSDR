@@ -51,6 +51,7 @@
 #include "core/session/IStationLink.h"
 #include "core/session/SessionMessages.h"
 #include "core/session/StationClient.h"
+#include "core/session/StationCapabilities.h"
 #include "core/session/StationServer.h"
 #include "core/settings/SettingsProxy.h"
 #include "fakes/LoopbackTransport.h"
@@ -307,7 +308,8 @@ void TstRemoteOcCal::keysAreOnTheListAtVersion8()
     QVERIFY(s.connect());
     // 14 since the Core owns Prevent transmitting on a different band, 15
     // since a remote window edits the CFC bands, 16 since the CW settings.
-    QCOMPARE(s.client->capabilities().transmitSettingsVersion, 16);
+    QCOMPARE(s.client->capabilities().transmitSettingsVersion,
+             kTransmitSettingsTxProfileFileVersion);
     QVERIFY(s.client->transmitSettingsAvailable(8));
     const IStationLink* link = s.window.stationLink();
     QVERIFY(link != nullptr && link->transmitSettingsAvailable(8));

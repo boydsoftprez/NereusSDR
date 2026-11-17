@@ -458,6 +458,7 @@
 #include "core/session/StationServer.h"
 #include "core/StationRotorController.h"
 #include "models/BandGrid.h"
+#include "core/TxProfileFile.h"
 #include "models/RadioModel.h"
 #include "models/RotorModel.h"
 #include "models/StationTciModel.h"
@@ -916,6 +917,10 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
         {"txProfile.save", {arg("name", kUtf8)}, "transmitSettingsVersion", 3,
          kRadioIdentitySessionProtocolMinor},
         {"txProfile.delete", {arg("name", kUtf8)}, "transmitSettingsVersion", 3,
+         kRadioIdentitySessionProtocolMinor},
+        // One transmit profile from a file (transmitSettingsVersion 17).
+        {"txProfile.import", {arg("name", kUtf8), arg("keysJson", kUtf8)},
+         "transmitSettingsVersion", kTransmitSettingsTxProfileFileVersion,
          kRadioIdentitySessionProtocolMinor},
         {"rade.resetVocoder", {}, "transmitSettingsVersion", 3,
          kRadioIdentitySessionProtocolMinor},
@@ -1944,7 +1949,8 @@ void SessionCommandDispatcher::dispatch(const SessionMessage& invoke)
     } else if (invoke.commandVerb == "setTunePowerForTxBand") {
         handleTunePowerForTxBand(invoke);
     } else if (invoke.commandVerb == "txProfile.select" || invoke.commandVerb == "txProfile.save"
-               || invoke.commandVerb == "txProfile.delete") {
+               || invoke.commandVerb == "txProfile.delete"
+               || invoke.commandVerb == "txProfile.import") {
         handleTxProfile(invoke);
     } else if (invoke.commandVerb == "rade.resetVocoder") {
         handleRadeResetVocoder(invoke);
@@ -4775,15 +4781,22 @@ void SessionCommandDispatcher::handleTunePowerForTxBand(const SessionMessage& in
 void SessionCommandDispatcher::handleTxProfile(const SessionMessage& invoke)
 {
     const QByteArray& verb = invoke.commandVerb;
+    const bool importing = verb == "txProfile.import";
     QString name;
-    if (!hasExactlyArguments(invoke.arguments, { "name" })
-        || !findUtf8Argument(invoke.arguments, "name", &name)) {
+    QString keysJson;
+    const bool shape = importing
+        ? hasExactlyArguments(invoke.arguments, { "name", "keysJson" })
+            && findUtf8Argument(invoke.arguments, "name", &name)
+            && findUtf8Argument(invoke.arguments, "keysJson", &keysJson)
+        : hasExactlyArguments(invoke.arguments, { "name" })
+            && findUtf8Argument(invoke.arguments, "name", &name);
+    if (!shape) {
         emitResult(verb, invoke.commandId, false,
                    QStringLiteral("The request for the transmit profile was not understood."), {});
         return;
     }
-    // iPhone app plan Task 77 (ruling 7.7): selecting, saving or deleting a
-    // transmit profile is the holder's while transmit is held.
+    // iPhone app plan Task 77 (ruling 7.7): selecting, saving, deleting or
+    // importing a transmit profile is the holder's while transmit is held.
     if (refusedForTheHolder(verb, invoke.commandId)) {
         return;
     }
@@ -4793,6 +4806,21 @@ void SessionCommandDispatcher::handleTxProfile(const SessionMessage& invoke)
         done = m_radioModel->selectTxProfileForStation(name, &reason, m_transmitSettingsOnAir);
     } else if (verb == "txProfile.save") {
         done = m_radioModel->saveTxProfileForStation(name, &reason, m_transmitSettingsOnAir);
+    } else if (importing) {
+        QHash<QString, QString> parsed;
+        if (!TxProfileFile::parseKeys(keysJson, &parsed, &reason)) {
+            emitResult(verb, invoke.commandId, false,
+                       reason.isEmpty()
+                           ? QStringLiteral("The transmit profile was not understood.")
+                           : reason, {});
+            return;
+        }
+        QHash<QString, QVariant> values;
+        for (auto it = parsed.constBegin(); it != parsed.constEnd(); ++it) {
+            values.insert(it.key(), it.value());
+        }
+        done = m_radioModel->importTxProfileForStation(name, values, &reason,
+                                                       m_transmitSettingsOnAir);
     } else {
         done = m_radioModel->deleteTxProfileForStation(name, &reason, m_transmitSettingsOnAir);
     }

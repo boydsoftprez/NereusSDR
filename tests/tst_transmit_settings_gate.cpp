@@ -260,8 +260,10 @@ void TstTransmitSettingsGate::coreOffersTransmitSettingsVersion()
     // Prevent TX'ing on a different band became the Core's setting, 15 since
     // a remote window edits the CFC bands (cfcProfile), 16 since the CW
     // settings are on `transmit`.
-    QCOMPARE(s.server->buildCapabilities().transmitSettingsVersion, 16);
-    QCOMPARE(s.client->capabilities().transmitSettingsVersion, 16);
+    QCOMPARE(s.server->buildCapabilities().transmitSettingsVersion,
+             kTransmitSettingsTxProfileFileVersion);
+    QCOMPARE(s.client->capabilities().transmitSettingsVersion,
+             kTransmitSettingsTxProfileFileVersion);
     QVERIFY(s.client->transmitSettingsAvailable());
     QVERIFY(s.client->transmitSettingsAvailable(1));
     QVERIFY(s.client->transmitSettingsAvailable(2));

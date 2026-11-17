@@ -106,6 +106,8 @@ public:
     QComboBox*   profileCombo() const { return m_combo; }
     QPushButton* saveButton()   const { return m_saveBtn; }
     QPushButton* deleteButton() const { return m_deleteBtn; }
+    QPushButton* exportButton() const { return m_exportBtn; }
+    QPushButton* importButton() const { return m_importBtn; }
     QSpinBox*    filterLowSpin()  const { return m_filterLowSpin; }
     QSpinBox*    filterHighSpin() const { return m_filterHighSpin; }
     QSpinBox*    amCarrierSpin()  const { return m_amCarrierSpin; }
@@ -154,6 +156,16 @@ public:
     using UnsavedPromptHook = std::function<UnsavedPromptResult(const QString& currentName)>;
     void setUnsavedPromptHook(UnsavedPromptHook hook);
 
+    // Export and Import file paths. An empty return cancels. When unset,
+    // the page opens the native file dialog.
+    using FilePathHook = std::function<QString()>;
+    void setExportPathHook(FilePathHook hook);
+    void setImportPathHook(FilePathHook hook);
+
+    // Replaces the export and import result message.
+    using FileResultHook = std::function<void(bool success, const QString& text)>;
+    void setFileResultHook(FileResultHook hook);
+
     // simulateUserComboChangeForTest: drive a user-equivalent combo change
     // without needing the combo to actually have focus.  Invokes the same
     // unsaved-prompt flow that the focus-gated path runs.  newName must be
@@ -176,6 +188,9 @@ private slots:
     // the verbatim Thetis string via RejectionMessageHook.
     void onDeleteClicked();
 
+    void onExportClicked();
+    void onImportClicked();
+
 private:
     void buildUi();
     void rebuildCombo();
@@ -189,6 +204,10 @@ private:
     // Run the J.4 prompt + branch logic for a switching-to newName.
     // Returns true if the switch should proceed; false on Cancel.
     bool handleUnsavedPrompt(const QString& newName);
+    UnsavedPromptResult promptUnsaved();
+    void showFileResult(bool success, const QString& text);
+    QString chooseExportPath(const QString& profileName);
+    QString chooseImportPath();
 
     // ── Wiring ──────────────────────────────────────────────────────────────
     MicProfileManager* m_profileMgr{nullptr};
@@ -198,6 +217,8 @@ private:
     QComboBox*   m_combo{nullptr};
     QPushButton* m_saveBtn{nullptr};
     QPushButton* m_deleteBtn{nullptr};
+    QPushButton* m_exportBtn{nullptr};
+    QPushButton* m_importBtn{nullptr};
     QSpinBox*    m_filterLowSpin{nullptr};
     QSpinBox*    m_filterHighSpin{nullptr};
     QSpinBox*    m_amCarrierSpin{nullptr};
@@ -223,6 +244,9 @@ private:
     DeleteConfirmHook     m_deleteConfirmHook;
     RejectionMessageHook  m_rejectionMessageHook;
     UnsavedPromptHook     m_unsavedPromptHook;
+    FilePathHook          m_exportPathHook;
+    FilePathHook          m_importPathHook;
+    FileResultHook        m_fileResultHook;
 };
 
 } // namespace NereusSDR

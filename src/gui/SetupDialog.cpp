@@ -2442,7 +2442,13 @@ void SetupDialog::buildTree()
     registerPage(diagnostics, "Settings Validation", SetupScope::Mixed,
                  [this] { return new SettingsValidationPage(m_model); });
     registerPage(diagnostics, "Export / Import", SetupScope::ThisComputer,
-                 [this] { return new ExportImportConfigPage(m_model); });
+                 [this]() -> QWidget* {
+        auto* page = new ExportImportConfigPage(m_model);
+        connect(page, &ExportImportConfigPage::txProfilePageRequested, this, [this] {
+            selectPage(QStringLiteral("TX Profile"));
+        });
+        return page;
+    });
     // Remote-window parity Task 22 (R-R3-49): in a remote window the page
     // also shows the Core's recent log.
     registerPage(diagnostics, "Logs", SetupScope::ThisComputer,

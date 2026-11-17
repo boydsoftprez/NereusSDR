@@ -425,6 +425,24 @@ void ExportImportConfigPage::buildUI()
             &ExportImportConfigPage::onImportAllClicked);
     connect(m_exportRadioBtn, &QPushButton::clicked, this,
             &ExportImportConfigPage::onExportRadioClicked);
+
+    auto* profileGroup = addSection(QStringLiteral("TX Profile"));
+    auto* profileLayout = qobject_cast<QVBoxLayout*>(profileGroup->layout());
+    m_txProfileBtn = new QPushButton(QStringLiteral("Open TX Profile…"));
+    m_txProfileBtn->setObjectName(QStringLiteral("openTxProfileButton"));
+    m_txProfileBtn->setToolTip(QStringLiteral(
+        "Import or export one transmit profile."));
+    auto* profileRow = new QHBoxLayout;
+    profileRow->addWidget(m_txProfileBtn);
+    profileRow->addStretch();
+    profileLayout->addLayout(profileRow);
+    auto* profileNote = new QLabel(QStringLiteral(
+        "One transmit profile is imported and exported on the TX Profile page."));
+    profileNote->setObjectName(QStringLiteral("txProfileRedirectExplanation"));
+    profileNote->setWordWrap(true);
+    profileLayout->addWidget(profileNote);
+    connect(m_txProfileBtn, &QPushButton::clicked, this,
+            &ExportImportConfigPage::txProfilePageRequested);
 }
 
 void ExportImportConfigPage::onExportAllClicked()

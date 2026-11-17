@@ -263,7 +263,7 @@
         {
             "kind": "i64",
             "name": "transmitSettingsVersion",
-            "value": 16
+            "value": 17
         },
         {
             "kind": "i64",
@@ -1138,6 +1138,24 @@
             "capabilityVersion": 3,
             "minMinor": 11,
             "verb": "txProfile.delete"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "name",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "keysJson",
+                    "optional": false
+                }
+            ],
+            "capability": "transmitSettingsVersion",
+            "capabilityVersion": 17,
+            "minMinor": 11,
+            "verb": "txProfile.import"
         },
         {
             "arguments": [

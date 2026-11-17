@@ -4986,6 +4986,13 @@ public:
                                  bool takenOnAir = false);
     bool deleteTxProfileForStation(const QString& name, QString* reason,
                                    bool takenOnAir = false);
+    // transmitSettingsVersion 17: store one imported profile and select it,
+    // as Setup > Audio > TX Profile's Import does. `values` are the file's
+    // keys; missing live keys take the factory defaults. Refused on the air
+    // the same way select is. None keys the radio.
+    bool importTxProfileForStation(const QString& name,
+                                   const QHash<QString, QVariant>& values,
+                                   QString* reason, bool takenOnAir = false);
     // R-R3-49 / R-IOS-18 (paProfileVersion 1): the PA Gain page's profile
     // actions and edits, for a paProfile verb, through the Core's own
     // PaProfileManager as the local page uses it. Each is refused, changing

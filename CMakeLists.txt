@@ -1200,6 +1200,8 @@ set(CORE_SOURCES
     src/core/dsp/DspAssetStore.cpp
     src/core/MoxController.cpp
     src/core/MicProfileManager.cpp
+    src/core/TxProfileFile.cpp
+    src/core/TxProfileFile.h
     src/core/ParaEqEnvelope.cpp
     src/core/CfcProfile.cpp
     # CW transmit (R-CW-01, R-CW-02): the CW value types and the pitch accessor.

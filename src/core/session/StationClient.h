@@ -1564,6 +1564,9 @@ public:
     CommandOutcome requestTxProfileSelect(const QString& name) override;
     CommandOutcome requestTxProfileSave(const QString& name) override;
     CommandOutcome requestTxProfileDelete(const QString& name) override;
+    // transmitSettingsVersion 17: see IStationLink. Sent only to a Core at
+    // transmitSettingsVersion 17.
+    CommandOutcome requestTxProfileImport(const QString& name, const QString& keysJson) override;
     CommandOutcome requestRadeResetVocoder() override;
     // transmitSettingsVersion 15: see IStationLink. Sent only to a Core at
     // transmitSettingsVersion 15.

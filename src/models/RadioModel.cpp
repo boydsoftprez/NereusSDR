@@ -8316,7 +8316,8 @@ void RadioModel::mirrorTxProfilesFromStation()
         return;
     }
     m_micProfileMgr->setStationMirror(
-        [this](MicProfileManager::StationRequest request, const QString& name) {
+        [this](MicProfileManager::StationRequest request, const QString& name,
+               const QHash<QString, QVariant>& values) {
             if (m_station == nullptr) {
                 reportStationSliceCommandRejected(
                     IStationLink::transmitSettingsUnavailableReason());
@@ -8333,6 +8334,16 @@ void RadioModel::mirrorTxProfilesFromStation()
             case MicProfileManager::StationRequest::Delete:
                 outcome = m_station->requestTxProfileDelete(name);
                 break;
+            case MicProfileManager::StationRequest::Import: {
+                QJsonObject object;
+                for (auto it = values.constBegin(); it != values.constEnd(); ++it) {
+                    object.insert(it.key(), it.value().toString());
+                }
+                const QString keysJson = QString::fromUtf8(
+                    QJsonDocument(object).toJson(QJsonDocument::Compact));
+                outcome = m_station->requestTxProfileImport(name, keysJson);
+                break;
+            }
             }
             if (!outcome.sent) {
                 reportStationSliceCommandRejected(outcome.reason);
@@ -8423,6 +8434,33 @@ bool RadioModel::deleteTxProfileForStation(const QString& name, QString* reason,
     }
     if (!m_micProfileMgr->deleteProfile(name)) {
         if (reason) { *reason = QStringLiteral("The Core did not delete the transmit profile."); }
+        return false;
+    }
+    return true;
+}
+
+bool RadioModel::importTxProfileForStation(const QString& name,
+                                           const QHash<QString, QVariant>& values,
+                                           QString* reason, bool takenOnAir)
+{
+    if (m_role != Role::Local || m_micProfileMgr == nullptr) {
+        if (reason) { *reason = QStringLiteral("The Core cannot change its transmit settings."); }
+        return false;
+    }
+    if (!takenOnAir && stationOnAirRefusal(reason)) {
+        return false;
+    }
+    const QString trimmed = name.trimmed();
+    if (trimmed.isEmpty()) {
+        if (reason) { *reason = QStringLiteral("Give the transmit profile a name."); }
+        return false;
+    }
+    if (m_micProfileMgr->profileNames().isEmpty()) {
+        if (reason) { *reason = QStringLiteral("The Core has no radio to keep transmit profiles for."); }
+        return false;
+    }
+    if (!m_micProfileMgr->importProfile(trimmed, values, &m_transmitModel)) {
+        if (reason) { *reason = QStringLiteral("The Core did not import the transmit profile."); }
         return false;
     }
     return true;

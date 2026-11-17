@@ -180,6 +180,8 @@ private slots:
     void saveRefusals();
     void deleteRemovesTheProfile();
     void deleteRefusals();
+    void importStoresTheProfileAndSelectsIt();
+    void importRefusals();
     void wrongArgumentsAreNotUnderstood();
     void aRefusedSelectShowsTheCoresProfileAgain();
     void anUnconnectedWindowAsksNothing();
@@ -288,7 +290,8 @@ void TstTxProfileSelect::aMirrorNeverKeepsProfilesHere()
     QStringList asked;
     MicProfileManager mirror;
     mirror.setStationMirror([&asked](MicProfileManager::StationRequest request,
-                                     const QString& name) {
+                                     const QString& name,
+                                     const QHash<QString, QVariant>&) {
         asked.append(QStringLiteral("%1:%2").arg(int(request)).arg(name));
         return true;
     });
@@ -490,6 +493,55 @@ void TstTxProfileSelect::deleteRefusals()
     QVERIFY(!s.windowProfiles().deleteProfile(QStringLiteral("Default")));
 }
 
+void TstTxProfileSelect::importStoresTheProfileAndSelectsIt()
+{
+    Session s(m_securityDir.path(), this);
+    QVERIFY(s.connect());
+    QVERIFY(s.client->transmitSettingsAvailable(kTransmitSettingsTxProfileFileVersion));
+    QHash<QString, QVariant> values;
+    values.insert(QStringLiteral("MicGain"), QStringLiteral("-14"));
+    values.insert(QStringLiteral("NotAProfileKey"), QStringLiteral("nope"));
+    QVERIFY(s.windowProfiles().importProfile(QStringLiteral("Desk,Mic"), values,
+                                             &s.window.transmitModel()));
+    QTRY_COMPARE(s.coreProfiles().activeProfileName(), QStringLiteral("Desk_Mic"));
+    QTRY_COMPARE(s.windowProfiles().activeProfileName(), QStringLiteral("Desk_Mic"));
+    QCOMPARE(storedField(QStringLiteral("Desk_Mic"), QStringLiteral("MicGain")),
+             QStringLiteral("-14"));
+    QCOMPARE(s.core->transmitModel().micGainDb(), -14);
+    QCOMPARE(storedField(QStringLiteral("Desk_Mic"), QStringLiteral("FilterLow")),
+             MicProfileManager::defaultProfileValues().value(QStringLiteral("FilterLow")).toString());
+    QVERIFY(storedField(QStringLiteral("Desk_Mic"), QStringLiteral("NotAProfileKey")).isEmpty());
+}
+
+void TstTxProfileSelect::importRefusals()
+{
+    Session s(m_securityDir.path(), this);
+    QVERIFY(s.connect());
+    const int count = s.coreProfiles().profileNames().size();
+    SessionMessage result = s.invoke("txProfile.import",
+        {nameArg(QStringLiteral("   ")),
+         nameArg(QStringLiteral("{}"), "keysJson")});
+    QVERIFY(!result.accepted);
+    QCOMPARE(result.reason, QStringLiteral("Give the transmit profile a name."));
+
+    result = s.invoke("txProfile.import",
+        {nameArg(QStringLiteral("Broken")),
+         nameArg(QStringLiteral("[]"), "keysJson")});
+    QVERIFY(!result.accepted);
+    QCOMPARE(result.reason, QStringLiteral("The transmit profile was not understood."));
+
+    s.keyCore();
+    QTRY_VERIFY(s.core->moxController()->isMox());
+    result = s.invoke("txProfile.import",
+        {nameArg(QStringLiteral("On Air")),
+         nameArg(QStringLiteral("{\"MicGain\":\"-9\"}"), "keysJson")});
+    QVERIFY(!result.accepted);
+    QCOMPARE(result.reason, kOnAir);
+    s.unkeyCore();
+    QCOMPARE(s.coreProfiles().profileNames().size(), count);
+    QVERIFY(storedField(QStringLiteral("On Air"), QStringLiteral("MicGain")).isEmpty());
+}
+
 void TstTxProfileSelect::wrongArgumentsAreNotUnderstood()
 {
     Session s(m_securityDir.path(), this);
@@ -498,7 +550,8 @@ void TstTxProfileSelect::wrongArgumentsAreNotUnderstood()
         QStringLiteral("The request for the transmit profile was not understood.");
     for (const QByteArray verb : {QByteArrayLiteral("txProfile.select"),
                                   QByteArrayLiteral("txProfile.save"),
-                                  QByteArrayLiteral("txProfile.delete")}) {
+                                  QByteArrayLiteral("txProfile.delete"),
+                                  QByteArrayLiteral("txProfile.import")}) {
         SessionMessage result = s.invoke(verb, {nameArg(QStringLiteral("AM"), "profile")});
         QVERIFY(!result.accepted);
         QCOMPARE(result.reason, notUnderstood);
@@ -538,6 +591,7 @@ void TstTxProfileSelect::anUnconnectedWindowAsksNothing()
          {client.requestTxProfileSelect(QStringLiteral("AM")),
           client.requestTxProfileSave(QStringLiteral("AM")),
           client.requestTxProfileDelete(QStringLiteral("AM")),
+          client.requestTxProfileImport(QStringLiteral("AM"), QStringLiteral("{}")),
           client.requestRadeResetVocoder()}) {
         QVERIFY(!outcome.sent);
         QCOMPARE(outcome.reason, IStationLink::transmitSettingsUnavailableReason());
@@ -556,6 +610,9 @@ void TstTxProfileSelect::refusalsArePlainWords()
           QStringLiteral("Give the transmit profile a name."),
           QStringLiteral("It is not possible to delete the last remaining TX profile."),
           QStringLiteral("The request for the transmit profile was not understood."),
+          QStringLiteral("The transmit profile was not understood."),
+          QStringLiteral("The transmit profile is too large."),
+          QStringLiteral("The Core did not import the transmit profile."),
           QStringLiteral("The Core has no radio to keep transmit profiles for."),
           QStringLiteral("Update this app to change transmit profiles on this Core."),
           QStringLiteral("RADE is not running on the Core's active slice."),

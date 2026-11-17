@@ -156,6 +156,25 @@ public:
     /// (Phase J.3) handles those before calling into this method.
     bool saveProfile(const QString& name, const TransmitModel* tx);
 
+    /// Store `values` under `name` (commas become underscores, as save does)
+    /// and select it. Missing live keys take the factory defaults. Unknown
+    /// keys are left out. On a remote window this asks the Core
+    /// (txProfile.import) and changes nothing here.
+    bool importProfile(const QString& name, const QHash<QString, QVariant>& values,
+                       TransmitModel* tx);
+
+    /// The name save and import store: trimmed, with commas replaced.
+    static QString normalizedProfileName(QString name);
+
+    /// The saved keys of one profile under hardware/<mac>/tx/profile/.
+    /// Empty when that radio has none. A remote window reads the Core's
+    /// copy through the settings proxy.
+    static QHash<QString, QVariant> readStoredProfile(const QString& mac,
+                                                      const QString& name);
+
+    /// The live transmit settings a profile save would store.
+    static QHash<QString, QVariant> liveProfileValues(const TransmitModel* tx);
+
     /// Delete a profile by name.  Refuses to delete the LAST remaining
     /// profile and returns false (qCWarning logs the verbatim Thetis string
     /// per F.3).  Returns true on success.
@@ -198,10 +217,12 @@ public:
     // nothing), so this computer keeps no copy of the Core's profiles. The
     // combos show the Core's active profile when it arrives; a refused
     // request (reportStationRequestRefused) shows it again.
-    enum class StationRequest { Select, Save, Delete };
+    enum class StationRequest { Select, Save, Delete, Import };
     /// Sends one request to the Core; false when it was not sent (the
-    /// requester says why to the operator).
-    using StationRequester = std::function<bool(StationRequest, const QString& name)>;
+    /// requester says why to the operator). `values` is the imported
+    /// profile for Import, and empty for the others.
+    using StationRequester = std::function<bool(StationRequest, const QString& name,
+                                                const QHash<QString, QVariant>& values)>;
     void setStationMirror(StationRequester requester);
     bool isStationMirror() const { return static_cast<bool>(m_stationRequester); }
     /// The Core's profile list, in the Core's order.
