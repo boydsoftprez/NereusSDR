@@ -31,6 +31,39 @@ namespace {
 constexpr int kMargin = 4;
 constexpr int kFreqScaleH = 32;
 
+// Offscreen there is no GPU: a SpectrumWidget says so once. This hides that
+// line while it lives and puts the test's own handler back when it goes, an
+// early QVERIFY or QCOMPARE return included.
+QtMessageHandler g_previousHandler = nullptr;
+
+void quietRhiHandler(QtMsgType type, const QMessageLogContext& context, const QString& message)
+{
+    if (message.startsWith(QLatin1String("QRhiWidget: QRhi is not supported"))) {
+        return;
+    }
+    if (g_previousHandler) {
+        g_previousHandler(type, context, message);
+    }
+}
+
+class QuietRhiWarning {
+public:
+    QuietRhiWarning() { g_previousHandler = qInstallMessageHandler(quietRhiHandler); }
+    ~QuietRhiWarning() { qInstallMessageHandler(g_previousHandler); }
+    Q_DISABLE_COPY_MOVE(QuietRhiWarning)
+};
+
+// The pan's zoom row: the "+" button's parent, a child of the pan.
+QWidget* zoomRowOf(QWidget& pan)
+{
+    for (QPushButton* b : pan.findChildren<QPushButton*>()) {
+        if (b->text() == QStringLiteral("+") && b->parentWidget() && b->parentWidget()->parentWidget() == &pan) {
+            return b->parentWidget();
+        }
+    }
+    return nullptr;
+}
+
 struct Pan {
     QWidget spectrum;
     SpectrumOverlayPanel* panel{nullptr};
@@ -120,15 +153,7 @@ private slots:
 
     void row_stays_on_a_short_waterfall_under_the_strip()
     {
-        // Offscreen there is no GPU: the pan says so once.
-        static QtMessageHandler previous = nullptr;
-        previous = qInstallMessageHandler(
-            [](QtMsgType type, const QMessageLogContext& context, const QString& message) {
-                if (message.startsWith(QLatin1String("QRhiWidget: QRhi is not supported"))) {
-                    return;
-                }
-                previous(type, context, message);
-            });
+        const QuietRhiWarning quiet;
         SpectrumWidget widget;
         widget.setUpdatesEnabled(false);
         widget.resize(700, 600);
@@ -160,7 +185,30 @@ private slots:
         widget.setSpectrumFrac(0.40f);
         QVERIFY(fromBottom() >= widget.waterfallTop() + kMargin);
         QCOMPARE(row->y(), fromBottom());
-        qInstallMessageHandler(previous);
+    }
+
+    void row_stays_inside_a_very_short_pan()
+    {
+        // A very short pan with the divider pulled low: under the waterfall's
+        // top would be past the bottom edge, so the row stays inside the pan.
+        const QuietRhiWarning quiet;
+        SpectrumWidget widget;
+        widget.setUpdatesEnabled(false);
+        widget.resize(700, 160);
+        auto* panel = new SpectrumOverlayPanel(&widget);
+        panel->move(4, 4);
+        widget.show();
+        QCoreApplication::processEvents();
+        QWidget* row = zoomRowOf(widget);
+        QVERIFY(row);
+        widget.setRoundtableStripShown(true);
+        widget.setSpectrumFrac(0.90f);
+        QVERIFY2(widget.waterfallTop() + kMargin + row->height() > widget.height(),
+                 qPrintable(QStringLiteral("waterfall top %1, pan %2").arg(widget.waterfallTop()).arg(widget.height())));
+        QVERIFY2(widget.rect().contains(row->geometry()),
+                 qPrintable(QStringLiteral("row %1..%2, pan %3").arg(row->y()).arg(row->geometry().bottom())
+                                .arg(widget.height())));
+        QCOMPARE(row->geometry().bottom(), widget.height() - 1);
     }
 
     void tall_pan_row_is_unchanged()
