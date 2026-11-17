@@ -939,6 +939,7 @@ if(NEREUS_GPU_SPECTRUM)
         # a single, context-rich failure message below instead of
         # multiple cryptic find_package warnings.
         find_package(Qt6 QUIET COMPONENTS ShaderTools GuiPrivate)
+        find_package(Qt6 QUIET COMPONENTS WidgetsPrivate)
 
         # Belt-and-braces detection: accept either the _FOUND variable
         # or the imported target. install-qt-action on Windows has
@@ -1932,6 +1933,7 @@ set(GUI_SOURCES
     src/gui/VaxFirstRunDialog.cpp
     src/gui/VaxFirstRunCheck.cpp
     src/gui/SpectrumWidget.cpp
+    src/gui/SpectrumIntelPresent.cpp
     src/gui/WaterfallImpulseBlanker.cpp
     src/gui/WheelStepAccumulator.cpp
     src/gui/hotkeys/HotKeyDispatcher.cpp
@@ -2363,6 +2365,9 @@ if(APPLE)
     list(APPEND GUI_SOURCES src/gui/bandstack/BandStackReducedMotion.mm)
     set_source_files_properties(src/gui/bandstack/BandStackReducedMotion.mm
         PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    # The Intel present path talks to AppKit. The rest of the file is C++.
+    set_source_files_properties(src/gui/SpectrumIntelPresent.cpp
+        PROPERTIES LANGUAGE OBJCXX SKIP_PRECOMPILE_HEADERS ON)
 endif()
 # RtMidi: desktop only, never NereusCore or nereusd (R-HK-18). On Linux it needs
 # ALSA (found above); without it the build has no MIDI support and the device
@@ -2968,6 +2973,12 @@ endfunction()
 function(nereus_apply_gui_deps target)
     if(APPLE)
         target_link_libraries(${target} PUBLIC "-framework Cocoa")
+    endif()
+    # Intel waterfall present reads QWidgetRepaintManager. The header is
+    # private; the core library does not need it.
+    if(TARGET Qt6::WidgetsPrivate)
+        target_link_libraries(${target} PRIVATE Qt6::WidgetsPrivate)
+        target_compile_definitions(${target} PRIVATE NEREUS_HAVE_WIDGETS_PRIVATE)
     endif()
     # Qt6::Widgets and Qt6::GuiPrivate are NOT listed here: both are
     # NereusCore dependencies for now (see the comments in

@@ -22,6 +22,9 @@
 // Modification history (NereusSDR):
 //   2026-11-06 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-11-15 - A detached spectrum's right-click off a tick asks for the
+//                 pan's menu. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -728,6 +731,42 @@ private slots:
         elsewhere.accept();
         QApplication::sendEvent(&p.sw, &elsewhere);
         QVERIFY(!elsewhere.isAccepted());
+    }
+
+    // A spectrum the pan detached into its own window (Intel macOS) has no
+    // parent to walk to, so a right-click off a tick asks for the pan's menu
+    // itself. A parentless spectrum that was not detached, as above, does not.
+    void aDetachedSpectrumAsksForThePansMenuOffATick()
+    {
+        Pan p;
+        p.sw.setBandStackTicks({tick(QStringLiteral("a"), kTickHz)});
+        QVERIFY(p.sw.isWindow());
+        QVERIFY(!p.sw.isDetachedIntoOwnWindow());
+        QSignalSpy panMenu(&p.sw, &SpectrumWidget::panContextMenuRequested);
+
+        const QPoint off(kTickX + 200, kSpecY);
+        QContextMenuEvent attached(QContextMenuEvent::Mouse, off, p.sw.mapToGlobal(off));
+        attached.accept();
+        QApplication::sendEvent(&p.sw, &attached);
+        QVERIFY(!attached.isAccepted());
+        QCOMPARE(panMenu.count(), 0);
+
+        p.sw.setDetachedIntoOwnWindow(true);
+        QVERIFY(p.sw.isDetachedIntoOwnWindow());
+        QContextMenuEvent detached(QContextMenuEvent::Mouse, off, p.sw.mapToGlobal(off));
+        detached.ignore();
+        QApplication::sendEvent(&p.sw, &detached);
+        QVERIFY(detached.isAccepted());
+        QCOMPARE(panMenu.count(), 1);
+        QCOMPARE(panMenu.first().first().toPoint(), p.sw.mapToGlobal(off));
+
+        // A tick still takes its own menu first, detached or not.
+        const QPoint onTickAt(kTickX + 2, kSpecY);
+        QContextMenuEvent onTick(QContextMenuEvent::Mouse, onTickAt, p.sw.mapToGlobal(onTickAt));
+        onTick.ignore();
+        QApplication::sendEvent(&p.sw, &onTick);
+        QVERIFY(onTick.isAccepted());
+        QCOMPARE(panMenu.count(), 1);
     }
 
     // ── On a window ──────────────────────────────────────────────────────────

@@ -1261,6 +1261,10 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
                                          m_container && m_container->containerMinimises());
     m_autoHeightCheck        = makeCheck(QStringLiteral("Auto height"),
                                          m_container && m_container->autoHeight());
+    m_clearFloatingCheck     = makeCheck(QStringLiteral("Transparent background"),
+                                         m_container && m_container->clearFloatingBackground());
+    m_clearFloatingCheck->setObjectName(QStringLiteral("containerClearFloating"));
+    m_clearFloatingCheck->setToolTip(tr("The container background is clear. The meter and its menu stay solid. In a floating window the desktop shows through."));
     m_hidesWhenRxNotUsedCheck = makeCheck(tr("Hide when slice not open"),
                                          m_container && m_container->containerHidesWhenRxNotUsed());
     m_noControlsCheck        = makeCheck(tr("No controls"),
@@ -1331,6 +1335,7 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
     } else {row2->addWidget(m_hideTitleCheck);}
     row2->addWidget(m_minimisesCheck);
     row2->addWidget(m_autoHeightCheck);
+    row2->addWidget(m_clearFloatingCheck);
     row2->addWidget(m_hidesWhenRxNotUsedCheck);
     row2->addWidget(m_noControlsCheck);
     row2->addWidget(m_highlightCheck);
@@ -2221,6 +2226,7 @@ void ContainerSettingsDialog::onContainerDropdownChanged(int index)
     if (m_hideTitleCheck) { m_hideTitleCheck->setChecked(!m_container->isTitleBarVisible()); }
     if (m_minimisesCheck) { m_minimisesCheck->setChecked(m_container->containerMinimises()); }
     if (m_autoHeightCheck) { m_autoHeightCheck->setChecked(m_container->autoHeight()); }
+    if (m_clearFloatingCheck) { m_clearFloatingCheck->setChecked(m_container->clearFloatingBackground()); }
     if (m_hidesWhenRxNotUsedCheck) {
         m_hidesWhenRxNotUsedCheck->setChecked(m_container->containerHidesWhenRxNotUsed());
     }
@@ -2805,6 +2811,7 @@ void ContainerSettingsDialog::loadCurrentDraft()
         if(m_hideTitleCheck) { m_hideTitleCheck->setChecked(c.header==HeaderMode::Hidden); }
         if(m_minimisesCheck) { m_minimisesCheck->setChecked(c.config.value("containerMinimises").toBool()); }
         if(m_autoHeightCheck) { m_autoHeightCheck->setChecked(c.autoHeight); }
+        if(m_clearFloatingCheck) { m_clearFloatingCheck->setChecked(c.config.value("clearFloatingBackground").toBool()); }
         if(m_hidesWhenRxNotUsedCheck) { m_hidesWhenRxNotUsedCheck->setChecked(c.config.value("hidesWhenRxNotUsed").toBool()); }
         if(m_noControlsCheck) { m_noControlsCheck->setChecked(c.config.value("noControls").toBool()); }
         if(m_highlightCheck) { m_highlightCheck->setChecked(c.config.value("highlight").toBool()); }
@@ -2909,6 +2916,7 @@ void ContainerSettingsDialog::saveCurrentDraft()
             }
             if (m_minimisesCheck) { setBool("containerMinimises",m_minimisesCheck->isChecked()); }
             if (m_autoHeightCheck) { d.autoHeight=m_autoHeightCheck->isChecked(); }
+            if (m_clearFloatingCheck) { setBool("clearFloatingBackground", m_clearFloatingCheck->isChecked()); }
             if (m_hidesWhenRxNotUsedCheck) { setBool("hidesWhenRxNotUsed",m_hidesWhenRxNotUsedCheck->isChecked()); }
             if (m_noControlsCheck) { setBool("noControls",m_noControlsCheck->isChecked()); }
             if(m_headerCombo) {d.header=static_cast<HeaderMode>(m_headerCombo->currentData().toInt());}
@@ -2955,6 +2963,9 @@ void ContainerSettingsDialog::applyToContainer()
     }
     if (m_autoHeightCheck) {
         m_container->setAutoHeight(m_autoHeightCheck->isChecked());
+    }
+    if (m_clearFloatingCheck) {
+        m_container->setClearFloatingBackground(m_clearFloatingCheck->isChecked());
     }
     if (m_hidesWhenRxNotUsedCheck) {
         m_container->setContainerHidesWhenRxNotUsed(

@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // 2026-10-28: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
 //   keep capture coordinates and explicit lifecycle breaks through the ring/remaps.
+// 2026-11-15: J.J. Boyd (KG4VCF), AI-assisted via Claude Code (Opus 5.5):
+//   keep a running count of out-of-order presentation pairs so the timeline
+//   check no longer walks every row on each read (phone CPU and heat).
 
 import Foundation
 import NereusMedia
@@ -136,6 +139,10 @@ public struct WaterfallHistory: Equatable, Sendable {
     private var presentationPeriods: [Double?] = []
     /// An explicit media/endpoint/away interruption precedes this row.
     private var presentationBreaks: [Bool] = []
+    /// How many neighboring held rows (age n, age n + 1) are not a strictly
+    /// older known time below a known newer one. Kept up to date on every
+    /// change to the rows, so ``hasPresentationTimeline`` needs no walk.
+    private var brokenPresentationPairs = 0
     private var storage: [UInt8] = []
     /// Where the next line goes.
     private var head = 0
@@ -180,6 +187,15 @@ public struct WaterfallHistory: Equatable, Sendable {
         if dbm.count != columns {
             remap(columns: dbm.count)
         }
+        // The row about to be written is the oldest one once the ring is
+        // full: its pair with the next-oldest row leaves the history.
+        if count == capacity, count >= 2,
+           Self.breaksTimeline(older: presentationTimes[head],
+                               newer: presentationTimes[storageRow(age: count - 2)]) {
+            brokenPresentationPairs -= 1
+        }
+        let previousNewest = count > 0 && capacity >= 2 ? presentationTimes[storageRow(age: 0)] : nil
+        let pairsWithPrevious = count > 0 && capacity >= 2
         let start = head * columns
         for (offset, value) in dbm.enumerated() {
             storage[start + offset] = Self.paletteIndex(dbm: value, levels: levels)
@@ -193,6 +209,9 @@ public struct WaterfallHistory: Equatable, Sendable {
         }
         presentationPeriods[head] = presentationPeriod.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
         presentationBreaks[head] = presentationBreakBefore
+        if pairsWithPrevious, Self.breaksTimeline(older: previousNewest, newer: presentationTimes[head]) {
+            brokenPresentationPairs += 1
+        }
         head = (head + 1) % capacity
         count = min(count + 1, capacity)
         linesAppended &+= 1
@@ -217,13 +236,33 @@ public struct WaterfallHistory: Equatable, Sendable {
     }
 
     /// Unknown or unordered arrivals retain the original row-count projection, without invented timestamps.
+    /// True when every held row has a known time and each is strictly older
+    /// than the row above it. Read many times a frame, so it answers from a
+    /// running count of broken neighboring pairs rather than a walk.
     public var hasPresentationTimeline: Bool {
-        guard count > 0, var newer = presentationTime(age: 0) else { return false }
-        for age in 1..<count {
-            guard let older = presentationTime(age: age), older < newer else { return false }
-            newer = older
+        count > 0 && presentationTime(age: 0) != nil && brokenPresentationPairs == 0
+    }
+
+    /// Whether the neighboring rows `older` (one line older) and `newer`
+    /// break the timeline: either time unknown, or not strictly older.
+    private static func breaksTimeline(older: Double?, newer: Double?) -> Bool {
+        guard let older, let newer else { return true }
+        return !(older < newer)
+    }
+
+    /// Counts the broken neighboring pairs from scratch: after a resize,
+    /// which rebuilds the rows in one go.
+    private mutating func recountBrokenPresentationPairs() {
+        var broken = 0
+        var age = 1
+        while age < count {
+            if Self.breaksTimeline(older: presentationTimes[storageRow(age: age)],
+                                   newer: presentationTimes[storageRow(age: age - 1)]) {
+                broken += 1
+            }
+            age += 1
         }
-        return true
+        brokenPresentationPairs = broken
     }
 
     public func presentationPeriod(age: Int) -> Double? {
@@ -298,6 +337,7 @@ public struct WaterfallHistory: Equatable, Sendable {
             head = (head + 1) % capacity
             count += 1
         }
+        recountBrokenPresentationPairs()
         // Layout changes retain the lifetime append counter. Consumers
         // may resize and commit a real row in the same draw.
         linesAppended = appended
@@ -415,6 +455,7 @@ public struct WaterfallHistory: Equatable, Sendable {
         presentationBreaks = [Bool](repeating: false, count: capacity)
         head = 0
         count = 0
+        brokenPresentationPairs = 0
         linesAppended = 0
         layoutGeneration &+= 1
     }

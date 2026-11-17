@@ -17,6 +17,10 @@
 //               waterfall: setRoundtableStripShown, SpectrumLayout::roundtableStrip,
 //               rebuildWaterfallImage. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-11-15: setDetachedIntoOwnWindow: only the Intel detach sends a
+//               right-click to the pan from here, not any parentless
+//               spectrum. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-11-06: BandStackTick and the band stack overlay: ticks, their hit
 //               test, hover and on-air hide (band stack plan Task 11). J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -2763,9 +2767,22 @@ public slots:
     /// non-GPU builds.
     void applyNativeWindowIsolationPolicy();
 
+    /// Intel detached spectrum only. The window's Metal layer otherwise
+    /// waits on the panel, and one row a second lands late.
+    void applyIntelDetachedPresentFormat();
+
+    /// Set by PanadapterApplet when it detaches this spectrum into its own
+    /// window (the Intel macOS present path). Only then does a right-click
+    /// elsewhere on the spectrum go to the pan through
+    /// panContextMenuRequested. A spectrum that is merely parentless, as in
+    /// a test, still ignores it.
+    void setDetachedIntoOwnWindow(bool detached) { m_detachedIntoOwnWindow = detached; }
+    bool isDetachedIntoOwnWindow() const { return m_detachedIntoOwnWindow; }
+
 private:
     friend class RemoteMediaController; // Private opt-in display provenance only.
     bool m_shutdownPrepared {false};
+    bool m_detachedIntoOwnWindow {false};
 
 public:
     /// Fraction of the DDC's spectrum discarded at EACH edge when drawing
@@ -3474,6 +3491,10 @@ signals:
     void dssAngleChanged(int pct);
     void dssRowDividerChanged(int n);
     void threeDSliceDepthChanged(bool on);
+
+    /// The spectrum is its own window, so an ignored right-click no longer
+    /// walks up to the pan applet. The applet opens its menu from this.
+    void panContextMenuRequested(const QPoint& globalPos);
 
 protected:
 #ifdef NEREUS_GPU_SPECTRUM
@@ -5384,6 +5405,11 @@ private:
     bool m_rhiInitialized{false};
 
     // GPU pipeline init helpers
+    // Intel macOS draws this pan at logical pixels (applySpectrumColorBufferSize).
+    // The overlay and background textures use the same ratio so they land on
+    // that color buffer 1:1. Other platforms follow the widget's device pixels.
+    void applySpectrumColorBufferSize();
+    qreal spectrumColorBufferRatio() const;
     void initWaterfallPipeline();
     void initOverlayPipeline();
     void initSpectrumPipeline();

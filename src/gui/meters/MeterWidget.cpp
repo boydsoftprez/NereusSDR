@@ -7,6 +7,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-09 - On Intel macOS meters paint with QPainter. Each GPU meter
+//                 was its own Metal swapchain, and Qt waits on every other
+//                 swapchain before the spectrum presents a waterfall row.
+//   2026-11-09 - On Intel macOS each meter color buffer is logical pixels.
+//                 Device-pixel meter frames were waiting on Metal inside the
+//                 window repaint that also places waterfall rows.
 //   2026-10-26 - Fix wave round 2: a click box added to the widget again is
 //                 connected once (it stepped twice after a host rebuild).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -187,6 +193,7 @@ mw0lge@grange-lane.co.uk
 #include "presets/BarPresetItem.h"
 #include "presets/CompositePresetItem.h"
 
+#include <QElapsedTimer>
 #include <QHelpEvent>
 #include <QPainter>
 #include <QPaintEvent>
@@ -199,7 +206,7 @@ mw0lge@grange-lane.co.uk
 #include <QStringList>
 #include <chrono>
 
-#ifdef NEREUS_GPU_SPECTRUM
+#ifdef NEREUS_METER_GPU
 #include <QFile>
 #include <rhi/qshader.h>
 #endif
@@ -279,7 +286,7 @@ MeterWidget::MeterWidget(QWidget* parent)
     // widget needs focus to get keys).
     setFocusPolicy(Qt::ClickFocus);
 
-#ifdef NEREUS_GPU_SPECTRUM
+#ifdef NEREUS_METER_GPU
     // Platform-specific QRhi backend selection.
     // Order matters: setApi() first, then WA_NativeWindow.
     // Mirrors SpectrumWidget.cpp:97-110 exactly.
@@ -392,7 +399,7 @@ void MeterWidget::addItem(MeterItem* item)
         const auto cached = m_lastBindingValue.constFind(binding);
         if (!item->property("containerUnsupportedSource").toBool() && radio && cached != m_lastBindingValue.constEnd()) { item->pushBindingValue(binding, cached.value()); }
     }
-#ifdef NEREUS_GPU_SPECTRUM
+#ifdef NEREUS_METER_GPU
     markOverlayDirty();
     m_bgDirty = true;
 #endif
@@ -418,7 +425,7 @@ void MeterWidget::removeItem(MeterItem* item)
         if (auto* led = qobject_cast<LEDItem*>(item)) {
             led->clearPublishedResult();
         }
-#ifdef NEREUS_GPU_SPECTRUM
+#ifdef NEREUS_METER_GPU
         markOverlayDirty();
         m_bgDirty = true;
 #endif
@@ -456,7 +463,7 @@ void MeterWidget::clearItems()
     m_items.clear();
     m_legacyRecords.clear();
     emit displayVisibilityChanged();
-#ifdef NEREUS_GPU_SPECTRUM
+#ifdef NEREUS_METER_GPU
     markOverlayDirty();
     m_bgDirty = true;
 #endif
@@ -550,7 +557,7 @@ void MeterWidget::invalidatePresentation(const MeterItem* item)
 void MeterWidget::invalidateItemLayers(const MeterItem* item)
 {
     ++m_readingInvalidations;
-#ifdef NEREUS_GPU_SPECTRUM
+#ifdef NEREUS_METER_GPU
     // Legacy Background-only dynamic items need their cached texture rebuilt.
     // A complete face keeps its backdrop static and paints moving parts in
     // OverlayDynamic/Geometry, so normal readings preserve its static caches.
@@ -561,18 +568,36 @@ void MeterWidget::invalidateItemLayers(const MeterItem* item)
     markDynamicDirty();
 #else
     Q_UNUSED(item);
-    update();
+    scheduleReadingRepaint();
 #endif
 }
 
+#ifndef NEREUS_METER_GPU
+void MeterWidget::scheduleReadingRepaint()
+{
+#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
+    if (m_readingRepaintQueued) {
+        return;
+    }
+    m_readingRepaintQueued = true;
+    QMetaObject::invokeMethod(this, [this] {
+        m_readingRepaintQueued = false;
+        update();
+    }, Qt::QueuedConnection);
+#else
+    update();
+#endif
+}
+#endif
+
 void MeterWidget::invalidateReadingLayers(bool staticLayers)
 {
-#ifdef NEREUS_GPU_SPECTRUM
+#ifdef NEREUS_METER_GPU
     if (staticLayers) { m_bgDirty = true; markOverlayDirty(); }
     else { markDynamicDirty(); }
 #else
     Q_UNUSED(staticLayers);
-    update();
+    scheduleReadingRepaint();
 #endif
 }
 
@@ -706,11 +731,42 @@ bool MeterWidget::deserializeItems(const QString& data)
 // Paint / Resize Events
 // ============================================================================
 
+#ifdef NEREUS_METER_GPU
+static void noteMeterPaintMs(qint64 ms)
+{
+    static qint64 totalMs = 0;
+    static int paints = 0;
+    static qint64 worstMs = 0;
+    static QElapsedTimer window;
+    if (!window.isValid()) {
+        window.start();
+    }
+    totalMs += ms;
+    ++paints;
+    worstMs = qMax(worstMs, ms);
+    if (window.elapsed() < 1000) {
+        return;
+    }
+    qDebug() << "MeterWidget: paint" << paints << "totalMs" << totalMs
+             << "worstMs" << worstMs;
+    totalMs = 0;
+    paints = 0;
+    worstMs = 0;
+    window.restart();
+}
+#endif
+
 void MeterWidget::paintEvent(QPaintEvent* event)
 {
-#ifdef NEREUS_GPU_SPECTRUM
-    // GPU path: delegate to QRhiWidget base class
+#ifdef NEREUS_METER_GPU
+    // GPU path: delegate to QRhiWidget base class.
+    // Set before QRhiWidget::paintEvent builds the color texture. A resize
+    // and the first Show both paint through here.
+    applyMeterColorBufferSize();
+    QElapsedTimer meterPaintTimer;
+    meterPaintTimer.start();
     MeterBaseClass::paintEvent(event);
+    noteMeterPaintMs(meterPaintTimer.elapsed());
 #else
     Q_UNUSED(event);
     QPainter p(this);
@@ -723,7 +779,7 @@ void MeterWidget::resizeEvent(QResizeEvent* event)
 {
     MeterBaseClass::resizeEvent(event);
     reflowStackedItems();
-#ifdef NEREUS_GPU_SPECTRUM
+#ifdef NEREUS_METER_GPU
     markOverlayDirty();
     m_bgDirty = true;
 #endif
@@ -1036,7 +1092,7 @@ void MeterWidget::setBindingUnavailable(int bindingId, const QString& reason)
     } else {
         m_unavailableBindings.insert(bindingId, reason);
     }
-#ifdef NEREUS_GPU_SPECTRUM
+#ifdef NEREUS_METER_GPU
     markOverlayDirty();
 #else
     update();
@@ -1086,7 +1142,7 @@ bool MeterWidget::event(QEvent* event)
     // another container.
     if ((event->type() == QEvent::StyleChange || event->type() == QEvent::ParentChange)
         && WorkspacePreview::enabled()) {
-#ifdef NEREUS_GPU_SPECTRUM
+#ifdef NEREUS_METER_GPU
         m_bgDirty = true;
 #endif
         update();
@@ -1141,7 +1197,7 @@ void MeterWidget::setMox(bool mox)
 {
     if (m_mox == mox) { return; }
     m_mox = mox;
-#ifdef NEREUS_GPU_SPECTRUM
+#ifdef NEREUS_METER_GPU
     markOverlayDirty();
     m_bgDirty = true;
 #endif
@@ -1192,7 +1248,7 @@ void MeterWidget::setDisplayGroup(int group)
     if (m_displayGroup == group) { return; }
     m_displayGroup = group;
     feedDisplayGroupText(m_items, m_displayGroup);
-#ifdef NEREUS_GPU_SPECTRUM
+#ifdef NEREUS_METER_GPU
     markOverlayDirty();
     m_bgDirty = true;
 #endif
@@ -1205,7 +1261,32 @@ void MeterWidget::setDisplayGroup(int group)
 // Mirrors SpectrumWidget.cpp:1257-1765 exactly.
 // ============================================================================
 
-#ifdef NEREUS_GPU_SPECTRUM
+#ifdef NEREUS_METER_GPU
+
+void MeterWidget::applyMeterColorBufferSize()
+{
+#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
+    // This Mac's panel is scaled so the window framebuffer is about twice
+    // the logical size. Each meter uploads its overlay and then waits for
+    // that Metal frame on the GUI thread. Draw at logical pixels. The
+    // backing store scales the texture up to the widget. Apple silicon
+    // keeps device pixels.
+    const int w = width();
+    const int h = height();
+    if (w > 0 && h > 0) {
+        setFixedColorBufferSize(w, h);
+    }
+#endif
+}
+
+qreal MeterWidget::meterColorBufferRatio() const
+{
+#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
+    return 1.0;
+#else
+    return devicePixelRatioF();
+#endif
+}
 
 // Fullscreen quad: position (x,y) + texcoord (u,v)
 // From AetherSDR SpectrumWidget.cpp:1779 / SpectrumWidget.cpp:1266
@@ -1237,9 +1318,17 @@ void MeterWidget::initBackgroundPipeline()
     m_bgVbo = r->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::VertexBuffer, sizeof(kMeterQuadData));
     m_bgVbo->create();
 
-    const qreal dpr = devicePixelRatioF();
+    const qreal dpr = meterColorBufferRatio();
+    // A 64px floor is for a device-pixel texture. On Intel the color buffer
+    // is the logical size, and a floor above that size would stretch a short
+    // meter (the quad samples the whole texture).
+#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
+    const int w = qMax(qRound(width() * dpr), 1);
+    const int h = qMax(qRound(height() * dpr), 1);
+#else
     const int w = qMax(qRound(width() * dpr), 64);
     const int h = qMax(qRound(height() * dpr), 64);
+#endif
     m_bgGpuTex = r->newTexture(QRhiTexture::RGBA8, QSize(w, h));
     m_bgGpuTex->create();
 
@@ -1333,9 +1422,14 @@ void MeterWidget::initOverlayPipeline()
     m_ovVbo = r->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::VertexBuffer, sizeof(kMeterQuadData));
     m_ovVbo->create();
 
+    const qreal dpr = meterColorBufferRatio();
+#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
+    const int w = qMax(width(), 1);
+    const int h = qMax(height(), 1);
+#else
     const int w = qMax(width(), 64);
     const int h = qMax(height(), 64);
-    const qreal dpr = devicePixelRatioF();
+#endif
     const int pw = static_cast<int>(w * dpr);
     const int ph = static_cast<int>(h * dpr);
     m_ovGpuTex = r->newTexture(QRhiTexture::RGBA8, QSize(pw, ph));
@@ -1400,7 +1494,8 @@ void MeterWidget::initialize(QRhiCommandBuffer* cb)
         qCWarning(lcMeter) << "MeterWidget: QRhi init failed — no GPU backend";
         return;
     }
-    qCDebug(lcMeter) << "MeterWidget: QRhi backend:" << r->backendName();
+    qCDebug(lcMeter) << "MeterWidget: QRhi backend:" << r->backendName()
+                     << "color buffer" << fixedColorBufferSize() << "logical" << size();
 
     auto* batch = r->nextResourceUpdateBatch();
 
@@ -1435,8 +1530,12 @@ void MeterWidget::renderGpuFrame(QRhiCommandBuffer* cb)
     // ---- Pipeline 1: Background ----
     // Repaint if dirty (size change or items changed)
     {
-        const qreal dpr = devicePixelRatioF();
+        const qreal dpr = meterColorBufferRatio();
+#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
+        const QSize bgSize(qMax(qRound(w * dpr), 1), qMax(qRound(h * dpr), 1));
+#else
         const QSize bgSize(qMax(qRound(w * dpr), 64), qMax(qRound(h * dpr), 64));
+#endif
         if (m_bgImage.size() != bgSize || !qFuzzyCompare(m_bgImage.devicePixelRatio(), dpr)) {
             m_bgImage = QImage(bgSize, QImage::Format_RGBA8888);
             m_bgImage.setDevicePixelRatio(dpr);
@@ -1485,7 +1584,7 @@ void MeterWidget::renderGpuFrame(QRhiCommandBuffer* cb)
 
     // ---- Pipeline 3: Overlay ----
     {
-        const qreal dpr = devicePixelRatioF();
+        const qreal dpr = meterColorBufferRatio();
         const int pw = static_cast<int>(w * dpr);
         const int ph = static_cast<int>(h * dpr);
 
@@ -1619,6 +1718,6 @@ void MeterWidget::releaseResources()
     m_rhiInitialized = false;
 }
 
-#endif // NEREUS_GPU_SPECTRUM
+#endif // NEREUS_METER_GPU
 
 } // namespace NereusSDR
