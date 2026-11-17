@@ -64,6 +64,11 @@
 // 2026-11-16  J.J. Boyd / KG4VCF; Roundtable pauses for a slice playing
 //             the past: rewoundLiveFrequencyHz, rewoundSlicesChanged. AI
 //             tooling: Anthropic Claude Code.
+// 2026-11-17  J.J. Boyd / KG4VCF; a receiver that closes reaches the
+//             recorder as not streaming and one that opens as streaming
+//             again (dsrStreamRateHz); a rewind or seek into a stretch kept
+//             around but not recorded says the receiver was off
+//             (kRewindReceiverOffReason). AI tooling: Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -294,6 +299,9 @@ public:
     static constexpr const char* kRewindGoneReason = "That moment is no longer kept.";
     // The moment is kept, but no receiver had this frequency in its span then.
     static constexpr const char* kRewindNoFrequencyReason = "Nothing was kept at this frequency then.";
+    // The moment is between the oldest and newest kept, but no receiver was
+    // recording then: it was closed.
+    static constexpr const char* kRewindReceiverOffReason = "Nothing was recorded then. The receiver was off.";
     static constexpr const char* kRewindNoSliceReason = "That slice is not open.";
     static constexpr const char* kRewindNotRewoundReason = "That slice is not playing the past.";
     static constexpr const char* kRewindRateReason = "That moment was kept at another sample rate.";
@@ -538,6 +546,9 @@ private:
     QList<RecordingVolume> dsrVolumes() const;
     void applyDsr();
     void startDsr(const QString& path, qint64 limitBytes);
+    // The rate the recorder keeps `stream` at: the radio's, or 0 while its
+    // receiver is closed (it sends no I/Q then).
+    int dsrStreamRateHz(int stream) const;
     void stopDsr();
     void checkDsrDisk();
     void updateDsrDiskTimer();

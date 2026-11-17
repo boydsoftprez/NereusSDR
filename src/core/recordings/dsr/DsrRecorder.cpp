@@ -4,6 +4,11 @@
 // Modification history (NereusSDR):
 // 2026-11-16  J.J. Boyd / KG4VCF; the Digital Spectrum Recorder (spec 3,
 //             6.1, 6.7, A10, A17). AI tooling: Anthropic Claude Code.
+// 2026-11-17  J.J. Boyd / KG4VCF; drainLane checks a lane's time against
+//             the clock as signal arrives and starts it again from the
+//             clock when they part by more than kClockToleranceNs (a
+//             receiver closed and reopened kept the time it closed at).
+//             AI tooling: Anthropic Claude Code.
 
 #include "DsrRecorder.h"
 
@@ -11,6 +16,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <thread>
 
 namespace NereusSDR {
@@ -224,6 +230,21 @@ bool DsrRecorder::drainLane(int receiver, Lane& lane, qint64 nowUtcNs, bool tran
     qint64 waiting = ring->available() / 2;
     if (waiting <= 0) {
         return true;
+    }
+    if (lane.anchored) {
+        // Where the samples counted so far say the waiting frames start,
+        // and where the clock says they do. A receiver closed and reopened
+        // at the same rate and centre sends nothing in between, so the
+        // count carries on from when it closed: what is held ends there,
+        // and the time starts again from the clock. Either direction.
+        const qint64 byCount = lane.startNs + DsrRingFile::durationNs(lane.held, rate);
+        const qint64 byClock = nowUtcNs - DsrRingFile::durationNs(waiting, rate);
+        if (std::llabs(byCount - byClock) > kClockToleranceNs) {
+            if (!writeHeld(receiver, lane)) {
+                return false;
+            }
+            lane.anchored = false;
+        }
     }
     if (!lane.anchored) {
         // The first frame waiting came that long before now.

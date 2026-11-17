@@ -33,6 +33,10 @@
 //                 Code. Roundtable's live frequency for a slice playing the
 //                 past holds through the rewind's retune and any tune in
 //                 the past, and lets go on LIVE and on PTT.
+//   2026-11-17 - J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. A rewind or seek to a moment kept around but not
+//                 recorded (the receiver was closed) says so; older than
+//                 the oldest kept is still gone.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -712,6 +716,52 @@ private slots:
         svc.setRadioStreaming(false);
         QVERIFY(!svc.rewind(0, ring.oldestUtcNs(0) + kNs, kPlayHz, &why));
         QCOMPARE(why, gone);
+        radio->worker = nullptr;
+    }
+
+    // A receiver closed for 30 s and reopened leaves a gap in what is kept.
+    // A rewind or a seek into the gap says the receiver was off, not that
+    // the moment is gone, and plays nothing; older than the oldest kept is
+    // still gone.
+    void aMomentWhenTheReceiverWasOffSaysSo()
+    {
+        RecordingService svc(nullptr);
+        FakeRadio* radio = prepare(svc);
+        RxDspWorker worker;
+        prepareWorker(worker);
+        radio->worker = &worker;
+        keepCarrier(svc, 2);
+        svc.dsrRecorder()->setStream(0, kKeptCentreHz, 0);
+        m_clockMs += 30000;
+        svc.pumpForTest();
+        svc.dsrRecorder()->setStream(0, kKeptCentreHz, kRate);
+        keepCarrier(svc, 2);
+        const DsrRingFile& ring = svc.dsrRecorder()->ring();
+        const qint64 oldest = ring.oldestUtcNs(0);
+        QCOMPARE(ring.newestUtcNs(0) - oldest, 34 * kNs);
+        const qint64 inGap = oldest + 10 * kNs;
+        const QString off = QStringLiteral("Nothing was recorded then. The receiver was off.");
+        QCOMPARE(QString::fromLatin1(RecordingService::kRewindReceiverOffReason), off);
+        QString why;
+        QVERIFY(!svc.rewind(0, inGap, kPlayHz, &why));
+        QCOMPARE(why, off);
+        QVERIFY(svc.rewound().isEmpty());
+        QCOMPARE(radio->frequency.value(0), kSliceAHz);
+        QVERIFY(!svc.rewind(0, oldest - kNs, kPlayHz, &why));
+        QCOMPARE(why, QString::fromLatin1(RecordingService::kRewindGoneReason));
+
+        // Rewound on the near side, a seek into the gap is refused the same
+        // way and the slice plays on from where it was.
+        QVERIFY(svc.rewind(0, oldest + kNs, kPlayHz, &why));
+        svc.pumpForTest();
+        QVERIFY(!svc.seekRewind(0, inGap, &why));
+        QCOMPARE(why, off);
+        QCOMPARE(svc.replayForTest(0)->fromUtcNs(), oldest + kNs);
+        QVERIFY(!svc.seekRewind(0, oldest - kNs, &why));
+        QCOMPARE(why, QString::fromLatin1(RecordingService::kRewindGoneReason));
+        // The far side plays.
+        QVERIFY(svc.seekRewind(0, ring.newestUtcNs(0) - kNs, &why));
+        svc.goLive(0, &why);
         radio->worker = nullptr;
     }
 
