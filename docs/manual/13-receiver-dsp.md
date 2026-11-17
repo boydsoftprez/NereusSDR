@@ -15,7 +15,24 @@ Open the selected VFO's **DSP** tab or **Setup > DSP > AGC/ALC**. You can also r
 - **Max Gain** caps AGC gain even on weak signals. **Fixed Gain** is the receiver gain used when AGC is Off.
 - **Auto AGC RX1** adjusts AGC from the measured noise floor. **± Offset** shifts its target from that floor in dB. It holds its last receive measurement and leaves the threshold alone while the station is on the air; see [Set receive volume and AGC deliberately](03-receive.md#set-receive-volume-and-agc-deliberately).
 
-To reduce pumping from a nearby strong signal, compare a slower mode or longer decay and lower the maximum gain. To make weak signals rise sooner after a peak, reduce decay or hang in Custom. Read the controls back and compare on the same audio. Do not use receiver AGC settings to correct an antenna, preamp or overload problem. The page also contains **TX Leveler** and **TX ALC** controls, which are transmit processing; the RX selector does not make them receiver settings. See [chapter 14](14-voice-profiles.md) for TX processing.
+To reduce pumping from a nearby strong signal, compare a slower mode or longer decay and lower the maximum gain. To make weak signals rise sooner after a peak, reduce decay or hang in Custom. Read the controls back and compare on the same audio. Do not use receiver AGC settings to correct an antenna, preamp or overload problem. The page also contains the **RX Leveler** (below), and **TX Leveler** and **TX ALC** controls, which are transmit processing; the RX selector does not make them receiver settings. See [chapter 14](14-voice-profiles.md) for TX processing.
+
+## Even out station loudness with RXL
+
+The receive leveler (RXL) rides each voice on a net toward one listening level. It lifts a quiet station and can turn a loud one down, so the AF slider stays your volume. It lifts only while a station is on the frequency, and never near ADC overload, so the noise between overs is not raised. It adds no delay.
+
+Turn it on with **RXL** on the selected flag's **DSP** tab. Right-click **RXL** for the mode, **Listening target** and **Maximum boost**, and **More Settings…** for the full **RX Leveler** section of **File > Settings... > DSP > AGC/ALC**:
+
+- **Off** leaves the audio exactly as it is. **Auto** uses the speech preset. **Custom** uses the settings below.
+- **Listening target**: the speech level every voice is moved toward, measured before the AF slider. -24 to -6 dB; Auto uses -12.
+- **Maximum boost**: the most RXL may lift a quiet voice. 0 to 30 dB; Auto uses 20.
+- **Maximum cut**: the most RXL may turn a loud voice down. 0 never turns a voice down. 0 to 12 dB; Auto uses 6.
+- **Attack** and **Release**: how quickly the gain moves. Auto uses 1000 ms and 600 ms.
+- **Gain now** shows what RXL is doing to this receiver: a plus figure is a lift, a minus figure a cut.
+
+While RXL is on, the flag shows the same figure, such as **RXL +12 dB**. Hover over it for what it is doing.
+
+RXL starts off, and each receiver keeps its own setting. It levels LSB, USB, DSB, AM and SAM and leaves the other modes as they are, so decoders hear the band unchanged. VAX and TCI always get the plain audio in every mode. RXL is separate from the **TX Leveler** on the same page. On the phone and iPad it is in the **Modes** tab.
 
 ## Select a noise reduction method
 

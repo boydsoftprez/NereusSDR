@@ -15,7 +15,7 @@ parser.add_argument('--preview', type=Path)
 args = parser.parse_args()
 source = Path(__file__).resolve().parent
 chapters = sorted(source.glob('[0-9][0-9]-*.md'))
-assert [p.name[:2] for p in chapters] == [f'{i:02}' for i in range(1, 21)], 'Expected chapters 01 through 20.'
+assert [p.name[:2] for p in chapters] == [f'{i:02}' for i in range(1, 22)], 'Expected chapters 01 through 21.'
 markdown = MarkdownIt('commonmark').enable('table')
 documents = {p.resolve(): markdown.parse(p.read_text()) for p in source.rglob('*.md')}
 anchors = {}
@@ -71,7 +71,7 @@ provenance = json.loads((source / 'images/capture-provenance.json').read_text())
 for capture in provenance['captures']:
     path = source / 'images' / capture['file']
     assert hashlib.sha256(path.read_bytes()).hexdigest() == capture['sha256'], f'Original capture changed: {path.name}'
-print(f'PASS: 20 chapters, {link_count} local manuscript links/images, titles, whitespace and SVGs; original capture preserved.')
+print(f'PASS: {len(chapters)} chapters, {link_count} local manuscript links/images, titles, whitespace and SVGs; original capture preserved.')
 print(f"PASS: {len(provenance['captures'])} preserved screenshot originals match their provenance hashes.")
 
 class Page(HTMLParser):
