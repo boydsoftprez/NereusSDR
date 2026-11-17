@@ -30,6 +30,9 @@
 // Modification history (Longpath):
 //   2026-10-22 — Original fuer Longpath von Martin Fischer (OE5SOS),
 //                KI-gestuetzt ueber Anthropic Claude.
+//   2026-11-17 — Fall „mehrere angeklickt": drei Doppelklicks gehen im
+//                selben Fenster hinaus. Martin Fischer (OE5SOS),
+//                KI-gestuetzt mit Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -705,6 +708,57 @@ private slots:
         // Ein zweiter Doppelklick auf denselben nimmt keinen zweiten Platz.
         QVERIFY(!applet.nimmFundAn(zeile).isEmpty());
         QCOMPARE(applet.mehrfachForTest().aktive(), 1);
+        applet.stopButtonForTest()->click();
+    }
+
+    // Mehrere Stationen nacheinander anklicken (Betreiber 2026-11-17,
+    // slots 3): „wenn ich mehrere Stationen gleichzeitig anklicke glaube
+    // ich nicht, dass alle gleichzeitig beantwortet werden". Sein
+    // Protokoll 11:07: R2ZDO vorbereitet, 16 s spaeter „Zug in der Frist
+    // gewechselt: R2ZDO … -> TF4CU …" -- der zweite Klick ersetzte den
+    // ersten. Ohne laufendes CQ, drei Klicks, drei Plaetze: alle drei
+    // muessen im SELBEN Fenster hinausgehen.
+    void mehrereAngeklickteGehenAlleGleichzeitigHinaus()
+    {
+        stelleEin(3);
+        RadioModel radio;
+        radio.installFt8TxForTest();
+        Ft8Applet applet(&radio);
+
+        fund(applet, "CQ R2ZDO KO85", -9.0);
+        const QString z1 = letzteZeile(applet);
+        fund(applet, "CQ TF4CU HP94", -14.0);
+        const QString z2 = letzteZeile(applet);
+        fund(applet, "CQ T77RN JN63", -11.0);
+        const QString z3 = letzteZeile(applet);
+        QVERIFY2(z1.contains(QStringLiteral("R2ZDO")), qPrintable(z1));
+        QVERIFY2(z2.contains(QStringLiteral("TF4CU")), qPrintable(z2));
+        QVERIFY2(z3.contains(QStringLiteral("T77RN")), qPrintable(z3));
+
+        QCOMPARE(applet.nimmFundAn(z1), QString());
+        QCOMPARE(applet.nimmFundAn(z2), QString());
+        QCOMPARE(applet.nimmFundAn(z3), QString());
+        QCOMPARE(applet.mehrfachForTest().aktive(), 3);
+
+        QVERIFY(sendetaktAbgelaufen(applet));
+        const QString gesendet = aufSendung(radio);
+        QVERIFY2(gesendet.contains(QStringLiteral("R2ZDO OE5SOS JN67"))
+                     && gesendet.contains(QStringLiteral("TF4CU OE5SOS JN67"))
+                     && gesendet.contains(QStringLiteral("T77RN OE5SOS JN67")),
+                 qPrintable(QStringLiteral("auf Sendung: ") + gesendet));
+        applet.fensterZuEndeForTest();
+
+        // Und alle drei antworten im naechsten Fenster -- jeder bekommt
+        // seinen eigenen naechsten Zug, keiner faellt heraus.
+        fund(applet, "OE5SOS R2ZDO -05", -9.0);
+        fund(applet, "OE5SOS TF4CU -12", -14.0);
+        fund(applet, "OE5SOS T77RN -08", -11.0);
+        QVERIFY(sendetaktAbgelaufen(applet));
+        const QString zwei = aufSendung(radio);
+        QVERIFY2(zwei.contains(QStringLiteral("R2ZDO OE5SOS R-09"))
+                     && zwei.contains(QStringLiteral("TF4CU OE5SOS R-14"))
+                     && zwei.contains(QStringLiteral("T77RN OE5SOS R-11")),
+                 qPrintable(QStringLiteral("zweites Fenster: ") + zwei));
         applet.stopButtonForTest()->click();
     }
 
