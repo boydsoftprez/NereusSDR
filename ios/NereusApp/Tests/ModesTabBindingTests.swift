@@ -1720,7 +1720,11 @@ struct ModesTabBindingTests {
                                           // The Roundtable meter bar's division marks (overlay design
                                           // D11), as fractions of the bar: where the drawing puts its
                                           // lines, the same on every radio.
-                                          "[0.136, 0.273, 0.409, 0.545, 0.773]"]
+                                          "[0.136, 0.273, 0.409, 0.545, 0.773]",
+                                          // The Digital Spectrum Recorder strip's tick spacings in
+                                          // seconds: where the drawing puts its ticks, the same on
+                                          // every radio.
+                                          "[1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600]"]
         #expect(TransmitTimeOutModel.choices == [30, 60, 120, 180, 300, 600, 900, 1200, 1800])
         #expect(ModMonitorModel.posScale.ticks == [0, 50, 100, 125, 160])
         #expect(SsbModMonitorModel.scale.ticks == [0, 50, 100, 120])
@@ -1730,6 +1734,7 @@ struct ModesTabBindingTests {
         #expect(RotorSetupCard.bauds == [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200])
         #expect(PhoneSetupKeys.frequencyGridSpacingChoices == [0, 1000, 2000, 5000, 10000, 25000, 50000, 100000])
         #expect(RoundtableMeterBar.marks == [0.136, 0.273, 0.409, 0.545, 0.773])
+        #expect(DsrStripLayer.tickSteps == [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600])
         #expect(TxEqCurveParts.tickStep(250) == 50 && TxEqCurveParts.tickStep(40_000) == 10000)
         func tables(in text: String) -> [Substring] {
             text.matches(of: numericList).map { text[$0.range] }.filter { list in

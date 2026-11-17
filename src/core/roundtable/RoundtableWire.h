@@ -38,6 +38,9 @@
 //   2026-10-26: kMinDbm and kMaxDbm, the reading range the Core's client
 //               and the desktop panel share. J.J. Boyd (KG4VCF),
 //               AI-assisted via Claude Code.
+//   2026-11-16: RoundtableSliceState::paused, a slice playing the past
+//               (recording plan). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -61,6 +64,10 @@ struct RoundtableSliceState {
     QString mode;
     int filterHz = 0;
     bool keyed = false;
+    // Playing the past (rewind sound): never on the wire. The slice stays in
+    // presence where it was live (the caller gives that frequency), sends
+    // no readings, and its signal floor starts again when it is live.
+    bool paused = false;
 };
 
 namespace RoundtableWire {

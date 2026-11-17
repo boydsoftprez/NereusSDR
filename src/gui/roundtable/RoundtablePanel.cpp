@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: setPausedForPast: a note while the slice plays the past.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-04: setHoldRead keeps an open inspector's read across a tune, and a
 //               refused read lets go of the one it replaced (overlay design D27).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -840,6 +842,14 @@ RoundtablePanel::RoundtablePanel(RoundtableModel* model, QWidget* parent)
     m_connection->setWordWrap(true);
     m_connection->setContentsMargins(8, 3, 8, 3);
     m_contentLayout->addWidget(m_connection);
+    // While the slice plays the past (setPausedForPast).
+    m_pausedNote = makeLabel(m_content, QStringLiteral("Paused while you listen to the past."), dimColor(),
+                             kSmallPx);
+    m_pausedNote->setObjectName(QStringLiteral("roundtablePausedNote"));
+    m_pausedNote->setWordWrap(true);
+    m_pausedNote->setContentsMargins(8, 3, 8, 3);
+    m_pausedNote->hide();
+    m_contentLayout->addWidget(m_pausedNote);
     m_txLine = makeSection(m_content, QStringLiteral("roundtableTxLine"));
     m_contentLayout->addWidget(m_txLine);
     m_talker = makeSection(m_content, QStringLiteral("roundtableTalker"));
@@ -1148,6 +1158,12 @@ void RoundtablePanel::readRoom(const QString& roomId)
         m_model->readRoom(roomId);
     }
     rebuildImmediately();
+}
+
+void RoundtablePanel::setPausedForPast(bool paused)
+{
+    m_pausedForPast = paused;
+    m_pausedNote->setVisible(paused);
 }
 
 void RoundtablePanel::setTuneAllowed(bool allowed)

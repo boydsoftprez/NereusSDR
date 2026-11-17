@@ -921,11 +921,215 @@
       ]
     },
     {
+      "UUID": "com.nereussdr.radio.voice.msg5",
+      "Name": "Voice message 5",
+      "Category": "Voice",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Voice message 5",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.voice.msg6",
+      "Name": "Voice message 6",
+      "Category": "Voice",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Voice message 6",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.voice.msg7",
+      "Name": "Voice message 7",
+      "Category": "Voice",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Voice message 7",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.voice.msg8",
+      "Name": "Voice message 8",
+      "Category": "Voice",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Voice message 8",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
       "UUID": "com.nereussdr.radio.voice.stop",
       "Name": "Stop voice message",
       "Category": "Voice",
       "Icon": "imgs/plugin-icon",
       "Tooltip": "Stop voice message",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.msg.1",
+      "Name": "Message 1",
+      "Category": "Messages",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Message 1",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.msg.2",
+      "Name": "Message 2",
+      "Category": "Messages",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Message 2",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.msg.3",
+      "Name": "Message 3",
+      "Category": "Messages",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Message 3",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.msg.4",
+      "Name": "Message 4",
+      "Category": "Messages",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Message 4",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.msg.5",
+      "Name": "Message 5",
+      "Category": "Messages",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Message 5",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.msg.6",
+      "Name": "Message 6",
+      "Category": "Messages",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Message 6",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.msg.7",
+      "Name": "Message 7",
+      "Category": "Messages",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Message 7",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
+      "UUID": "com.nereussdr.radio.msg.8",
+      "Name": "Message 8",
+      "Category": "Messages",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "Message 8",
       "Controllers": [
         "Keypad"
       ],

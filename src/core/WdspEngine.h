@@ -10,6 +10,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16 - Recording plan Task 22: test-only friendship for the rewind
+//                 sound test, which demodulates the past through a real RX
+//                 channel. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-15 - m_impulseCacheFile: each profile keeps an impulse cache
 //                 file of its own in the shared DSP folder. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -257,6 +261,8 @@ class TestTxKeyDspOptions;
 class TstRemoteTxDisplay;
 // Squelch persistence: slices B to D open with their saved squelch.
 class TestSliceSquelchChannelSeed;
+// Recording plan Task 22: rewind sound's past I/Q through a real RX channel.
+class TestDsrRewind;
 #endif
 
 namespace NereusSDR {
@@ -1207,6 +1213,9 @@ private:
     friend class ::TestSliceSquelchChannelSeed;
     // Same friendship for the first DSP > Options apply test.
     friend class ::TestDspOptionsFirstApply;
+    // Recording plan Task 22: the rewind test demodulates the past through a
+    // real RX channel.
+    friend class ::TestDsrRewind;
 #endif
 };
 

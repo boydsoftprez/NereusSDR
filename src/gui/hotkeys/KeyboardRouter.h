@@ -4,6 +4,9 @@
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-06 - J.J. Boyd (KG4VCF), first-look fixes: a key already down, the
 //                Linux pairing, menu bar menus. AI-assisted via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 13 fix round: a key the
+//                focused widget claims (it accepts ShortcutOverride) is its own.
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 // Turns key presses into hot key actions: an application event filter, because
 // a hold must see its release and a QShortcut has no release signal. It applies
@@ -61,6 +64,7 @@ private:
     void dropHolds();
     bool windowTakesKeys(const QWidget* receiver) const;
     bool focusKeeps(int key) const;
+    static bool widgetClaims(QWidget* receiver, const QKeyEvent* event);
 
     HotKeyDispatcher* m_dispatcher;
     HotKeyBindings* m_bindings;

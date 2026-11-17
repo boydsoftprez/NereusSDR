@@ -1689,6 +1689,14 @@ nereus_add_test(tst_vfo_level_bar)
 nereus_add_test(tst_scrollable_label)
 nereus_add_test(tst_vfo_mode_containers)
 nereus_add_test(tst_vfo_tooltip_coverage)
+# Recording plan Task 6: Record and Play on the slice flag.
+nereus_add_test(tst_flag_record_play)
+# Recording plan Task 7: the Recordings panel and the Recordings window.
+nereus_add_test(tst_recordings_panel_window)
+# Recording plan Task 12: the Voice keyer panel, VOICE and the clip recorder.
+nereus_add_test(tst_voice_keyer_desktop)
+# Recording plan Task 8: Setup > Cores > Recordings.
+nereus_add_test(tst_recordings_setup_page)
 
 # Regression test for issue #73 — VfoWidget frequency-entry parser
 nereus_add_test(tst_vfo_frequency_parser)
@@ -10664,6 +10672,18 @@ nereus_add_test(tst_bandstack_link
 target_compile_definitions(tst_bandstack_link PRIVATE
     NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
 
+# Recording plan Task 5: recordings through a loopback link: the facade, the
+# feature gate and every recordings.* verb, then RecordingsAccess, local and
+# remote. No RF, no audio device.
+nereus_add_test(tst_recordings_link
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_recordings_link PRIVATE
+    NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
+nereus_add_test(tst_recordings_access
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+
 # Band stack plan Task 7: the panel shell and its place beside the pans, both
 # looks, real MainWindow offscreen.
 nereus_add_test(tst_bandstack_panel
@@ -12065,6 +12085,101 @@ nereus_add_test(tst_cat_rigctld CORE_ONLY)
 # the VAX TX device's audio on that key. NereusSDR-native; no upstream port.
 nereus_add_test(tst_remote_rigctld)
 target_compile_definitions(tst_remote_rigctld PRIVATE NEREUS_BUILD_TESTS)
+
+# Recordings on the Core: WAV and MP3 files written and read back
+# (src/core/recordings/AudioFileWriter.cpp, AudioFileReader.cpp).
+nereus_add_test(tst_recording_audio_files CORE_ONLY)
+# The writer compiled without NEREUS_HAVE_LAME, as a build without LAME has
+# it: MP3 is refused with a reason and WAV still opens.
+nereus_add_test(tst_recording_audio_files_no_lame DEPENDENCY_ISOLATED
+    ../src/core/recordings/AudioFileWriter.cpp EXTRA_LABELS core)
+if(TARGET tst_recording_audio_files_no_lame)
+    target_include_directories(tst_recording_audio_files_no_lame PRIVATE
+        ${CMAKE_SOURCE_DIR}/src)
+    target_compile_definitions(tst_recording_audio_files_no_lame PRIVATE NEREUS_CORE_STATIC)
+    target_link_libraries(tst_recording_audio_files_no_lame PRIVATE Qt6::Test)
+endif()
+# The recording store: names, the recordings.json index, rename and delete,
+# the disk list's SD card rule and the Core's recording settings
+# (src/core/recordings/RecordingNames.cpp, RecordingStore.cpp,
+# RecordingDisks.cpp, RecordingSettings.cpp).
+nereus_add_test(tst_recording_store CORE_ONLY)
+# The quiet rule for "stop by itself when it goes quiet" (spec V4;
+# src/core/recordings/QuietRule.h).
+nereus_add_test(tst_recording_quiet_rule CORE_ONLY)
+# The contact recorder and the recording service: 24 kHz files, your voice
+# together or apart, start and stop from any device, start and stop by
+# themselves, a full disk, MP3 without an encoder, the taps' copy-only
+# contract and the call from Roundtable (src/core/recordings/
+# ContactRecorder.cpp, RecordingService.cpp).
+nereus_add_test(tst_recording_contact CORE_ONLY)
+# The recording player: the mixer's playback slot reaches only its owner's
+# speakers, 48 kHz from any file rate, seek, the end and a whole-pan refusal
+# (src/core/recordings/RecordingPlayer.cpp, RecordingService.cpp,
+# src/core/audio/MasterMixer.cpp).
+nereus_add_test(tst_recording_player CORE_ONLY)
+# A recording on the air: keying while it plays sends it from where it is,
+# another device's key sends its own microphone, the end hands over to the
+# microphone within one block, and the five processing switches act on the
+# TX channel and come back from TransmitModel (src/core/recordings/
+# OnAirSource.cpp, RecordingService.cpp, src/core/TxWorkerThread.cpp).
+nereus_add_test(tst_recording_on_air CORE_ONLY)
+target_compile_definitions(tst_recording_on_air PRIVATE NEREUS_BUILD_TESTS)
+
+# Recording plan Task 11: the voice keyer on the Core. Only a send keys;
+# every way a message stops unkeys; another station holding transmit
+# refuses a send; 48 kHz mono messages, Repeat and its wait
+# (src/core/recordings/VoiceKeyer.cpp).
+nereus_add_test(tst_voice_keyer CORE_ONLY)
+target_compile_definitions(tst_voice_keyer PRIVATE NEREUS_BUILD_TESTS)
+# Recording plan Task 21: the Digital Spectrum Recorder's ring file:
+# one-second 16-bit I/Q blocks, the size limit, reading back, transmit
+# marks and a restart (src/core/recordings/dsr/DsrRingFile.cpp).
+nereus_add_test(tst_dsr_ring CORE_ONLY)
+# Recording plan Task 21: the Digital Spectrum Recorder on the Core: the
+# lock-free I/Q tap (no allocation, no disk, counted overflow), one-second
+# blocks, your transmit marked, on by default, never on an SD card, and a
+# missing disk that stops only the recorder
+# (src/core/recordings/dsr/DsrRecorder.cpp, RecordingService.cpp).
+nereus_add_test(tst_dsr_recorder CORE_ONLY)
+# Recording plan Task 22: rewind sound, the one switch on the receive path.
+# A rewound slice's demodulator is fed from the ring file through
+# RxDspWorker's switch, in real time, while the other slices keep the radio's
+# I/Q; LIVE, seek, PTT while rewound, the newest second playing on into live,
+# a moment no longer kept refused, and a past carrier demodulated by a real
+# WDSP channel (src/core/recordings/dsr/DsrReplay.cpp, RecordingService.cpp,
+# src/models/RxDspWorker.cpp).
+nereus_add_test(tst_dsr_rewind CORE_ONLY)
+# Recording plan Task 23: the past picture. Past rows and a past spectrum
+# frame drawn from the ring file with the pan's own FFT settings put a kept
+# carrier in the live spectrum's bin; rows newest first, only what is kept,
+# in chunks; the hours map over a three-hour ring; drawn on the recordings
+# worker; bad requests refused in plain words
+# (src/core/recordings/dsr/DsrReplay.cpp, RecordingService.cpp).
+nereus_add_test(tst_dsr_past_rows CORE_ONLY)
+# Recording plan Task 24: rewind on the desktop waterfall. A strip drag past
+# the window's own minutes asks the Core for rows and dims with "Drawing"; a
+# click on a past signal rewinds Slice A there and the picture moves with the
+# sound; the past spectrum replaces the trace; LIVE and PTT while rewound;
+# your transmit rows marked; the hours map and a typed time jump; an older
+# Core or the recorder off keeps the strip as it was, the new parts disabled
+# with the reason (src/gui/SpectrumWidget.cpp, src/gui/recordings/).
+nereus_add_test(tst_dsr_desktop_rewind)
+# Recording plan Task 25: saving a stretch. A whole-pan save is a WholePan
+# recording of the bracket's length and the ring's bytes, kept outside the
+# ring; a stretch partly gone saves what is kept and says so; sound only is
+# slice A's sound in the Files format; Save sound only from a whole pan; a
+# saved stretch opened on the waterfall replays like rewind with the
+# recorder off. SAVE's yellow bracket and box against a fake access, SAVE
+# disabled with the reason, and the Recordings window's whole-pan rows
+# (src/core/recordings/, src/gui/recordings/DsrSaveBox.cpp, DsrHoursMap.cpp).
+nereus_add_test(tst_dsr_save)
+# Recording plan Task 26: Setup > Cores > Digital Spectrum Recorder against a
+# fake access. On and its status, the hours at the receivers and rates now,
+# the in-use bar's moving head and red zone, each control sending its field,
+# the erase asking first, an SD card only Core with the switch off and the
+# red warning, an older Core dimmed (src/gui/setup/DsrSetupPage.cpp).
+nereus_add_test(tst_dsr_setup_page)
 
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)

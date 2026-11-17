@@ -49,5 +49,17 @@
   {"id": "voice.msg2", "name": "Voice message 2", "group": "Voice", "gesture": "press", "transmits": true},
   {"id": "voice.msg3", "name": "Voice message 3", "group": "Voice", "gesture": "press", "transmits": true},
   {"id": "voice.msg4", "name": "Voice message 4", "group": "Voice", "gesture": "press", "transmits": true},
-  {"id": "voice.stop", "name": "Stop voice message", "group": "Voice", "gesture": "press", "transmits": false}
+  {"id": "voice.msg5", "name": "Voice message 5", "group": "Voice", "gesture": "press", "transmits": true},
+  {"id": "voice.msg6", "name": "Voice message 6", "group": "Voice", "gesture": "press", "transmits": true},
+  {"id": "voice.msg7", "name": "Voice message 7", "group": "Voice", "gesture": "press", "transmits": true},
+  {"id": "voice.msg8", "name": "Voice message 8", "group": "Voice", "gesture": "press", "transmits": true},
+  {"id": "voice.stop", "name": "Stop voice message", "group": "Voice", "gesture": "press", "transmits": false},
+  {"id": "msg.1", "name": "Message 1", "group": "Messages", "gesture": "press", "transmits": true},
+  {"id": "msg.2", "name": "Message 2", "group": "Messages", "gesture": "press", "transmits": true},
+  {"id": "msg.3", "name": "Message 3", "group": "Messages", "gesture": "press", "transmits": true},
+  {"id": "msg.4", "name": "Message 4", "group": "Messages", "gesture": "press", "transmits": true},
+  {"id": "msg.5", "name": "Message 5", "group": "Messages", "gesture": "press", "transmits": true},
+  {"id": "msg.6", "name": "Message 6", "group": "Messages", "gesture": "press", "transmits": true},
+  {"id": "msg.7", "name": "Message 7", "group": "Messages", "gesture": "press", "transmits": true},
+  {"id": "msg.8", "name": "Message 8", "group": "Messages", "gesture": "press", "transmits": true}
 ]

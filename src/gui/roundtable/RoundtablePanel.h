@@ -31,6 +31,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: setPausedForPast: a note while the slice plays the past.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-04: setHoldRead: an open inspector's read outlasts a tune (overlay design
 //               D27). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-03: setTuneAllowed: the read bar's Tune greys while keyed (overlay
@@ -120,6 +122,12 @@ public:
     /// Whether the read bar's Tune may act: false while keyed (overlay design
     /// D22). The button greys; it is never hidden.
     void setTuneAllowed(bool allowed);
+
+    /// The followed slice plays the past (rewind sound): Roundtable sends
+    /// nothing new for it and keeps it where it was live, and the panel
+    /// says so under the connection line. The room's table keeps showing.
+    void setPausedForPast(bool paused);
+    bool pausedForPast() const { return m_pausedForPast; }
 
     /// The room shown (the read one, else the slice's), or empty.
     QString roomId() const;
@@ -288,6 +296,8 @@ private:
     QPointer<QLabel> m_tagAbove;
     QWidget* m_head = nullptr;
     QLabel* m_connection = nullptr;
+    QLabel* m_pausedNote = nullptr;
+    bool m_pausedForPast = false;
     QWidget* m_txLine = nullptr;
     QWidget* m_talker = nullptr;
     QWidget* m_readings = nullptr;

@@ -68,6 +68,13 @@
 //               gains Sizing, first in its group, and `rememberedKey` on
 //               Hz/bin Target; the two averaging times run from 1 ms.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-16: Recording plan Task 17: the `recordings` tool after VAX
+//               Audio, offered when the Core runs the recordings service.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-16: Recording plan Task 18: the `voiceKeyer` tool just before
+//               Recordings, offered with the recordings service, which
+//               owns the voice keyer. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/StationCatalog.h"
@@ -883,6 +890,7 @@ enum class Offer {
     Memories,
     Cat,
     Transverters,
+    Recordings,
 };
 
 struct ToolEntry {
@@ -902,6 +910,11 @@ constexpr ToolEntry kTools[] = {
     {"catControl", "CAT Control", "station", Offer::Cat},
     {"tciServer", "TCI Server", "station", Offer::StationTci},
     {"vaxAudio", "VAX Audio", "station", Offer::Vax},
+    // Recording plan Task 18: the voice keyer's eight messages (design section
+    // 6.6), kept by the recordings service.
+    {"voiceKeyer", "Voice Keyer", "station", Offer::Recordings},
+    // Recording plan Task 17: the Core's saved recordings (design section 6.4).
+    {"recordings", "Recordings", "station", Offer::Recordings},
     {"networkDiagnostics", "Network Diagnostics", "both", Offer::Always},
     {"supportBundle", "Support Bundle", "both", Offer::Always},
 };
@@ -945,6 +958,8 @@ bool offered(Offer offer, const StationCatalog::Inputs& inputs)
         return UnbuiltFeatures::isBuilt(UnbuiltFeature::Cat);
     case Offer::Transverters:
         return UnbuiltFeatures::isBuilt(UnbuiltFeature::Transverters);
+    case Offer::Recordings:
+        return inputs.recordingService;
     }
     return false;
 }
@@ -1083,6 +1098,9 @@ StationCatalog::Inputs StationCatalog::inputsFrom(const RadioModel& model)
     // Rotor control plan Task 4b: a rotor set up on the Core.
     inputs.rotorConfigured = model.rotorModel() != nullptr
         && model.rotorModel()->driver() != RotorLink::RotorModel::Driver::None;
+    // Recording plan Task 17: the recordings service, made with the model
+    // where it runs the radio.
+    inputs.recordingService = model.recordingService() != nullptr;
     return inputs;
 }
 

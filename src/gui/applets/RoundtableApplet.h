@@ -17,6 +17,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: the panel pauses while the slice plays the past
+//               (updatePastPause). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-11-04: setSliceSource. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
 //   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
@@ -36,6 +39,8 @@
 #include "gui/roundtable/RoundtableWindow.h"
 #include "models/RoundtableModel.h"
 
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QPointer>
 #include <QUrl>
 
@@ -82,6 +87,12 @@ public:
     /// follows nothing and Tune is greyed.
     void setSliceSource(std::function<SliceModel*()> source);
 
+    /// The `recordings` document (RecordingsAccess::document), followed from
+    /// the model's recordings: while dsr.rewound lists the followed slice it
+    /// plays the past, and the panel stays where it was live and says it is
+    /// paused. Public so a test can hand one in.
+    void notePastDocument(const QJsonObject& document);
+
     /// What opens the Archive's sign-in link (a seam for tests).
     void setUrlOpener(std::function<void(const QUrl&)> opener) { m_urlOpener = std::move(opener); }
 
@@ -92,6 +103,13 @@ signals:
 private:
     void build();
     void bindActiveSlice();
+    // The followed slice plays the past when the `recordings` document lists
+    // it under dsr.rewound: the panel stays on the room where it was live
+    // and says it is paused.
+    void updatePastPause();
+    // Where the panel's room is: the frequency the slice had live while it
+    // plays the past, else its own.
+    qint64 contextHz() const;
     void tuneHere(qint64 hz, const QString& family);
     void openArchive();
     void popOut();
@@ -112,6 +130,10 @@ private:
     std::function<void(const QUrl&)> m_urlOpener;
     bool m_webLinkPending = false;
     bool m_tuning = false;
+    // The followed slice's live frequency while it plays the past; 0 when live.
+    qint64 m_pastLiveHz = 0;
+    // The document's dsr.rewound, as last seen.
+    QJsonArray m_pastRewound;
 };
 
 } // namespace NereusSDR

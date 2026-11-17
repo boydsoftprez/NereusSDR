@@ -208,6 +208,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Recording plan Task 11 fix round 2: m_voiceKeyerSelfWireId
+//               and followVoiceMessageSending. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-11-05: Band stack plan Task 6: sliceControlledHere.
 //   2026-11-05: Band stack plan Task 4: bandStackAvailable and sendBandStackCommand.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1166,6 +1169,8 @@ public:
     bool pureSignalArmingOffered() const;
     bool stationTciAvailable() const override;
     bool coreServesTciOnThisComputer() const override;
+    // Recording plan Task 5: see IStationLink.
+    bool coreIsOnThisComputer() const override;
     /// iPhone app plan Task 39 (D14, R-IOS-13): the Core's `txState` as this
     /// window last heard it (never null). Its values are the idle ones while
     /// the Core does not send it (txStateVersion 0) and after a session
@@ -1443,6 +1448,9 @@ public:
     // Band stack plan Task 4: see IStationLink.
     bool bandStackAvailable() const override;
     CommandOutcome sendBandStackCommand(const QString& verb, const QJsonObject& arguments) override;
+    // Recording plan Task 5: see IStationLink.
+    int recordingsVersion() const override;
+    CommandOutcome sendRecordingsCommand(const QString& verb, const QJsonObject& arguments) override;
     bool sliceControlledHere(int sliceId) const override;
     // Slice control plan Task 5 (sliceAccessVersion 1 at minor 11): listen
     // to, stop listening to, take control of and release a slice. The
@@ -2112,6 +2120,13 @@ private:
     bool m_declaredSessionHolder = false;
     bool m_declaresSessionHolder = true;
     QString m_tokenSessionHolderIdForTest;
+    // Recording plan Task 11 fix round 2: the Core's name for this window
+    // (as voiceKeyer.sending's deviceId), from the answer to its own
+    // voiceKeyer.send this session; empty until then.
+    QString m_voiceKeyerSelfWireId;
+    // Recording plan Task 11: keepalives while the Core's voice keyer sends
+    // this window's message (voiceKeyer.sending names it).
+    void followVoiceMessageSending();
     bool m_tokenSliceAccessForTest = false;
     /// Take-over parity: the sliceAccess version the hello declares.
     /// Core-slice take-over: 3, the Core's own slice may be taken.

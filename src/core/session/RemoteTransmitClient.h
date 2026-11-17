@@ -106,6 +106,9 @@
 //               J.J. Boyd (KG4VCF), AI-assisted via Grok.
 //   2026-11-05: hot keys plan Task 4: screenKeyDownChanged. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-16: Recording plan Task 11: setVoiceMessageSending, keepalives
+//               while the Core's voice keyer sends this window's message.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -190,6 +193,14 @@ public:
     }
     /// The Core's VOX is on (the window's mirrored transmit.voxEnabled).
     void setVoxArmed(bool armed);
+    /// Recording plan Task 11: the Core's voice keyer is sending this
+    /// window's message, or waiting to repeat it (the mirrored recordings
+    /// voiceKeyer.sending names this device). It keys the radio as this
+    /// device, which the Core's watchdog watches like any key of its, so
+    /// keepalives go while it does (and the link offers remote transmit).
+    /// The window's mirror keeps it; a new session does not clear it.
+    void setVoiceMessageSending(bool sending);
+    bool voiceMessageSending() const { return m_voiceMessageSending; }
     /// Keepalives are going out now.
     bool keepaliveRunning() const { return m_keepaliveTimer.isActive(); }
     /// The epoch the next keepalive names.
@@ -406,6 +417,7 @@ private:
     quint32 m_twoToneCommandId{0};
     quint64 m_twoToneRequestSerial{0};
     bool m_voxArmed{false};
+    bool m_voiceMessageSending{false};
     KeepaliveSender m_sessionKeepalive;
     KeepaliveSender m_channelKeepalive;
     KeepaliveSender m_auxiliaryKeepalive;

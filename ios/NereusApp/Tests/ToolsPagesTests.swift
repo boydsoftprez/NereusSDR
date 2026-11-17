@@ -31,13 +31,15 @@ struct ToolsPagesTests {
     /// the phone shows greyed, and the Rotor last, greyed until a rotor is
     /// set up at the Core.
     static let offeredIds = ["spotHub", "freedvReporter", "txEqualizer", "pureSignal", "diversity", "cwx",
-                             "catControl", "tciServer", "vaxAudio", "networkDiagnostics", "supportBundle", "rotor"]
+                             "catControl", "tciServer", "vaxAudio", "voiceKeyer", "recordings", "networkDiagnostics", "supportBundle",
+                             "rotor"]
 
     /// The phone's list from that catalogue: the same tools. CAT Control
     /// opens from a Core that lets this app set up its CAT, and is greyed
     /// with its reason from one that does not.
     static let listedIds = ["spotHub", "freedvReporter", "txEqualizer", "pureSignal", "diversity", "cwx",
-                            "catControl", "tciServer", "vaxAudio", "networkDiagnostics", "supportBundle", "rotor"]
+                            "catControl", "tciServer", "vaxAudio", "voiceKeyer", "recordings", "networkDiagnostics", "supportBundle",
+                            "rotor"]
 
     // MARK: The list
 
@@ -57,9 +59,10 @@ struct ToolsPagesTests {
         })
         #expect(list.entries.map(\.title) == ["Spot Hub", "FreeDV Reporter", "TX Equalizer", "PureSignal",
                                               "Diversity", "CWX", "CAT Control", "TCI Server", "VAX Audio",
-                                              "Connection and performance", "Support Bundle", "Rotor"])
-        #expect(list.entries.map(\.tag) == [.both, .core, .core, .core, .core, .core, .core, .core, .core, .both,
-                                            .both, .core])
+                                              "Voice Keyer", "Recordings", "Connection and performance", "Support Bundle",
+                                              "Rotor"])
+        #expect(list.entries.map(\.tag) == [.both, .core, .core, .core, .core, .core, .core, .core, .core, .core,
+                                            .core, .both, .both, .core])
         #expect(list.entries.allSatisfy { $0.page != nil })
         // This Core runs no TCI server of its own: TCI Server is greyed with the reason; the rest open.
         let tci = try #require(list.entries.first { $0.id == "tciServer" })
@@ -114,7 +117,7 @@ struct ToolsPagesTests {
         }
         #expect(await settle { list.entries.contains { $0.id == "memoryManager" } })
         #expect(list.entries.map(\.id) == ["spotHub", "freedvReporter", "txEqualizer", "diversity", "cwx",
-                                           "memoryManager", "catControl", "tciServer", "vaxAudio",
+                                           "memoryManager", "catControl", "tciServer", "vaxAudio", "voiceKeyer", "recordings",
                                            "networkDiagnostics", "supportBundle", "rotor"])
         let memories = try #require(list.entries.first { $0.id == "memoryManager" })
         #expect(memories.title == "Memory Manager" && memories.tag == .core && memories.page == nil)
@@ -140,7 +143,7 @@ struct ToolsPagesTests {
         // The Hermes Lite 2's catalogue: no diversity receiver, no TCI server of the Core's own.
         try await deliverCatalogue(station, revision: 2, fixture: "catalog-hermes-lite-2")
         #expect(await settle { list.entries.map(\.id) == ["spotHub", "freedvReporter", "txEqualizer", "pureSignal",
-                                                          "cwx", "catControl", "tciServer", "vaxAudio",
+                                                          "cwx", "catControl", "tciServer", "vaxAudio", "voiceKeyer", "recordings",
                                                           "networkDiagnostics", "supportBundle", "rotor"] })
         #expect(list.entries.first { $0.id == "tciServer" }?.reason == StationToolList.noTciServerReason)
         // A headless Core with its own TCI server: VAX Audio greyed, TCI Server opens; no PureSignal on this radio.
@@ -156,7 +159,7 @@ struct ToolsPagesTests {
             }
         }
         #expect(await settle { list.entries.map(\.id) == ["spotHub", "freedvReporter", "txEqualizer", "diversity",
-                                                          "cwx", "catControl", "tciServer", "vaxAudio",
+                                                          "cwx", "catControl", "tciServer", "vaxAudio", "voiceKeyer", "recordings",
                                                           "networkDiagnostics", "supportBundle", "rotor"] })
         let vax = try #require(list.entries.first { $0.id == "vaxAudio" })
         #expect(!vax.enabled && vax.reason == StationToolList.noVaxReason && vax.page == .vaxAudio)
@@ -174,7 +177,7 @@ struct ToolsPagesTests {
          {"id":"spotHub","label":"Spot Hub","where":"both","offered":false}]
         """.utf8))
         let entries = StationToolList.entries(tools: tools, connected: true, olderCore: false)
-        #expect(entries.map(\.id) == ["networkDiagnostics", "spotHub", "rotor"])
+        #expect(entries.map(\.id) == ["networkDiagnostics", "spotHub", "voiceKeyer", "recordings", "rotor"])
         #expect(entries[0].enabled)
         #expect(entries[1].reason == StationToolList.notOfferedReason)
     }
@@ -195,7 +198,7 @@ struct ToolsPagesTests {
         [{"id":"spotHub","label":"Spot Hub","where":"both","offered":true}]
         """.utf8))
         let bare = StationToolList.entries(tools: tools, connected: true, olderCore: false)
-        #expect(bare.map(\.id) == ["spotHub", "networkDiagnostics", "rotor"])
+        #expect(bare.map(\.id) == ["spotHub", "networkDiagnostics", "voiceKeyer", "recordings", "rotor"])
         // A Core that lists its tools without the rotor is older than it: the Rotor is greyed with that reason.
         #expect(bare.last?.reason == StationToolList.rotorOlderCoreReason && bare.last?.page == .rotor)
     }
@@ -1588,7 +1591,7 @@ struct ToolsPagesTests {
          {"id":"spotHub","label":"Spot Hub","where":"both","offered":true}]
         """.utf8))
         let entries = StationToolList.entries(tools: tools, connected: true, olderCore: false)
-        #expect(entries.map(\.id) == ["spotHub", "networkDiagnostics", "rotor"])
+        #expect(entries.map(\.id) == ["spotHub", "networkDiagnostics", "voiceKeyer", "recordings", "rotor"])
     }
 
     @Test("CWX sends the text, a memory and Stop as the Core's CW verbs, three copies under one id, and keys nothing")

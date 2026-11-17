@@ -22,6 +22,8 @@
 //   2026-11-07 - Five ctest entries of this binary (TestFunctionGroups),
 //                 near the 120 s limit as one on the Linux runner.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-16 - F2 on a focused row renames and sends no Message 2.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -1498,6 +1500,50 @@ private slots:
         window->setBandStackAccessForTest(window->radioModel()->bandStack());
     }
 
+    // F2 on a focused row renames it: the rows claim the key, and the
+    // window's F2 (Message 2) waits for a press nothing claims.
+    void f2OnAFocusedRowRenamesAndSendsNoMessage()
+    {
+        const std::unique_ptr<MainWindow> window = buildWindow(false);
+        FakeBandStackAccess fake;
+        fake.setDocument(stackDocument());
+        window->setBandStackAccessForTest(&fake);
+        fake.setState(BandStackAccess::State::Ready);
+        auto* panel = window->findChild<BandStackPanel*>();
+        QVERIFY(panel);
+        SliceModel slice(0);
+        slice.setFrequency(kOn40mHz);
+        panel->rows()->setContext(stackContext());
+        panel->setSlice(&slice);
+        panel->setOpen(true, false);
+        settle();
+        window->activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(window.get()));
+        BandStackRowList* rows = panel->rows();
+        rows->setFocus(Qt::OtherFocusReason);
+        QTRY_COMPARE(QApplication::focusWidget(), rows);
+        const qsizetype toastsBefore = window->findChildren<StatusToast*>().size();
+
+        QTest::keyClick(rows, Qt::Key_F2);
+        auto* editor = rows->findChild<QLineEdit*>(QStringLiteral("bandStackRowRename"));
+        QVERIFY(editor);
+        QVERIFY(editor->isVisible());
+        QCOMPARE(window->findChildren<StatusToast*>().size(), toastsBefore);
+        QTest::keyClick(editor, Qt::Key_Escape);
+        QTRY_VERIFY(!rows->findChild<QLineEdit*>(QStringLiteral("bandStackRowRename"))
+                    || !rows->findChild<QLineEdit*>(QStringLiteral("bandStackRowRename"))->isVisible());
+
+        // With nothing claiming it, F2 is Message 2, which says why it cannot
+        // send with no radio connected.
+        panel->setOpen(false, false);
+        settle();
+        window->setFocus(Qt::OtherFocusReason);
+        QTest::keyClick(window.get(), Qt::Key_F2);
+        QTRY_VERIFY(window->findChildren<StatusToast*>().size() > toastsBefore);
+        panel->setSlice(nullptr);
+        window->setBandStackAccessForTest(window->radioModel()->bandStack());
+    }
+
     void capturesOfTheRowsAndMenus_data()
     {
         QTest::addColumn<bool>("workspaceLook");
@@ -1606,6 +1652,7 @@ int main(int argc, char** argv)
          {QStringLiteral("window"),
           {QStringLiteral("anExpiryNoteOffersUndoForFiveSeconds"),
            QStringLiteral("theRowsReachTheWindowsSliceAndFlags"),
+           QStringLiteral("f2OnAFocusedRowRenamesAndSendsNoMessage"),
            QStringLiteral("capturesOfTheRowsAndMenus")}}});
     return arguments ? QTest::qExec(&test, *arguments) : 1;
 }

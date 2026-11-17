@@ -21,6 +21,16 @@
 // the button column. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-11-05: The Roundtable sheet is told its full height on this band.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-16: Recording plan Task 16, each flag's Record and Play on the band.
+// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan Task 17, the playing bar's All recordings… and
+// Recording settings… open their pages. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan Task 18, the round VOICE beside PTT and the voice
+// keyer's messages over the pan. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan Task 19, the iPad column's Recordings panel.
+// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: VOICE goes above PTT while the thumbwheel's step box is beside it.
+// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -94,10 +104,18 @@ struct MainScreen: View {
     /// The toolbar's link dot opens the same destination as Tools.
     let openPerformance: () -> Void
     let openTransmitSettings: () -> Void
+    /// The playing bar's All recordings… (Tools > Recordings) and Recording
+    /// settings… (Setup > Recording settings).
+    let openAllRecordings: () -> Void
+    let openRecordingSettings: () -> Void
+    /// VOICE's All settings › and an empty message: Tools > Voice Keyer.
+    let openVoiceKeyer: () -> Void
 
     @State private var rxPanelOpen: Bool
     @State private var txPanelOpen: Bool
     @State private var soundPanelOpen = false
+    /// VOICE's M1 to M8 over the pan.
+    @State private var voicePanelOpen = false
     @State private var sheet: OpenSheet?
     /// The Display pill's open tab, kept while the sheet closes and opens.
     @State private var displayTab: DisplayPillTab = .spectrum
@@ -167,7 +185,9 @@ struct MainScreen: View {
          roundtableSheet: RoundtableSheet.Detent? = nil, holdObserver: ((PttHold.Action) -> Void)? = nil,
          swipes: SwipeShortcutModel? = nil, roundtableWide: Bool = false,
          openSetup: @escaping () -> Void = {}, openRadio: @escaping () -> Void = {},
-         openPerformance: @escaping () -> Void = {}, openTransmitSettings: @escaping () -> Void = {}) {
+         openPerformance: @escaping () -> Void = {}, openTransmitSettings: @escaping () -> Void = {},
+         openAllRecordings: @escaping () -> Void = {}, openRecordingSettings: @escaping () -> Void = {},
+         openVoiceKeyer: @escaping () -> Void = {}) {
         self.app = app
         self.main = main
         transmit = main.transmit
@@ -187,6 +207,9 @@ struct MainScreen: View {
         self.openRadio = openRadio
         self.openPerformance = openPerformance
         self.openTransmitSettings = openTransmitSettings
+        self.openAllRecordings = openAllRecordings
+        self.openRecordingSettings = openRecordingSettings
+        self.openVoiceKeyer = openVoiceKeyer
         offline = flow?.offline ?? false
         _rxPanelOpen = State(initialValue: rxPanelOpen)
         _sheet = State(initialValue: sheet)
@@ -222,7 +245,11 @@ struct MainScreen: View {
                             if columnShown {
                                 AppletColumn(main: main, openRadio: openRadio, openSettings: openTransmitSettings,
                                              openBandStackSetup: { app.phoneNavigation?.openPage(.bandStack) },
-                                             roundtable: roundtable.available ? appletConfig : nil)
+                                             roundtable: roundtable.available ? appletConfig : nil,
+                                             recordings: RecordingsAppletConfig(model: app.recordingsApplet,
+                                                                                settings: app.phoneSettings,
+                                                                                openAll: openAllRecordings,
+                                                                                openSettings: openRecordingSettings))
                                     .transition(.move(edge: .trailing))
                             }
                         }
@@ -442,6 +469,20 @@ struct MainScreen: View {
                         .padding(.bottom, roundtableSheet == nil ? PttButton.bottomInset
                                  : (DialLayer.stripHeight - PttButton.diameter) / 2)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                    if roundtableSheet == nil {
+                        // VOICE beside PTT, centred on it (recording design 6.6). With the
+                        // thumbwheel on, its step box sits beside PTT, so VOICE goes above PTT.
+                        let above = app.phoneSettings.dialKind == .thumbwheel
+                        VoiceButton(model: app.voiceKeyer) { voicePanelOpen = true }
+                            .offset(x: placed.minX - pttHome.minX)
+                            .padding(.leading, PttButton.inset + (sideways ? leadingInset : 0)
+                                     + (above ? (PttButton.diameter - VoiceButton.diameter) / 2
+                                        : PttButton.diameter + VoiceButton.gap))
+                            .padding(.bottom, PttButton.bottomInset
+                                     + (above ? PttButton.diameter + VoiceButton.gap
+                                        : (PttButton.diameter - VoiceButton.diameter) / 2))
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                    }
                 }
             }
             // A spot's details or a badge's list, over PTT and under the covers.
@@ -499,6 +540,21 @@ struct MainScreen: View {
             }
             if let flow {
                 LinkLostBanner(flow: flow, mirror: app.mirror, devices: main.devices)
+            }
+            if voicePanelOpen {
+                // VOICE's messages over the pan; a tap off them closes them.
+                ChromeColours.scrim
+                    .contentShape(Rectangle())
+                    .onTapGesture { voicePanelOpen = false }
+                    .transition(.opacity)
+                    .accessibilityLabel("Close the voice keyer")
+                    .accessibilityAddTraits(.isButton)
+                VoiceKeyerPanel(model: app.voiceKeyer, take: main.take, close: { voicePanelOpen = false },
+                                openPage: openVoiceKeyer)
+                    .frame(maxWidth: sideways ? DropSheet<EmptyView, EmptyView>.sidewaysWidth : .infinity)
+                    .padding(.leading, sideways ? leadingInset : 0)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .transition(.move(edge: .bottom))
             }
             if rxPanelOpen || txPanelOpen || rxDrag != nil || txDrag != nil {
                 let drag = rxDrag ?? txDrag
@@ -1120,7 +1176,9 @@ struct MainScreen: View {
                              toggleRoundtableLine: first ? { id in toggleRoundtableLine(id) } : nil,
                              dialStrip: strip, roundtable: first ? roundtable : nil,
                              swipes: swipesHere ? swipes : nil,
-                             bandStack: controls.bandStack, radioOnAir: transmit.coreOnAir)
+                             bandStack: controls.bandStack, radioOnAir: transmit.coreOnAir,
+                             recordings: app.recordingFlag, openAllRecordings: openAllRecordings,
+                             openRecordingSettings: openRecordingSettings, dsr: first ? app.dsr : nil)
             DbmScaleArrows(display: controls.display, band: band, trailingInset: trailingInset)
             BandReadouts(band: band, trailingInset: trailingInset)
             TransmitDisplayBanner(band: band)

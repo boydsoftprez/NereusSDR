@@ -12,6 +12,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Recording plan Task 21: recordingsVersion 4, the Digital Spectrum Recorder.
+//   2026-11-16: Recording plan Task 11: recordingsVersion 3, the voice keyer.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-15: Recording plan Task 10: recordingsVersion 2.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-15: Recording plan Task 5: and recordings, so recordingsVersion and the
+//               `recordings` object are captured.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05: Band stack plan Task 4: and bandStack, so bandStackVersion and the `bandStack`
 //               object are captured.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -296,6 +304,7 @@
 #include "core/session/MirrorPolicy.h"
 #include "core/session/MirrorSchema.h"
 #include "core/session/BandStackFacade.h"
+#include "core/session/RecordingsFacade.h"
 #include "core/session/PaProfilesFacade.h"
 #include "core/session/PureSignalSessionFacade.h"
 #include "core/session/SessionCommandDispatcher.h"
@@ -747,6 +756,8 @@ std::optional<QList<QByteArray>> liveSessionWire(
                                   {"paProfiles", 1},
                                   // Band stack plan Task 4: the `bandStack` object.
                                   {"bandStack", 1},
+                                  // Recording plan Task 5: the `recordings` object.
+                                  {"recordings", 1},
                                   // RADE status: each slice's radeSynced
                                   // and radeFreqOffsetHz.
                                   {"radeStatus", 1},
@@ -885,6 +896,8 @@ QJsonArray captureCapabilities()
     caps.paProfileVersion = 1;
     // Band stack plan Task 4: sent to a peer that declared bandStack.
     caps.bandStackVersion = 1;
+    // Recording plan Task 5: sent to a peer that declared recordings.
+    caps.recordingsVersion = 4;
     // RADE status: sent to a peer that declared radeStatus.
     caps.radeStatusVersion = 1;
     // HL2 port part 2: sent to a peer that declared txInhibitReason.
@@ -2103,6 +2116,7 @@ QList<const QMetaObject*> LinkSurface::mirroredMetaObjects()
             &StationVax::staticMetaObject,
             &PaProfilesFacade::staticMetaObject,
             &BandStackFacade::staticMetaObject,
+            &RecordingsFacade::staticMetaObject,
             &RotorLink::RotorModel::staticMetaObject,
             &RoundtableState::staticMetaObject};
 }

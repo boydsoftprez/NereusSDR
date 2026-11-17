@@ -931,6 +931,8 @@ struct PhoneNavigation {
     var followDisplayPan: (PanIdentity) -> Void = { _ in }
     /// Opens one of the app's own Setup pages on the Setup tab.
     var openPage: (SetupTree.Page) -> Void = { _ in }
+    /// Opens Tools > Recordings on the Tools tab.
+    var openRecordings: () -> Void = {}
 }
 
 /// This phone's own Display rows on the Core's version 29 pages (spec

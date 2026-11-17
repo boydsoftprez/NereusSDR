@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recordings Window</title>
+<style>
+:root { color-scheme: dark; --app: #08080a; --panel: #0c0c0e; --border: #2c2c31; --text: #dcdce1; --dim: #a6a6ac; --blue: #264e78; --blue-b: #4a7ba8; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --app: #08080a; } }
+:root[data-theme="dark"] { --app: #08080a; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--app); color: var(--text); font: 13px/1.4 system-ui, -apple-system, sans-serif; }
+header { padding: 16px 20px 4px; }
+h1 { margin: 0 0 4px; font: 700 21px/1.2 system-ui, sans-serif; }
+.note { color: var(--dim); margin: 0; max-width: 1000px; }
+.bar { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; padding: 10px 20px; }
+.chips { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.chips > span { color: var(--dim); margin-right: 4px; }
+.chip { height: 24px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--border); background: #1b1b1f; color: #e8e8ec; font: 600 12px/22px system-ui; cursor: pointer; }
+.chip.on { background: var(--blue); border-color: var(--blue-b); color: #fff; }
+.wrap { padding: 0 20px 30px; }
+.box { width: 100%; max-width: 1100px; overflow-x: auto; overflow-y: hidden; border: 1px solid var(--border); border-radius: 8px; -webkit-overflow-scrolling: touch; }
+#sizer { position: relative; }
+/* The window, in the Setup window's look. */
+.win { position: absolute; left: 0; top: 0; width: 900px; height: 560px; transform-origin: 0 0; background: #08080a; font: 12.7px/1.35 system-ui, -apple-system, sans-serif; color: #dcdce1; overflow: hidden; }
+.tb { height: 28px; display: flex; align-items: center; justify-content: center; position: relative; background: #1a1a1e; border-bottom: 1px solid #2c2c31; font-weight: 600; color: #c4c4ca; }
+.tb .lights { position: absolute; left: 10px; top: 9px; display: flex; gap: 7px; }
+.tb .lights i { width: 11px; height: 11px; border-radius: 6px; background: #ff5f57; } .tb .lights i:nth-child(2) { background: #febc2e; } .tb .lights i:nth-child(3) { background: #28c840; }
+.in { position: absolute; left: 0; right: 0; top: 28px; bottom: 0; padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 8px; }
+fieldset { margin: 0; border: 1px solid #2c2c31; border-radius: 4px; padding: 5px 8px 7px; }
+legend { padding: 0 6px; margin-left: 6px; font-weight: 700; color: #c4c4ca; }
+.store { display: flex; align-items: center; gap: 10px; }
+.meter { flex: 1; height: 10px; border-radius: 3px; background: #040406; border: 1px solid #2c2c31; overflow: hidden; display: flex; }
+.meter i { height: 100%; }
+.dim { color: #a6a6ab; }
+.tools { display: flex; align-items: center; gap: 6px; }
+.seg { display: inline-flex; border: 1px solid #38383e; border-radius: 5px; overflow: hidden; }
+.seg button { height: 22px; padding: 0 9px; border: 0; border-left: 1px solid #38383e; background: #1b1b1f; color: #dcdce1; font: inherit; cursor: pointer; }
+.seg button:first-child { border-left: 0; }
+.seg button.on { background: #2f5f92; color: #fff; }
+.search { margin-left: auto; width: 210px; height: 22px; border-radius: 5px; border: 1px solid #38383e; background: #040406; color: #fff; font: inherit; padding: 0 7px; }
+.tbl { flex: 1; min-height: 0; border: 1px solid #2c2c31; overflow-y: auto; }
+table { width: 100%; border-collapse: collapse; }
+th { position: sticky; top: 0; background: #1a1a1e; color: #dcdce1; font-weight: 500; text-align: left; padding: 3px 8px; border-right: 1px solid #2c2c31; white-space: nowrap; cursor: pointer; }
+th.r, td.r { text-align: right; }
+th .ar { color: #7aa7d6; margin-left: 3px; }
+td { padding: 3px 8px; white-space: nowrap; border-bottom: 1px solid #141417; }
+tr.row { cursor: default; }
+tr.row:hover td { background: #101015; }
+tr.row.sel td { background: #1e3d5f; color: #fff; }
+td.pl { width: 26px; padding: 0 0 0 6px; }
+.pb { width: 20px; height: 18px; border-radius: 4px; border: 1px solid #38383e; background: #1b1b1f; color: #8fd0a0; font: 10px/16px system-ui; cursor: pointer; padding: 0; }
+.pb.on { background: #2f5a40; border-color: #3f7a55; color: #fff; }
+.kind { display: inline-block; padding: 0 6px; border-radius: 3px; font: 600 10.5px/16px system-ui; }
+.k-quick { background: #2a2a30; color: #d6d6dc; }
+.k-pan { background: #1f3b5c; color: #cfe2f6; }
+.k-mp3 { background: #2f4a37; color: #cfe9d6; }
+.prog { display: block; height: 2px; background: #4caf6a; margin-top: 1px; width: 0; }
+.acts { display: flex; gap: 6px; align-items: center; }
+.acts .sp { flex: 1; }
+button.q { height: 24px; padding: 0 11px; border-radius: 5px; border: 1px solid #38383e; background: #1b1b1f; color: #e8e8ec; font: inherit; cursor: pointer; }
+button.q:disabled { color: #5c5c62; cursor: default; }
+button.q.danger { border-color: #6b2c2e; color: #ffb4b4; }
+button.q.danger:disabled { border-color: #38383e; color: #5c5c62; }
+.modal { position: absolute; inset: 28px 0 0 0; background: rgba(0, 0, 0, .55); display: none; align-items: center; justify-content: center; }
+.modal .m { width: 400px; background: #1b1b1f; border: 1px solid #3d3d41; border-radius: 6px; padding: 12px 14px; box-shadow: 0 14px 34px -8px #000; }
+.modal .m b { display: block; margin-bottom: 6px; font-size: 13.2px; }
+.modal .m .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.modal .m input, .modal .m select { height: 22px; border-radius: 4px; border: 1px solid #38383e; background: #040406; color: #fff; font: inherit; padding: 0 6px; }
+.modal .btns { display: flex; justify-content: flex-end; gap: 6px; margin-top: 12px; }
+.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 7px 12px; background: #1b1b1f; border: 1px solid #3d3d41; border-radius: 4px; font-size: 12.5px; opacity: 0; transition: opacity .15s; pointer-events: none; z-index: 9; max-width: 90vw; }
+.toast.on { opacity: 1; }
+@media (max-width: 700px) { header, .bar { padding-left: 16px; padding-right: 16px; } .wrap { padding: 0 16px 24px; } h1 { font-size: 18px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Recordings window</h1>
+  <p class="note">Opened by "All recordings…" in the Recordings panel or the flag's Play menu. It lists what is saved on the Core, so it is the same on the desktop and the phone. Click a row to select it (Shift or Cmd for several), click a column to sort, double-click to play.</p>
+</header>
+<div class="bar">
+  <div class="chips" id="where"><span>The Core is:</span>
+    <button class="chip on" data-w="remote">On another computer</button>
+    <button class="chip" data-w="local">On this Mac</button></div>
+</div>
+<div class="wrap">
+  <div class="box" id="box"><div id="sizer"><div class="win" id="win">
+    <div class="tb"><span class="lights"><i></i><i></i><i></i></span>Recordings</div>
+    <div class="in">
+      <fieldset><legend>On the Core</legend>
+        <div class="store"><span id="storeT"></span></div>
+        <div class="dim" id="storeD" style="margin-top:3px"></div>
+      </fieldset>
+      <div class="tools">
+        <div class="seg" id="filt"><button class="on" data-f="all">All</button><button data-f="quick">Quick recordings</button><button data-f="pan">Whole pan</button><button data-f="mp3">Sound only</button></div>
+        <input class="search" id="search" placeholder="Search call, frequency or name">
+      </div>
+      <div class="tbl"><table><thead><tr id="hdr"></tr></thead><tbody id="rows"></tbody></table></div>
+      <div class="acts">
+        <button class="q" id="aPlay">Play</button>
+        <button class="q" id="aRen">Rename…</button>
+        <button class="q" id="aMp3">Save sound only…</button>
+        <span class="sp"></span>
+        <button class="q" id="aCopy">Save a copy here…</button>
+        <button class="q" id="aShow">Show in Finder</button>
+        <button class="q danger" id="aDel">Delete…</button>
+      </div>
+    </div>
+    <div class="modal" id="modal"><div class="m" id="mBody"></div></div>
+  </div></div></div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+(function () {
+  var REC = [
+    { id: 1, t: Date.UTC(2026, 10, 14, 15, 2), kind: 'quick', f: 7.188, mode: 'LSB', call: 'W4XYZ', secs: 312, mb: 15, name: '' },
+    { id: 2, t: Date.UTC(2026, 10, 14, 13, 2), kind: 'pan', f: 7.185, mode: 'LSB', call: '', secs: 600, mb: 460, name: 'Sunday net' },
+    { id: 3, t: Date.UTC(2026, 10, 14, 13, 5), kind: 'mp3', f: 7.1985, mode: 'LSB', call: 'K4ABC', secs: 390, mb: 6, name: '' },
+    { id: 4, t: Date.UTC(2026, 10, 13, 23, 11), kind: 'quick', f: 3.873, mode: 'LSB', call: 'N4RDR', secs: 2410, mb: 116, name: '' },
+    { id: 5, t: Date.UTC(2026, 10, 13, 21, 0), kind: 'pan', f: 14.25, mode: 'USB', call: '', secs: 900, mb: 690, name: '20 m opening' },
+    { id: 6, t: Date.UTC(2026, 10, 13, 21, 5), kind: 'quick', f: 14.25, mode: 'USB', call: '', secs: 95, mb: 4.6, name: '' },
+    { id: 7, t: Date.UTC(2026, 10, 12, 18, 15), kind: 'pan', f: 7.2, mode: 'LSB', call: 'AA5ABC', secs: 1800, mb: 1380, name: '' },
+    { id: 8, t: Date.UTC(2026, 10, 12, 18, 22), kind: 'mp3', f: 7.2, mode: 'LSB', call: 'AA5ABC', secs: 640, mb: 10, name: '' }
+  ];
+  var KIND = { quick: ['Quick', 'k-quick', 'From the flag’s Record button (WAV)'], pan: ['Whole pan', 'k-pan', 'A saved stretch: every station on the pan'], mp3: ['Sound only', 'k-mp3', 'MP3 of one station'] };
+  var COLS = [['', 'pl'], ['When (UTC)', 't'], ['Kind', 'kind'], ['Frequency', 'f'], ['Mode', 'mode'], ['Call', 'call'], ['Name', 'name'], ['Length', 'secs', 'r'], ['Size', 'mb', 'r']];
+  var st = { where: 'remote', filt: 'all', q: '', sort: 't', dir: -1, sel: {}, anchor: null, play: null, nextId: 9 };
+  var FREE_GB = 884;
+  var tt; function say(t) { var e = document.getElementById('toast'); e.textContent = t; e.classList.add('on'); clearTimeout(tt); tt = setTimeout(function () { e.classList.remove('on'); }, 3400); }
+  function when(t) { var d = new Date(t); return d.getUTCDate() + ' ' + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getUTCMonth()] + ' ' + d.toISOString().slice(11, 16); }
+  function len(s) { var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0'); }
+  function size(mb) { return mb >= 1000 ? (mb / 1000).toFixed(1) + ' GB' : (mb < 10 ? mb.toFixed(1) : Math.round(mb)) + ' MB'; }
+  function freq(r) { return r.kind === 'pan' ? (r.f - 0.096).toFixed(3) + ' to ' + (r.f + 0.096).toFixed(3) : r.f.toFixed(4).replace(/0$/, ''); }
+  function visible() {
+    var q = st.q.toLowerCase();
+    return REC.filter(function (r) { return (st.filt === 'all' || r.kind === st.filt) && (!q || (r.call + ' ' + r.name + ' ' + r.f + ' ' + KIND[r.kind][0]).toLowerCase().indexOf(q) >= 0); })
+      .sort(function (a, b) { var x = a[st.sort], y = b[st.sort]; if (st.sort === 'kind') { x = KIND[a.kind][0]; y = KIND[b.kind][0]; } return (x > y ? 1 : x < y ? -1 : 0) * st.dir; });
+  }
+  function selected() { return REC.filter(function (r) { return st.sel[r.id]; }); }
+
+  function render() {
+    var tot = REC.reduce(function (a, r) { return a + r.mb; }, 0);
+    var by = { pan: 0, quick: 0, mp3: 0 }; REC.forEach(function (r) { by[r.kind] += r.mb; });
+    document.getElementById('storeT').innerHTML = '<b>' + size(tot) + '</b> saved';
+    document.getElementById('storeD').textContent = 'Whole pan ' + size(by.pan) + ', sound ' + size(by.quick + by.mp3) + '. ' + FREE_GB + ' GB free on the USB SSD. The Digital Spectrum Recorder’s 10 GB loop is separate and not counted here.';
+    document.getElementById('hdr').innerHTML = COLS.map(function (c) { return '<th data-s="' + c[1] + '" class="' + (c[2] || '') + '">' + c[0] + (st.sort === c[1] ? '<span class="ar">' + (st.dir > 0 ? '▲' : '▼') + '</span>' : '') + '</th>'; }).join('');
+    document.getElementById('rows').innerHTML = visible().map(function (r) {
+      var on = st.play && st.play.id === r.id;
+      return '<tr class="row' + (st.sel[r.id] ? ' sel' : '') + '" data-id="' + r.id + '">' +
+        '<td class="pl"><button class="pb' + (on ? ' on' : '') + '" data-p="' + r.id + '" title="' + (r.kind === 'pan' ? 'Open on the pan, like rewind' : 'Play on your speaker') + '">' + (on ? '■' : '▶') + '</button></td>' +
+        '<td>' + when(r.t) + '</td><td><span class="kind ' + KIND[r.kind][1] + '" title="' + KIND[r.kind][2] + '">' + KIND[r.kind][0] + '</span></td>' +
+        '<td>' + freq(r) + '</td><td>' + r.mode + '</td><td>' + (r.call || '<span class="dim">—</span>') + '</td><td>' + (r.name || '<span class="dim">—</span>') + '</td>' +
+        '<td class="r">' + len(r.secs) + (on ? '<span class="prog" id="prog"></span>' : '') + '</td><td class="r">' + size(r.mb) + '</td></tr>';
+    }).join('') || '<tr><td colspan="9" class="dim" style="padding:14px">No recordings match.</td></tr>';
+    var s = selected(), one = s.length === 1;
+    document.getElementById('aPlay').disabled = !one;
+    document.getElementById('aRen').disabled = !one;
+    document.getElementById('aMp3').disabled = !(one && s[0].kind === 'pan');
+    document.getElementById('aMp3').title = 'Pull out one station from a whole-pan stretch as an MP3';
+    document.getElementById('aCopy').disabled = !s.length;
+    var sh = document.getElementById('aShow'); sh.disabled = st.where !== 'local' || !s.length;
+    sh.title = st.where === 'local' ? 'Show the file in Finder' : 'The Core is on another computer. Use Save a copy here, then it shows in Finder.';
+    var d = document.getElementById('aDel'); d.disabled = !s.length; d.textContent = s.length > 1 ? 'Delete ' + s.length + '…' : 'Delete…';
+  }
+
+  // Playing: sound recordings play on the speaker with progress; a whole-pan stretch opens on the pan.
+  var playTimer = null;
+  function play(r) {
+    if (st.play && st.play.id === r.id) { st.play = null; clearInterval(playTimer); render(); return; }
+    if (r.kind === 'pan') { say('Opens ' + when(r.t) + ' on the pan, like rewind: the waterfall shows that stretch and you can click any station in it.'); return; }
+    st.play = { id: r.id, t0: Date.now() }; render();
+    clearInterval(playTimer);
+    playTimer = setInterval(function () { var p = document.getElementById('prog'); if (!st.play) { return; } var f = (Date.now() - st.play.t0) / 1000 / r.secs * 30; if (f >= 1) { st.play = null; clearInterval(playTimer); render(); return; } if (p) { p.style.width = (f * 100) + '%'; } }, 100);
+  }
+  function modal(html, wire) { var m = document.getElementById('modal'); document.getElementById('mBody').innerHTML = html; m.style.display = 'flex'; wire(function () { m.style.display = 'none'; }); }
+
+  document.getElementById('rows').addEventListener('click', function (e) {
+    var pb = e.target.closest('[data-p]');
+    if (pb) { play(REC.filter(function (r) { return r.id === +pb.getAttribute('data-p'); })[0]); return; }
+    var tr = e.target.closest('tr.row'); if (!tr) { return; }
+    var id = +tr.getAttribute('data-id');
+    if (e.shiftKey && st.anchor !== null) {
+      var v = visible().map(function (r) { return r.id; }), a = v.indexOf(st.anchor), b = v.indexOf(id);
+      st.sel = {}; v.slice(Math.min(a, b), Math.max(a, b) + 1).forEach(function (x) { st.sel[x] = true; });
+    } else if (e.metaKey || e.ctrlKey) { st.sel[id] = !st.sel[id]; st.anchor = id; }
+    else { st.sel = {}; st.sel[id] = true; st.anchor = id; }
+    render();
+  });
+  document.getElementById('rows').addEventListener('dblclick', function (e) { var tr = e.target.closest('tr.row'); if (tr && !e.target.closest('[data-p]')) { play(REC.filter(function (r) { return r.id === +tr.getAttribute('data-id'); })[0]); } });
+  document.getElementById('hdr').addEventListener('click', function (e) { var th = e.target.closest('th'); if (!th || th.getAttribute('data-s') === 'pl') { return; } var s = th.getAttribute('data-s'); if (st.sort === s) { st.dir = -st.dir; } else { st.sort = s; st.dir = s === 't' || s === 'mb' || s === 'secs' ? -1 : 1; } render(); });
+  document.getElementById('filt').addEventListener('click', function (e) { var b = e.target.closest('[data-f]'); if (!b) { return; } st.filt = b.getAttribute('data-f'); document.querySelectorAll('#filt button').forEach(function (x) { x.classList.toggle('on', x === b); }); render(); });
+  document.getElementById('search').addEventListener('input', function () { st.q = this.value; render(); });
+  document.getElementById('aPlay').onclick = function () { play(selected()[0]); };
+  document.getElementById('aRen').onclick = function () {
+    var r = selected()[0];
+    modal('<b>Rename</b><div class="row"><input id="rn" style="flex:1" value="' + (r.name || '') + '" placeholder="A name, like Sunday net"></div><div class="btns"><button class="q" id="c">Cancel</button><button class="q" id="o" style="border-color:#4a7ba8;background:#264e78;color:#fff">Rename</button></div>',
+      function (close) { var i = document.getElementById('rn'); i.focus(); document.getElementById('c').onclick = close; document.getElementById('o').onclick = function () { r.name = i.value.trim().slice(0, 30); close(); render(); }; });
+  };
+  document.getElementById('aMp3').onclick = function () {
+    var r = selected()[0];
+    modal('<b>Save sound only from this stretch</b><span class="dim">' + when(r.t) + ', ' + len(r.secs) + ', ' + freq(r) + ' MHz</span>' +
+      '<div class="row">Station: <input id="mf" style="width:100px" value="' + r.f.toFixed(4) + '"> MHz <select id="mm"><option>LSB</option><option>USB</option><option>AM</option><option>CW</option></select></div>' +
+      '<div class="row">Saves as: <select><option>MP3</option><option>WAV</option></select></div>' +
+      '<div class="dim">Or open the stretch on the pan, click the station, and use Save sound only there.</div>' +
+      '<div class="btns"><button class="q" id="c">Cancel</button><button class="q" id="o" style="border-color:#4a7ba8;background:#264e78;color:#fff">Save</button></div>',
+      function (close) { document.getElementById('mm').value = r.mode; document.getElementById('c').onclick = close; document.getElementById('o').onclick = function () { var f = parseFloat(document.getElementById('mf').value) || r.f; REC.push({ id: st.nextId++, t: r.t, kind: 'mp3', f: f, mode: document.getElementById('mm').value, call: '', secs: r.secs, mb: Math.round(r.secs / 60 * 0.96 * 10) / 10, name: (r.name ? r.name + ', ' : '') + f.toFixed(4) }); close(); render(); say('Saved an MP3 of ' + f.toFixed(4) + ' MHz from that stretch'); }; });
+  };
+  document.getElementById('aCopy').onclick = function () {
+    var s = selected(), mb = s.reduce(function (a, r) { return a + r.mb; }, 0);
+    say(st.where === 'local' ? 'Copied ' + s.length + ' recording' + (s.length > 1 ? 's' : '') + ' (' + size(mb) + ') to Downloads' : 'Copying ' + size(mb) + ' from the Core to Downloads on this Mac, then showing it in Finder');
+  };
+  document.getElementById('aShow').onclick = function () { say('Shows the file in Finder'); };
+  document.getElementById('aDel').onclick = function () {
+    var s = selected(), mb = s.reduce(function (a, r) { return a + r.mb; }, 0);
+    modal('<b>Delete ' + (s.length > 1 ? s.length + ' recordings' : 'this recording') + ' from the Core?</b>' + s.map(function (r) { return '<div class="dim">' + when(r.t) + ', ' + KIND[r.kind][0] + ', ' + size(r.mb) + '</div>'; }).join('') +
+      '<div style="margin-top:6px">This frees ' + size(mb) + ' and cannot be undone. Copies already saved on a computer stay.</div><div class="btns"><button class="q" id="c">Cancel</button><button class="q danger" id="o">Delete</button></div>',
+      function (close) { document.getElementById('c').onclick = close; document.getElementById('o').onclick = function () { REC = REC.filter(function (r) { return !st.sel[r.id]; }); FREE_GB += Math.round(mb / 1000); st.sel = {}; close(); render(); say('Deleted, freed ' + size(mb)); }; });
+  };
+  document.getElementById('where').addEventListener('click', function (e) { var b = e.target.closest('[data-w]'); if (!b) { return; } st.where = b.getAttribute('data-w'); document.querySelectorAll('#where .chip').forEach(function (c) { c.classList.toggle('on', c === b); }); render(); });
+  var fitted = false;
+  function fit() {
+    var b = document.getElementById('box'), k = Math.max(Math.min(b.clientWidth / 900, 1.25), b.clientWidth < 700 ? 0.72 : 0);
+    document.getElementById('win').style.transform = 'scale(' + k + ')';
+    var z = document.getElementById('sizer'); z.style.width = (900 * k) + 'px'; z.style.height = (560 * k) + 'px';
+  }
+  window.addEventListener('resize', fit); fit(); render();
+})();
+</script>
+</body>
+</html>

@@ -16,7 +16,7 @@ apt-get install -y --no-install-recommends \
     ca-certificates cmake ninja-build pkg-config build-essential \
     qt6-base-dev qt6-multimedia-dev qt6-base-private-dev \
     qt6-shadertools-dev qt6-svg-dev qt6-websockets-dev qt6-serialport-dev \
-    libfftw3-dev libssl-dev libasound2-dev libjack-jackd2-dev \
+    libfftw3-dev libmp3lame-dev libssl-dev libasound2-dev libjack-jackd2-dev \
     libpipewire-0.3-dev libpulse-dev libgl1-mesa-dev libxkbcommon-dev \
     autoconf automake libtool wget git python3
 
@@ -52,6 +52,8 @@ from pathlib import Path
 commands = json.loads(Path('/tmp/nereus-build/compile_commands.json').read_text())
 assert any('DeepFilterFilter.cpp' in item['file'] and '-DHAVE_DFNR' in item['command']
            for item in commands), 'DFNR silently disabled in CMake'
+assert any('AudioFileWriter.cpp' in item['file'] and '-DNEREUS_HAVE_LAME' in item['command']
+           for item in commands), 'MP3 recording (LAME) silently disabled in CMake'
 PY
 cmake --build /tmp/nereus-build --target nereusd -j2
 test -x /tmp/nereus-build/nereusd

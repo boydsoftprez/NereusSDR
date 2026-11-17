@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recordings Setup Page</title>
+<style>
+:root { color-scheme: dark; --app: #08080a; --panel: #0c0c0e; --border: #2c2c31; --text: #dcdce1; --dim: #a6a6ac; --blue: #264e78; --blue-b: #4a7ba8; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --app: #08080a; } }
+:root[data-theme="dark"] { --app: #08080a; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--app); color: var(--text); font: 13px/1.4 system-ui, -apple-system, sans-serif; }
+header { padding: 16px 20px 4px; }
+h1 { margin: 0 0 4px; font: 700 21px/1.2 system-ui, sans-serif; }
+.note { color: var(--dim); margin: 0; max-width: 1000px; }
+.bar { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; padding: 10px 20px; }
+.chips { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.chips > span { color: var(--dim); margin-right: 4px; }
+.chip { height: 24px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--border); background: #1b1b1f; color: #e8e8ec; font: 600 12px/22px system-ui; cursor: pointer; }
+.chip.on { background: var(--blue); border-color: var(--blue-b); color: #fff; }
+.wrap { padding: 0 20px 30px; }
+.box { width: 100%; max-width: 1100px; overflow-x: auto; overflow-y: hidden; border: 1px solid var(--border); -webkit-overflow-scrolling: touch; }
+#sizer { position: relative; }
+.dlg { position: absolute; left: 0; top: 0; width: 900px; height: 650px; transform-origin: 0 0; background: #08080a; font: 12.7px/1.35 system-ui, -apple-system, sans-serif; color: #dcdce1; overflow: hidden; }
+/* The real Setup tree, opened up by one row under Cores for the new page. */
+.tree { position: absolute; left: 0; top: 0; width: 201px; height: 650px; }
+.tree .a { position: absolute; left: 0; top: 0; width: 201px; height: 168px; background: url(tree.png) 0 0 / 201px 650px no-repeat; }
+.tree .b { position: absolute; left: 0; top: 189px; width: 201px; height: 461px; background: url(tree.png) 0 -168px / 201px 650px no-repeat; }
+.tree .it { position: absolute; left: 0; width: 186px; height: 21px; color: #dcdce1; font: 12.4px/21px system-ui, -apple-system, sans-serif; padding-left: 43px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.tree .it.sel { background: #2f5f92; color: #dbe9f8; }
+.page { position: absolute; left: 201px; top: 0; right: 0; bottom: 0; padding: 8px 12px 10px 16.5px; overflow-y: auto; }
+.page h2 { margin: 0 0 14px; font: 700 15.6px/1.5 system-ui, -apple-system, sans-serif; color: #dcdce1; }
+fieldset { margin: 0 0 9px; border: 1px solid #2c2c31; border-radius: 4px; padding: 6px 8px 8px; min-width: 0; }
+legend { padding: 0 6px; margin-left: 6px; font-weight: 700; color: #c4c4ca; }
+p { margin: 0 0 6px; }
+.dim { color: #a6a6ab; }
+.row { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; }
+.row label { white-space: nowrap; }
+.chk { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; }
+.chk input { width: 14px; height: 14px; margin: 0; accent-color: #2f5f92; }
+.sub { margin-left: 21px; }
+select { height: 22px; border-radius: 5px; border: 1px solid #38383e; background: #1b1b1f; color: #dcdce1; font: inherit; padding: 0 6px; }
+select.grow { flex: 1; }
+.val { width: 62px; height: 22px; border-radius: 4px; border: 1px solid #38383e; background: #040406; color: #fff; font: 600 12px/20px system-ui; text-align: center; }
+button.q { height: 22px; padding: 0 10px; border-radius: 5px; border: 1px solid #38383e; background: #1b1b1f; color: #e8e8ec; font: inherit; cursor: pointer; }
+button.q:disabled, select:disabled, input:disabled { color: #5c5c62; cursor: default; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 4px; margin-right: 6px; background: #4caf6a; }
+.dot.off { background: #5c5c62; }
+.name { font: 12px ui-monospace, "SF Mono", Menlo, monospace; color: #cfe2ff; background: #0f0f12; border: 1px solid #2c2c31; border-radius: 4px; padding: 4px 7px; margin: 0 0 6px; word-break: break-all; }
+.meter { position: relative; height: 10px; border-radius: 3px; background: #040406; border: 1px solid #2c2c31; overflow: hidden; margin: 2px 0 3px; }
+.meter i { display: block; height: 100%; background: #2f5f92; }
+.okbox { border: 1px solid #38383e; background: #0f0f12; border-radius: 4px; padding: 6px 8px; margin: 0 0 7px; }
+.okbox b { color: #fff; }
+.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 7px 12px; background: #1b1b1f; border: 1px solid #3d3d41; border-radius: 4px; font-size: 12.5px; opacity: 0; transition: opacity .15s; pointer-events: none; z-index: 9; }
+.toast.on { opacity: 1; }
+@media (max-width: 700px) { header, .bar { padding-left: 16px; padding-right: 16px; } .wrap { padding: 0 16px 24px; } h1 { font-size: 18px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Recordings: Setup page</h1>
+  <p class="note">The real Setup window, with a second new page under Cores, next to the Digital Spectrum Recorder page you approved. It holds the settings for the flag's Record button and for files you save. Recordings are made and kept on the Core, so the desktop and the phone share these settings.</p>
+</header>
+<div class="bar">
+  <div class="chips" id="scen"><span>The Core:</span>
+    <button class="chip on" data-s="ssd">A Core with an SSD</button>
+    <button class="chip" data-s="sd">A Pi with only an SD card</button>
+    <button class="chip" data-s="none">Not connected</button></div>
+</div>
+<div class="wrap">
+  <div class="box" id="box"><div id="sizer"><div class="dlg" id="dlg">
+    <div class="tree"><div class="a"></div>
+      <div class="it" id="tDsr" style="top:147px">Digital Spectrum Recorder</div>
+      <div class="it sel" id="tRec" style="top:168px">Recordings</div>
+      <div class="b"></div></div>
+    <div class="page" id="page"></div>
+  </div></div></div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+(function () {
+  var st = { scen: 'ssd', fmt: 'MP3', mine: true, chan: 'mono', auto: false, idle: true, idleMin: 2, disk: 'own' };
+  var DISKS = {
+    ssd: [{ id: 'own', name: "The Core's own disk (SSD, 412 GB free)", free: 412 }, { id: 'usb', name: 'USB disk: Samsung T7 SSD (931 GB free)', free: 931 }],
+    sd:  [{ id: 'sd', name: 'SD card (58 GB free)', free: 58 }]
+  };
+  var tt; function say(t) { var e = document.getElementById('toast'); e.textContent = t; e.classList.add('on'); clearTimeout(tt); tt = setTimeout(function () { e.classList.remove('on'); }, 3000); }
+  function mbPerHour() { var mono = st.chan === 'mono'; return st.fmt === 'MP3' ? (mono ? 29 : 58) : (mono ? 173 : 346); }
+
+  function render() {
+    var none = st.scen === 'none', sd = st.scen === 'sd', dis = none ? ' disabled' : '';
+    var d = DISKS[sd ? 'sd' : 'ssd'], cur = d.filter(function (x) { return x.id === st.disk; })[0] || d[0];
+    var h = '<h2>Recordings</h2>';
+    if (none) { h += '<p class="dim">No authenticated Core connection in this window. Connect to the Core to change these.</p>'; }
+
+    h += '<fieldset><legend>What the Record button keeps</legend>';
+    h += '<p>The round Record button beside the slice flag records the contact on that slice.</p>';
+    h += '<div class="row"><label class="chk"><input type="checkbox" checked disabled> What you hear on the slice</label></div>';
+    h += '<div class="row"><label class="chk"><input type="checkbox" id="mine"' + (st.mine ? ' checked' : '') + dis + '> Your own voice when you transmit</label></div>';
+    h += '<div class="row sub"><label>Put the two sides:</label><select id="chan"' + (st.mine && !none ? '' : ' disabled') + '>' +
+      '<option value="mono"' + (st.chan === 'mono' ? ' selected' : '') + '>Together, one after the other</option>' +
+      '<option value="stereo"' + (st.chan === 'stereo' ? ' selected' : '') + '>Apart: them on the left, you on the right</option></select></div>';
+    h += '</fieldset>';
+
+    h += '<fieldset><legend>Starting and stopping</legend>';
+    h += '<div class="row"><label class="chk"><input type="checkbox" id="auto"' + (st.auto ? ' checked' : '') + dis + '> Start recording by itself when I transmit</label></div>';
+    h += '<div class="row"><label class="chk"><input type="checkbox" id="idle"' + (st.idle ? ' checked' : '') + dis + '> Stop by itself after</label><input class="val" id="idleMin" value="' + st.idleMin + ' min"' + (st.idle && !none ? '' : ' disabled') + '><span class="dim">with nothing heard and no transmit</span></div>';
+    h += '<p class="dim">' + (st.auto ? 'Every contact you answer or call is recorded without pressing Record. ' : 'Recording starts only when you press Record. ') + (st.idle ? 'A recording left running ends ' + st.idleMin + ' min after the band goes quiet.' : 'A recording runs until you press Record again.') + '</p>';
+    h += '</fieldset>';
+
+    h += '<fieldset><legend>Files</legend>';
+    h += '<div class="row"><label>Save as:</label><select id="fmt"' + dis + '><option' + (st.fmt === 'MP3' ? ' selected' : '') + '>MP3</option><option' + (st.fmt === 'WAV' ? ' selected' : '') + '>WAV</option></select><span class="dim">' + (st.fmt === 'MP3' ? 'Small, plays anywhere. About ' + mbPerHour() + ' MB an hour.' : 'Full quality, bigger. About ' + mbPerHour() + ' MB an hour.') + '</span></div>';
+    h += '<p class="dim">Also used for "Save sound only" from the Digital Spectrum Recorder.</p>';
+    h += '<p>Each one is named for when and where it was made, with the other station\'s call when the log knows it:</p>';
+    h += '<div class="name">2026-11-15 1432Z 7.236.400 LSB K4ABC.' + st.fmt.toLowerCase() + '</div>';
+    h += '<p class="dim">You can rename any recording in the Recordings window.</p>';
+    h += '</fieldset>';
+
+    h += '<fieldset><legend>Where they are kept</legend>';
+    h += '<div class="row"><label>Disk:</label><select class="grow" id="disk"' + dis + '>' + d.map(function (x) { return '<option value="' + x.id + '"' + (x.id === cur.id ? ' selected' : '') + '>' + x.name + '</option>'; }).join('') + '</select></div>';
+    if (sd && !none) { h += '<div class="okbox"><b>The SD card is fine for these.</b> Recordings are only written while one is running, so they do not wear the card the way the Digital Spectrum Recorder would.</div>'; }
+    var used = none ? 0 : 1.4;
+    h += '<div class="meter"><i style="width:' + (none ? 0 : Math.max(1, used / cur.free * 100)) + '%"></i></div>';
+    h += '<div class="row"><span class="dim" style="flex:1">' + (none ? 'Not known.' : '12 recordings, ' + used + ' GB. ' + Math.round(cur.free) + ' GB free on this disk, ' + (cur.free * 1000 / mbPerHour() > 1000 ? 'room for well over a thousand hours more.' : 'room for about ' + Math.round(cur.free * 1000 / mbPerHour()) + ' hours more.')) + '</span><button class="q" id="recs"' + dis + '>Show recordings</button></div>';
+    h += '<p class="dim">Recordings are never erased by themselves. Only you delete them.</p>';
+    h += '</fieldset>';
+
+    h += '<fieldset><legend>Playing back</legend>';
+    h += '<p>Play comes out of your own speaker or headphones, on the computer or phone you press it on. Transmit while it plays and whatever is playing goes out on the air instead of your mic, the one you picked, not only the latest.</p>';
+    h += '</fieldset>';
+
+    document.getElementById('page').innerHTML = h;
+    bind();
+  }
+  function bind() {
+    var q = function (id) { return document.getElementById(id); };
+    var keep = function (fn) { return function () { var y = q('page').scrollTop; fn.call(this); render(); q('page').scrollTop = y; }; };
+    if (q('mine')) { q('mine').onchange = keep(function () { st.mine = this.checked; }); }
+    if (q('chan')) { q('chan').onchange = keep(function () { st.chan = this.value; }); }
+    if (q('auto')) { q('auto').onchange = keep(function () { st.auto = this.checked; }); }
+    if (q('idle')) { q('idle').onchange = keep(function () { st.idle = this.checked; }); }
+    if (q('idleMin')) { q('idleMin').onchange = keep(function () { var v = parseInt(this.value, 10); if (v >= 1 && v <= 60) { st.idleMin = v; } }); }
+    if (q('fmt')) { q('fmt').onchange = keep(function () { st.fmt = this.value; }); }
+    if (q('disk')) { q('disk').onchange = keep(function () { st.disk = this.value; say('New recordings go to ' + this.options[this.selectedIndex].text.split(' (')[0] + '. Older ones stay where they are.'); }); }
+    if (q('recs')) { q('recs').onclick = function () { say('Opens the Recordings window (approved earlier).'); }; }
+  }
+  document.getElementById('tDsr').onclick = function () { say('The Digital Spectrum Recorder page (approved earlier).'); };
+  document.getElementById('scen').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-s]'); if (!b) { return; }
+    st.scen = b.getAttribute('data-s'); st.disk = st.scen === 'sd' ? 'sd' : 'own';
+    document.querySelectorAll('#scen [data-s]').forEach(function (c) { c.classList.toggle('on', c === b); });
+    render();
+  });
+  var fitted = false;
+  function fit() {
+    var b = document.getElementById('box'), k = Math.max(Math.min(b.clientWidth / 900, 1.25), b.clientWidth < 700 ? 0.7 : 0);
+    document.getElementById('dlg').style.transform = 'scale(' + k + ')';
+    var z = document.getElementById('sizer'); z.style.width = (900 * k) + 'px'; z.style.height = (650 * k) + 'px';
+    if (!fitted) { b.scrollLeft = Math.max(0, 201 * k - 8); fitted = true; }
+  }
+  window.addEventListener('resize', fit); fit(); render();
+})();
+</script>
+</body>
+</html>

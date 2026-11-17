@@ -86,6 +86,13 @@
 //                 local sums and never in them. NereusSDR-original.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code.
+//   2026-11-15 -- Recording player (spec 6.1, 6.3): playback slots, outside
+//                 0..31, each routed only into the speakers sum that names
+//                 it (an owner's playbackSlot, or the local sums'
+//                 localPlaybackSlot); never a barrier member, never in the
+//                 headphones, radio or every-slice sums; queuedFrames for
+//                 the feed's top-up. NereusSDR-original.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // --- From aamix.c ---
@@ -239,6 +246,7 @@ warren@wpratt.com
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
@@ -287,6 +295,21 @@ public:
     // stall the mix for kStallTolerance drains when it stopped, and do
     // that again on every transition.
     void setSliceOpportunistic(int sliceId, bool opportunistic);
+
+    // Recording player (spec 6.1, 6.3): mark a slot outside 0..31 as a
+    // playback slot (ids 0..31 are slices and are refused). A playback slot
+    // is opportunistic, so it never holds up a drain, and it is summed only
+    // into the speakers sum that names it: an owner's
+    // OwnerOutput::playbackSlot or tryDrain's localPlaybackSlot. It never
+    // reaches a headphones sum, radioOut, everySliceOut, a listen lane or
+    // another owner, whatever route accumulate() is given. UI thread, before
+    // the slot is fed.
+    void setPlaybackSlot(int slotId, bool playback);
+    // No playback slot: an OwnerOutput or a local sum that plays nothing.
+    static constexpr int kNoPlaybackSlot = std::numeric_limits<int>::min();
+    // Audio thread: the frames a slot holds for the next drain (0 for an
+    // unknown slot). The playback feed tops a slot up to the drain with it.
+    int queuedFrames(int slotId) const;
 
     // Audio thread: queue a slice's stereo block. samples is interleaved
     // L/R float32, frames = sample pairs. Enrols the slice as a barrier
@@ -366,6 +389,9 @@ public:
         std::uint32_t listenMask{0};
         const float* listenLevels{nullptr};
         int listenSlot{-1};
+        // Recording player: the playback slot this owner's speakers sum
+        // carries (setPlaybackSlot), or kNoPlaybackSlot.
+        int playbackSlot{kNoPlaybackSlot};
     };
     // As the two-sum tryDrain, except that speakersOut and headphonesOut
     // carry only the slices `localMask` names (slot ids outside 0..31, the
@@ -386,7 +412,8 @@ public:
                  std::uint32_t localListenMask = 0,
                  const float* localListenLevels = nullptr,
                  float* radioOut = nullptr,
-                 float* everySliceOut = nullptr);
+                 float* everySliceOut = nullptr,
+                 int localPlaybackSlot = kNoPlaybackSlot);
     // Radio codec (JJ's ruling 2026-09-30): `radioOut`, when not null, is
     // the radio's own speaker out, as Thetis's audio mixer 0: every
     // receiving slice whatever localMask says, each at its own gain, pan
@@ -404,6 +431,10 @@ public:
     // here once, at its controller's level. It is a sum of its own:
     // speakersOut, headphonesOut, every owner's sums and radioOut are what
     // they are without it. maxFrames * 2 floats.
+    //
+    // Recording player: `localPlaybackSlot` names the playback slot the
+    // local speakers sum carries (the window that runs its own radio), or
+    // kNoPlaybackSlot. Any other playback slot is in no local sum.
 
     // Test seam: ramp length in frames (default kDefaultRampFrames).
     void setRampFrames(int frames);
@@ -527,6 +558,10 @@ private:
         // Never a barrier member; mixed in when it happens to have
         // audio. Written on the UI thread before streaming starts.
         std::atomic<bool> opportunistic{false};
+
+        // Recording player: a playback slot (setPlaybackSlot). Written on
+        // the UI thread before the slot is fed.
+        std::atomic<bool> playback{false};
 
         // Ramped gains. Start at silence so a slice's first block fades
         // in instead of stepping in.

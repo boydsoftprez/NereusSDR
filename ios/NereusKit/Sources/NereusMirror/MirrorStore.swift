@@ -1,8 +1,12 @@
 // NereusSDR for iOS: the app's copy of the Core's objects, capabilities and telemetry
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-11-16: Recording plan Task 15, the recordings object read by key.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import NereusLink
+import NereusModels
 import os
 
 /// The Core's state as the app sees it (link document sections 5 to 7 and
@@ -887,5 +891,17 @@ public final class MirrorStore: ObservableObject {
             finish(pending, .linkLost)
         }
         currentEdits = [:]
+    }
+}
+
+extension MirrorStore {
+    /// The Core's recordings document (the `recordings` object); nil on a
+    /// Core that sends none, before it publishes, or for a malformed one.
+    public var recordingsDocument: RecordingsDocument? {
+        guard let object = object(RecordingsDocument.objectKey), case .text(let json)? = object["json"],
+              case .int(let revision)? = object["revision"] else {
+            return nil
+        }
+        return RecordingsDocument(json: json, revision: revision)
     }
 }

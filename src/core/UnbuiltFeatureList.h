@@ -47,6 +47,9 @@
 //   2026-11-06 - Hot keys plan Task 11: Midi leaves the list; Setup > Keys and
 //                controllers > MIDI and Tools > MIDI Mapping are built. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-15 - Recording plan Task 6: the VFO flag's Record and Play are
+//                built and leave Voice. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -78,7 +81,7 @@ enum class UnbuiltFeature {
                       // the container RX2, SUB RX and Pan Swap buttons
     VariableFilters,  // The variable filter slots: the container filter Var1 and Var2 buttons
     AntennaRxTxSplit, // The antenna box's receive/transmit split: the container antenna Rx/Tx button
-    Voice,            // Voice Rec/Play container control; VFO flag record and play; DVK on the status bar;
+    Voice,            // Voice Rec/Play container control; DVK on the status bar;
                       // the container Play and Rec buttons
     Fdx,              // FDX on the status bar (full duplex; the DUP button is display duplex, built)
     Navigation,       // Setup > General > Navigation

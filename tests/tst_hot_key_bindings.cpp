@@ -7,6 +7,9 @@
 //   2026-11-08 - J.J. Boyd (KG4VCF), hot keys: on a Mac CW message 5 has no
 //                default key.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 13: eight voice
+//                messages, Escape, and F1 to F8 (msg.N).
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original test.
 //
 // The action list, chord text and bindings, against the plan's Action ids table
@@ -95,7 +98,20 @@ QList<ExpectedAction> expectedActions()
         {"voice.msg2", "Voice", G::Press, true, {"Ctrl+Shift+F2"}},
         {"voice.msg3", "Voice", G::Press, true, {"Ctrl+Shift+F3"}},
         {"voice.msg4", "Voice", G::Press, true, {"Ctrl+Shift+F4"}},
-        {"voice.stop", "Voice", G::Press, false, {"Ctrl+Shift+F10"}},
+        // Recording plan Task 13 (design V8 and 6.6): M1 to M8, and Escape stops.
+        {"voice.msg5", "Voice", G::Press, true, {"Ctrl+Shift+F5"}},
+        {"voice.msg6", "Voice", G::Press, true, {"Ctrl+Shift+F6"}},
+        {"voice.msg7", "Voice", G::Press, true, {"Ctrl+Shift+F7"}},
+        {"voice.msg8", "Voice", G::Press, true, {"Ctrl+Shift+F8"}},
+        {"voice.stop", "Voice", G::Press, false, {"Ctrl+Shift+F10", "Esc"}},
+        {"msg.1", "Messages", G::Press, true, {"F1"}},
+        {"msg.2", "Messages", G::Press, true, {"F2"}},
+        {"msg.3", "Messages", G::Press, true, {"F3"}},
+        {"msg.4", "Messages", G::Press, true, {"F4"}},
+        {"msg.5", "Messages", G::Press, true, {"F5"}},
+        {"msg.6", "Messages", G::Press, true, {"F6"}},
+        {"msg.7", "Messages", G::Press, true, {"F7"}},
+        {"msg.8", "Messages", G::Press, true, {"F8"}},
     };
     return e;
 }
@@ -126,7 +142,7 @@ private slots:
     {
         const QList<ExpectedAction> expected = expectedActions();
         const QList<HotKeyAction>& actual = HotKeyActionList::all();
-        QCOMPARE(actual.size(), 51);
+        QCOMPARE(actual.size(), 63);
         QCOMPARE(actual.size(), expected.size());
         for (int i = 0; i < expected.size(); ++i) {
             const ExpectedAction& e = expected.at(i);
@@ -153,6 +169,8 @@ private slots:
         QCOMPARE(scopeOf("tx.hold"), HotKeyScope::TransmitSlice);
         QCOMPARE(scopeOf("cw.stop"), HotKeyScope::TransmitSlice);
         QCOMPARE(scopeOf("voice.msg1"), HotKeyScope::TransmitSlice);
+        QCOMPARE(scopeOf("voice.stop"), HotKeyScope::TransmitSlice);
+        QCOMPARE(scopeOf("msg.1"), HotKeyScope::TransmitSlice);
         QCOMPARE(scopeOf("zoom.in"), HotKeyScope::Pan);
         QCOMPARE(scopeOf("zoom.out"), HotKeyScope::Pan);
         QCOMPARE(scopeOf("slice.next"), HotKeyScope::Window);
@@ -208,6 +226,15 @@ private slots:
         QCOMPARE(b.actionForChord("Ctrl+T"), QStringLiteral("tx.tune"));
         QCOMPARE(b.actionForChord("Ctrl+F8"), QStringLiteral("cw.msg8"));
         QCOMPARE(b.actionForChord("/"), QStringLiteral("cw.straight"));
+        QCOMPARE(b.actionForChord("F3"), QStringLiteral("msg.3"));
+        QCOMPARE(b.actionForChord("Ctrl+Shift+F7"), QStringLiteral("voice.msg7"));
+        QCOMPARE(b.actionForChord("Ctrl+F3"), QStringLiteral("cw.msg3"));
+        QCOMPARE(b.actionForChord("Escape"), QStringLiteral("voice.stop"));
+        QCOMPARE(b.actionForChord("Esc"), QStringLiteral("voice.stop"));
+        QCOMPARE(b.actionForChord("Ctrl+Shift+F10"), QStringLiteral("voice.stop"));
+        // Plain F5 and Ctrl+Shift+F5 are not VoiceOver's Cmd+F5: a Mac keeps them.
+        QCOMPARE(b.actionForChord("F5"), QStringLiteral("msg.5"));
+        QCOMPARE(b.actionForChord("Ctrl+Shift+F5"), QStringLiteral("voice.msg5"));
         QCOMPARE(b.actionForChord("Ctrl+Y"), QString());
         QCOMPARE(b.actionForChord("not a key"), QString());
         QVERIFY(b.enabled());
@@ -230,6 +257,8 @@ private slots:
         QTest::newRow("Qt order") << "Ctrl+Alt+Shift+X" << "Ctrl+Shift+Alt+X";
         QTest::newRow("case") << "ctrl+t" << "Ctrl+T";
         QTest::newRow("named key case") << "shift+PGUP" << "Shift+PgUp";
+        QTest::newRow("escape's full name") << "Escape" << "Esc";
+        QTest::newRow("escape's full name, any case") << "ctrl+ESCAPE" << "Ctrl+Esc";
         QTest::newRow("keypad plus") << "Num++" << "Num++";
         QTest::newRow("keypad minus") << "Num+-" << "Num+-";
         QTest::newRow("keypad star") << "Num+*" << "Num+*";
@@ -314,6 +343,7 @@ private slots:
         QTest::newRow("voice letter") << "voice.msg1" << "Q";
         QTest::newRow("cw stop is in the CW group") << "cw.stop" << "S";
         QTest::newRow("voice stop is in the Voice group") << "voice.stop" << "S";
+        QTest::newRow("message letter") << "msg.3" << "Q";
         QTest::newRow("keypad number is still a plain number") << "tx.mox" << "Num+5";
     }
 
@@ -616,13 +646,15 @@ private slots:
         HotKeyBindings b;
         b.setPin("tune.up", QLatin1Char('D'));
         const QStringList lines = b.exportText().split('\n', Qt::SkipEmptyParts);
-        QCOMPARE(lines.size(), 52);
+        QCOMPARE(lines.size(), 64);
         QCOMPARE(lines.at(0), QStringLiteral("# NereusSDR shortcuts 1"));
         QCOMPARE(lines.at(1), QStringLiteral("tune.up\tRight\tD"));
         QVERIFY(lines.contains(QStringLiteral("volume.up\tUp Num++\t")));
         QVERIFY(lines.contains(QStringLiteral("cw.dot\t,\t")));
         QVERIFY(lines.contains(QStringLiteral("tx.hold\tSpace\t")));
         QVERIFY(lines.contains(QStringLiteral("vox.toggle\t\t")));
+        QVERIFY(lines.contains(QStringLiteral("voice.stop\tCtrl+Shift+F10 Esc\t")));
+        QVERIFY(lines.contains(QStringLiteral("msg.3\tF3\t")));
     }
 
     void importRestoresAnExport()

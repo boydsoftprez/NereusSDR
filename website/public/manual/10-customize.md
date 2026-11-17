@@ -399,12 +399,15 @@ On a Mac, Ctrl in this list is the Command key.
 | **Ctrl+Shift+M** | MOX on or off. |
 | **Ctrl+T** | TUNE on or off. |
 | **Ctrl+Shift+T** | Two-tone on or off. |
+| **F1** to **F8** | Send message 1 to 8: the voice message in a voice mode, the CW message in a CW mode. |
 | **Ctrl+F1** to **Ctrl+F8** | Send CW message 1 to 8. |
+| **Ctrl+Shift+F1** to **F8** | Send voice message 1 to 8. |
 | **Ctrl+F10** | Stop the CW message. |
+| **Ctrl+Shift+F10**, **Escape** | Stop the voice message. |
 | Comma / period (hold) | CW dot and dash, in CW mode. |
 | Slash (hold) | CW straight key, in CW mode. |
 
-On a Mac, CW message 5 has no key until you give it one, because Command+F5 turns VoiceOver on or off. A key you set yourself is kept. **VOX on or off** has no key until you give it one. It turns on the same VOX as the TX panel's **VOX** button. Voice message keys (**Ctrl+Shift+F1** to **F4**, **Ctrl+Shift+F10**) are listed but grayed, because voice messages are not built yet.
+On a Mac, CW message 5 has no key until you give it one, because Command+F5 turns VoiceOver on or off. A key you set yourself is kept. **VOX on or off** has no key until you give it one. It turns on the same VOX as the TX panel's **VOX** button. **Escape** stops a voice message only when nothing else wants it: in a text field or an open popup it keeps its usual meaning. A voice message imported from a file goes out at a fixed level, whatever the mic gain, and a message recorded on the mic goes out like your live voice.
 
 ### Where keys work
 

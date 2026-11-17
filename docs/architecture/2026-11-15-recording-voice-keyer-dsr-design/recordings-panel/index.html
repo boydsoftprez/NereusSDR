@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recordings Panel</title>
+<style>
+:root{ --bg:#08080a; --ink:#e8e8ec; --dim:#9a9aa2; }
+@media (prefers-color-scheme: light){ :root:not([data-theme="light"]){ --bg:#08080a; --ink:#e8e8ec; } }
+:root[data-theme="dark"]{ --bg:#08080a; }
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:14px -apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;-webkit-text-size-adjust:100%}
+.top{max-width:1100px;margin:0 auto;padding:12px 16px 4px}
+.top h1{font-size:17px;margin:0 0 6px;font-weight:600}
+.top p{margin:4px 0;color:var(--dim);font-size:13px;line-height:1.4}
+.bar{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 4px;align-items:center}
+.bar button,.bar select{background:#1c1c1f;color:var(--ink);border:1px solid #333338;border-radius:8px;padding:7px 10px;font:inherit;font-size:13px}
+.bar button.on{background:#2b4a75;border-color:#4a76b0}
+.bar button.rec{background:#5a1c1a;border-color:#c25a5c}
+.bar label{color:var(--dim);font-size:13px;margin-left:4px}
+details{margin:4px 0 8px;color:var(--dim);font-size:13px}
+details summary{cursor:pointer;color:var(--ink)}
+details li{margin:3px 0;line-height:1.35}
+.view{position:relative;overflow:hidden;margin:6px auto 24px;border-radius:10px;border:1px solid #222;background:#000}
+#stage{position:absolute;left:0;top:0;width:3024px;height:1738px;transform-origin:0 0}
+#stage > img{position:absolute;left:0;top:0;width:3024px;height:1738px;display:block;user-select:none;-webkit-user-drag:none}
+/* capture pixels (2x the app's points) */
+#col{position:absolute;left:2360px;top:904px;width:638px;height:744px;overflow:hidden;background:#0c0c0e}
+#txShift{width:638px;height:744px;background:url(../shared/desk.jpg) -2360px -904px / 3024px 1738px no-repeat}
+#ap{background:#0c0c0e;border-bottom:2px solid #1f1f23;font-family:system-ui,-apple-system,sans-serif}
+.ahd{display:flex;align-items:center;height:34px;padding:0 10px 0 6px;gap:10px;font:600 22px/34px system-ui,sans-serif;letter-spacing:.14em;color:#a6a6ac;border-bottom:2px solid #1f1f23}
+.ahd .g{letter-spacing:0;color:#5b5b61}
+.ahd .ic{margin-left:auto;letter-spacing:0;color:#a6a6ac;display:flex;gap:22px;font-size:22px}
+.ahd .ic span{cursor:pointer}
+#off{display:none;margin:8px 8px 0;padding:10px 12px;border-radius:8px;background:#1b1b1f;border:2px solid #3a3a40;color:#c8c8cc;font:21px/1.3 system-ui,sans-serif}
+#list{padding:6px 8px 0}
+.r{display:grid;grid-template-columns:44px 1fr auto;gap:12px;align-items:center;height:62px;padding:0 8px 0 4px;border-radius:8px;position:relative;cursor:default}
+.r:nth-child(odd){background:#0a0a0c}
+.r:hover{background:#15151a}
+.r.sel{background:#12202f;outline:2px solid #4a7ba8;outline-offset:-2px}
+.r .pb{width:40px;height:40px;border-radius:9px;border:2px solid #2c2c31;background:linear-gradient(#222226,#1b1b1f);color:#dcdce1;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
+.r .pb:hover{background:#26262b}
+.r .pb svg{width:18px;height:18px}
+.r .t{min-width:0}
+.r .a{font:600 23px/1.15 system-ui,sans-serif;color:#dcdce1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.r .b{font:19px/1.2 system-ui,sans-serif;color:#7e7e85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.r .d{font:20px ui-monospace,"SF Mono",Menlo,monospace;color:#7e7e85;text-align:right}
+.r .prog{position:absolute;left:58px;right:10px;bottom:4px;height:4px;border-radius:2px;background:#1a1a1e;display:none}
+.r .prog i{display:block;height:100%;width:0;background:#3a9cff;border-radius:2px}
+.r.playing .pb{background:#1e3d5f;border-color:#4a7ba8;color:#fff}
+.r.playing .a{color:#cfe4ff}
+.r.playing .prog{display:block}
+.r.now{background:#1a0d0e !important;outline:2px solid #7a2c2e;outline-offset:-2px}
+.r.now .pb{background:#7a2c2e;border-color:#c25a5c;color:#ffd9d9}
+.r.now .a{color:#ffd9d9}
+.r.now .dot{color:#ff453a;animation:bl 1.1s ease-in-out infinite}
+@keyframes bl{50%{opacity:.3}}
+.r input{width:100%;font:600 23px system-ui,sans-serif;background:#050507;color:#fff;border:2px solid #4a7ba8;border-radius:5px;padding:2px 6px}
+.tag{display:inline-block;padding:0 7px;margin-right:6px;border-radius:5px;font:600 16px/22px system-ui,sans-serif;vertical-align:1px}
+.tag.c{background:#1f2a1f;color:#8fc79c}
+.tag.w{background:#1e2a3a;color:#8cc4ff}
+.tag.s{background:#2a2418;color:#d8a55f}
+.ft{display:flex;align-items:center;gap:12px;padding:8px 10px 10px}
+.ft .btn{height:40px;border-radius:9px;border:2px solid #2c2c31;background:linear-gradient(#222226,#1b1b1f);color:#f0f0f2;font:700 21px system-ui,sans-serif;padding:0 14px;cursor:pointer}
+.ft .btn:hover{background:#26262b}
+.ft .u{margin-left:auto;font:19px system-ui,sans-serif;color:#7e7e85;text-align:right;line-height:1.25}
+#ap.dis #list,#ap.dis .ft .btn{opacity:.4;pointer-events:none}
+#menu{position:absolute;display:none;min-width:420px;padding:4px 0;background:#1b1b1f;border:2px solid #3d3d41;box-shadow:0 18px 50px -10px #000;font:24px/1.2 system-ui,sans-serif;z-index:9;border-radius:8px}
+#menu.on{display:block}
+#menu button{display:flex;justify-content:space-between;gap:20px;width:100%;padding:10px 26px;background:none;border:0;color:#e8e8ec;text-align:left;font:inherit;cursor:pointer}
+#menu button:hover:not(:disabled){background:#1e3d5f}
+#menu button:disabled{color:#5e5e66;cursor:default}
+#menu button small{font-size:19px;color:inherit;opacity:.8}
+#menu .sep{height:2px;margin:6px 0;background:#2c2c31}
+#confirm{position:absolute;display:none;left:2380px;width:600px;top:1100px;background:#1b1b1f;border:2px solid #3d3d41;border-radius:12px;padding:20px 22px;z-index:10;box-shadow:0 18px 50px -10px #000;font:22px/1.35 system-ui,sans-serif;color:#dcdce1}
+#confirm.on{display:block}
+#confirm .bt{display:flex;justify-content:flex-end;gap:12px;margin-top:16px}
+#confirm button{height:42px;border-radius:9px;border:2px solid #2c2c31;background:#222226;color:#f0f0f2;font:600 21px system-ui,sans-serif;padding:0 18px;cursor:pointer}
+#confirm button.red{background:#7a2c2e;border-color:#c25a5c;color:#ffd9d9}
+#tip{position:absolute;display:none;max-width:560px;background:#26262b;border:2px solid #444;border-radius:8px;padding:8px 12px;font:21px -apple-system,sans-serif;color:#ddd;z-index:8;line-height:1.3}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:rgba(44,44,48,.97);color:#fff;border-radius:12px;padding:10px 14px;font-size:13px;max-width:360px;text-align:center;z-index:90;opacity:0;transition:opacity .2s;pointer-events:none;border:1px solid #444}
+.toast.on{opacity:1}
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>The small Recordings panel</h1>
+  <p>Built on a real capture of the desktop. Added from Containers, Applets, it sits in the right-hand column like any other panel; here it is under RX, with TX moved down below it. It is for quick listening. Managing many recordings is the Recordings window's job.</p>
+  <div class="bar">
+    <button data-z="col" class="on">Close up on the column</button>
+    <button data-z="full">Whole window</button>
+    <button id="recB">Record on the flag</button>
+    <label>Core:</label>
+    <select id="core"><option value="local">On this Mac</option><option value="remote">On the Pi in the shack</option><option value="off">Not connected</option></select>
+  </div>
+  <details open>
+    <summary>Things to try</summary>
+    <ul>
+      <li>Click a row's play button: it plays on this computer's speaker (transmit while it plays to send it on the air), with a blue bar showing how far along it is. Click it again to stop. Double-clicking a row plays it too.</li>
+      <li>A "Whole pan" stretch opens on the waterfall instead, the way rewind plays the past. "Sound" and "Contact" recordings just play.</li>
+      <li>Right-click a row: Play, Rename, Save a copy here, Show in Finder, Delete.</li>
+      <li>Click "Record on the flag" above: the recording in progress shows at the top in red, with a Stop button. Stop it and it joins the list.</li>
+      <li>"All recordings&hellip;" opens the Recordings window for search, sorting and deleting many.</li>
+      <li>Set Core to "Not connected": the panel stays, dimmed, with a note.</li>
+    </ul>
+  </details>
+</div>
+<div class="view" id="view">
+  <div id="stage">
+    <img src="../shared/desk.jpg" alt="NereusSDR desktop window">
+    <div id="col">
+      <div id="ap">
+        <div class="ahd"><span class="g">&#8942;&#8942;</span>RECORDINGS<span class="ic"><span id="hPop" title="Pop out">&#8599;</span><span id="hMore" title="More">&#8943;</span><span id="hClose" title="Close">&times;</span></span></div>
+        <div id="off"><b>Not connected to a Core.</b> Recordings live on the Core. Connect to play them.</div>
+        <div id="list"></div>
+        <div class="ft"><button class="btn" id="allB">All recordings&hellip;</button><div class="u" id="use"></div></div>
+      </div>
+      <div id="txShift"></div>
+    </div>
+    <div id="menu"></div>
+    <div id="confirm"><div id="cfT"></div><div class="bt"><button id="cfN">Cancel</button><button class="red" id="cfY">Delete</button></div></div>
+    <div id="tip"></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+(() => {
+const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const pad = n => String(n).padStart(2,'0'); const mm = s => Math.floor(s/60) + ':' + pad(Math.floor(s%60));
+let tt = 0; function toast(m){ const el = $('#toast'); el.textContent = m; el.classList.add('on'); clearTimeout(tt); tt = setTimeout(() => el.classList.remove('on'), 2800); }
+
+let zoom = 'col';
+const CROP = {x:2300, y:440, w:724, h:1230};
+function fit(){
+  const view = $('#view'), vw = Math.min(document.documentElement.clientWidth - 16, zoom === 'col' ? 560 : 1100);
+  view.style.width = vw + 'px';
+  if (zoom === 'full'){ const s = vw / 3024; view.style.height = (1738*s) + 'px'; $('#stage').style.transform = 'scale(' + s + ')'; }
+  else { const s = vw / CROP.w; view.style.height = (CROP.h*s) + 'px';
+    $('#stage').style.transform = 'scale(' + s + ') translate(' + (-CROP.x) + 'px,' + (-CROP.y) + 'px)'; }
+}
+$$('[data-z]').forEach(b => b.onclick = () => { zoom = b.dataset.z; $$('[data-z]').forEach(x => x.classList.toggle('on', x === b)); fit(); });
+addEventListener('resize', fit); fit();
+
+const NOW = Date.now()/1000;
+const KIND = {c:'Contact', w:'Whole pan', s:'Sound'};
+let id = 0;
+let RECS = [
+  {k:'c', f:'7.185.000', m:'LSB', call:'K4ABC', when:NOW-1800, len:312, mb:9},
+  {k:'w', f:'7.150 to 7.290', m:'', call:'', name:'40 m net, whole pan', when:NOW-5400, len:600, mb:1650},
+  {k:'c', f:'7.236.400', m:'LSB', call:'W1XYZ', when:NOW-9000, len:205, mb:6},
+  {k:'s', f:'14.250.000', m:'USB', call:'', when:NOW-86400, len:64, mb:2},
+  {k:'c', f:'7.200.000', m:'LSB', call:'N4QQ', when:NOW-90000, len:540, mb:15},
+  {k:'c', f:'3.880.000', m:'LSB', call:'', when:NOW-170000, len:1210, mb:34},
+  {k:'c', f:'14.313.000', m:'USB', call:'VE3ABC', when:NOW-200000, len:188, mb:5},
+  {k:'s', f:'21.300.000', m:'USB', call:'EA8XX', when:NOW-260000, len:402, mb:11},
+  {k:'c', f:'7.191.000', m:'LSB', call:'KD4Z', when:NOW-400000, len:150, mb:4}
+].map(r => Object.assign({id:++id, name:''}, r));
+const SHOW = 6;
+const hm = t => { const d = new Date(t*1000); return pad(d.getUTCHours()) + pad(d.getUTCMinutes()) + 'Z'; };
+const day = t => (NOW - t) < 20*3600 ? 'today' : (NOW - t) < 44*3600 ? 'yesterday' : Math.round((NOW - t)/86400) + ' days ago';
+const title = r => r.name || (r.f + (r.m ? ' ' + r.m : '') + (r.call ? '  ' + r.call : ''));
+const gb = mb => mb >= 1000 ? (mb/1000).toFixed(1) + ' GB' : mb + ' MB';
+
+let play = null, rec = null, core = 'local', sel = null, editing = null;
+const PLAY = '<svg viewBox="0 0 20 20"><path d="M6 3.5l10 6.5-10 6.5z" fill="currentColor"/></svg>';
+const STOP = '<svg viewBox="0 0 20 20"><rect x="4.5" y="4.5" width="11" height="11" rx="1.5" fill="currentColor"/></svg>';
+const PAN = '<svg viewBox="0 0 20 20"><path d="M2 15l4-6 3 4 4-8 5 10z" fill="currentColor"/></svg>';
+
+function render(){
+  const off = core === 'off';
+  $('#ap').classList.toggle('dis', off); $('#off').style.display = off ? 'block' : 'none';
+  const L = $('#list'); L.innerHTML = '';
+  if (rec){
+    const d = document.createElement('div'); d.className = 'r now';
+    d.innerHTML = '<button class="pb" aria-label="Stop recording">' + STOP + '</button><div class="t"><div class="a"><span class="dot">●</span> Recording slice A</div><div class="b">7.185.000 LSB · what you hear and your voice</div></div><div class="d">' + mm(rec.t) + '</div>';
+    d.querySelector('.pb').onclick = e => { e.stopPropagation(); stopRec(); };
+    L.appendChild(d);
+  }
+  RECS.slice().sort((a,b) => b.when - a.when).slice(0, rec ? SHOW - 1 : SHOW).forEach(r => {
+    const d = document.createElement('div'); const p = play && play.r === r;
+    d.className = 'r' + (p ? ' playing' : '') + (sel === r.id ? ' sel' : '');
+    const icon = p ? STOP : r.k === 'w' ? PAN : PLAY;
+    d.innerHTML = '<button class="pb" aria-label="' + (p ? 'Stop' : r.k === 'w' ? 'Open on the pan' : 'Play') + '">' + icon + '</button>' +
+      '<div class="t">' + (editing === r.id ? '<input value="' + esc(title(r)) + '">' : '<div class="a">' + esc(title(r)) + '</div>') +
+      '<div class="b"><span class="tag ' + r.k + '">' + KIND[r.k] + '</span>' + day(r.when) + ' ' + hm(r.when) + '</div></div>' +
+      '<div class="d">' + (p ? mm(play.pos) + ' / ' : '') + mm(r.len) + '</div>' +
+      '<div class="prog"><i style="width:' + (p ? play.pos / r.len * 100 : 0) + '%"></i></div>';
+    d.querySelector('.pb').onclick = e => { e.stopPropagation(); sel = r.id; doPlay(r); };
+    d.querySelector('.pb').onmouseenter = ev => tipAt(ev.currentTarget, p ? 'Stop' : r.k === 'w' ? 'Open on the waterfall, like rewind' : 'Play on this computer’s speaker. Transmit while it plays to send it on the air.');
+    d.querySelector('.pb').onmouseleave = hideTip;
+    d.onclick = () => { sel = r.id; render(); };
+    d.ondblclick = () => { sel = r.id; doPlay(r); };
+    d.oncontextmenu = e => { e.preventDefault(); sel = r.id; render(); openMenu(r, e); };
+    const inp = d.querySelector('input');
+    if (inp){ setTimeout(() => { inp.focus(); inp.select(); });
+      inp.onkeydown = e => { if (e.key === 'Enter'){ r.name = inp.value.trim(); editing = null; render(); toast('Renamed on the Core. Every computer and phone sees the new name.'); } if (e.key === 'Escape'){ editing = null; render(); } };
+      inp.onclick = e => e.stopPropagation(); }
+    L.appendChild(d);
+  });
+  const tot = RECS.reduce((a,r) => a + r.mb, 0);
+  $('#use').innerHTML = off ? 'Unknown while<br>not connected' : RECS.length + ' on the Core, ' + gb(tot) + '<br>' + (core === 'local' ? '812 GB free on the T7' : '58 GB free on the Pi');
+  $('#recB').classList.toggle('rec', !!rec); $('#recB').textContent = rec ? 'Stop recording on the flag' : 'Record on the flag';
+}
+function doPlay(r){
+  if (core === 'off') return;
+  if (play && play.r === r){ play = null; render(); return; }
+  if (r.k === 'w'){ play = null; render(); toast('Mockup: the waterfall jumps back to this stretch and plays it, like rewind. LIVE brings you back.'); return; }
+  play = {r, pos:0}; render();
+}
+function stopRec(){
+  const len = Math.max(1, Math.round(rec.t));
+  RECS.push({id:++id, k:'c', f:'7.185.000', m:'LSB', call:'K4ABC', name:'', when:Date.now()/1000, len, mb:Math.max(1, Math.round(len/60))});
+  rec = null; render(); toast('Kept on the Core. It is at the top of the list.');
+}
+function openMenu(r, e){
+  hideTip();
+  const m = $('#menu');
+  m.innerHTML = '';
+  const add = (lab, fn, dis, note) => { const b = document.createElement('button'); b.innerHTML = '<span>' + lab + '</span>' + (note ? '<small>' + note + '</small>' : ''); b.disabled = !!dis; b.onclick = ev => { ev.stopPropagation(); closeMenu(); fn(); }; m.appendChild(b); };
+  const sep = () => { const s = document.createElement('div'); s.className = 'sep'; m.appendChild(s); };
+  add(r.k === 'w' ? 'Open on the pan' : (play && play.r === r ? 'Stop' : 'Play'), () => doPlay(r));
+  if (r.k === 'w') add('Play its sound only', () => { play = {r, pos:0}; render(); });
+  add('Rename…', () => { editing = r.id; render(); });
+  add('Save a copy here…', () => toast('Mockup: asks where to save it on this computer, then copies it from the Core.'));
+  add('Show in Finder', () => toast('Mockup: opens the Core’s recordings folder with this file selected.'), core !== 'local', core !== 'local' ? 'files are on the Pi' : '');
+  sep();
+  add('Delete…', () => askDelete(r));
+  const st = $('#stage').getBoundingClientRect(), sc = st.width / 3024;
+  let x = (e.clientX - st.left) / sc, y = (e.clientY - st.top) / sc;
+  x = Math.min(x, 3024 - 440);
+  m.style.left = x + 'px'; m.style.top = y + 'px'; m.classList.add('on');
+}
+function closeMenu(){ $('#menu').classList.remove('on'); }
+function askDelete(r){
+  $('#cfT').innerHTML = '<b>Delete ' + esc(title(r)) + '?</b><br>It is removed from the Core for every computer and phone. This cannot be undone.';
+  $('#confirm').classList.add('on');
+  $('#cfY').onclick = () => { RECS = RECS.filter(x => x !== r); if (play && play.r === r) play = null; $('#confirm').classList.remove('on'); render(); toast('Deleted.'); };
+}
+$('#cfN').onclick = () => $('#confirm').classList.remove('on');
+function tipAt(el, text){ const t = $('#tip'); t.textContent = text; t.style.display = 'block';
+  const st = $('#stage').getBoundingClientRect(), sc = st.width / 3024, r = el.getBoundingClientRect();
+  t.style.left = Math.min((r.left - st.left)/sc, 3024 - 580) + 'px'; t.style.top = ((r.bottom - st.top)/sc + 8) + 'px'; }
+function hideTip(){ $('#tip').style.display = 'none'; }
+
+$('#allB').onclick = () => toast('Mockup: opens the Recordings window (approved earlier): search, sort, delete many, save copies.');
+$('#hPop').onclick = () => toast('Pops the panel out into its own window, like other panels.');
+$('#hMore').onclick = () => toast('The panel menu: Recording settings… and the usual panel choices.');
+$('#hClose').onclick = () => toast('Closes the panel. Add it back from Containers, Applets.');
+$('#recB').onclick = () => { if (core === 'off'){ toast('Not connected to a Core.'); return; } if (rec) stopRec(); else { rec = {t:0}; render(); } };
+$('#core').onchange = e => { core = e.target.value; if (core === 'off'){ play = null; rec = null; } render(); };
+document.addEventListener('click', closeMenu);
+document.addEventListener('keydown', e => { if (e.key === 'Escape'){ closeMenu(); $('#confirm').classList.remove('on'); } });
+
+setInterval(() => {
+  if (rec) rec.t += .25;
+  if (play){ play.pos += .25; if (play.pos >= play.r.len) play = null; }
+  if ((rec || play) && editing === null) render();
+}, 250);
+render();
+})();
+</script>
+</body>
+</html>

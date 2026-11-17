@@ -35,7 +35,7 @@ struct SavedPlacesTests {
 
     @Test("every Setup route reads back from its kept form")
     func setupRoundTrip() {
-        let routes: [SetupTree.Route] = [.category("CAT & Network"), .page(.batteryAndSessions),
+        let routes: [SetupTree.Route] = [.category("CAT & Network"), .page(.batteryAndSessions), .page(.recordingSettings),
                                          .described(category: "dsp", page: "dsp.agcAlc"),
                                          .cfcBands(category: "dsp", control: "cfc|bands")]
         #expect(SavedPlaces.setupPath(routes.map(SavedPlaces.stored)) == routes)
@@ -48,7 +48,7 @@ struct SavedPlacesTests {
             [.spotHub, .spotHubPage(.identity)], [.performance], [.freedvReporter], [.txEqualizer], [.pureSignal],
             [.diversity], [.cwx], [.catControl, .catControlPage(.channel(3))], [.catControl, .catControlPage(.options)],
             [.catControl, .catControlPage(.ptt)], [.catControl, .catControlPage(.test)], [.tciServer], [.vaxAudio],
-            [.supportBundle], [.rotor], [.roundtable],
+            [.supportBundle], [.rotor], [.roundtable], [.recordings],
         ]
         for route in routes {
             #expect(SavedPlaces.toolsRoute(SavedPlaces.stored(route)) == route)
