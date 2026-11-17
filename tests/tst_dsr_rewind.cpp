@@ -20,6 +20,9 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code. Final review fix: a closed slice's replay is
 //                 switched out.
+//   2026-11-16 - J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. The rewound sound stays read ahead while the past
+//                 picture is drawn on the same worker.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -40,6 +43,7 @@
 #include "core/recordings/dsr/DsrReplay.h"
 #include "models/RxDspWorker.h"
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <numbers>
@@ -485,6 +489,78 @@ private slots:
         QVERIFY(svc.rewound().isEmpty());
         QCOMPARE(worker.sliceReplay(0), nullptr);
         QCOMPARE(radio->frequency.value(0), kPlayHz);
+        radio->worker = nullptr;
+    }
+
+    // Drawing past rows runs on the worker that reads the rewound sound
+    // ahead, and can take longer than the read-ahead lasts. The drawing tops
+    // the sound up as it goes, so the block after it is the past, not
+    // silence. The worker's rounds are held: only the queued jobs run, in
+    // order (empty the sound, draw, take one block), so nothing but the
+    // drawing can have filled it.
+    void theSoundStaysFedWhileThePastIsDrawn()
+    {
+        RecordingService svc(nullptr);
+        FakeRadio* radio = prepare(svc);
+        RxDspWorker worker;
+        prepareWorker(worker);
+        radio->worker = &worker;
+        keepCarrier(svc, 10);
+        const DsrRingFile& ring = svc.dsrRecorder()->ring();
+        const qint64 oldest = ring.oldestUtcNs(0);
+        QString why;
+        QVERIFY2(svc.rewind(0, oldest + 3 * kNs, kPlayHz, &why), qPrintable(why));
+        svc.pumpForTest();
+        QVERIFY(worker.sliceReplay(0) != nullptr);
+        const std::shared_ptr<DsrReplay> replay = svc.replayForTest(0);
+        QVERIFY(replay);
+        QVERIFY(replay->primed());
+        svc.holdWorkerRoundsForTest(true);
+
+        // The DSP thread's part, played on the worker between the jobs: take
+        // everything read ahead, until a block comes up short.
+        std::vector<float> i(static_cast<size_t>(kInSize));
+        std::vector<float> q(static_cast<size_t>(kInSize));
+        quint64 underrunsEmptied = 0;
+        bool emptied = false;
+        svc.runOnWorker([&] {
+            const quint64 before = replay->underruns();
+            for (int block = 0; block < 100000 && replay->underruns() == before; ++block) {
+                if (!replay->pull(i.data(), q.data(), kInSize)) {
+                    return;
+                }
+            }
+            underrunsEmptied = replay->underruns();
+            emptied = underrunsEmptied == before + 1;
+        });
+
+        DsrPanView view;
+        view.fftSize = 4096;
+        view.windowType = 1;
+        view.centreHz = kKeptCentreHz;
+        view.spanHz = 48000;
+        bool drawn = false;
+        svc.pastRows(0, view, oldest, oldest + 2 * kNs, 16,
+                     [&](bool ok, const QString&, const DsrPastFrames& frames) {
+                         drawn = ok && !frames.rows.isEmpty();
+                     });
+
+        bool fedAfter = false;
+        quint64 underrunsAfter = 0;
+        svc.runOnWorker([&] {
+            fedAfter = replay->pull(i.data(), q.data(), kInSize);
+            underrunsAfter = replay->underruns();
+        });
+        svc.waitForWorker();
+        svc.holdWorkerRoundsForTest(false);
+        QTRY_VERIFY(drawn);
+
+        QVERIFY(emptied);
+        QVERIFY(fedAfter);
+        // The block after the drawing was the past in full: no silence.
+        QCOMPARE(underrunsAfter, underrunsEmptied);
+        QVERIFY(std::any_of(i.cbegin(), i.cend(), [](float v) { return v != 0.0f; }));
+        QVERIFY(svc.goLive(0, &why));
         radio->worker = nullptr;
     }
 

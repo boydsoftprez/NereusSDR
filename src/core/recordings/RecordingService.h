@@ -47,6 +47,9 @@
 // 2026-11-16  J.J. Boyd / KG4VCF; renameRecording and removeRecordings let
 //             go of the files first (Windows will not rename or remove an
 //             open file). AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; the past picture tops up the rewound
+//             sound between transforms; holdWorkerRoundsForTest. AI
+//             tooling: Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -388,6 +391,9 @@ public:
     void setDsrVolumesForTest(VolumesProvider provider);
     // The recorder's disk check, now.
     void checkDsrDiskForTest() { checkDsrDisk(); }
+    // True: the worker's 20 ms rounds do nothing, so only queued jobs run
+    // there (a test sees what one job does on its own).
+    void holdWorkerRoundsForTest(bool held) { m_workerRoundsHeldForTest.store(held); }
 
 signals:
     void sliceStateChanged(int sliceId);
@@ -667,6 +673,7 @@ private:
     // The past picture: made, used and dropped on the worker.
     std::unique_ptr<DsrPastRenderer> m_pastRenderer;
     std::atomic<QThread*> m_pastRenderThread{nullptr};
+    std::atomic<bool> m_workerRoundsHeldForTest{false};
 };
 
 }  // namespace NereusSDR

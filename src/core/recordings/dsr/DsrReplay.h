@@ -24,6 +24,10 @@
 //             Task 25). AI tooling: Anthropic Claude Code.
 // 2026-11-16  J.J. Boyd / KG4VCF; DsrSoundRender drops WDSP's start-up
 //             silence (m_leadFramesLeft). AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; DsrPastRenderer::setBetweenWork: a call
+//             before each transform, so the recordings worker keeps the
+//             rewound sound read ahead while the past picture is drawn.
+//             AI tooling: Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -37,6 +41,7 @@
 #include <QtGlobal>
 
 #include <atomic>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <vector>
@@ -282,6 +287,11 @@ public:
     DsrPastRenderer(const DsrPastRenderer&) = delete;
     DsrPastRenderer& operator=(const DsrPastRenderer&) = delete;
 
+    // Called before each transform rows(), spectrum() and hours() run, on
+    // the thread drawing. The recordings worker tops up the rewound sound
+    // here, so a long drawing never leaves the sound waiting. Empty: none.
+    void setBetweenWork(std::function<void()> betweenWork) { m_betweenWork = std::move(betweenWork); }
+
     // The bin layout the live spectrum has for `view` on a receiver at
     // `rateHz` around `streamCentreHz` (SpectrumReducer::visibleBinRange).
     // False when it selects no bins.
@@ -331,6 +341,7 @@ private:
     bool liveGrid(const DsrRingFile& ring, int receiver, int liveRateHz, qint64 liveCentreHz,
                   qint64 nearUtcNs, int* rateHz, qint64* centreHz) const;
 
+    std::function<void()> m_betweenWork;
     std::unique_ptr<FFTEngine> m_fft;
     QVector<float> m_frame;
     bool m_haveFrame = false;

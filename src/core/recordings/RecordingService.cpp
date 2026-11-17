@@ -45,6 +45,10 @@
 //             the recording's playback and close an opened stretch before
 //             the file is renamed or deleted (Windows will not rename or
 //             remove an open file). AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; the past picture tops up the rewound
+//             sound between transforms (workerPastRenderer), so rewound
+//             playback no longer falls behind while rows are drawn. AI
+//             tooling: Anthropic Claude Code.
 
 #include "RecordingService.h"
 
@@ -370,6 +374,9 @@ void RecordingService::ensureWorker()
         m_workerTimer = new QTimer(m_workerContext);
         m_workerTimer->setInterval(kDrainIntervalMs);
         connect(m_workerTimer, &QTimer::timeout, m_workerContext, [this] {
+            if (m_workerRoundsHeldForTest.load()) {
+                return;
+            }
             workerDrainAll();
             workerFillPlayers();
             workerDrainDsr();
@@ -2178,6 +2185,13 @@ DsrPastRenderer& RecordingService::workerPastRenderer()
 {
     if (!m_pastRenderer) {
         m_pastRenderer = std::make_unique<DsrPastRenderer>();
+        // A drawing can run longer than the rewound sound's read-ahead
+        // (DsrReplay::kReadAheadMs), and the worker's rounds wait behind
+        // it: top the sound up before each transform. fill returns at once
+        // when the read-ahead is full. Safe here: a drawing job holds no
+        // iterator into m_workerReplays, and the ready and finished notices
+        // are queued to the main thread as from a round.
+        m_pastRenderer->setBetweenWork([this] { workerFillReplays(); });
     }
     m_pastRenderThread.store(QThread::currentThread());
     return *m_pastRenderer;

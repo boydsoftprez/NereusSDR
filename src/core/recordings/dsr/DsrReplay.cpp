@@ -16,6 +16,9 @@
 // 2026-11-16  J.J. Boyd / KG4VCF; final review fixes: a stretch's sound
 //             drops WDSP's start-up silence; two Thetis cites carry their
 //             version. AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; transformAt calls the between-work hook
+//             first (rewound sound kept fed while the past is drawn). AI
+//             tooling: Anthropic Claude Code.
 
 #include "DsrReplay.h"
 
@@ -275,6 +278,11 @@ bool DsrPastRenderer::gather(const DsrRingFile& ring, int receiver, qint64 fromU
 bool DsrPastRenderer::transformAt(const DsrRingFile& ring, int receiver, qint64 utcNs, int fftSize,
                                   int windowType, DsrBlockHeader* kept, QVector<float>* binsDbm)
 {
+    // Between one transform and the next, whoever draws may do its own
+    // short work (the recordings worker: the rewound sound's read-ahead).
+    if (m_betweenWork) {
+        m_betweenWork();
+    }
     // FFTEngine transforms once its window is full and one more pair comes.
     const int frames = fftSize + 1;
     if (!gather(ring, receiver, utcNs, frames, kept)) {
