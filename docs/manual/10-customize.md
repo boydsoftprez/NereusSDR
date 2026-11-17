@@ -77,7 +77,7 @@ The grid is set on two pages. On **File > Settings... > Display > Spectrum**, th
 
 ## Colors and meter styles
 
-Open **File > Settings... > Appearance > Colors & Theme** for grid, text, band-edge, zero-line, passband and related display colors. **Trace Color** and **Fill Color** are on **File > Settings... > Display > Spectrum** (Trace and Fill groups) and are two separate choices; until you choose a trace color, the trace uses the fill color. A color chosen on either page is the default for every pan, and a pan with its own color keeps it. **Reset all colors to defaults** returns the nine colors on Colors & Theme to their defaults. Color choices are local presentation. The custom waterfall palette is edited on **Waterfall** (**Edit Custom gradient…**).
+Open **File > Settings... > Appearance > Colors & Theme** for grid, text, band-edge, zero-line, passband and related display colors. **Trace Color** and **Fill Color** are on **File > Settings... > Display > Spectrum** (Trace and Fill groups) and are two separate choices; until you choose a trace color, the trace uses the fill color. A color chosen on either page is the default for every pan, and a pan with its own color keeps it. **Reset all colors to defaults** returns the nine colors on Colors & Theme to their defaults. **Grid Text Color** sets the frequency numbers under the spectrum, which sit in a slim row with short ticks along its top edge; it is white-gray at first, and the frame-rate counter and Hz/bin readout use it too. A larger **Scale Text** size makes that row taller. Color choices are local presentation. The custom waterfall palette is edited on **Waterfall** (**Edit Custom gradient…**).
 
 **Appearance > Meter Styles** selects the S-meter face/style and its peak-hold and decay presentation. S-meter peak hold is implemented. For container meters, open **File > Settings... > Display > Multimeter**. **Polling delay** sets how often live meter values are sampled (10 to 2000 ms): shorter responds faster and costs more CPU. **Show decimal point in readouts** controls a decimal digit in S-meter/dBm text values. **Display units** applies S, dBm, or uV to supported meter items; read the item after changing units to confirm formatting. `S` uses S1 to S9 plus dB above S9, dBm reports dB relative to 1 mW, and uV reports microvolts at 50 ohms. The implemented controls include polling delay, decimal presentation, units and **History duration**, which updates existing container History Graph items. Peak/text/digital hold controls, the global history-enable checkbox and meter averaging are hidden/unbuilt. The separate container **History Graph** has a live first-series producer; create and bind that item as described below. The hidden global checkbox is not how you enable it. PBSNR is not a supported live meter value in this build. A designer property name or saved layout entry does not establish live data availability.
 
@@ -206,6 +206,9 @@ slice line under the digits.
 4. Make the viewport smaller and use its scrollbars to reach objects outside
    it. Window resizing retains the objects' saved size/position. **Auto height**
    can grow a floating/overlay viewport only within the available screen.
+   **Transparent background** clears the container behind its contents.
+   Meters and their right-click menus stay solid; in a floating container
+   the desktop shows through.
 5. Apply and verify the live arrangement. Live grip/resize gestures commit when
    completed; a storage or concurrent-placement failure restores committed
    geometry. This differs from the editor preview, which remains pending Apply.
@@ -293,7 +296,9 @@ The workspace look is how the main window opens. Its container headers, Arrange 
 
 **Workspace profiles.** **Containers > Manage Workspace Profiles…** opens **Workspace Profiles**, where you can make a **New** profile, **Duplicate**, **Rename**, **Save**, **Export**, **Import** and **Remove** one. The profile rail and Ctrl+1 to Ctrl+9 switch between profiles; see [chapter 2](02-desktop-window.md#workspace-profiles).
 
-**S-Meter.** The **S-Meter** checkbox in **Containers > Applets** shows or hides the S-Meter applet. **Containers > Reset Default Layout** puts the S-Meter first and showing. The **S-Meter dial (additional)** item can be added to any container from **Available**.
+**S-Meter.** The **S-Meter** checkbox in **Containers > Applets** shows or hides the S-Meter applet. **Containers > Reset Default Layout** puts the S-Meter first and showing. The **S-Meter dial (additional)** item can be added to any container from **Available**. **S-Meter dial (scales)** is the same dial sized to fit its container; its **Alignment** puts the face at the **Top**, **Center** or **Bottom** of the space it is given.
+
+**Recordings and Voice keyer.** **Containers > Applets** also shows or hides the **Recordings** panel and the **Voice keyer** panel. Both start hidden. See [Recordings](21-recordings.md).
 
 ### Copy a container item layout between containers
 

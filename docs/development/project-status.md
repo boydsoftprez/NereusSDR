@@ -7,8 +7,8 @@ verbatim from `CLAUDE.md` as of commit 86a1b20d6.
 
 ## Current status
 
-2026.11.1 is the current desktop and Core release; the table below lists what it adds
-to 2026.11.0. 2026.11.0 combined the work since 2026.10.1,
+2026.11.1 is the current desktop and Core release; the first table below lists what it adds
+to 2026.11.0, and the second what 2026.11.2, now being prepared, adds to 2026.11.1. 2026.11.0 combined the work since 2026.10.1,
 including remote display codec v2, audio-aligned remote RX meters, CW and
 remote transmit recovery, frequency-first Roundtable and signal units,
 receiver and container state, and phone display fixes. NNR retains the
@@ -65,31 +65,36 @@ PR 749's exports reach no production connection across a DLL, and its certificat
 key seam has no production caller, so Windows and Core behavior stay as they were.
 The Windows signal fix still needs a Windows test run; PR 749 names it.
 
-### On main since 2026.11.1
+### In 2026.11.2, since 2026.11.1
 
-Nothing an operator would notice has merged since the tag, so `CHANGELOG.md` has
-no new entry yet. On main: PR 771 (manual gaps: CWX menu, G2E microphone group,
-release record), PR 772 (website for 2026.11.1), PR 773 (phone app version
-2026.11.1) and PR 792 (three whole-window tests fitted to the hosted Linux
-runner and two MediaNotReady test cases; tests only).
+Scope set by J.J. Boyd on 2026-11-17. [CHANGELOG.md](../../CHANGELOG.md) under
+`[Unreleased]` has the operator wording; the release turns it into `[2026.11.2]`.
 
-### Open, headed for the next release
+| Work | PRs | Verification so far |
+| --- | --- | --- |
+| Recordings on the Core: contact recorder per slice, playback on the pressing device, sending a recording on the air, voice keyer M1 to M8 with VOICE and F1 to F8, Digital Spectrum Recorder with rewind and SAVE; desktop, phone and iPad | 797 | Each task's tests and one combined pass on macOS; one whole-branch review and fix round. J.J. Boyd's on-air and by-hand runs and the bench Pi 5 Core runs are listed in the PR. Adds LAME (MP3 encoding, Core only) and minimp3. Touches transmit and the core RX path (rewind feeds the demodulator from the disk). |
+| Roundtable strip under the frequency scale on the desktop, and its review fixes | 804, 805 | Focused tests and `roundtable-*` capture scenes on a Mac. Not run on a radio per the PRs. |
+| Slim frequency row with ticks and white-gray numbers | 806 | Focused tests and three capture scenes; picked by J.J. Boyd from a mockup. Clears a stored old-yellow default once. |
+| Receive leveler (RXL), Brian Sutton (W4KZO)'s feature with a rebuilt engine; desktop, remote and phone; phone flag folds on the slice letter | 786 | Leveler model tests; J.J. Boyd on the air: steady with nobody talking, weak stations lift. Ships off. Touches the core RX path after AGC. |
+| Intel Mac waterfall presented on its own (Brian Sutton W4KZO) | 775, 793 | Tests; Brian's Intel MacBook Pro. Apple silicon path unchanged. |
+| Speaker audio from the Core on its own thread while windows move (Brian Sutton W4KZO) | 776, 794 | Tests on a Mac. Touches the remote speaker audio path. |
+| S-Meter dial (scales) and Transparent background for containers (Brian Sutton W4KZO) | 779, 795 | Tests and captures on a Mac. |
+| Roundtable readings at 12 px (Brian Sutton W4KZO) | 780 | Tests. |
+| SSB Mod Monitor OVER line (Brian Sutton W4KZO) | 781 | Monitor tests. Desktop only. |
+| RX Attenuator caption stays on its control in a tall container (Brian Sutton W4KZO) | 783, 796 | Tests. |
+| Phone heat: waterfall timeline check, meter readings, band drawing, Modes tab, Roundtable history | 787, 788, 789, 790, 791 | Phone tests; about 96% to 52% of one core on an iPhone with 787 to 789 (Debug build). No Release build measured. Ships with the next phone build. |
 
-- Brian Sutton (W4KZO): 775 Intel Mac waterfall, 776 speaker dropouts when
-  moving windows, 779 S-Meter dial that scales and a clear container
-  background, 780 Roundtable reading size, 781 SSB Mod Monitor OVER line,
-  783 RX Attenuator caption. 793 to 796 are corrected copies of 775, 776, 779
-  and 783.
-- 786 receive leveler (RXL), Brian Sutton's feature, being reworked on
-  `claude/lucid-sutherland-ee1dfb` with a new engine.
-- 753 Cinnamon file choosers on Linux source builds, 754 container dialog when
-  adding a meter on Linux.
-- 787 to 791 iPhone heat: waterfall timeline, meter readings, band drawing,
-  Modes tab and Roundtable churn.
-- 797 recordings, voice keyer and Digital Spectrum Recorder (draft, in
-  progress; JJ wants it in this release).
-- The web version: run the station from a web browser (branch
-  `claude/web-version`, in progress, no PR yet; JJ wants it in this release).
+Also on main, with no operator-facing change and so no release note: PR 771
+(manual gaps), PR 772 (website for 2026.11.1), PR 773 (phone app version
+2026.11.1), PR 792, 801, 802 and 803 (tests fitted to the hosted Linux runner,
+MediaNotReady cases and phone test waits) and PR 799 (Windows CI finds the
+OpenSSL 4 DLLs).
+
+### Not in 2026.11.2
+
+- The Flex 8600M work.
+- 753 Cinnamon file choosers on Linux source builds and 754 the container
+  dialog when adding a meter on Linux stay open for their reporters.
 
 The remaining text is an archived reference copied from the earlier agent
 context. Its phase scheduling, release status and class inventories can be

@@ -60,6 +60,8 @@ examples and not a live station. The **OVERLOAD** indicator is present but not l
 Figure 2. The flag's frequency field (1), filter width (2), ownership text
 (3), and control tabs (4). **You control** identifies an editable slice;
 a listening slice has different ownership text and restricted controls.
+Beside the flag, a column of round buttons runs close, lock, **Record**,
+**Play** and the more button; see [Recordings](21-recordings.md).
 
 ## Choose the control surface you need
 
@@ -69,7 +71,7 @@ every applet open to operate a slice.
 | Surface | How to reach it | What it controls |
 | --- | --- | --- |
 | VFO flag audio page | Click the speaker tab at the foot of the flag. | AF, AGC, stereo pan, mute, binaural audio, playback destination and squelch. |
-| VFO flag DSP page | Click **DSP**. | Noise blankers, noise-reduction method, automatic notch, spectral blanker and CW peak filter. |
+| VFO flag DSP page | Click **DSP**. | Noise blankers, noise-reduction method, automatic notch, spectral blanker, CW peak filter and the receive leveler (**RXL**). |
 | VFO flag mode/filter page | Click the tab showing the current mode, such as **LSB**. | Mode selection and that mode's filter presets. |
 | VFO flag offset page | Click **X/RIT**. | Receive and transmit offsets, their enable/reset controls and tuning step. |
 | VFO flag virtual-audio page | Click **VAX**. | The slice's virtual-audio routing controls. |

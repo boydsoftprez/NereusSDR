@@ -183,7 +183,7 @@ of the first three alone establishes over-the-air audio quality.
 4. Press **MOX**. The button turns red while manual transmit is requested. Speak briefly and observe the mic/ALC, forward-power, and SWR indications that your radio provides.
 5. Press **MOX** again to unkey. Confirm the red state clears and receive audio returns. If the red state or transmit holder remains, do not close the window as a substitute for unkeying; inspect the active PTT state and Core indication.
 
-For a single-tone check, press **TUNE** instead of MOX. The button changes to **TUNING...** while the carrier is active; press it again to stop. TUNE is not a voice test and should be used only into an appropriate antenna/load system with station precautions. The TX applet's **2-Tone** control is a separate keyed measurement path, configured as described below. PureSignal uses that test path in [PureSignal and diversity](18-puresignal-diversity.md).
+For a single-tone check, press **TUNE** instead of MOX. The button changes to **TUNING...** while the carrier is active; press it again to stop. TUNE is not a voice test and should be used only into an appropriate antenna/load system with station precautions. The TX applet's **2-Tone** control is a separate keyed measurement path, configured as described below. PureSignal uses that test path in [PureSignal and diversity](18-puresignal-diversity.md). **VOICE**, beside TUNE and MOX, sends a recorded voice message; see [the voice keyer](21-recordings.md#the-voice-keyer). Keying while a recording plays sends that recording instead of your mic; see [Send a recording on the air](21-recordings.md#send-a-recording-on-the-air).
 
 ## Configure the transmit protection readback
 

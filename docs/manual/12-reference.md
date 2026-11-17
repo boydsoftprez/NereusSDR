@@ -24,6 +24,7 @@ Use this chapter to locate common commands and distinguish which part of the sta
 | Display and appearance | **File > Settings... > Display**; **File > Settings... > Appearance** | **Setup > Display** | Page labels identify phone/Core scope |
 | Inspect saved Core, retain addresses and rename | **File > Settings... > Cores > Your Cores** | Saved Core row actions; **Setup > Devices** when connected | Desktop inspection is local; accepted rename changes the shared Core. |
 | Core audio quality and media recovery | **File > Settings... > Cores > Audio with the Core** | **Sound**, **Setup > Data use** | Current window/device preference; read actual format/health. |
+| Recordings, voice keyer and spectrum recorder | **File > Settings... > Cores > Recordings** and **Digital Spectrum Recorder**; **Containers > Applets > Recordings**, **Voice keyer** | **Setup > Recording settings**, **Setup > Digital Spectrum Recorder**, **Tools > Recordings**, **Tools > Voice Keyer** | Core; every device sees the same. See [Recordings](21-recordings.md). |
 | Canvas, meter sources and individual controls | **Containers > New / Edit Container** | No desktop Canvas editor on phone | Desktop arrangement; live controls retain their ordinary receiver/TX authority. |
 | Core service and pairing | **File > Settings... > CAT & Network > Remote Access** | Welcome/connect flow; **Setup > Devices** for paired-device administration | Service on this computer; device registry on Core |
 | Radio selection and saved targets | **Radio > Connections…** (or **Manage Radios…** in a radio-panel window) | **Radio > More > Manage Radios** for the radio the connected Core runs; **Your Cores** list for saved connection targets | Choosing a different radio changes the Core's shared radio and reconnects devices; this is not the same as choosing a saved Core target. |
@@ -79,7 +80,7 @@ until that readback is ready.
 | Category | Implemented pages in the covered source | Detailed instructions |
 | --- | --- | --- |
 | **General** | Startup & Preferences; Options; Filters; This Core in a remote window. | [Connect](01-desktop-connect.md), [sharing](08-shared-core.md), [spots and identity](16-spots-reporters.md), [filter limits](13-receiver-dsp.md#set-filter-edges-and-edit-the-shared-preset-bank). |
-| **Cores** | Your Cores (Overview, Addresses, Radio, Devices); Audio with the Core. Inspection and current connection are distinct. | [Core Settings and audio](01-desktop-connect.md), [sharing](08-shared-core.md). |
+| **Cores** | Your Cores (Overview, Addresses, Radio, Devices); Audio with the Core; Digital Spectrum Recorder; Recordings. Inspection and current connection are distinct. | [Core Settings and audio](01-desktop-connect.md), [sharing](08-shared-core.md). |
 | **Hardware** | Hardware Config, whose tabs depend on the radio. | [Hardware and antennas](17-hardware-antennas-calibration.md). |
 | **PA** | PA Gain; Watt Meter; PA Values, with radio capability reasons. | [Calibration](17-hardware-antennas-calibration.md). |
 | **Audio** | Outputs (speakers, headphones, radio speaker, Core speaker); Microphone; Digital modes (VAX and TCI); Advanced; TX Profile. | [Transmit](05-transmit.md), [digital routing](09-tools.md), [profiles](14-voice-profiles.md). |
