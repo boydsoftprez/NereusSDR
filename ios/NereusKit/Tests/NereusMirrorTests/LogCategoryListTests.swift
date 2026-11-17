@@ -24,13 +24,13 @@ import Testing
         return ""
     }
 
-    @Test("the session's list reads as sent: thirteen categories in the Support dialog's order")
+    @Test("the session's list reads as sent: fourteen categories in the Support dialog's order")
     func fixture() throws {
         let list = try #require(LogCategoryList(json: try Self.fixtureList()))
         #expect(list.categories.map(\.label) == ["Discovery", "Connection", "Protocol", "Receiver", "Audio", "DSP",
-                                                 "Spectrum", "Container", "Meter", "MMIO", "TCI", "Spots", "CAT"])
+                                                 "Spectrum", "Container", "Meter", "MMIO", "TCI", "Spots", "CAT", "Recordings"])
         #expect(list.categories.first?.id == "nereus.discovery")
-        #expect(list.categories.last?.id == "nereus.cat")
+        #expect(list.categories.last?.id == "nereus.recordings")
     }
 
     @Test("unknown keys are ignored, an entry without an id is skipped, one without a label shows its id")
