@@ -49,6 +49,10 @@
 //             sound between transforms (workerPastRenderer), so rewound
 //             playback no longer falls behind while rows are drawn. AI
 //             tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; a past spectrum asked while rows are
+//             drawn is drawn and answered between their transforms, the
+//             newest per slice and view; the recorder drains between
+//             them too. AI tooling: Anthropic Claude Code.
 
 #include "RecordingService.h"
 
@@ -294,11 +298,14 @@ RecordingService::~RecordingService()
             m_workerTimer = nullptr;
             // Its FFT engine was made on the worker; it goes there too.
             m_pastRenderer.reset();
+            m_spectrumRenderer.reset();
+            m_workerSpectra.clear();
         }, Qt::BlockingQueuedConnection);
         connect(m_thread.get(), &QThread::finished, m_workerContext, &QObject::deleteLater);
         m_thread->quit();
         m_thread->wait();
         m_workerContext = nullptr;
+        m_spectrumContext = nullptr;   // its child, deleted with it
     }
 }
 
@@ -368,6 +375,7 @@ void RecordingService::ensureWorker()
     m_thread = std::make_unique<QThread>();
     m_thread->setObjectName(QStringLiteral("NereusRecordings"));
     m_workerContext = new QObject;
+    m_spectrumContext = new QObject(m_workerContext);
     m_workerContext->moveToThread(m_thread.get());
     m_thread->start();
     QMetaObject::invokeMethod(m_workerContext, [this] {
@@ -2191,10 +2199,56 @@ DsrPastRenderer& RecordingService::workerPastRenderer()
         // when the read-ahead is full. Safe here: a drawing job holds no
         // iterator into m_workerReplays, and the ready and finished notices
         // are queued to the main thread as from a round.
-        m_pastRenderer->setBetweenWork([this] { workerFillReplays(); });
+        m_pastRenderer->setBetweenWork([this] { workerBetweenPastWork(true); });
     }
     m_pastRenderThread.store(QThread::currentThread());
     return *m_pastRenderer;
+}
+
+DsrPastRenderer& RecordingService::workerSpectrumRenderer()
+{
+    if (!m_spectrumRenderer) {
+        m_spectrumRenderer = std::make_unique<DsrPastRenderer>();
+        // Never takes spectrum asks itself: it may be drawing one between
+        // two transforms of a rows drawing already.
+        m_spectrumRenderer->setBetweenWork([this] { workerBetweenPastWork(false); });
+    }
+    m_pastRenderThread.store(QThread::currentThread());
+    return *m_spectrumRenderer;
+}
+
+void RecordingService::workerBetweenPastWork(bool serveSpectra)
+{
+    workerFillReplays();
+    // The recorder's I/Q ring holds well under a second at the widest
+    // rates; a long drawing must not leave it to overflow.
+    workerDrainDsr();
+    if (!serveSpectra || m_workerTakingSpectra || m_spectrumContext == nullptr) {
+        return;
+    }
+    // Only the spectrum asks queued meanwhile run here (each one only
+    // records itself), then the newest of them are drawn and answered.
+    m_workerTakingSpectra = true;
+    QCoreApplication::sendPostedEvents(m_spectrumContext, QEvent::MetaCall);
+    m_workerTakingSpectra = false;
+    workerServeSpectra();
+}
+
+void RecordingService::workerServeSpectra()
+{
+    while (!m_workerSpectra.empty()) {
+        PendingSpectrum p = std::move(m_workerSpectra.front());
+        m_workerSpectra.erase(m_workerSpectra.begin());
+        DsrPastFrames frame;
+        const bool kept = workerSpectrumRenderer().spectrum(p.source ? *p.source : m_dsr->ring(), p.readReceiver,
+                                                            p.liveRateHz, p.liveCentreHz, p.view, p.utcNs, &frame);
+        frame.slice = p.slice;
+        for (PastFramesDone& done : p.dones) {
+            QMetaObject::invokeMethod(this, [done = std::move(done), kept, frame] {
+                done(kept, kept ? QString() : QString::fromLatin1(kRewindGoneReason), frame);
+            }, Qt::QueuedConnection);
+        }
+    }
 }
 
 void RecordingService::pastRows(int slice, const DsrPanView& view, qint64 fromUtcNs, qint64 toUtcNs,
@@ -2238,16 +2292,42 @@ void RecordingService::pastSpectrum(int slice, const DsrPanView& view, qint64 ut
     }
     int readReceiver = receiver;
     const std::shared_ptr<DsrRingFile> source = pastSource(slice, receiver, utcNs, utcNs, &readReceiver);
-    runOnWorker([this, slice, view, utcNs, readReceiver, liveRate, liveCentre, source,
-                 done = std::move(done)]() mutable {
-        DsrPastFrames frame;
-        const bool kept = workerPastRenderer().spectrum(source ? *source : m_dsr->ring(), readReceiver, liveRate,
-                                                        liveCentre, view, utcNs, &frame);
-        frame.slice = slice;
-        QMetaObject::invokeMethod(this, [done = std::move(done), kept, frame] {
-            done(kept, kept ? QString() : QString::fromLatin1(kRewindGoneReason), frame);
-        }, Qt::QueuedConnection);
-    });
+    PendingSpectrum ask;
+    ask.slice = slice;
+    ask.view = view;
+    ask.utcNs = utcNs;
+    ask.readReceiver = readReceiver;
+    ask.liveRateHz = liveRate;
+    ask.liveCentreHz = liveCentre;
+    ask.source = source;
+    ask.dones.push_back(std::move(done));
+    ensureWorker();
+    // Queued on its own context: a rows drawing takes it between two
+    // transforms (workerBetweenPastWork) instead of after the whole batch.
+    QMetaObject::invokeMethod(m_spectrumContext, [this, ask = std::move(ask)]() mutable {
+        const auto same = std::find_if(m_workerSpectra.begin(), m_workerSpectra.end(),
+                                       [&ask](const PendingSpectrum& p) {
+                                           return p.slice == ask.slice && p.view.fftSize == ask.view.fftSize
+                                               && p.view.windowType == ask.view.windowType
+                                               && p.view.centreHz == ask.view.centreHz
+                                               && p.view.spanHz == ask.view.spanHz
+                                               && p.view.pixels == ask.view.pixels;
+                                       });
+        if (same != m_workerSpectra.end()) {
+            // The newer moment for every caller still waiting.
+            std::vector<PastFramesDone> dones = std::move(same->dones);
+            for (PastFramesDone& d : ask.dones) {
+                dones.push_back(std::move(d));
+            }
+            ask.dones = std::move(dones);
+            *same = std::move(ask);
+        } else {
+            m_workerSpectra.push_back(std::move(ask));
+        }
+        if (!m_workerTakingSpectra) {
+            workerServeSpectra();
+        }
+    }, Qt::QueuedConnection);
 }
 
 void RecordingService::pastHours(HoursDone done)

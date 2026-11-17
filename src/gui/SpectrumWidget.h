@@ -1,4 +1,9 @@
 // Modification history (NereusSDR):
+//   2026-11-16: Rewound, the past spectrum is asked for at the display's
+//               frame rate (the paint timer) for the moment playing, not
+//               once a waterfall row at most ten a second;
+//               displayTimerForTest. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-11-16: SAVE above the hours map, its yellow bracket and the save
 //               box (recording plan Task 25). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
@@ -2374,6 +2379,8 @@ public:
     void loadSettingsForTest()              { loadSettings(); }
     /// The paint timer's period (setDisplayFps sets it).
     int displayTimerIntervalForTest() const { return m_displayTimer.interval(); }
+    /// The paint timer itself: a test stops it and emits its timeout.
+    QTimer& displayTimerForTest() { return m_displayTimer; }
     /// The MOX tune gate is the property under test; synthesising a press,
     /// a wheel notch and a spot-label hit would test Qt's event delivery
     /// instead. Every emitter routes through requestTune, which is greppable.
@@ -3817,6 +3824,7 @@ private:
     void  layoutDsrChildren();
     void  substituteDsrPastTrace();
     void  askDsrPastSpectrum();
+    qint64 dsrPlayingUtcMs();
     bool  dsrPastClick(const QPoint& pos);
     void  dsrGotoSubmit();
     void  placeDsrSaveBox();
@@ -4177,8 +4185,10 @@ private:
     static constexpr qint64 kDsrLeadMs = 2000;
     // "Drawing" dims the picture while at least this share of it waits.
     static constexpr int kDsrDrawingShareDivisor = 4;
-    // The past spectrum is asked for at most this often.
-    static constexpr qint64 kDsrSpectrumIntervalMs = 100;
+    // The past spectrum is asked for once a display frame (the paint
+    // timer's period). Asks closer than the period less this share of it
+    // are left out, so a tick a millisecond early never drops a frame.
+    static constexpr int kDsrSpectrumSlackDivisor = 4;
     // How many of the Core's rows are kept, in picture heights.
     static constexpr int kDsrCacheHeights = 4;
     bool            m_dsrAvailable{false};
@@ -4199,6 +4209,10 @@ private:
     NereusSDR::DsrPastFrames m_dsrPastTrace;
     bool            m_dsrSpectrumInFlight{false};
     qint64          m_dsrSpectrumAskedMs{0};
+    // The picture's top moment, and when it got there: the moment playing
+    // runs on from it until the next row moves the top.
+    qint64          m_dsrTopAnchorUtcMs{0};
+    qint64          m_dsrTopAnchorAtMs{0};
     QVector<quint8> m_wfHistoryTransmit;           // parallel; 1 = your transmit
     QPointer<QWidget> m_dsrHoursMap;
     QPointer<QWidget> m_dsrGoto;

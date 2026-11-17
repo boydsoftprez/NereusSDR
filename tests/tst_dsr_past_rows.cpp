@@ -19,6 +19,10 @@
 //                 reduces bins, your transmit marked per row, and the
 //                 pixels refusal. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code. Recording plan Task 24.
+//   2026-11-16 - A past spectrum asked while rows are drawn is answered
+//                 before them, the newest of two asks for every caller,
+//                 and the recorder keeps writing meanwhile. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -28,6 +32,7 @@
 #include <QHash>
 #include <QLoggingCategory>
 #include <QRandomGenerator>
+#include <QSemaphore>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QTimeZone>
@@ -550,6 +555,89 @@ private slots:
         bool hoursDone = false;
         svc.pastHours([&](const QList<DsrHour>& hours) { hoursDone = hours.size() == 1; });
         QTRY_VERIFY(hoursDone);
+    }
+
+    // A past spectrum asked while a batch of rows is drawn is drawn and
+    // answered between two of the rows, not after the batch; of two asks
+    // for the same pan the newer moment answers both callers; and the
+    // recorder writes what the radio sent meanwhile. The worker's rounds
+    // are held and the worker is held while the asks go in, so only the
+    // drawing can have done any of it.
+    void aSpectrumAskedDuringRowsComesFirst()
+    {
+        const QString ssd = m_dir.filePath(QStringLiteral("ssd-spectrum-first"));
+        QDir().mkpath(ssd);
+        std::atomic<qint64> clockMs{kStartNs / 1000000};
+        RecordingService svc(nullptr);
+        svc.setClockForTest([&clockMs] { return clockMs.load(); });
+        svc.setDsrVolumesForTest([&ssd] {
+            return QList<RecordingVolume>{volume(QDir::rootPath(), true), volume(ssd, false)};
+        });
+        RecordingSettings s = svc.settings();
+        s.disk = m_dir.filePath(QStringLiteral("recordings-spectrum-first"));
+        QDir().mkpath(s.disk);
+        s.format = AudioFileFormat::Wav;
+        s.dsrEnabled = true;
+        s.dsrDisk = ssd;
+        s.dsrSizeLimitGb = 1;
+        svc.setSettings(s);
+        svc.setDsrRewindHostForTest(std::make_unique<FakeRadio>());
+        svc.setRadioStreaming(true);
+        svc.dsrRecorder()->setStream(0, kKeptCentreHz, kRate);
+        constexpr int kChunkFrames = 4800;   // what the tap takes at once
+        const auto tapSecond = [&](quint32 seed) {
+            const std::vector<qint16> iq =
+                keptIq(kRate, kRate, kKeptCentreHz, kCarrierHz, kCarrierAmplitude, 0.001f, seed);
+            std::vector<float> chunk(iq.size());
+            for (size_t k = 0; k < iq.size(); ++k) {
+                chunk[k] = float(iq[k]) / DsrReplay::kIqScale;
+            }
+            for (int at = 0; at < kRate; at += kChunkFrames) {
+                svc.dsrRecorder()->consumeIq(0, chunk.data() + size_t(at) * 2, kChunkFrames);
+            }
+            clockMs += 1000;
+        };
+        for (int sec = 0; sec < 4; ++sec) {
+            tapSecond(quint32(sec + 11));
+            svc.pumpForTest();
+        }
+        const DsrRingFile& ring = svc.dsrRecorder()->ring();
+        const qint64 oldest = ring.oldestUtcNs(0);
+        QVERIFY(ring.newestUtcNs(0) - oldest >= 2 * kNs);
+
+        svc.holdWorkerRoundsForTest(true);
+        // One more second from the radio, waiting in the recorder's ring.
+        tapSecond(99);
+        const qint64 newestBefore = ring.newestUtcNs(0);
+
+        QSemaphore gate;
+        svc.runOnWorker([&gate] { gate.acquire(); });
+        QStringList order;
+        int rowsGot = 0;
+        svc.pastRows(0, panView(), oldest, oldest + 2 * kNs, 32,
+                     [&](bool ok, const QString&, const DsrPastFrames& rows) {
+                         order.append(QStringLiteral("rows"));
+                         rowsGot = ok ? int(rows.rows.size()) : -1;
+                     });
+        QList<qint64> spectrumAt;
+        const auto spectrumDone = [&](bool ok, const QString&, const DsrPastFrames& frame) {
+            order.append(QStringLiteral("spectrum"));
+            spectrumAt.append(ok && !frame.utcNs.isEmpty() ? frame.utcNs.first() : -1);
+        };
+        svc.pastSpectrum(0, panView(), oldest + kNs / 2, spectrumDone);
+        svc.pastSpectrum(0, panView(), oldest + kNs, spectrumDone);
+        gate.release();
+        svc.waitForWorker();
+        const qint64 newestAfter = ring.newestUtcNs(0);
+        svc.holdWorkerRoundsForTest(false);
+        QTRY_COMPARE(order.size(), 3);
+
+        QCOMPARE(order, (QStringList{QStringLiteral("spectrum"), QStringLiteral("spectrum"), QStringLiteral("rows")}));
+        QCOMPARE(rowsGot, 32);
+        // Both callers have the newer moment.
+        QCOMPARE(spectrumAt, (QList<qint64>{oldest + kNs, oldest + kNs}));
+        // The recorder wrote the waiting second while the rows were drawn.
+        QCOMPARE(newestAfter, newestBefore + kNs);
     }
 };
 

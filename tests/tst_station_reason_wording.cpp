@@ -132,6 +132,9 @@
 //                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16  J.J. Boyd / KG4VCF  workerServeSpectra (the past spectrum's
+//                                    refusal, moved there) is scanned too.
+//                                    AI tooling: Claude Code.
 //   2026-11-08  J.J. Boyd / KG4VCF  Hot keys: HotKeyDeviceBindings.cpp's
 //                                    turnRefusal is app-side (Knobs page).
 //                                    AI tooling: Claude Code.
@@ -1868,7 +1871,9 @@ const QList<ReasonSource>& reasonSources()
         // passes on one of RecordingService.h's kPast... or kRewind...
         // sentences (scanned in that file's entry below).
         {"src/core/recordings/RecordingService.cpp",
-         {QStringLiteral("checkPastRequest"), QStringLiteral("pastRows"), QStringLiteral("pastSpectrum")}, {}, 0,
+         {QStringLiteral("checkPastRequest"), QStringLiteral("pastRows"), QStringLiteral("pastSpectrum"),
+          QStringLiteral("workerServeSpectra")},
+         {}, 0,
          {},
          {QStringLiteral("QString::fromLatin1(why)"), QStringLiteral("QString::fromLatin1(kPastRowsReason)"),
           QStringLiteral("kept ? QString() : QString::fromLatin1(kRewindGoneReason)"),

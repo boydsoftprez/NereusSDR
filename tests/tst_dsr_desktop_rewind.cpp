@@ -18,6 +18,10 @@
 // Modification history (NereusSDR):
 //   2026-11-16 - Created. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code. Recording plan Task 24.
+//   2026-11-16 - Rewound, the past spectrum is asked for once a display
+//                 frame for the moment playing, one at a time, and a late
+//                 answer asks again at once. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -318,6 +322,94 @@ private slots:
         m_clockMs += kRowMs;
         w.pushWaterfallRowForTest(flatRow(-130.0f));
         QCOMPARE(w.waterfallHistoryOffsetRowsForTest(), offset + 1);
+    }
+
+    // Rewound, the past spectrum is asked for on every display frame, not
+    // once a waterfall row, for the moment playing (one frame later each
+    // time, between rows too); never two at once; an answer that comes a
+    // frame or more late asks again at once. The paint timer is stopped
+    // and ticked by hand on the test's clock.
+    void thePastSpectrumFollowsTheFrameRate()
+    {
+        SpectrumWidget w;
+        FakeRecordingsAccess fake;
+        DsrRewindLink link(&w, [] { return 0; });
+        prepare(w, link, fake);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QTimer& paint = w.displayTimerForTest();
+        paint.stop();
+        w.setDisplayFps(50);
+        const int periodMs = w.displayTimerIntervalForTest();
+        QCOMPARE(periodMs, 20);
+        const auto tick = [&paint] { QMetaObject::invokeMethod(&paint, "timeout", Qt::DirectConnection); };
+        w.setWaterfallHistoryOffsetForTest(100);
+        w.setDsrRewound(true, 0);
+        const auto asks = [&fake] { return callsOf(fake, QStringLiteral("requestPastSpectrum")); };
+        QCOMPARE(asks().size(), 1);
+        int answered = 0;
+        const auto answerNewest = [&] {
+            const auto asked = asks();
+            if (asked.size() <= answered) {
+                return;
+            }
+            answered = int(asked.size());
+            DsrPastFrames f;
+            f.slice = 0;
+            f.firstBinHz = 7185000.0 - 96000.0;
+            f.hzPerBin = 192000.0 / 800.0;
+            f.binCount = 800;
+            f.utcNs = {asked.last().utcNs};
+            f.rows = {QVector<float>(800, -50.0f)};
+            emit fake.pastSpectrumReady(f);
+        };
+        answerNewest();
+
+        // One second: a frame every 20 ms, a row every 50 ms, the Core
+        // answering each ask at once.
+        int frames = 0;
+        int rows = 0;
+        for (int t = 1; t <= 1000; ++t) {
+            ++m_clockMs;
+            if (t % periodMs == 0) {
+                tick();
+                ++frames;
+                answerNewest();
+            }
+            if (t % kRowMs == 0) {
+                w.pushWaterfallRowForTest(flatRow(-130.0f));
+                ++rows;
+                answerNewest();
+            }
+        }
+        QCOMPARE(frames, 50);
+        QCOMPARE(rows, 20);
+        const auto asked = asks();
+        QCOMPARE(asked.size(), 1 + frames);
+        for (qsizetype i = 1; i < asked.size(); ++i) {
+            QCOMPARE(asked.at(i).utcNs - asked.at(i - 1).utcNs, qint64(periodMs) * 1000000LL);
+        }
+
+        // Unanswered: no second ask, however many frames pass.
+        tick();   // nothing new since the last frame's ask
+        m_clockMs += periodMs;
+        tick();
+        const int waiting = int(asks().size());
+        QCOMPARE(waiting, 1 + frames + 1);
+        m_clockMs += periodMs;
+        tick();
+        m_clockMs += kRowMs - periodMs - periodMs / 2;   // a row between frames
+        w.pushWaterfallRowForTest(flatRow(-130.0f));
+        m_clockMs += periodMs / 2;
+        tick();
+        m_clockMs += periodMs;
+        tick();
+        QCOMPARE(int(asks().size()), waiting);
+        // The late answer asks again at once, for the moment now.
+        answerNewest();
+        QCOMPARE(int(asks().size()), waiting + 1);
+        QCOMPARE(asks().last().utcNs - asks().at(waiting - 1).utcNs, qint64(3 * periodMs) * 1000000LL);
     }
 
     // LIVE asks for live sound; after PTT took the slice live (the

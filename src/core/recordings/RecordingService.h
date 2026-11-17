@@ -50,6 +50,11 @@
 // 2026-11-16  J.J. Boyd / KG4VCF; the past picture tops up the rewound
 //             sound between transforms; holdWorkerRoundsForTest. AI
 //             tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; a past spectrum asked while rows are
+//             drawn is answered between them (m_spectrumContext,
+//             m_workerSpectra), the newest per slice and view; the
+//             recorder's drain runs between them too. AI tooling:
+//             Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -550,6 +555,14 @@ private:
     bool checkPastRequest(int slice, const DsrPanView& view, int* receiver, int* liveRateHz,
                           qint64* liveCentreHz, QString* refusal) const;
     DsrPastRenderer& workerPastRenderer();
+    // Past spectrum frames: drawn with their own renderer, so they can be
+    // drawn between two transforms of a rows drawing.
+    DsrPastRenderer& workerSpectrumRenderer();
+    // Between two transforms of a past drawing: the rewound sound read
+    // ahead, the recorder drained, and (rows and hours only) the past
+    // spectrum frames asked meanwhile drawn and answered.
+    void workerBetweenPastWork(bool serveSpectra);
+    void workerServeSpectra();
     // The opened stretch when `slice` is slice A and it keeps `utcNs`.
     std::shared_ptr<DsrRingFile> stretchFor(int slice, qint64 utcNs) const;
     // The opened stretch when a past picture of `slice` from `fromUtcNs`
@@ -600,6 +613,9 @@ private:
 
     std::unique_ptr<QThread> m_thread;
     QObject* m_workerContext = nullptr;   // lives on m_thread; deleted there
+    // A child of m_workerContext: past-spectrum asks are queued here, so a
+    // drawing of rows can take them between its transforms.
+    QObject* m_spectrumContext = nullptr;
     QTimer* m_workerTimer = nullptr;      // worker thread only
     QHash<int, WorkerResult> m_workerFiles;   // worker thread only: the files being written
     std::vector<WorkerPlayer> m_workerPlayers;   // worker thread only: the playbacks being decoded
@@ -672,6 +688,22 @@ private:
 
     // The past picture: made, used and dropped on the worker.
     std::unique_ptr<DsrPastRenderer> m_pastRenderer;
+    std::unique_ptr<DsrPastRenderer> m_spectrumRenderer;
+    // Past spectrum frames asked and not drawn yet, oldest first; a newer
+    // ask for the same slice and view takes the older one's place and
+    // answers every caller with the newer frame. Worker thread only.
+    struct PendingSpectrum {
+        int slice = -1;
+        DsrPanView view;
+        qint64 utcNs = 0;
+        int readReceiver = -1;
+        int liveRateHz = 0;
+        qint64 liveCentreHz = 0;
+        std::shared_ptr<DsrRingFile> source;
+        std::vector<PastFramesDone> dones;
+    };
+    std::vector<PendingSpectrum> m_workerSpectra;
+    bool m_workerTakingSpectra = false;   // worker thread only
     std::atomic<QThread*> m_pastRenderThread{nullptr};
     std::atomic<bool> m_workerRoundsHeldForTest{false};
 };

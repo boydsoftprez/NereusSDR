@@ -8,6 +8,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16 J.J. Boyd / KG4VCF : rewound, the past spectrum is asked
+//                 for on the paint timer's tick, at the display's frame
+//                 rate, for the moment playing; an answer that comes late
+//                 asks again at once. AI-assisted via Anthropic Claude Code.
 //   2026-11-16 J.J. Boyd / KG4VCF : SAVE above the hours map, its yellow
 //                 bracket and the save box (recording plan Task 25).
 //                 AI-assisted via Anthropic Claude Code.
@@ -922,6 +926,11 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     m_displayTimer.setSingleShot(false);
     connect(&m_displayTimer, &QTimer::timeout, this, [this]() {
         checkImdFreshness(QDateTime::currentMSecsSinceEpoch());
+        // Rewound: the past spectrum moves at the display's frame rate,
+        // as the live one does.
+        if (m_dsrRewound) {
+            askDsrPastSpectrum();
+        }
         // 2026-05-25 KG4VCF Option B revisit: the original Option B drop
         // of this gate ("always repaint at display cadence") looked great
         // on a healthy system but pegged a CPU core under macOS low-power
@@ -10210,18 +10219,39 @@ void SpectrumWidget::setDsrLiveReturnPending(bool pending)
     }
 }
 
+qint64 SpectrumWidget::dsrPlayingUtcMs()
+{
+    // The top row is the moment playing when it got there; the sound goes
+    // on in real time until the next row moves the top, at most one row.
+    const qint64 top = waterfallTopUtcMs();
+    const qint64 now = wfNowMs();
+    if (top != m_dsrTopAnchorUtcMs) {
+        m_dsrTopAnchorUtcMs = top;
+        m_dsrTopAnchorAtMs = now;
+    }
+    const qint64 rowMs = std::max<qint64>(1, std::llround(waterfallRowPeriodMs()));
+    return top + std::clamp<qint64>(now - m_dsrTopAnchorAtMs, 0, rowMs);
+}
+
 void SpectrumWidget::askDsrPastSpectrum()
 {
-    if (!m_dsrRewound || m_dsrSpectrumInFlight) {
+    if (!m_dsrRewound) {
+        return;
+    }
+    // Followed even when no ask goes out, so the moment runs from when the
+    // top really moved.
+    const qint64 playing = dsrPlayingUtcMs();
+    if (m_dsrSpectrumInFlight) {
         return;
     }
     const qint64 now = wfNowMs();
-    if (m_dsrSpectrumAskedMs > 0 && now - m_dsrSpectrumAskedMs < kDsrSpectrumIntervalMs) {
+    const qint64 periodMs = std::max(1, m_displayTimer.interval());
+    if (m_dsrSpectrumAskedMs > 0 && now - m_dsrSpectrumAskedMs < periodMs - periodMs / kDsrSpectrumSlackDivisor) {
         return;
     }
     m_dsrSpectrumAskedMs = now;
     m_dsrSpectrumInFlight = true;
-    emit dsrPastSpectrumWanted(waterfallTopUtcMs());
+    emit dsrPastSpectrumWanted(playing);
 }
 
 void SpectrumWidget::setDsrPastSpectrum(const NereusSDR::DsrPastFrames& frame)
@@ -10237,6 +10267,9 @@ void SpectrumWidget::setDsrPastSpectrum(const NereusSDR::DsrPastFrames& frame)
     emit spectrumFrameRendered();
     markOverlayDirty();
     update();
+    // An answer that took a frame or more: the moment has moved on, so the
+    // next is asked for now rather than on the next tick.
+    askDsrPastSpectrum();
 }
 
 void SpectrumWidget::dsrPastSpectrumRefused()
