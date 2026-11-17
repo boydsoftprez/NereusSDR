@@ -22,8 +22,15 @@ void RxPassbandVoice::reset()
     m_frames = 0;
 }
 
+void RxPassbandVoice::outerEdges(int filterLowHz, int filterHighHz, bool& trimLow,
+                                 bool& trimHigh)
+{
+    trimLow = filterLowHz < 0;
+    trimHigh = filterHighHz > 0;
+}
+
 void RxPassbandVoice::addFrame(const float* binsDbm, int binCount, int loBin, int hiBin,
-                               double dtSec)
+                               double dtSec, bool trimLow, bool trimHigh)
 {
     if (binsDbm == nullptr || binCount <= 0) {
         return;
@@ -31,7 +38,11 @@ void RxPassbandVoice::addFrame(const float* binsDbm, int binCount, int loBin, in
     const int lo = std::clamp(loBin, 0, binCount);
     const int hi = std::clamp(hiBin, 0, binCount);
     const int width = hi - lo;
-    if (width < kMinBins) {
+    // The edges away from the carrier are left out (see the header).
+    const int edge = static_cast<int>(std::floor(kEdgeShare * static_cast<double>(width)));
+    const int countLo = lo + (trimLow ? edge : 0);
+    const int countHi = hi - (trimHigh ? edge : 0);
+    if (countHi - countLo < kMinBins) {
         return;
     }
     if (lo != m_lo || hi != m_hi) {
@@ -59,7 +70,7 @@ void RxPassbandVoice::addFrame(const float* binsDbm, int binCount, int loBin, in
     const double threshold = static_cast<double>(*mid) + kBinMarginDb;
 
     int counted = 0;
-    for (int i = lo; i < hi; ++i) {
+    for (int i = countLo; i < countHi; ++i) {
         double& above = m_aboveSec[static_cast<size_t>(i - lo)];
         if (static_cast<double>(binsDbm[i]) >= threshold) {
             above += dt;

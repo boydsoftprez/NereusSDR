@@ -21,6 +21,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: The receive leveler's measuring band rides in a second
+//               word per slice (m_sliceRxLevelerBand). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-11-14: Receive leveler per receiver (setSliceRxLeveler,
 //               sliceRxLevelerGainDb): the speakers and remote-listening
 //               mix get the leveled block, VAX and the receiver taps the
@@ -1867,6 +1870,9 @@ private:
     // writes, audio thread reads) and the leveler itself, audio thread only
     // (its gain reading is atomic).
     std::array<std::atomic<std::uint64_t>, kMaxSliceAudioViews> m_sliceRxLeveler{};
+    // The band the leveler reads loudness in (RxLevelerParams::packBand),
+    // a second word per slice id, written before the first.
+    std::array<std::atomic<std::uint64_t>, kMaxSliceAudioViews> m_sliceRxLevelerBand{};
     std::array<RxLeveler, kMaxSliceAudioViews> m_rxLevelers;
 
     // Sub-Phase 12 Task 12.2 — live-reconfig safety mutex for the speakers

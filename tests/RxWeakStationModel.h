@@ -214,6 +214,8 @@ inline Result run(double snrDb, double hissDb, double binHz, const RxLevelerPara
     RxPassbandVoice voice;
     RxLevelerParams p = base;
     p.on = true;
+    // The audio here is white noise, not shaped by a receiver filter, so
+    // the loudness is read on the whole block (no measuring band).
 
     // Panadapter: complex noise of unit power per sample; the passband
     // holds kPass / fs of it, and the station snrDb over that.
@@ -310,7 +312,7 @@ inline Result run(double snrDb, double hissDb, double binHz, const RxLevelerPara
                 const std::complex<double> c = buf[static_cast<size_t>((i + kFftSize / 2) % kFftSize)];
                 bins[static_cast<size_t>(i)] = static_cast<float>(10.0 * std::log10(std::norm(c) + 1e-30));
             }
-            voice.addFrame(bins.data(), kFftSize, loBin, hiBin, sinceFrame);
+            voice.addFrame(bins.data(), kFftSize, loBin, hiBin, sinceFrame, false, true);  // USB
             sinceFrame = 0.0;
         }
 

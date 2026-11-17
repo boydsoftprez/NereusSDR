@@ -20,6 +20,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16 — Receive leveler: the slice's filter sets the band its
+//                 loudness is read in (RxLeveler::measureBand), sent again
+//                 on a filter change. NereusSDR-original. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-15 — Receive leveler: the station check also reads the
 //                 panadapter bins in each receiver's passband
 //                 (feedRxLevelerSpectrum). NereusSDR-original. J.J. Boyd
@@ -16560,6 +16564,15 @@ void RadioModel::publishRxLevelers()
             if (track != m_rxLevelerTracks.constEnd()) {
                 p.stationPresent = track->gate.stationPresent();
                 p.nearOverload = track->gate.nearOverload();
+                // With the panadapter deciding, the loudness is read
+                // without the filter's outer edge, so a neighbor
+                // overlapping it does not move the level. Without it the
+                // S-meter (the whole passband) decides, and the leveler
+                // reads the whole block too (RxStationGate::panadapterRunning).
+                if (track->gate.panadapterRunning()) {
+                    RxLeveler::measureBand(s->filterLow(), s->filterHigh(),
+                                           p.measureLowHz, p.measureHighHz);
+                }
             }
         }
     }
@@ -16612,7 +16625,10 @@ void RadioModel::feedRxLevelerSpectrum(int streamIndex, const QVector<float>& bi
         } else {
             track->frameClock.start();
         }
-        track->voice.addFrame(binsDbm.constData(), bins, loBin, hiBin, dtSec);
+        bool trimLow = false;
+        bool trimHigh = false;
+        RxPassbandVoice::outerEdges(s->filterLow(), s->filterHigh(), trimLow, trimHigh);
+        track->voice.addFrame(binsDbm.constData(), bins, loBin, hiBin, dtSec, trimLow, trimHigh);
     }
 }
 
@@ -17620,6 +17636,7 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     });
     connect(slice, &SliceModel::filterChanged, this, [this, slice](int, int) {
         resetRxStationGate(slice->sliceIndex());
+        publishRxLevelers();    // the leveler's measuring band follows the filter
     });
     publishSliceAudioView();
     if (!currentAdded()) { return -1; }

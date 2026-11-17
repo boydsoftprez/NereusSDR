@@ -28,6 +28,10 @@
 //                no station are neither counted nor lifted, and a weak
 //                station through static still is. J.J. Boyd (KG4VCF), with
 //                AI-assisted transformation via Anthropic Claude Code.
+//   2026-11-16 — A neighbor overlapping one edge: the measuring band, the
+//                edge bins left out, the level steady while the neighbor
+//                keys, the hold after a turn-down. J.J. Boyd (KG4VCF),
+//                with AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -180,7 +184,9 @@ private slots:
         RxLevelerParams p = autoParams();
         p.stationPresent = true;
         p.nearOverload = true;
-        QCOMPARE(RxLevelerParams::unpack(p.pack()), p);
+        RxLevelerParams back = RxLevelerParams::unpack(p.pack());
+        RxLevelerParams::unpackBand(p.packBand(), back);
+        QCOMPARE(back, p);
 
         RxLevelerParams lo;
         lo.on = true;
@@ -204,7 +210,7 @@ private slots:
         wild.maxCutDb = 99;
         wild.attackMs = 1;
         wild.releaseMs = 100000;
-        const RxLevelerParams back = RxLevelerParams::unpack(wild.pack());
+        back = RxLevelerParams::unpack(wild.pack());
         QCOMPARE(back.targetDb, RxLeveler::kTargetDbMax);
         QCOMPARE(back.maxBoostDb, RxLeveler::kMaxBoostDbMin);
         QCOMPARE(back.maxCutDb, RxLeveler::kMaxCutDbMax);
@@ -824,6 +830,182 @@ private slots:
                 QCOMPARE(r.gapPresentShare, 0.0);
             }
         }
+    }
+
+    // ── A neighbor overlapping one edge (JJ on the air, 2026-11-16) ──────
+
+    // The loudness is read without the filter's outer edge: kEdgeShare of
+    // its width at each edge away from the carrier, as audio frequencies.
+    void measureBandFollowsTheFilter()
+    {
+        int lo = -1;
+        int hi = -1;
+        RxLeveler::measureBand(100, 2900, lo, hi);      // USB: the top 420 Hz off
+        QCOMPARE(lo, 100);
+        QCOMPARE(hi, 2480);
+        RxLeveler::measureBand(-2900, -100, lo, hi);    // LSB: mirrored, the same audio
+        QCOMPARE(lo, 100);
+        QCOMPARE(hi, 2480);
+        RxLeveler::measureBand(-5000, 5000, lo, hi);    // AM: folded, outer edges trimmed
+        QCOMPARE(lo, 0);
+        QCOMPARE(hi, 3500);
+        RxLeveler::measureBand(2900, 100, lo, hi);      // no filter: the whole block
+        QCOMPARE(lo, 0);
+        QCOMPARE(hi, 0);
+        bool trimLow = false;
+        bool trimHigh = false;
+        RxPassbandVoice::outerEdges(100, 2900, trimLow, trimHigh);      // USB
+        QVERIFY(!trimLow && trimHigh);
+        RxPassbandVoice::outerEdges(-2900, -100, trimLow, trimHigh);    // LSB
+        QVERIFY(trimLow && !trimHigh);
+        RxPassbandVoice::outerEdges(-5000, 5000, trimLow, trimHigh);    // AM
+        QVERIFY(trimLow && trimHigh);
+        RxLevelerParams p;
+        p.measureLowHz = 100;
+        p.measureHighHz = 2480;
+        RxLevelerParams back;
+        RxLevelerParams::unpackBand(p.packBand(), back);
+        QCOMPARE(back.measureLowHz, 100);
+        QCOMPARE(back.measureHighHz, 2480);
+    }
+
+    // The trimmed reading is used only while the panadapter decides: the
+    // gate says so for a bins reading within kPanadapterStaleSec.
+    void gatePanadapterRunning()
+    {
+        RxStationGate gate;
+        QVERIFY(!gate.panadapterRunning());
+        RxStationReading r;
+        r.signalDbm = -120.0;
+        r.passbandVoice = 0.0;
+        gate.update(r, 0.1);
+        QVERIFY(gate.panadapterRunning());
+        r.passbandVoice = -1.0;
+        for (int i = 0; i < 9; ++i) {
+            gate.update(r, 0.1);
+        }
+        QVERIFY(gate.panadapterRunning());      // 0.9 s: a slow display
+        gate.update(r, 0.1);
+        gate.update(r, 0.1);
+        QVERIFY(!gate.panadapterRunning());
+        r.passbandVoice = 0.0;
+        gate.update(r, 0.1);
+        gate.reset();
+        QVERIFY(!gate.panadapterRunning());
+    }
+
+    // A neighbor filling the outer edge's bins is not a station; the same
+    // signal inside the filter is.
+    void passbandEdgeNeighborIsNoVoice()
+    {
+        constexpr int kBins = 1024;
+        constexpr int lo = 515;
+        constexpr int hi = 575;     // 60 bins, the top 9 left out (USB)
+        const std::vector<float> flat(kBins, -140.0f);
+        RxPassbandVoice voice;
+        std::vector<float> edge = flat;
+        for (int i = hi - 9; i < hi; ++i) {
+            edge[static_cast<size_t>(i)] = -100.0f;
+        }
+        voice.addFrame(edge.data(), kBins, lo, hi, 0.033, false, true);
+        QCOMPARE(voice.take(), 0.0);
+        voice.addFrame(edge.data(), kBins, lo, hi, 0.033);     // untrimmed: counted
+        QVERIFY(voice.take() >= RxStationGate::kVoiceEnterShare);
+        std::vector<float> inside = flat;
+        for (int i = 540; i < 549; ++i) {
+            inside[static_cast<size_t>(i)] = -100.0f;
+        }
+        voice.addFrame(inside.data(), kBins, lo, hi, 0.033, false, true);
+        QVERIFY(voice.take() >= RxStationGate::kVoiceEnterShare);
+    }
+
+    // A steady voice in a 100-2900 Hz filter and a louder neighbor in its
+    // top 300 Hz keying 3 s on, 2 s off. Read without the outer edge, the
+    // level holds still; read on the whole block (as before) it rode up
+    // and down with the neighbor.
+    void edgeNeighborDoesNotRideTheLevel()
+    {
+        const auto swing = [](bool trimmed) {
+            constexpr int kBlock = 480;
+            constexpr double kTwoPi = 2.0 * 3.14159265358979323846;
+            RxLevelerParams p = autoParams();
+            p.stationPresent = true;
+            p.measureLowHz = 0;
+            p.measureHighHz = 0;
+            if (trimmed) {
+                RxLeveler::measureBand(100, 2900, p.measureLowHz, p.measureHighHz);
+            }
+            RxLeveler lev;
+            std::vector<float> x(kBlock * 2);
+            std::vector<double> gains;
+            const int blocks = static_cast<int>(40.0 * kRate) / kBlock;
+            for (int b = 0; b < blocks; ++b) {
+                for (int k = 0; k < kBlock; ++k) {
+                    const double t = (b * kBlock + k) / kRate;
+                    // Wanted: a quiet voice, syllables at 1 kHz and 1.4 kHz.
+                    const bool syl = std::fmod(t, 0.25) < 0.17;
+                    double v = syl ? 0.03 * (std::sin(kTwoPi * 1000.0 * t)
+                                             + 0.5 * std::sin(kTwoPi * 1400.0 * t)) : 0.0;
+                    // Neighbor: 15 dB louder, 2.65-2.85 kHz, 3 s on, 2 s off.
+                    if (std::fmod(t, 5.0) < 3.0 && std::fmod(t + 0.1, 0.25) < 0.17) {
+                        v += 0.17 * (std::sin(kTwoPi * 2650.0 * t) + std::sin(kTwoPi * 2850.0 * t));
+                    }
+                    v += 0.002 * std::sin(kTwoPi * 731.0 * t + 3.0 * std::sin(kTwoPi * 17.0 * t));
+                    x[2 * k] = x[2 * k + 1] = static_cast<float>(v);
+                }
+                lev.process(x.data(), kBlock, kRate, p);
+                if (b * kBlock >= 10.0 * kRate) {
+                    gains.push_back(lev.gainDb());
+                }
+            }
+            std::sort(gains.begin(), gains.end());
+            return gains[gains.size() * 95 / 100] - gains[gains.size() * 5 / 100];
+        };
+        const double whole = swing(false);
+        const double trimmed = swing(true);
+        QVERIFY2(whole > 3.0, qPrintable(QStringLiteral("whole-block swing %1 dB").arg(whole)));
+        QVERIFY2(trimmed < 1.5 && trimmed < whole / 3.0,
+                 qPrintable(QStringLiteral("trimmed swing %1 dB, whole-block %2 dB")
+                                .arg(trimmed).arg(whole)));
+    }
+
+    // After a turn-down for a louder voice the level holds kRiseHoldSec
+    // before it rises for a quieter one; a pause's let-go starts no hold.
+    void riseHoldsAfterATurnDown()
+    {
+        constexpr int kBlock = 480;
+        constexpr double kTwoPi = 2.0 * 3.14159265358979323846;
+        RxLevelerParams p = autoParams();
+        p.stationPresent = true;
+        RxLeveler lev;
+        std::vector<float> x(kBlock * 2);
+        double gainAtSwitch = 0.0;
+        double gainHeld = 0.0;
+        double gainAfter = 0.0;
+        const int blocks = static_cast<int>(16.0 * kRate) / kBlock;
+        for (int b = 0; b < blocks; ++b) {
+            const double t0 = b * kBlock / kRate;
+            // 6 s at a quiet level, 2 s loud, then quiet again.
+            const double amp = (t0 >= 6.0 && t0 < 8.0) ? 0.5 : 0.03;
+            for (int k = 0; k < kBlock; ++k) {
+                const double t = (b * kBlock + k) / kRate;
+                const double v = std::fmod(t, 0.25) < 0.17 ? amp * std::sin(kTwoPi * 1000.0 * t) : 0.0;
+                x[2 * k] = x[2 * k + 1] = static_cast<float>(v + 0.002 * std::sin(kTwoPi * 731.0 * t));
+            }
+            lev.process(x.data(), kBlock, kRate, p);
+            if (std::abs(t0 - 8.0) < 0.005) {
+                gainAtSwitch = lev.gainDb();
+            } else if (std::abs(t0 - (8.0 + RxLeveler::kRiseHoldSec - 0.5)) < 0.005) {
+                gainHeld = lev.gainDb();
+            } else if (std::abs(t0 - 15.9) < 0.005) {
+                gainAfter = lev.gainDb();
+            }
+        }
+        QVERIFY2(gainAtSwitch < 0.0, qPrintable(QStringLiteral("at the switch %1").arg(gainAtSwitch)));
+        QVERIFY2(gainHeld <= gainAtSwitch + 0.5,
+                 qPrintable(QStringLiteral("held %1, at the switch %2").arg(gainHeld).arg(gainAtSwitch)));
+        QVERIFY2(gainAfter > gainHeld + 6.0,
+                 qPrintable(QStringLiteral("after %1, held %2").arg(gainAfter).arg(gainHeld)));
     }
 
     void weakStationMatrix()

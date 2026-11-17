@@ -22,11 +22,24 @@
 // margin for kSteadySec (a carrier, a birdie, a steady data signal) stops
 // counting until it drops: voice comes and goes.
 //
-// take() returns the share of the passband's bins that stood out,
+// The filter's outer edges are left out: kEdgeShare of its width at each
+// edge away from the carrier (the top in USB, the bottom in LSB, both in
+// AM). A neighbor overlapping the filter puts its strongest audio, its low
+// end, there; counting those bins kept "station present" up for the
+// neighbor while the wanted station paused. The edge next to the carrier
+// is kept: the wanted voice's own strongest harmonics sit there, and a
+// neighbor reaches it only with its weak treble.
+//
+// take() returns the share of the passband's bins (the whole filter, so
+// the station check's bars keep their meaning) that stood out,
 // averaged over the frames since the previous take().
 //
 // Modification history (NereusSDR):
 //   2026-11-15 — New. J.J. Boyd (KG4VCF), with AI-assisted transformation
+//                via Anthropic Claude Code.
+//   2026-11-16 — Leave the filter's outer edges out (kEdgeShare): a
+//                neighbor overlapping one edge made RXL pump (JJ on the
+//                air). J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                via Anthropic Claude Code.
 // =================================================================
 
@@ -36,11 +49,16 @@ namespace NereusSDR {
 
 class RxPassbandVoice {
 public:
+    // Share of the filter's width left out at each edge away from the
+    // carrier, here and in the leveler's loudness reading
+    // (RxLeveler::measureBand): 0.15 of a 100-2900 Hz filter is its top
+    // 420 Hz, 2480 to 2900 Hz.
+    static constexpr double kEdgeShare = 0.15;
     // A passband bin counts when it is this far above the band's noise.
     static constexpr double kBinMarginDb = 10.0;
     // A bin above the margin this long is steady, not voice.
     static constexpr double kSteadySec = 2.0;
-    // Fewer passband bins than this: no reading (too coarse to tell).
+    // Fewer counted bins than this: no reading (too coarse to tell).
     static constexpr int kMinBins = 6;
     // The noise reference spans this many passband widths on each side.
     static constexpr int kReferenceWidths = 4;
@@ -51,8 +69,16 @@ public:
     void reset();
 
     // One frame: `binCount` dBm bins in frequency order, the passband
-    // bins [loBin, hiBin), `dtSec` after the previous frame.
-    void addFrame(const float* binsDbm, int binCount, int loBin, int hiBin, double dtSec);
+    // bins [loBin, hiBin), `dtSec` after the previous frame. `trimLow` and
+    // `trimHigh` leave kEdgeShare of the passband out at that edge: the
+    // edges away from the carrier (outerEdges).
+    void addFrame(const float* binsDbm, int binCount, int loBin, int hiBin, double dtSec,
+                  bool trimLow = false, bool trimHigh = false);
+
+    // Which edges of a filter filterLowHz..filterHighHz about the carrier
+    // are away from it: the low one when it is below the carrier, the high
+    // one when it is above.
+    static void outerEdges(int filterLowHz, int filterHighHz, bool& trimLow, bool& trimHigh);
 
     // The share (0 to 1) of the passband's bins above the band's noise,
     // averaged over the frames since the last call, or -1 with none.

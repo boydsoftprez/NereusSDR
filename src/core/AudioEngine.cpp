@@ -19,6 +19,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16 : The leveler gets its measuring band (the middle of the
+//                filter) from a second word per slice. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-11-14 : rxBlockReady runs each receiver's leveler (RxLeveler) on
 //                a copy for the speakers and remote-listening mix; VAX and
 //                the receiver taps keep the plain block. RX Leveler feature
@@ -817,6 +820,8 @@ void AudioEngine::setSliceRxLeveler(int sliceId, const RxLevelerParams& params) 
     if (sliceId < 0 || sliceId >= kMaxSliceAudioViews) {
         return;
     }
+    m_sliceRxLevelerBand[static_cast<size_t>(sliceId)].store(params.packBand(),
+                                                             std::memory_order_release);
     m_sliceRxLeveler[static_cast<size_t>(sliceId)].store(params.pack(),
                                                          std::memory_order_release);
 }
@@ -4439,8 +4444,11 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
     // plain block, in every mode. The AF level is applied in the mix,
     // after this, so the leveler's reading never includes the slider and
     // the slider stays the volume. Off passes `samples` itself, untouched.
-    const RxLevelerParams leveler = RxLevelerParams::unpack(
+    RxLevelerParams leveler = RxLevelerParams::unpack(
         m_sliceRxLeveler[static_cast<size_t>(sliceId)].load(std::memory_order_acquire));
+    RxLevelerParams::unpackBand(
+        m_sliceRxLevelerBand[static_cast<size_t>(sliceId)].load(std::memory_order_acquire),
+        leveler);
     RxLeveler& rxLeveler = m_rxLevelers[static_cast<size_t>(sliceId)];
     // The scratch is sized off this thread with the mix scratch; a larger
     // block is leveled and queued a scratch at a time.

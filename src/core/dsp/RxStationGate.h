@@ -55,6 +55,10 @@
 //                station present and the leveler lifted the hiss. J.J. Boyd
 //                (KG4VCF), with AI-assisted transformation via Anthropic
 //                Claude Code.
+//   2026-11-16 — panadapterRunning(): the leveler reads its loudness
+//                without the filter's outer edge only while the panadapter
+//                decides. J.J. Boyd (KG4VCF), with AI-assisted
+//                transformation via Anthropic Claude Code.
 // =================================================================
 
 namespace NereusSDR {
@@ -93,6 +97,9 @@ public:
     // long, to bring a station in and to keep one: longer than a static
     // crash holds the meter up.
     static constexpr double kMeterSustainSec = 0.5;
+    // The panadapter counts as running while a bins reading came in within
+    // this long (a slow display may skip a meter tick).
+    static constexpr double kPanadapterStaleSec = 1.0;
     // Once present, it stays present this long after the last reading
     // above the margin: the gaps between words and breaths.
     static constexpr double kPresentHoldSec = 2.5;
@@ -125,12 +132,19 @@ public:
     // The quiet level (dBm), or kNoReadingDbm before the first reading.
     double quietLevelDbm() const noexcept { return m_quietDbm; }
     bool anchorLearned() const noexcept { return m_anchorQuietSec >= kAnchorReadySec; }
+    // The panadapter's bins are deciding (a reading within
+    // kPanadapterStaleSec). Without them the S-meter decides, and it hears
+    // a neighbor overlapping the filter's edge as a station; the leveler
+    // then reads the whole block, as the S-meter does, so that it cuts
+    // for the neighbor rather than lifting the hiss beside it.
+    bool panadapterRunning() const noexcept { return m_binsAgeSec < kPanadapterStaleSec; }
 
 private:
     double m_quietDbm{kNoReadingDbm};
     bool   m_present{false};
     double m_aboveSec{0.0};       // bins above their bar, unbroken
     double m_meterSec{0.0};       // S-meter above its bar, unbroken
+    double m_binsAgeSec{1e9};     // since the last bins reading
     double m_holdLeft{0.0};
     double m_overloadLeft{0.0};
     double m_anchorDb{0.0};       // quiet level minus panadapter floor

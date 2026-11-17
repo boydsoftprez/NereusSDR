@@ -29,6 +29,13 @@
 // Off is a bypass. AudioEngine passes the block on untouched, so the
 // audio is bit-identical to a build without the leveler.
 //
+// What it listens to: the receiver's filter less its edges away from the
+// carrier (measureBand). A neighbor whose edge pokes into the passband is still
+// heard as before, but it does not move the loudness reading, so the
+// level does not ride up and down as the neighbor keys. And once the
+// level has come down for a louder voice it holds there kRiseHoldSec
+// before it rises again.
+//
 // Modification history (NereusSDR):
 //   2026-11-14 — RX Leveler feature (RXL control, setup section, per
 //                receiver settings) by Brian Sutton (W4KZO), AI-assisted
@@ -40,10 +47,18 @@
 //                (tst_rx_leveler, NEREUS_RXL_MATRIX=1). J.J. Boyd
 //                (KG4VCF), with AI-assisted transformation via Anthropic
 //                Claude Code.
+//   2026-11-16 — Loudness read without the filter's outer edge
+//                (measureBand, kEdgeShare), and a hold after a turn-down
+//                before the level rises again (kRiseHoldSec): a neighbor
+//                overlapping one edge made the level drift up and down
+//                (JJ on the air). J.J. Boyd (KG4VCF), with AI-assisted
+//                transformation via Anthropic Claude Code.
 // =================================================================
 
 #include "core/WdspTypes.h"
+#include "core/dsp/RxPassbandVoice.h"
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 
@@ -66,6 +81,10 @@ struct RxLevelerParams {
     int  maxCutDb{6};
     int  attackMs{1000};
     int  releaseMs{600};
+    // The audio band the loudness is read in (Hz, from measureBand): the
+    // receiver's filter less its outer edges. 0 and 0 read the whole block.
+    int  measureLowHz{0};
+    int  measureHighHz{0};
 
     bool operator==(const RxLevelerParams&) const = default;
 
@@ -73,6 +92,10 @@ struct RxLevelerParams {
     // change. Fields are clamped to the ranges below on the way in.
     std::uint64_t pack() const noexcept;
     static RxLevelerParams unpack(std::uint64_t word) noexcept;
+    // The measuring band in a second word (a block read between the two
+    // stores is judged on the band before, harmless).
+    std::uint64_t packBand() const noexcept;
+    static void unpackBand(std::uint64_t word, RxLevelerParams& into) noexcept;
 };
 
 class RxLeveler {
@@ -152,6 +175,26 @@ public:
     // that starts while the gain is still up for a quiet one loses that
     // boost at once instead of at the fall rate.
     static constexpr double kBoostHeadroomDb = 9.0;
+    // The loudness is read without the filter's outer edge (measureBand).
+    // A voice puts a little of its power up there, so the reading is
+    // raised by this much to sit where the
+    // whole-block reading did: the Auto target means what it meant, and a
+    // station with no neighbor gets about the lift it got before. Measured
+    // on the synthetic voices of tst_rx_leveler (RxWeakStationModel.h and
+    // RxLevelerSynth.h).
+    static constexpr double kMeasureOffsetDb = 0.5;
+    // The reading's low-pass corner is the measuring band's top divided by
+    // this, so the reading is 10 dB down at the band's top, where the
+    // filter's outer edge (and a neighbor poking into it) begins, and 15 to
+    // 20 dB down across the edge. A voice has little power up there. Its
+    // high-pass corner is the band's bottom.
+    static constexpr double kTopCornerRatio = 1.15;
+    // After the level comes down this far for a louder voice, it holds
+    // kRiseHoldSec before it may rise again: a neighbor keying on and off
+    // does not ride it up and down. Smaller falls (the loudness reading's
+    // own wobble through an over) do not start the hold.
+    static constexpr double kTurnDownDb = 2.0;
+    static constexpr double kRiseHoldSec = 3.0;
     // Limiter: how fast it may pull the gain down ahead of a peak inside
     // the block, and how fast it lets go.
     static constexpr double kLimiterAttackMs  = 2.0;
@@ -160,6 +203,15 @@ public:
     // Voice modes only. CW, FM and the digital modes are left alone: they
     // feed decoders or carry no speech level to even out.
     static bool modeAllows(DSPMode mode);
+
+    // The audio band (Hz) the loudness is read in, for a receiver filter
+    // of filterLowHz..filterHighHz about the carrier: the filter less
+    // RxPassbandVoice::kEdgeShare of its width at the edges away from the
+    // carrier, as audio frequencies (the top of the audio in USB and LSB;
+    // in AM and DSB, which fold, the top too). The edge next to the
+    // carrier is kept: it holds the voice's own strongest harmonics. 0 and
+    // 0 when nothing is left.
+    static void measureBand(int filterLowHz, int filterHighHz, int& lowHz, int& highHz);
 
     // Back to unity, nothing learned. The audio thread calls this when the
     // leveler is turned off, so turning it on again starts from scratch.
@@ -180,13 +232,39 @@ public:
     double loudnessDb() const;
 
 private:
+    // One second-order section (transposed direct form II).
+    struct Section {
+        double b0{1.0}, b1{0.0}, b2{0.0}, a1{0.0}, a2{0.0};
+        double z1{0.0}, z2{0.0};
+        double run(double x)
+        {
+            const double y = b0 * x + z1;
+            z1 = b1 * x - a1 * y + z2;
+            z2 = b2 * x - a2 * y;
+            return y;
+        }
+    };
+    void setMeasureBand(int lowHz, int highHz, double sampleRate);
+
+    // The measuring band: 8th-order Butterworth high- and low-pass, on the
+    // loudness reading only, never on the audio.
+    std::array<Section, 4> m_measureHp{};
+    std::array<Section, 4> m_measureLp{};
+    bool   m_measureHpOn{false};
+    bool   m_measureLpOn{false};
+    int    m_measureLowHz{-1};
+    int    m_measureHighHz{-1};
+    double m_measureRate{0.0};
+
     double m_gainDb{0.0};
     double m_limiter{1.0};
     double m_loudPow{-1.0};     // < 0: no speech heard yet
     double m_loudSec{0.0};
     double m_quietSec{0.0};
     double m_needDb{0.0};
-    double m_shortPow{0.0};
+    double m_shortPow{0.0};       // in the measuring band
+    double m_riseHoldLeft{0.0};
+    double m_fallDb{0.0};
     double m_hissPow{-1.0};     // < 0: not learned yet
     double m_peakRefDb{-200.0};
     bool   m_active{false};

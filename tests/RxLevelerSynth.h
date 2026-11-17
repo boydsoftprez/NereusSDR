@@ -368,6 +368,9 @@ inline NereusSDR::RxLevelerParams autoParams()
     p.maxCutDb = RxLeveler::kAutoMaxCutDb;
     p.attackMs = RxLeveler::kAutoAttackMs;
     p.releaseMs = RxLeveler::kAutoReleaseMs;
+    // The loudness is read without the synthetic passband's outer edge,
+    // as RadioModel sets it from the slice's filter.
+    RxLeveler::measureBand(300, 2700, p.measureLowHz, p.measureHighHz);
     return p;
 }
 

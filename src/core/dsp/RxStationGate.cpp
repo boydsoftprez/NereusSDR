@@ -19,6 +19,7 @@ void RxStationGate::reset()
     m_present = false;
     m_aboveSec = 0.0;
     m_meterSec = 0.0;
+    m_binsAgeSec = 1e9;
     m_holdLeft = 0.0;
     m_anchorDb = 0.0;
     m_anchorQuietSec = 0.0;
@@ -37,6 +38,9 @@ void RxStationGate::update(const RxStationReading& reading, double dtSec)
     } else {
         m_overloadLeft = std::max(0.0, m_overloadLeft - dt);
     }
+
+    const bool binsIn = std::isfinite(reading.passbandVoice) && reading.passbandVoice >= 0.0;
+    m_binsAgeSec = binsIn ? 0.0 : std::min(m_binsAgeSec + dt, 1e9);
 
     const double s = reading.signalDbm;
     if (!std::isfinite(s) || s <= kNoReadingDbm) {

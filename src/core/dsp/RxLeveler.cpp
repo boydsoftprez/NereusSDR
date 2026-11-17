@@ -10,6 +10,7 @@
 #include "RxLeveler.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace NereusSDR {
@@ -38,6 +39,12 @@ double step(double dt, double tau)
     }
     return 1.0 - std::exp(-dt / tau);
 }
+
+// Butterworth section Qs, 8th order (four sections).
+constexpr std::array<double, 4> kButterworth8Q{0.5097955791041592, 0.6013448869350453,
+                                              0.8999762231364156, 2.5629154477415055};
+// Measuring band corners are kept this far inside Nyquist (share of it).
+constexpr double kMaxCornerShare = 0.9;
 
 std::uint64_t field(int value, int lo, int hi)
 {
@@ -74,6 +81,94 @@ RxLevelerParams RxLevelerParams::unpack(std::uint64_t w) noexcept
     return p;
 }
 
+std::uint64_t RxLevelerParams::packBand() const noexcept
+{
+    const auto hz = [](int v) { return static_cast<std::uint64_t>(std::clamp(v, 0, 0xFFFF)); };
+    return hz(measureLowHz) | (hz(measureHighHz) << 16);
+}
+
+void RxLevelerParams::unpackBand(std::uint64_t w, RxLevelerParams& into) noexcept
+{
+    into.measureLowHz = static_cast<int>(w & 0xFFFFu);
+    into.measureHighHz = static_cast<int>((w >> 16) & 0xFFFFu);
+}
+
+void RxLeveler::measureBand(int filterLowHz, int filterHighHz, int& lowHz, int& highHz)
+{
+    lowHz = 0;
+    highHz = 0;
+    if (filterHighHz <= filterLowHz) {
+        return;
+    }
+    const double edge = RxPassbandVoice::kEdgeShare
+        * static_cast<double>(filterHighHz - filterLowHz);
+    double lo = 0.0;
+    double hi = 0.0;
+    if (filterLowHz >= 0) {             // above the carrier (USB)
+        lo = filterLowHz;
+        hi = filterHighHz - edge;
+    } else if (filterHighHz <= 0) {     // below it (LSB): audio is mirrored
+        lo = -filterHighHz;
+        hi = -filterLowHz - edge;
+    } else {                            // straddles it (AM, DSB): folded
+        lo = 0.0;
+        hi = std::min(-filterLowHz, filterHighHz) - edge;
+    }
+    if (hi <= lo) {
+        return;
+    }
+    lowHz = static_cast<int>(std::lround(lo));
+    highHz = static_cast<int>(std::lround(hi));
+}
+
+void RxLeveler::setMeasureBand(int lowHz, int highHz, double sampleRate)
+{
+    if (lowHz == m_measureLowHz && highHz == m_measureHighHz && sampleRate == m_measureRate) {
+        return;
+    }
+    m_measureLowHz = lowHz;
+    m_measureHighHz = highHz;
+    m_measureRate = sampleRate;
+    const double maxHz = kMaxCornerShare * sampleRate / 2.0;
+    const bool band = highHz > lowHz && highHz > 0;
+    // The top corner sits below the band's top (kTopCornerRatio) so the
+    // reading is well down where the edge begins: a voice has little power
+    // up there, a neighbor's low end has the most.
+    const double topHz = static_cast<double>(highHz) / kTopCornerRatio;
+    m_measureHpOn = band && lowHz > 0 && lowHz < maxHz;
+    m_measureLpOn = band && topHz < maxHz && topHz > lowHz;
+    // Robert Bristow-Johnson's audio EQ cookbook biquads (low- and
+    // high-pass), one per Butterworth section Q.
+    const auto design = [sampleRate](Section& sec, double hz, double q, bool high) {
+        const double w0 = 2.0 * 3.14159265358979323846 * hz / sampleRate;
+        const double c = std::cos(w0);
+        const double alpha = std::sin(w0) / (2.0 * q);
+        const double a0 = 1.0 + alpha;
+        if (high) {
+            sec.b0 = (1.0 + c) / 2.0 / a0;
+            sec.b1 = -(1.0 + c) / a0;
+        } else {
+            sec.b0 = (1.0 - c) / 2.0 / a0;
+            sec.b1 = (1.0 - c) / a0;
+        }
+        sec.b2 = sec.b0;
+        sec.a1 = -2.0 * c / a0;
+        sec.a2 = (1.0 - alpha) / a0;
+        sec.z1 = 0.0;
+        sec.z2 = 0.0;
+    };
+    for (size_t i = 0; i < m_measureHp.size(); ++i) {
+        if (m_measureHpOn) {
+            design(m_measureHp[i], lowHz, kButterworth8Q[i], true);
+        }
+    }
+    for (size_t i = 0; i < m_measureLp.size(); ++i) {
+        if (m_measureLpOn) {
+            design(m_measureLp[i], topHz, kButterworth8Q[i], false);
+        }
+    }
+}
+
 bool RxLeveler::modeAllows(DSPMode mode)
 {
     switch (mode) {
@@ -97,6 +192,11 @@ void RxLeveler::reset()
     m_quietSec = 0.0;
     m_needDb = 0.0;
     m_shortPow = 0.0;
+    m_riseHoldLeft = 0.0;
+    m_fallDb = 0.0;
+    m_measureLowHz = -1;     // the filters are designed afresh
+    m_measureHighHz = -1;
+    m_measureRate = 0.0;
     m_hissPow = -1.0;
     m_peakRefDb = -200.0;
     m_active = false;
@@ -148,7 +248,34 @@ void RxLeveler::process(float* x, int frames, double sampleRate,
         sum += v * v;
         peak = std::max(peak, std::abs(v));
     }
-    const double power = sum / static_cast<double>(samples);
+    const double fullPower = sum / static_cast<double>(samples);
+
+    // The loudness is read without the filter's outer edge: a neighbor whose
+    // edge pokes into the passband is heard, but does not move the level.
+    setMeasureBand(params.measureLowHz, params.measureHighHz, sampleRate);
+    double power = fullPower;
+    if (m_measureHpOn || m_measureLpOn) {
+        double msum = 0.0;
+        for (int n = 0; n < frames; ++n) {
+            double y = 0.5 * (static_cast<double>(x[2 * n]) + static_cast<double>(x[2 * n + 1]));
+            if (m_measureHpOn) {
+                for (Section& sec : m_measureHp) {
+                    y = sec.run(y);
+                }
+            }
+            if (m_measureLpOn) {
+                for (Section& sec : m_measureLp) {
+                    y = sec.run(y);
+                }
+            }
+            msum += y * y;
+        }
+        power = msum / static_cast<double>(frames) * std::pow(10.0, kMeasureOffsetDb / 10.0);
+        if (!std::isfinite(power)) {
+            power = fullPower;
+            m_measureLowHz = -1;    // start the filters over next block
+        }
+    }
     if (m_shortPow <= 0.0) {
         m_shortPow = power;     // the first block sets it, not a climb from zero
     } else {
@@ -229,6 +356,15 @@ void RxLeveler::process(float* x, int frames, double sampleRate,
     } else {
         want = std::min(m_needDb, m_gainDb); // a pause: no rise on the hiss
     }
+    // After a turn-down for a louder voice, no rise until the hold runs
+    // out: a neighbor keying on and off does not ride the level.
+    if (!present) {
+        m_riseHoldLeft = 0.0;
+        m_fallDb = 0.0;
+    } else if (m_riseHoldLeft > 0.0) {
+        m_riseHoldLeft = std::max(0.0, m_riseHoldLeft - dt);
+        want = std::min(want, m_gainDb);
+    }
     want = std::clamp(want, -maxCut, maxBoost);
 
     const double attackSec = static_cast<double>(
@@ -241,9 +377,23 @@ void RxLeveler::process(float* x, int frames, double sampleRate,
     gainDb = std::clamp(gainDb, -maxCut, maxBoost);
     // A loud voice arriving while the gain is still up for a quiet one
     // loses the boost at once, not at the release rate.
+    // Read in the measuring band too, so a neighbor keying at the edge does
+    // not snap the level down; the limiter still keeps every peak under
+    // kCeiling.
     if (gainDb > 0.0 && present) {
         const double room = target + kBoostHeadroomDb - toDb(m_shortPow);
         gainDb = std::min(gainDb, std::max(room, 0.0));
+    }
+    // A turn-down while a voice is heard (not the let-go in a pause)
+    // starts the hold once it adds up to kTurnDownDb.
+    if (present && speech && gainDb < m_gainDb) {
+        m_fallDb += m_gainDb - gainDb;
+        if (m_fallDb >= kTurnDownDb) {
+            m_riseHoldLeft = kRiseHoldSec;
+            m_fallDb = 0.0;
+        }
+    } else if (gainDb > m_gainDb) {
+        m_fallDb = 0.0;
     }
 
     // ── 4. Ramp the gain across the block, under a limiter that has
