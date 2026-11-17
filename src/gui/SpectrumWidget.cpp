@@ -8,6 +8,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: The details stand over the waterfall: roundtableInspectorSpot
+//                 gives the waterfall, the spectrum and the left edge to line up
+//                 with; the divider and your line moving re-place them.
+//                 roundtableControlRects is gone. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-11-16: Your frequency's line and the tags in the Roundtable strip,
 //                 each tag one line, kept clear only of the line; nothing
 //                 Roundtable on the spectrum any more (the card, its tick and
@@ -4160,6 +4165,8 @@ void SpectrumWidget::setSpectrumFrac(float frac)
     if (std::abs(m_spectrumFrac - clamped) < 1e-6f) { return; }
     m_spectrumFrac = clamped;
     refreshWfTimestampLabel();
+    // The waterfall's room changed: open details re-place (strip design 5).
+    emit roundtableInspectorSpotChanged();
     markOverlayDirty();
     update();
     scheduleSettingsSave();
@@ -12937,11 +12944,10 @@ void SpectrumWidget::showSpotClusterPopup(const SpotCluster& cluster, const QPoi
 namespace {
 
 constexpr int kRoundtableTagHeight = 22;
-constexpr int kRoundtableTagFootGap = 8;      // the inspector's foot to the band plan top
 constexpr int kRoundtableTagGap = 4;          // between tags and from the edges
 constexpr int kRoundtableTagMinWidth = 56;
 constexpr int kRoundtableTagMaxWidth = 128;
-constexpr int kRoundtableCardTopGap = 2;      // the inspector's top limit, under the pan's top edge
+constexpr int kRoundtableDetailsDialGap = 8;  // the details' left edge off the dial, with no line drawn
 constexpr int kRoundtableTagNames = 2;        // a double names up to two (D20)
 constexpr int kRoundtableTagLineGap = 6;      // .rct--line gap: a double's word, names and count
 constexpr int kRoundtableLineKeepOut = 4;     // tags keep this clear each side of your line
@@ -13152,6 +13158,18 @@ QRect SpectrumWidget::roundtableTagSpectrumRectForTest() const
 
 void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
 {
+    // Open details line up with your line: when it moves, appears or goes, they
+    // re-place, after this paint (strip design 5).
+    struct LineWatch {
+        SpectrumWidget* widget;
+        QRect before;
+        ~LineWatch()
+        {
+            if (widget->m_roundtableStripLineDrawn.line != before) {
+                QMetaObject::invokeMethod(widget, &SpectrumWidget::roundtableInspectorSpotChanged, Qt::QueuedConnection);
+            }
+        }
+    } lineWatch{this, m_roundtableStripLineDrawn.line};
     m_roundtableTagHits.clear();
     m_roundtableStripLineDrawn = RoundtableStripLinePlacement{};
     // Everything Roundtable sits in the strip under the frequency scale (strip
@@ -13422,30 +13440,21 @@ std::optional<double> SpectrumWidget::roundtablePanLevel(quint64 hz, const QStri
     return peak + static_cast<double>(fftTraceShiftDb());
 }
 
-QVector<QRect> SpectrumWidget::roundtableControlRects() const
-{
-    // Every flag, and the pan's toolbar down its left side, is kept clear.
-    QVector<QRect> controls;
-    for (const QRect& flag : m_receiverFlagRegion) {
-        controls.append(flag);
-    }
-    for (const QWidget* child : findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {
-        if (child->isVisible() && child->inherits("NereusSDR::SpectrumOverlayPanel")) {
-            controls.append(child->geometry());
-        }
-    }
-    return controls;
-}
-
 SpectrumWidget::RoundtableInspectorSpot SpectrumWidget::roundtableInspectorSpot(int sliceId, qint64 fallbackHz) const
 {
-    const QRect spec = spectrumLayout().spectrum;
-    const int bandTop = spec.bottom() + 1 - bandPlanStripHeight();
-    const int panTop = spec.top() + kRoundtableCardTopGap;
+    const SpectrumLayout layout = spectrumLayout();
+    const QRect spec = layout.spectrum;
     RoundtableInspectorSpot spot;
-    spot.pan = QRect(spec.left() + kRoundtableTagGap, panTop, spec.width() - 2 * kRoundtableTagGap,
-                     bandTop - kRoundtableTagFootGap - panTop);
-    spot.flags = roundtableControlRects();
+    // Below: the waterfall, cut clear of the time scale down its right edge.
+    QRect below = layout.waterfall;
+    if (!below.isEmpty()) {
+        const QRect timeScale = waterfallTimeScaleRect(layout.waterfallChrome);
+        below.setRight(std::min(below.right(), timeScale.left() - 1));
+    }
+    spot.below = below;
+    // Above: the spectrum from its top to the frequency scale's top edge.
+    spot.above = QRect(spec.left(), spec.top(), spec.width(), std::max(0, layout.frequency.top() - spec.top()));
+
     const VfoWidget* flag = m_vfoWidgets.value(sliceId, nullptr);
     if (flag == nullptr && !m_vfoWidgets.isEmpty()) {
         flag = m_vfoWidgets.first();
@@ -13455,6 +13464,16 @@ SpectrumWidget::RoundtableInspectorSpot SpectrumWidget::roundtableInspectorSpot(
         spot.flagFlipped = flag->geometry().center().x() < spot.dialX;
     } else {
         spot.dialX = hzToX(static_cast<double>(fallbackHz), spec);
+    }
+    // Lined up with your line when it is drawn here, whatever the details show;
+    // else beside the dial on the flag's far side (strip design 5).
+    if (!m_roundtableStripLineDrawn.line.isNull()) {
+        spot.anchorLeft = m_roundtableStripLineDrawn.line.left();
+    } else if (spot.flagFlipped) {
+        const int width = std::min(kRoundtableInspectorWidth, std::max(0, below.width()));
+        spot.anchorLeft = spot.dialX - kRoundtableDetailsDialGap - width;
+    } else {
+        spot.anchorLeft = spot.dialX + kRoundtableDetailsDialGap;
     }
     return spot;
 }
@@ -15524,6 +15543,8 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
             / std::max(1, layout.contentHeight);
         m_spectrumFrac = std::clamp(frac, 0.10f, 0.90f);
         refreshWfTimestampLabel();
+        // The waterfall's room changed: open details re-place (strip design 5).
+        emit roundtableInspectorSpotChanged();
 #ifdef NEREUS_GPU_SPECTRUM
         markOverlayDirty();
 #else

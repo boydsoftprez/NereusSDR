@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: The Roundtable details stand over the waterfall under the
+//               strip, lined up with your line (updateRoundtableInspectorSpot).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: Every pan shows the Roundtable strip while Roundtable is on
 //               (refreshRoundtableTags, roundtableStripShownFor). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -8354,7 +8357,8 @@ void MainWindow::updateRoundtableInspectorSpot()
     const SliceModel* active = activeSliceForWindow();
     const SpectrumWidget::RoundtableInspectorSpot spot
         = pan->roundtableInspectorSpot(active ? active->sliceIndex() : -1, m_roundtablePeekAnchorHz);
-    m_roundtablePeek->setInspectorSpot(spot.pan, spot.dialX, spot.flags, spot.flagFlipped);
+    // Under the strip over the waterfall, lined up with your line (strip design 5).
+    m_roundtablePeek->setInspectorSpot(spot.below, spot.above, spot.anchorLeft);
     pan->setRoundtableInspectorRect(m_roundtablePeek->inspectorRect());
 }
 

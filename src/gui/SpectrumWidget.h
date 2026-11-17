@@ -1,4 +1,9 @@
 // Modification history (NereusSDR):
+//   2026-11-16: The details stand over the waterfall: roundtableInspectorSpot
+//               gives the waterfall, the spectrum and the left edge to line up
+//               with; the divider and your line moving re-place them.
+//               roundtableControlRects is gone. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-11-16: Your frequency's line and the tags move into the Roundtable
 //               strip (roundtableStripLineForTest, SpectrumLayout::
 //               roundtableStripChrome); the card on the spectrum is gone.
@@ -2928,16 +2933,21 @@ public:
     /// wide (overlay design D23): nullopt off the pan, before the first frame and
     /// while transmitting.
     std::optional<double> roundtablePanLevel(quint64 hz, const QString& family) const;
-    /// Where the inspector stands on this pan: see placeRoundtableInspector.
+    /// Where the details may stand on this pan: see placeRoundtableDetails.
+    /// `below` is the waterfall cut clear of its time scale, `above` the spectrum
+    /// to the frequency scale's top edge, `anchorLeft` the left edge to line up
+    /// with: your line's when it is drawn here, else 8 px past the dial on the
+    /// flag's far side.
     struct RoundtableInspectorSpot {
-        QRect pan;
+        QRect below;
+        QRect above;
+        int anchorLeft = 0;
         int dialX = 0;
-        QVector<QRect> flags;
         bool flagFlipped = false;
     };
-    /// By `sliceId`'s flag when it is on this pan, else by this pan's own slice,
-    /// else by `fallbackHz`, the clicked tag (overlay design D37). It needs no card
-    /// or tag pass, so a quiet frequency has one too.
+    /// The dial is `sliceId`'s flag when it is on this pan, else this pan's own
+    /// slice, else `fallbackHz`, the clicked tag (overlay design D37). It needs no
+    /// card, so a quiet frequency has one too.
     RoundtableInspectorSpot roundtableInspectorSpot(int sliceId, qint64 fallbackHz) const;
     /// Where the open inspector is, in this widget's coordinates; null while closed.
     /// Open on your own frequency, your line in the strip is drawn open. It
@@ -3301,7 +3311,8 @@ signals:
     void roundtableTagMenuRequested(const QString& context, QPoint globalPos);
     // The short menu's Messages.
     void roundtableMessagesRequested(const QString& context);
-    // What roundtableInspectorSpot says may have changed: a resize or a flag's move.
+    // What roundtableInspectorSpot says may have changed: a resize, the divider,
+    // the strip shown or hidden, a flag's move or your line moving.
     void roundtableInspectorSpotChanged();
     // The card menu's Read reports.
     void roundtableReportsRequested();
@@ -4785,7 +4796,6 @@ private:
     QString m_roundtableViewedRoom;
     bool m_roundtableViewedIsFold{false};
     QString m_roundtableSliceName{QStringLiteral("A")};
-    QVector<QRect> roundtableControlRects() const;
     QRect m_roundtableInspectorRect;
     // GPU path: tags paint here, above the spectrum and under the flags.
     // A reading updates this widget only, not the panadapter frame.

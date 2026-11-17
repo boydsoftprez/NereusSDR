@@ -13,6 +13,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: The details hang under the strip over the waterfall, lined up
+//               with the line, and open upward over a short waterfall. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: The pan shows the Roundtable strip, where the tags now sit.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-04: The one inspector. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -608,44 +611,69 @@ private slots:
         QVERIFY(pan.peek->isOpen());
     }
 
-    void itStandsOnTheFootLineInTheCardsSpot()
+    // Strip design 5 (V4): under the strip, 4 px down, lined up with the line.
+    void itHangsUnderTheStripLinedUpWithTheLine()
     {
         Pan pan;
-        const QRect spot(4, 30, 1192, 500);
-        const int dialX = 600;
-        const QRect flag(dialX - 24, 30, 276, 162);
+        const QRect below(0, 330, 1100, 400);
+        const QRect above(0, 0, 1200, 300);
         QSignalSpy closed(pan.peek, &RoundtableFrequencyPeek::closed);
-        pan.peek->setInspectorSpot(spot, dialX, {flag}, false);
+        pan.peek->setInspectorSpot(below, above, 608);
         QVERIFY(pan.peek->inspectorRect().isNull());
         pan.peek->showOwn(kSliceHz, QStringLiteral("lsb"));
         pan.peek->refresh(talker(), std::nullopt, false);
         QRect rect = pan.peek->inspectorRect();
         QCOMPARE(rect, pan.peek->geometry());
         QCOMPARE(rect.width(), 300);
-        QCOMPARE(rect.left(), flag.left() + flag.width() + 4);
-        QCOMPARE(rect.top() + rect.height(), spot.top() + spot.height());
+        QCOMPARE(rect.left(), 608);
+        QCOMPARE(rect.top(), below.top() + 4);
+        QVERIFY(below.contains(rect));
+        QVERIFY(!pan.peek->upwardForTest());
 
-        // The same spot again does nothing; a flipped flag moves it past the flag.
+        // The same spot again does nothing; the line on the other side moves it there.
         const int fits = pan.peek->fitsForTest();
-        pan.peek->setInspectorSpot(spot, dialX, {flag}, false);
+        pan.peek->setInspectorSpot(below, above, 608);
         QCOMPARE(pan.peek->fitsForTest(), fits);
-        const QRect flipped(dialX - 252, 30, 276, 162);
-        pan.peek->setInspectorSpot(spot, dialX, {flipped}, true);
+        pan.peek->setInspectorSpot(below, above, 292);
         rect = pan.peek->inspectorRect();
-        QCOMPARE(rect.left() + rect.width(), flipped.left() - 4);
-        QCOMPARE(rect.top() + rect.height(), spot.top() + spot.height());
+        QCOMPARE(rect.left(), 292);
+        QCOMPARE(rect.top(), below.top() + 4);
         QCOMPARE(closed.size(), 0);
 
-        // A taller card grows upward from the foot.
-        const int top = rect.top();
+        // A taller card grows downward from the strip.
+        const int height = rect.height();
         RoundtableCardModel card = talker();
         card.rows.append(rowOf(QStringLiteral("K4NEW"), -60.0));
         pan.peek->refresh(card, std::nullopt, false);
-        QVERIFY(pan.peek->geometry().top() < top);
-        QCOMPARE(pan.peek->geometry().top() + pan.peek->height(), spot.top() + spot.height());
+        QCOMPARE(pan.peek->geometry().top(), below.top() + 4);
+        QVERIFY(pan.peek->height() > height);
+
+        // Past the waterfall's right edge, the edge holds it.
+        pan.peek->setInspectorSpot(below, above, 1000);
+        QCOMPARE(pan.peek->geometry().right(), below.right());
 
         pan.peek->closePeek();
         QVERIFY(pan.peek->inspectorRect().isNull());
+    }
+
+    // Strip design 5 (V5): a waterfall with under 140 px of room and a taller
+    // spectrum opens it upward, standing on the frequency scale.
+    void aShortWaterfallOpensItUpward()
+    {
+        Pan pan;
+        const QRect above(0, 0, 1200, 300);
+        pan.peek->setInspectorSpot(QRect(0, 330, 1100, 100), above, 608);
+        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"));
+        pan.peek->refresh(longTalker(), -71.0, false);
+        QVERIFY(pan.peek->upwardForTest());
+        const QRect rect = pan.peek->inspectorRect();
+        QCOMPARE(rect.bottom(), above.bottom());
+        QVERIFY(above.contains(rect));
+        QCOMPARE(rect.left(), 608);
+        // Less above than below: it stays below, cut.
+        pan.peek->setInspectorSpot(QRect(0, 330, 1100, 130), QRect(0, 0, 1200, 100), 608);
+        QVERIFY(!pan.peek->upwardForTest());
+        QCOMPARE(pan.peek->geometry(), QRect(608, 334, 300, 122));
     }
 
     // D19: a short pan folds everyone not keyed before anything else gives way.
@@ -664,8 +692,9 @@ private slots:
         view.card.onFrequency.removeLast();
         QCOMPARE(roundtableViewLayout(view, 300, true, pan.peek).total, roundtableViewLayout(view, 300, false, pan.peek).total);
 
-        const QRect spot(4, 30, 1192, 500);
-        pan.peek->setInspectorSpot(spot, 600, {}, false);
+        // The waterfall under the strip, 500 px of room once 4 px are kept each end.
+        const QRect below(4, 26, 1192, 508);
+        pan.peek->setInspectorSpot(below, QRect(), 600);
         pan.peek->showFor(kViewedHz, QStringLiteral("lsb"));
         pan.peek->refresh(talker(), std::nullopt, false);
         QVERIFY(!pan.peek->foldedForTest());
@@ -673,11 +702,11 @@ private slots:
         QCOMPARE(pan.peek->maxScrollForTest(), 0);
 
         // One pixel short of the whole list folds, and the fold is enough: nothing scrolls.
-        pan.peek->setInspectorSpot(QRect(4, 30, 1192, wants - 1), 600, {}, false);
+        pan.peek->setInspectorSpot(QRect(4, 26, 1192, wants - 1 + 8), QRect(), 600);
         QVERIFY(pan.peek->foldedForTest());
         QCOMPARE(pan.peek->maxScrollForTest(), 0);
         QVERIFY(pan.peek->height() < wants);
-        pan.peek->setInspectorSpot(spot, 600, {}, false);
+        pan.peek->setInspectorSpot(below, QRect(), 600);
         QVERIFY(!pan.peek->foldedForTest());
     }
 
@@ -721,8 +750,9 @@ private slots:
     {
         Pan pan;
         pan.widget.setUpdatesEnabled(true);
+        // 200 px of room under the strip.
         const QRect spot(4, 30, 1192, 200);
-        pan.peek->setInspectorSpot(spot, 600, {}, false);
+        pan.peek->setInspectorSpot(spot.adjusted(0, -4, 0, 4), QRect(), 600);
         pan.peek->showFor(kViewedHz, QStringLiteral("lsb"));
         pan.peek->refresh(longTalker(), -71.0, false);
         QVERIFY(pan.peek->foldedForTest());
@@ -780,12 +810,13 @@ private slots:
         QCOMPARE(pan.peek->scrollForTest(), 0);
     }
 
-    // The two ends of the short pan: 120 px still holds the head and the buttons.
+    // The two ends of short room: 120 px under the strip, with nothing taller above,
+    // still holds the head and the buttons.
     void aVeryShortPanKeepsTheButtons()
     {
         Pan pan;
         const QRect spot(4, 30, 1192, 120);
-        pan.peek->setInspectorSpot(spot, 600, {}, false);
+        pan.peek->setInspectorSpot(spot.adjusted(0, -4, 0, 4), QRect(4, 0, 1192, 20), 600);
         pan.peek->showFor(kViewedHz, QStringLiteral("lsb"));
         pan.peek->refresh(longTalker(), -71.0, false);
         QCOMPARE(pan.peek->height(), 120);
@@ -961,7 +992,7 @@ private slots:
             row.hz = 7185000 + i * 50;
             rows.append(row);
         }
-        pan.peek->setInspectorSpot(QRect(4, 2, 1000, 240), 300, {}, false);
+        pan.peek->setInspectorSpot(QRect(4, -2, 1000, 248), QRect(), 300);
         pan.peek->showFold(rows);
         QCOMPARE(pan.peek->height(), 240);
         QVERIFY(pan.peek->maxScrollForTest() > 0);
@@ -1194,7 +1225,7 @@ private slots:
         const int footTop = fold ? 133 : scroll ? 93 : tiny ? 183 : 32;
         const QRect spot(80, footTop, 1109 - 80, 303 - footTop);
         if (onFoot) {
-            pan.peek->setInspectorSpot(spot, dialX, {flag}, flipped);
+            pan.peek->setInspectorSpot(spot, QRect(), flipped ? dialX - 8 - 300 : dialX + 8);
             if (own) {
                 pan.peek->setSlice(kViewedHz, QStringLiteral("lsb"), QStringLiteral("A"));
                 pan.peek->showOwn(kViewedHz, QStringLiteral("lsb"));
@@ -1208,7 +1239,8 @@ private slots:
         if (fold) {
             // Exactly the room the folded list needs, and one row less than the whole.
             const RoundtableViewLayout folded = roundtableViewLayout(pan.peek->viewForTest(), 300, true, pan.peek);
-            pan.peek->setInspectorSpot(QRect(80, 303 - (folded.total + 45), 1109 - 80, folded.total + 45), dialX, {flag}, false);
+            pan.peek->setInspectorSpot(QRect(80, 303 - (folded.total + 45) - 4, 1109 - 80, folded.total + 45 + 8), QRect(),
+                                       dialX + 8);
         }
         QImage image;
         if (onFoot) {

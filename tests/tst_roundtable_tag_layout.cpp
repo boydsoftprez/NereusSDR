@@ -20,6 +20,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: The details over the waterfall: placeRoundtableDetails cases,
+//               the spot's areas and left edge, a short waterfall opens them
+//               upward, and the line's width no longer follows its values. The
+//               foot-of-spectrum inspector cases are gone. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-11-16: Your frequency's line and the tags in the strip: the line's
 //               placement and drawing replace the card's, the tags sit in the
 //               strip clear only of the line, and nothing Roundtable is on the
@@ -355,15 +360,6 @@ QStringList lineTexts(const RoundtableCardModel& card, const RoundtableStripLine
     paintRoundtableStripLine(painter, card, placed, QStringLiteral("dBm"), false, false);
     painter.end();
     return recorder.texts;
-}
-
-// The board's desktop band: dial 570 of a 1143 wide pan, the tool strip to 80,
-// the scale from 1109, the foot at 303, and a flag 250 wide.
-const QRect kBoardPan(80, 32, 1109 - 80, 303 - 32);
-
-QRect boardFlag(int dialX, bool flipped = false)
-{
-    return flipped ? QRect(dialX - 252, 30, 276, 162) : QRect(dialX - 24, 30, 276, 162);
 }
 
 bool hasColor(const QImage& image, const QRect& area, const QColor& want)
@@ -942,92 +938,74 @@ private slots:
         QVERIFY(rows.contains(heading));
     }
 
-    // ---- The inspector: placement (overlay design D34, D37; overlay.js placeIns) ----
+    // ---- The details: placement (strip design 5, V4, V5) ----
 
-    void theInspectorStandsOnTheFootPastTheFlag()
+    void theDetailsHangUnderTheStripWithPlentyOfRoom()
     {
-        const int dialX = 400;
-        const QRect flag = boardFlag(dialX);
-        const QRect placed = placeRoundtableInspector(kBoardPan, dialX, {flag}, false, 180);
-        QCOMPARE(placed.width(), 300);
-        QCOMPARE(placed.height(), 180);
-        // At the stretch's edge, 4 px past the flag, not centered on anything.
-        QCOMPARE(placed.left(), flag.left() + flag.width() + 4);
-        QCOMPARE(placed.top() + placed.height(), 303);
-        QVERIFY(!placed.intersects(flag));
+        const QRect below(0, 330, 1000, 400);
+        const QRect above(0, 0, 1000, 300);
+        RoundtableDetailsPlacement placed = placeRoundtableDetails(below, above, 500, 200);
+        QVERIFY(!placed.upward);
+        QCOMPARE(placed.rect, QRect(500, 334, 300, 200));
+        // Taller than the room: cut 4 px above the waterfall's foot.
+        placed = placeRoundtableDetails(below, above, 500, 900);
+        QVERIFY(!placed.upward);
+        QCOMPARE(placed.rect.top(), below.top() + 4);
+        QCOMPARE(placed.rect.bottom(), below.bottom() - 4);
+        QCOMPARE(placed.rect.height(), 392);
     }
 
-    void theInspectorIsCutToAShortPanAndStaysInside()
+    void theDetailsAnchorClampsIntoTheArea()
     {
-        const int dialX = 400;
-        const QRect flag = boardFlag(dialX);
-        const QRect shortPan(80, 183, 1029, 120);
-        const QRect placed = placeRoundtableInspector(shortPan, dialX, {flag}, false, 400);
-        QCOMPARE(placed.height(), 120);
-        QCOMPARE(placed.top(), 183);
-        QCOMPARE(placed.top() + placed.height(), 303);
-        QCOMPARE(placed.width(), 300);
-        QVERIFY(!placed.intersects(flag));
-        // Tall enough, it asks for no more than it wants.
-        const QRect tall = placeRoundtableInspector(kBoardPan, dialX, {flag}, false, 90);
-        QCOMPARE(tall.height(), 90);
-        QCOMPARE(tall.top() + tall.height(), 303);
+        const QRect below(10, 330, 1000, 400);
+        const QRect above(10, 0, 1000, 300);
+        // Past the right edge: the right edge holds it.
+        QCOMPARE(placeRoundtableDetails(below, above, 900, 100).rect.left(), 1010 - 300);
+        QCOMPARE(placeRoundtableDetails(below, above, 5000, 100).rect.right(), below.right());
+        // Past the left edge: the left edge holds it.
+        QCOMPARE(placeRoundtableDetails(below, above, -50, 100).rect.left(), 10);
+        QCOMPARE(placeRoundtableDetails(below, above, 300, 100).rect.left(), 300);
     }
 
-    void theInspectorFollowsAFlippedFlag()
+    void theDetailsTakeANarrowAreasWidth()
     {
-        const int dialX = 800;
-        const QRect flag = boardFlag(dialX, true);
-        const QRect placed = placeRoundtableInspector(kBoardPan, dialX, {flag}, true, 180);
-        QCOMPARE(placed.width(), 300);
-        // Ends 4 px short of the flag, on the far side from the dial.
-        QCOMPARE(placed.left() + placed.width(), flag.left() - 4);
-        QVERIFY(!placed.intersects(flag));
-        QCOMPARE(placed.top() + placed.height(), 303);
+        const QRect below(40, 330, 200, 400);
+        const RoundtableDetailsPlacement placed = placeRoundtableDetails(below, QRect(40, 0, 200, 300), 120, 100);
+        QCOMPARE(placed.rect.width(), 200);
+        QCOMPARE(placed.rect.left(), 40);
+        QVERIFY(below.contains(placed.rect));
     }
 
-    // The two stretches differ from the card's: a 260 stretch counts, 259 does not,
-    // and narrower than 300 it takes what there is.
-    void theInspectorsStretchIsAtLeast260()
+    void underRoomBelowWithMoreAboveTheDetailsOpenUpward()
     {
-        const QRect pan(0, 0, 1000, 300);
-        const int dialX = 300;
-        const auto flagEnding = [](int right) { return QRect(100, 0, right - 100, 100); };
-        // Past the flag there is 1000 - 736 = 264 wide: narrower than 300, still taken.
-        QRect placed = placeRoundtableInspector(pan, dialX, {flagEnding(732)}, false, 100);
-        QCOMPARE(placed.left(), 736);
-        QCOMPARE(placed.width(), 264);
-        // 1000 - 741 = 259 is too narrow, and so is what the flag leaves on the near
-        // side: no stretch has room, so it stays open at the pan's edge.
-        placed = placeRoundtableInspector(pan, dialX, {flagEnding(737)}, false, 100);
-        QCOMPARE(placed.left(), pan.left());
-        QCOMPARE(placed.width(), 300);
+        const QRect above(0, 0, 1000, 300);
+        const QRect below(0, 330, 1000, 100);  // 92 px of room
+        RoundtableDetailsPlacement placed = placeRoundtableDetails(below, above, 500, 200);
+        QVERIFY(placed.upward);
+        QCOMPARE(placed.rect, QRect(500, 100, 300, 200));
+        QCOMPARE(placed.rect.bottom(), above.bottom());
+        // Cut to the spectrum's height.
+        placed = placeRoundtableDetails(below, above, 500, 900);
+        QVERIFY(placed.upward);
+        QCOMPARE(placed.rect, QRect(500, 0, 300, 300));
+        // 140 px of room below is enough: they stay below.
+        placed = placeRoundtableDetails(QRect(0, 330, 1000, 148), above, 500, 200);
+        QVERIFY(!placed.upward);
+        QCOMPARE(placed.rect, QRect(500, 334, 300, 140));
+        // 139 is not.
+        QVERIFY(placeRoundtableDetails(QRect(0, 330, 1000, 147), above, 500, 200).upward);
+        QCOMPARE(kRoundtableDetailsMinBelow, 140);
     }
 
-    void theInspectorUsesTheDialOnlyWhenItLiesInsideTheStretch()
+    void underRoomBelowWithLessAboveTheDetailsStayBelow()
     {
-        const QRect pan(0, 0, 1000, 300);
-        // Nothing in the way: the stretch holds the dial, so it centers on it.
-        QCOMPARE(placeRoundtableInspector(pan, 500, {}, false, 100).left(), 350);
-        // Clamped to the stretch near an end.
-        QCOMPARE(placeRoundtableInspector(pan, 40, {}, false, 100).left(), 0);
-        QCOMPARE(placeRoundtableInspector(pan, 980, {}, false, 100).left(), 700);
-        // A flag out of the pan's height keeps nothing clear.
-        QCOMPARE(placeRoundtableInspector(pan, 500, {QRect(400, -200, 200, 100)}, false, 100).left(), 350);
-    }
-
-    void theInspectorStaysOpenWithNoFreeStretch()
-    {
-        const QRect wall(80, 30, 1029, 162);
-        const QRect placed = placeRoundtableInspector(kBoardPan, 570, {wall}, false, 180);
-        QCOMPARE(placed.left(), kBoardPan.left());
-        QCOMPARE(placed.width(), 300);
-        QCOMPARE(placed.top() + placed.height(), 303);
-        // A pan narrower than the inspector holds it inside, and an empty one has no spot.
-        const QRect narrow = placeRoundtableInspector(QRect(10, 0, 200, 300), 50, {}, false, 100);
-        QCOMPARE(narrow.left(), 10);
-        QCOMPARE(narrow.width(), 200);
-        QVERIFY(placeRoundtableInspector(QRect(), 50, {}, false, 100).isNull());
+        const QRect below(0, 330, 1000, 130);  // 122 px of room
+        const QRect above(0, 0, 1000, 100);
+        const RoundtableDetailsPlacement placed = placeRoundtableDetails(below, above, 500, 200);
+        QVERIFY(!placed.upward);
+        QCOMPARE(placed.rect, QRect(500, 334, 300, 122));
+        // Nothing anywhere: no spot.
+        QVERIFY(placeRoundtableDetails(QRect(), QRect(), 500, 200).rect.isNull());
     }
 
     // ---- Your frequency's line in the strip: placement (strip design 3; placeStrip) ----
@@ -1151,27 +1129,47 @@ private slots:
     void theLineDependsOnlyOnStructureAndTextWidths()
     {
         QImage device(1, 1, QImage::Format_ARGB32_Premultiplied);
-        RoundtableCardModel card = talkingCard(4);
-        const RoundtableCardModel firstCard = card;
-        const RoundtableStripLinePlacement first
-            = placeRoundtableStripLine(card, kStrip, 600, false, QStringLiteral("dBm"), &device);
-        for (int i = 0; i < 4; ++i) {
-            // New values whose words read the same, so their widths are the same:
-            // the reading within its rounding, the age within its second, the peak,
-            // the clock, and a row gone old.
-            for (RoundtableCardRow& row : card.rows) {
-                row.dbm -= 0.1;
-                row.ageMs += 200;
-                row.peakDbm = row.dbm + 1.0 + i;
-                row.hasPeak = i % 2 == 0;
+        for (const QString& format : {QStringLiteral("dBm"), QStringLiteral("S-units"), QStringLiteral("Both")}) {
+            for (int dialX : {600, 1100}) {
+                RoundtableCardModel card = talkingCard(4);
+                const RoundtableCardModel firstCard = card;
+                const RoundtableStripLinePlacement first
+                    = placeRoundtableStripLine(card, kStrip, dialX, false, format, &device);
+                QVERIFY(!first.line.isNull());
+                // New values of every width: whole dB across the meter, ages from one
+                // to two digits and to minutes, the peak, the clock, a row gone old.
+                const double dbms[] = {-121.0, -33.0, -7.0, -99.0, -60.0, -128.0};
+                const qint64 ages[] = {0, 9000, 10000, 59000, 600000, 3540000};
+                for (int i = 0; i < 6; ++i) {
+                    for (RoundtableCardRow& row : card.rows) {
+                        row.dbm = dbms[i];
+                        row.ageMs = ages[i];
+                        row.peakDbm = row.dbm + 1.0 + i;
+                        row.hasPeak = i % 2 == 0;
+                    }
+                    card.rows[3].old = i % 2 == 1;
+                    card.clockMs = ages[i];
+                    QVERIFY(roundtableCardSameStructure(card, firstCard));
+                    const RoundtableStripLinePlacement again
+                        = placeRoundtableStripLine(card, kStrip, dialX, false, format, &device);
+                    QCOMPARE(again, first);
+                }
             }
-            card.rows[3].old = i % 2 == 1;
-            card.clockMs += 1000;
-            QVERIFY(roundtableCardSameStructure(card, firstCard));
-            const RoundtableStripLinePlacement again
-                = placeRoundtableStripLine(card, kStrip, 600, false, QStringLiteral("dBm"), &device);
-            QCOMPARE(again, first);
         }
+        // A double's clock and a last talker's ended age move nothing either.
+        RoundtableCardModel twin = talkingCard(2, RoundtableCardModel::Kind::Double);
+        twin.clockMs = 1000;
+        const RoundtableStripLinePlacement twinFirst
+            = placeRoundtableStripLine(twin, kStrip, 600, false, QStringLiteral("dBm"), &device);
+        twin.clockMs = 59 * 60000 + 58000;
+        QCOMPARE(placeRoundtableStripLine(twin, kStrip, 600, false, QStringLiteral("dBm"), &device), twinFirst);
+        RoundtableCardModel last = talkingCard(2, RoundtableCardModel::Kind::LastTalker);
+        last.endedAgoMs = 1000;
+        const RoundtableStripLinePlacement lastFirst
+            = placeRoundtableStripLine(last, kStrip, 600, false, QStringLiteral("dBm"), &device);
+        QVERIFY(!lastFirst.line.isNull());
+        last.endedAgoMs = 48000;
+        QCOMPARE(placeRoundtableStripLine(last, kStrip, 600, false, QStringLiteral("dBm"), &device), lastFirst);
     }
 
     // ---- Your frequency's line: drawing (D10, D11, D13, D15; strip design 3, 6) ----
@@ -1451,8 +1449,12 @@ private slots:
         const QRect lineRect = cardHit(pan.widget)->rect;
         const QList<SpectrumWidget::RoundtableTagHit> before = pan.widget.roundtableTagHitsForTest();
         const SpectrumWidget::RoundtableInspectorSpot spot = pan.widget.roundtableInspectorSpot(0, 0);
-        const QRect inspector = placeRoundtableInspector(spot.pan, spot.dialX, spot.flags, spot.flagFlipped, 300);
+        // The details line up with the drawn line, under the strip.
+        QCOMPARE(spot.anchorLeft, lineRect.left());
+        const QRect inspector = placeRoundtableDetails(spot.below, spot.above, spot.anchorLeft, 300).rect;
         QVERIFY(inspector.isValid());
+        QCOMPARE(inspector.left(), lineRect.left());
+        QCOMPARE(inspector.top(), pan.widget.roundtableStripRectForTest().bottom() + 1 + 4);
         const QPoint edge(lineRect.center().x(), lineRect.top());
         QCOMPARE(QColor(closed.pixel(edge)).name(), QStringLiteral("#4caf6a"));
 
@@ -1555,20 +1557,33 @@ private slots:
     }
 
     // D37: the spot needs no card or tag, follows the flag, and a pan without the
-    // slice uses its own flag, or the clicked tag.
+    // slice uses its own flag, or the clicked tag. Strip design 5: the details' areas
+    // are the waterfall clear of its time scale and the spectrum to the scale.
     void theInspectorsSpotNeedsNoCardAndFollowsTheFlag()
     {
         Pan pan;
         pan.flag->setFrequency(7200000);
         pan.widget.updateVfoPositions();
         QSignalSpy changed(&pan.widget, &SpectrumWidget::roundtableInspectorSpotChanged);
+        const SpectrumWidget::SpectrumLayout layout = pan.widget.spectrumLayout();
         const QRect spec = pan.widget.roundtableTagSpectrumRectForTest();
+        const QRect timeScale = pan.widget.waterfallTimeScaleRect(layout.waterfallChrome);
         const SpectrumWidget::RoundtableInspectorSpot quiet = pan.widget.roundtableInspectorSpot(0, 0);
-        QCOMPARE(quiet.pan.bottom() + 1, spec.bottom() + 1 - pan.widget.bandPlanStripHeightForTest() - 8);
-        QCOMPARE(quiet.pan.top(), spec.top() + 2);
+        QCOMPARE(quiet.below.top(), layout.roundtableStrip.bottom() + 1);
+        QCOMPARE(quiet.below.top(), layout.waterfall.top());
+        QCOMPARE(quiet.below.bottom(), layout.waterfall.bottom());
+        QCOMPARE(quiet.below.left(), layout.waterfall.left());
+        QCOMPARE(quiet.below.right(), std::min(layout.waterfall.right(), timeScale.left() - 1));
+        QVERIFY(!quiet.below.intersects(timeScale));
+        QCOMPARE(quiet.above.top(), spec.top());
+        QCOMPARE(quiet.above.bottom() + 1, layout.frequency.top());
+        QCOMPARE(quiet.above.left(), spec.left());
+        QCOMPARE(quiet.above.width(), spec.width());
         QCOMPARE(quiet.dialX, spec.left() + spec.width() / 2);
-        QVERIFY(!quiet.flags.isEmpty());
         QCOMPARE(quiet.flagFlipped, pan.flag->geometry().center().x() < quiet.dialX);
+        // No line drawn: 8 px past the dial on the flag's far side.
+        QVERIFY(pan.widget.roundtableStripLineForTest().line.isNull());
+        QCOMPARE(quiet.anchorLeft, quiet.flagFlipped ? quiet.dialX - 8 - 300 : quiet.dialX + 8);
 
         // The flag moves and the spot says so, with whichever side the flag now hangs on.
         pan.flag->setFrequency(7290000);
@@ -1577,15 +1592,20 @@ private slots:
         const SpectrumWidget::RoundtableInspectorSpot right = pan.widget.roundtableInspectorSpot(0, 0);
         QVERIFY(right.dialX > quiet.dialX);
         QVERIFY(right.flagFlipped);
+        QCOMPARE(right.anchorLeft, right.dialX - 8 - 300);
         pan.flag->setFrequency(7110000);
         pan.widget.updateVfoPositions();
         const SpectrumWidget::RoundtableInspectorSpot left = pan.widget.roundtableInspectorSpot(0, 0);
         QVERIFY(left.dialX < quiet.dialX);
         QVERIFY(!left.flagFlipped);
+        QCOMPARE(left.anchorLeft, left.dialX + 8);
 
-        // A resize says so too.
-        const int before = changed.size();
+        // A resize says so, and so does the divider.
+        int before = changed.size();
         pan.widget.resize(1100, 700);
+        QVERIFY(changed.size() > before);
+        before = changed.size();
+        pan.widget.setSpectrumFrac(0.3f);
         QVERIFY(changed.size() > before);
 
         // The slice named is not on this pan: this pan's own flag.
@@ -1602,7 +1622,43 @@ private slots:
         const QRect emptySpec = empty.roundtableTagSpectrumRectForTest();
         const SpectrumWidget::RoundtableInspectorSpot byTag = empty.roundtableInspectorSpot(0, static_cast<qint64>(kPanCenterHz));
         QCOMPARE(byTag.dialX, emptySpec.left() + emptySpec.width() / 2);
-        QVERIFY(byTag.flags.isEmpty());
+        QCOMPARE(byTag.anchorLeft, byTag.dialX + 8);
+    }
+
+    // Your line appearing, moving sides or going re-places open details, after the paint.
+    void yourLineMovingReplacesTheDetails()
+    {
+        Pan pan;
+        const QString room = QStringLiteral("frequency:lsb-7200000");
+        pan.widget.setRoundtableTags({}, RoundtableTagDisplay::Live);
+        QSignalSpy changed(&pan.widget, &SpectrumWidget::roundtableInspectorSpotChanged);
+        pan.draw();
+        QCoreApplication::processEvents();
+        changed.clear();
+        pan.widget.setRoundtableCard(talkingCard(), room);
+        pan.draw();
+        const QRect first = pan.widget.roundtableStripLineForTest().line;
+        QVERIFY(!first.isNull());
+        // Queued: nothing during the paint, once after it.
+        QCOMPARE(changed.size(), 0);
+        QCoreApplication::processEvents();
+        QCOMPARE(changed.size(), 1);
+        QCOMPARE(pan.widget.roundtableInspectorSpot(0, 0).anchorLeft, first.left());
+        // The same line again says nothing.
+        pan.draw();
+        QCoreApplication::processEvents();
+        QCOMPARE(changed.size(), 1);
+        // The dial near the right edge: the line moves with it.
+        pan.widget.setFrequencyRange(7200000.0 - kPanSpanHz / 2.0 + 20000.0, kPanSpanHz);
+        QCoreApplication::processEvents();
+        const qsizetype before = changed.size();
+        pan.draw();
+        const QRect moved = pan.widget.roundtableStripLineForTest().line;
+        QVERIFY(moved != first);
+        QCOMPARE(changed.size(), before);
+        QCoreApplication::processEvents();
+        QCOMPARE(changed.size(), before + 1);
+        QCOMPARE(pan.widget.roundtableInspectorSpot(0, 0).anchorLeft, moved.left());
     }
 
     // The line's right-click: the flag's own menu unless a frequency server asks for the short one.
@@ -1626,40 +1682,50 @@ private slots:
         QCOMPARE(line->contextMenuPolicy(), Qt::DefaultContextMenu);
     }
 
-    // 120 px usable, another frequency, through the same spot the window uses.
-    void aVeryShortPanStillOpensTheInspectorInside()
+    // Strip design 5 (V5): 100 px of waterfall under 300 px of spectrum. The details
+    // stand on the frequency scale and open upward over the spectrum, through the same
+    // spot the window uses.
+    void aShortWaterfallOpensTheDetailsUpward()
     {
         Pan pan;
-        for (int height = 760; height > 100 && pan.widget.roundtableInspectorSpot(0, 0).pan.height() > 120; --height) {
-            pan.widget.resize(1200, height);
-        }
+        pan.widget.resize(1200, 600);
+        const int chrome = 600 - pan.widget.spectrumLayout().contentHeight;
+        pan.widget.resize(1200, 430 + chrome);
+        pan.widget.setSpectrumFrac(300.5f / 430.0f);
+        const SpectrumWidget::SpectrumLayout layout = pan.widget.spectrumLayout();
+        QCOMPARE(layout.spectrum.height(), 300);
+        QCOMPARE(layout.waterfall.height(), 100);
         const SpectrumWidget::RoundtableInspectorSpot spot = pan.widget.roundtableInspectorSpot(0, 0);
-        QCOMPARE(spot.pan.height(), 120);
         auto* peek = new RoundtableFrequencyPeek(&pan.widget);
         peek->setSlice(7200000, QStringLiteral("lsb"), QStringLiteral("A"));
-        peek->setInspectorSpot(spot.pan, spot.dialX, spot.flags, spot.flagFlipped);
+        peek->setInspectorSpot(spot.below, spot.above, spot.anchorLeft);
         peek->showFor(7188600, QStringLiteral("lsb"));
         RoundtableCardModel card = talkingCard(3);
         card.hz = 7188600;
         peek->refresh(card, -71.0, false);
         pan.widget.setRoundtableInspectorRect(peek->inspectorRect());
-        QCOMPARE(peek->inspectorRect().height(), 120);
-        QVERIFY(spot.pan.contains(peek->inspectorRect()));
-        QVERIFY(peek->foldedForTest());
-        QVERIFY(peek->maxScrollForTest() > 0);
-        QVERIFY(peek->bodyHeightForTest() > 0);
+        const QRect rect = peek->inspectorRect();
+        QVERIFY(peek->upwardForTest());
+        QVERIFY(placeRoundtableDetails(spot.below, spot.above, spot.anchorLeft, 400).upward);
+        // On the frequency scale's top edge, over the spectrum, cut to its height.
+        QCOMPARE(rect.bottom() + 1, layout.frequency.top());
+        QVERIFY(spot.above.contains(rect));
+        QVERIFY(rect.height() <= spot.above.height());
+        QVERIFY(!rect.intersects(layout.frequency));
+        QVERIFY(!rect.intersects(layout.roundtableStrip));
+        QVERIFY(!rect.intersects(layout.waterfall));
+        QCOMPARE(rect.left(), spot.anchorLeft);
         const QString captures = qEnvironmentVariable("NEREUS_ROUNDTABLE_ROUTING_CAPTURES");
         if (!captures.isEmpty()) {
             // The fixture holds the pan's updates, and its children's with them.
             pan.widget.setUpdatesEnabled(true);
-            pan.widget.show();
             QCoreApplication::processEvents();
             QImage image = pan.draw();
             image.fill(Qt::black);
             QPainter painter(&image);
-            painter.drawImage(peek->inspectorRect().topLeft(), peek->grab().toImage());
+            painter.drawImage(rect.topLeft(), peek->grab().toImage());
             painter.end();
-            QVERIFY(image.copy(0, 0, 360, 130).save(captures + QStringLiteral("/usable-120-another-frequency.png")));
+            QVERIFY(image.copy(rect.adjusted(-20, -20, 20, 20)).save(captures + QStringLiteral("/short-waterfall-upward.png")));
         }
     }
 

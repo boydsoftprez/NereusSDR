@@ -31,6 +31,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: The details open over the waterfall, under the strip:
+//               placeRoundtableDetails, RoundtableDetailsPlacement,
+//               kRoundtableDetailsMinBelow. placeRoundtableInspector and
+//               kRoundtableInspectorMinStretch are gone. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-11-16: Your frequency's line in the strip replaces the card on the
 //               spectrum: placeRoundtableStripLine, paintRoundtableStripLine,
 //               roundtableStripLineParts. placeRoundtableCard, paintRoundtableCard
@@ -256,25 +261,34 @@ struct RoundtableCardModel {
 /// words of a note. Such a change moves nothing and redraws in place (D14).
 NEREUS_GUI_EXPORT bool roundtableCardSameStructure(const RoundtableCardModel& a, const RoundtableCardModel& b);
 
-/// The inspector's width, and the narrowest stretch it takes, on the desktop pan
-/// (overlay design D34, D37; overlay.js placeIns).
+/// The inspector's width on the desktop pan (overlay design D34; strip design 5).
 inline constexpr int kRoundtableInspectorWidth = 300;
-inline constexpr int kRoundtableInspectorMinStretch = 260;
 
 /// How tall the fade over a cut body is: never more than half of it, so a short
 /// body's rows stay readable.
 NEREUS_GUI_EXPORT int roundtableViewFadeHeight(int bodyHeight);
 
-/// Where the inspector stands (overlay design D34, D37). Pure. `pan` is the
-/// spectrum from its top to the foot line, its bottom the foot. `height` is what
-/// the inspector wants, cut to the pan. `flags` are every flag and control on
-/// the pan, each kept clear from pan top to foot; `flagFlipped` is true when the
-/// active flag hangs left of its dial. It takes the stretch nearest the dial, past the flag if one
-/// has room, narrower than 300 only in a stretch that is, and sits at the stretch's
-/// edge unless the dial lies inside it. With no stretch at least 260 wide it stays
-/// open at the pan's left edge, over the flag. Null only for an empty pan.
-NEREUS_GUI_EXPORT QRect placeRoundtableInspector(const QRect& pan, int dialX, const QVector<QRect>& flags,
-                                                 bool flagFlipped, int height);
+/// The details' gap to the strip above and the waterfall's foot below.
+inline constexpr int kRoundtableDetailsGap = 4;
+/// Under this much room over the waterfall, the details may open upward.
+inline constexpr int kRoundtableDetailsMinBelow = 140;
+
+/// Where the details stand with the strip (design V4, V5). Pure. `below` is the
+/// waterfall area the details may cover (already cut clear of the time strip on
+/// its right edge); `above` is the spectrum from its top to the frequency
+/// scale's top edge. `anchorLeft` is the left edge to line up with (your line's
+/// left when it is drawn, else dialX + 8, or dialX - 8 - width when the flag
+/// side says left). `height` is what the details want. They hang from
+/// below.top() + 4, cut to below.bottom() - 4, 300 wide or the area's width if
+/// narrower, left clamped into the area. When below has under 140 px of room
+/// (below.height() - 8 < 140) and above has more room than below, they stand on
+/// above's bottom edge instead, cut to above's height. `upward` reports which.
+struct RoundtableDetailsPlacement {
+    QRect rect;
+    bool upward = false;
+};
+NEREUS_GUI_EXPORT RoundtableDetailsPlacement placeRoundtableDetails(
+    const QRect& below, const QRect& above, int anchorLeft, int height);
 
 /// A reading in the chosen format: "dBm", "S-units" or "Both".
 NEREUS_GUI_EXPORT QString roundtableSignalText(double dbm, const QString& format);
@@ -298,7 +312,11 @@ struct RoundtableStripLinePlacement {
 /// the dial on the flag's far side when it fits there or that side is the
 /// roomier, else on the near side; readings drop from the end, behind
 /// "+N more", until it fits. It depends only on the card's structure and the
-/// widths of its texts in `device`'s fonts.
+/// widths of its texts in `device`'s fonts: each reading is its call's width
+/// plus a value column as wide as the format's widest words (-121 dBm or
+/// -33 dBm) and an age column for two digits and the unit, at least 78 px, and
+/// the clock and a last talker's "Last heard" take their widest two digits, so
+/// new readings, ages and clocks move nothing.
 NEREUS_GUI_EXPORT RoundtableStripLinePlacement placeRoundtableStripLine(
     const RoundtableCardModel& card, const QRect& strip, int dialX, bool flagFlipped,
     const QString& format, const QPaintDevice* device);

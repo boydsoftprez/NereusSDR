@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: The details stand by placeRoundtableDetails, over the waterfall
+//               under the strip or upward over the spectrum. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-11-04: A fold's list (overlay design D37). J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
 //   2026-11-04: The one inspector: your own frequency, ⋯, the Viewing line with
@@ -39,7 +42,6 @@ namespace NereusSDR {
 
 namespace {
 
-constexpr int kEdgeGap = 4;         // overlay.js renderPeek: kept 4 px inside
 constexpr int kActionsAbove = 6;    // .rc-insp .rc__body's gap and .pk-acts margin-top
 constexpr int kActionsRule = 1;
 constexpr int kActionsBelow = 4;    // .pk-acts padding-top
@@ -152,15 +154,14 @@ void RoundtableFrequencyPeek::showOwn(quint64 hz, const QString& family)
     open(hz, family, true);
 }
 
-void RoundtableFrequencyPeek::setInspectorSpot(const QRect& pan, int dialX, const QVector<QRect>& flags, bool flagFlipped)
+void RoundtableFrequencyPeek::setInspectorSpot(const QRect& below, const QRect& above, int anchorLeft)
 {
-    if (pan == m_spotPan && dialX == m_spotDialX && flags == m_spotFlags && flagFlipped == m_spotFlipped) {
+    if (below == m_spotBelow && above == m_spotAbove && anchorLeft == m_spotAnchorLeft) {
         return;
     }
-    m_spotPan = pan;
-    m_spotDialX = dialX;
-    m_spotFlags = flags;
-    m_spotFlipped = flagFlipped;
+    m_spotBelow = below;
+    m_spotAbove = above;
+    m_spotAnchorLeft = anchorLeft;
     if (m_open) {
         if (m_listing) {
             fitList();
@@ -320,18 +321,24 @@ int RoundtableFrequencyPeek::maxScrollForTest() const
     return std::max(0, m_layout.body() - m_bodyHeight);
 }
 
+RoundtableDetailsPlacement RoundtableFrequencyPeek::placeFor(int height) const
+{
+    // Until told the spot, the whole pan is the room below, centered.
+    const QWidget* host = parentWidget();
+    if (m_spotBelow.isEmpty() && m_spotAbove.isEmpty() && host != nullptr) {
+        return placeRoundtableDetails(host->rect(), QRect(), host->rect().center().x() - kWidth / 2, height);
+    }
+    return placeRoundtableDetails(m_spotBelow, m_spotAbove, m_spotAnchorLeft, height);
+}
+
 void RoundtableFrequencyPeek::fitList()
 {
     ++m_fits;
-    const QWidget* host = parentWidget();
-    const QRect spot = m_spotPan.isEmpty() && host != nullptr ? host->rect().adjusted(kEdgeGap, kEdgeGap, -kEdgeGap, -kEdgeGap)
-                                                              : m_spotPan;
-    const int wantedHeight = roundtableFoldListHeight(static_cast<int>(m_rows.size()));
-    const int height = std::min(spot.height(), wantedHeight);
-    m_bodyHeight = std::max(0, height - roundtableFoldListBodyTop());
+    const RoundtableDetailsPlacement placed = placeFor(roundtableFoldListHeight(static_cast<int>(m_rows.size())));
+    const QRect wanted = placed.rect;
+    m_upward = placed.upward;
+    m_bodyHeight = std::max(0, wanted.height() - roundtableFoldListBodyTop());
     m_scroll = std::clamp(m_scroll, 0, maxScrollForTest());
-    const int dialX = m_spotPan.isEmpty() ? spot.center().x() : m_spotDialX;
-    const QRect wanted = placeRoundtableInspector(spot, dialX, m_spotFlags, m_spotFlipped, height);
     if (geometry() != wanted) {
         setGeometry(wanted);
     }
@@ -356,26 +363,23 @@ void RoundtableFrequencyPeek::setHoverRow(int row)
 void RoundtableFrequencyPeek::fitToContents()
 {
     ++m_fits;
-    const QWidget* host = parentWidget();
-    // Until told the spot, the foot is the bottom of the pan.
-    const QRect spot = m_spotPan.isEmpty() && host != nullptr ? host->rect().adjusted(kEdgeGap, kEdgeGap, -kEdgeGap, -kEdgeGap)
-                                                              : m_spotPan;
-    const int room = spot.height();
     const int measureWidth = kWidth;
 
-    // Everyone not keyed folds first; what still does not fit scrolls (D19).
+    // Everyone not keyed folds first; what still does not fit scrolls (D19). The
+    // room is what the details' spot leaves, under the strip or over the spectrum.
     m_fold = false;
     m_layout = roundtableViewLayout(m_view, measureWidth, false, this);
-    if (m_layout.total + actionsHeight() > room) {
+    RoundtableDetailsPlacement placed = placeFor(m_layout.total + actionsHeight());
+    if (placed.rect.height() < m_layout.total + actionsHeight()) {
         m_fold = true;
         m_layout = roundtableViewLayout(m_view, measureWidth, true, this);
+        placed = placeFor(m_layout.total + actionsHeight());
     }
-    const int height = std::min(room, m_layout.total + actionsHeight());
-    m_bodyHeight = std::max(0, height - m_layout.head - actionsHeight());
+    const QRect wanted = placed.rect;
+    m_upward = placed.upward;
+    m_bodyHeight = std::max(0, wanted.height() - m_layout.head - actionsHeight());
     m_scroll = std::clamp(m_scroll, 0, maxScrollForTest());
 
-    const int dialX = m_spotPan.isEmpty() ? spot.center().x() : m_spotDialX;
-    const QRect wanted = placeRoundtableInspector(spot, dialX, m_spotFlags, m_spotFlipped, height);
     if (geometry() != wanted) {
         setGeometry(wanted);
     }
