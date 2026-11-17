@@ -413,6 +413,37 @@ struct BandRowClockTests {
         try await ShotWait.requireBandShown(band, in: window, after: ready)
     }
 
+    @Test("a hidden tab's band keeps each frame's extras: the Core's levels still go in")
+    func aHiddenTabKeepsTheExtras() async throws {
+        let band = try Self.band(stacked: false)
+        let tab = TabShown()
+        let window = try BandFlagShotTests.window(size: CGSize(width: 402, height: 874))
+        window.rootViewController = ShotHosting.host(TabbedBand(tab: tab, band: band))
+        window.isHidden = false
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        _ = try await ShotWait.requireBandLaidOut(band, in: window)
+        tab.shown = false
+        #expect(await ShotWait.until(seconds: 10) { !band.pacingLines })
+        band.gates = MediaFeatureGates(agreedMinor: 11) { _ in 1 }
+        try #require(band.state.expectsExtras)
+        // The frame asks for a draw, which a hidden band leaves to the
+        // view's own draw: the frame waits for its extras.
+        band.receive(.displayFrame(BandFixturesForApp.frame(sequence: 1)))
+        band.receive(.displayExtras(DisplayExtras(endpointId: 1, contextGeneration: 1, encoderSequence: 1,
+            waterfallLevels: .init(lowDbm: -131, highDbm: -71))))
+        #expect(band.state.history.heldLevels == WaterfallHistory.Levels(lowDbm: -131, highDbm: -71),
+                "the hidden band dropped the frame's extras")
+        // Hidden, each later frame's levels go in as well.
+        try await Task.sleep(for: .milliseconds(50))
+        band.receive(.displayFrame(BandFixturesForApp.frame(sequence: 2)))
+        band.receive(.displayExtras(DisplayExtras(endpointId: 1, contextGeneration: 1, encoderSequence: 2,
+            waterfallLevels: .init(lowDbm: -127, highDbm: -67))))
+        #expect(band.state.history.heldLevels == WaterfallHistory.Levels(lowDbm: -127, highDbm: -67))
+    }
+
     #if DEBUG
     @Test("the timing trace keeps at most two seconds of lines for a view that does not draw")
     func theTraceKeepsFewLinesForADraw() {
