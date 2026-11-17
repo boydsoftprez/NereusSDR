@@ -144,6 +144,20 @@ struct VoiceKeyerTests {
 
     // MARK: Sending
 
+    @Test("VOICE on the main screen is on by default, and the page's switch is kept on this device")
+    func voiceButtonSwitchIsKept() throws {
+        let suite = "VoiceKeyerTests-\(UUID().uuidString)"
+        let store = try #require(UserDefaults(suiteName: suite))
+        defer { store.removePersistentDomain(forName: suite) }
+        let settings = PhoneSettings(defaults: store, isPad: false)
+        #expect(settings.voiceButtonShown)
+        settings.voiceButtonShown = false
+        #expect(!PhoneSettings(defaults: store, isPad: false).voiceButtonShown)
+        #expect(store.object(forKey: PhoneSettings.keyPrefix + PhoneSettings.voiceButtonShownKey) as? Bool == false)
+        settings.voiceButtonShown = true
+        #expect(PhoneSettings(defaults: store, isPad: true).voiceButtonShown)
+    }
+
     @Test("a tap on a message sends it as voiceKeyer.send, and opening the page sends nothing")
     func tapSends() async {
         let rig = await Self.rig()

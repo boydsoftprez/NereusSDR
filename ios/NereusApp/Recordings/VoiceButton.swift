@@ -3,10 +3,27 @@
 // Modification history (NereusSDR):
 // 2026-11-16: Recording plan Task 18, VOICE beside PTT and its messages over the pan.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: VoiceButtonGate, the switch on Tools > Voice Keyer that takes VOICE
+//   off the main screen. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusLink
 import NereusModels
 import SwiftUI
+
+/// VOICE on the main screen while this device's switch on Tools > Voice
+/// Keyer is on (``PhoneSettings/voiceButtonShown``); off, nothing is drawn.
+/// `content` is told whether VOICE goes above PTT: while the thumbwheel is
+/// on, its step box takes the place beside PTT.
+struct VoiceButtonGate<Content: View>: View {
+    @ObservedObject var settings: PhoneSettings
+    @ViewBuilder let content: (_ above: Bool) -> Content
+
+    var body: some View {
+        if settings.voiceButtonShown {
+            content(settings.dialKind == .thumbwheel)
+        }
+    }
+}
 
 /// The round VOICE beside PTT (design 2026-11-15-recording-voice-keyer-dsr
 /// sections 3, 6.6 and 6.8; the phone mockup's pan). A tap opens M1 to M8

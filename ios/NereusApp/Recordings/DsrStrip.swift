@@ -19,6 +19,9 @@
 //   one instead of veiling it; the time strip's ticks move every display
 //   frame, live and in the past, not on the 250 ms tick.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: The time strip redraws every display frame only in the past or
+//   while a rewind plays; live it is back to its old pace (the phone's heat).
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import CoreGraphics
 import NereusBand
@@ -195,10 +198,13 @@ struct DsrStripLayer: View {
     // MARK: The strip
 
     private var strip: some View {
-        // Live, the strip runs on with the clock every display frame; in the
-        // past it moves as the picture's top does, which the display link
-        // steps every frame while the sound plays and the finger moves while it drags.
-        TimelineView(.animation(minimumInterval: DsrPanModel.defaultFrameSeconds, paused: model.inPast)) { _ in
+        // In the past, or while a rewind plays, the strip redraws every display
+        // frame and moves as the picture's top does, which the display link
+        // steps every frame while the sound plays and the finger moves while it
+        // drags. Live it redraws only as its values change, as before, to keep
+        // the phone cool (stripRunsEveryFrame).
+        TimelineView(.animation(minimumInterval: DsrPanModel.defaultFrameSeconds,
+                                paused: !model.stripRunsEveryFrame)) { _ in
             let top = model.top
             Canvas { context, size in
                 Self.drawStrip(context, size: size, model: model, top: top)

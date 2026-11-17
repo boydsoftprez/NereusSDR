@@ -17,6 +17,10 @@
 //   2026-11-15 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 8.
+//   2026-11-17 - J.J. Boyd (KG4VCF), JJ's request: the VOICE button
+//                 switch, this computer's own, on by default, kept in
+//                 AppSettings and usable with no Core. AI-assisted
+//                 implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QCheckBox>
@@ -29,7 +33,9 @@
 #include <QSpinBox>
 #include <QTest>
 
+#include "core/AppSettings.h"
 #include "fakes/FakeRecordingsAccess.h"
+#include "gui/recordings/VoiceButton.h"
 #include "gui/setup/RecordingsSetupPage.h"
 
 using namespace NereusSDR;
@@ -88,6 +94,7 @@ private slots:
     void onAirSwitchesWaitForVersionTwo();
     void notConnectedDimsEveryGroup();
     void olderCoreSaysWhy();
+    void voiceButtonSwitchIsThisComputers();
 };
 
 void TestRecordingsSetupPage::groupsAndDefaults()
@@ -326,6 +333,34 @@ void TestRecordingsSetupPage::olderCoreSaysWhy()
         QVERIFY(!g->isEnabled());
         QCOMPARE(g->toolTip(), QStringLiteral("This Core needs an update for recordings."));
     }
+}
+
+// The VOICE button switch: on by default, written to this computer's
+// AppSettings as "True" / "False" and never sent to the Core, usable with
+// no Core, and a page opened later shows what was chosen.
+void TestRecordingsSetupPage::voiceButtonSwitchIsThisComputers()
+{
+    AppSettings::instance().remove(VoiceButton::shownSettingKey());
+    FakeRecordingsAccess access;
+    access.setState(RecordingsAccess::State::NotConnected);
+    RecordingsSetupPage page(&access);
+    QCheckBox* box = page.voiceButtonBox();
+    QVERIFY(box != nullptr);
+    QCOMPARE(box->text(), QStringLiteral("Show the VOICE button beside TUNE and MOX"));
+    QVERIFY(box->isChecked());
+    QVERIFY(box->isEnabled());
+    QVERIFY(!page.groups().contains(qobject_cast<QGroupBox*>(box->parentWidget())));
+
+    box->setChecked(false);
+    QCOMPARE(AppSettings::instance().value(VoiceButton::shownSettingKey()).toString(), QStringLiteral("False"));
+    QVERIFY(access.settingsSent.isEmpty());
+    {
+        RecordingsSetupPage later(&access);
+        QVERIFY(!later.voiceButtonBox()->isChecked());
+    }
+    box->setChecked(true);
+    QCOMPARE(AppSettings::instance().value(VoiceButton::shownSettingKey()).toString(), QStringLiteral("True"));
+    QVERIFY(access.settingsSent.isEmpty());
 }
 
 QTEST_MAIN(TestRecordingsSetupPage)

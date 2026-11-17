@@ -592,6 +592,45 @@ struct DsrTests {
         #expect(!model.hidesLiveSpectrum)
     }
 
+    /// The time strip redraws every display frame only in the past or while
+    /// this device's rewind plays; live, and live again after LIVE, it keeps
+    /// its old pace (the phone's heat). Another device's rewind leaves it live.
+    @Test func theStripRunsEveryFrameOnlyInThePast() async throws {
+        let (rig, model, _) = await Self.pan()
+        model.tick()
+        #expect(!model.inPast && !model.stripRunsEveryFrame)
+        // Dragged back, paused in the past.
+        model.drag(from: model.top, by: -200)
+        #expect(model.inPast && model.stripRunsEveryFrame)
+        model.dragEnded()
+        let (index, _) = try #require(await Self.invoke(rig, "dsr.rewind"))
+        await RecordingFlagTests.answer(rig, index, accepted: false, reason: "No.")
+        #expect(await Eventually.holds { model.note == "No." })
+        #expect(model.inPast && !model.followsSound && model.stripRunsEveryFrame)
+        // Nothing plays here, so LIVE asks the Core for nothing.
+        await model.goLive()
+        #expect(!model.inPast && !model.stripRunsEveryFrame)
+        // This device's rewind playing.
+        try await Self.rewindHere(rig, model, moment: Self.now - 600, revision: 2)
+        model.frame(periodSeconds: DsrPanModel.defaultFrameSeconds)
+        #expect(model.followsSound && model.stripRunsEveryFrame)
+        let before = rig.sent.invokes.count
+        let live = Task { await model.goLive() }
+        let (liveIndex, _) = try #require(await Self.invoke(rig, "dsr.live", after: before))
+        await RecordingFlagTests.answer(rig, liveIndex)
+        await live.value
+        RecordingFlagTests.publish(rig, Self.document(dsr: Self.dsrPart()), revision: 3)
+        model.documentChanged()
+        model.tick()
+        #expect(!model.inPast && !model.stripRunsEveryFrame)
+        // Another device's rewind of the active slice: the picture stays live.
+        let theirs = Self.rewound(Int64((Self.now - 600) * 1e9))
+        RecordingFlagTests.publish(rig, Self.document(dsr: Self.dsrPart(rewound: theirs)), revision: 4)
+        model.documentChanged()
+        model.tick()
+        #expect(model.rewound != nil && !model.inPast && !model.stripRunsEveryFrame)
+    }
+
     /// The hours are asked once the recorder is usable, not again on every
     /// tick, and again after an erase or a reconnect, which also drop the
     /// hours and the past drawn.

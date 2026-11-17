@@ -33,6 +33,8 @@
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-17: Pan 1 shows only the recorder strip's LIVE, not the band's own
 // look-back LIVE over it. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: Tools > Voice Keyer's switch takes VOICE off the main screen.
+// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -474,16 +476,19 @@ struct MainScreen: View {
                     if roundtableSheet == nil {
                         // VOICE beside PTT, centred on it (recording design 6.6). With the
                         // thumbwheel on, its step box sits beside PTT, so VOICE goes above PTT.
-                        let above = app.phoneSettings.dialKind == .thumbwheel
-                        VoiceButton(model: app.voiceKeyer) { voicePanelOpen = true }
-                            .offset(x: placed.minX - pttHome.minX)
-                            .padding(.leading, PttButton.inset + (sideways ? leadingInset : 0)
-                                     + (above ? (PttButton.diameter - VoiceButton.diameter) / 2
-                                        : PttButton.diameter + VoiceButton.gap))
-                            .padding(.bottom, PttButton.bottomInset
-                                     + (above ? PttButton.diameter + VoiceButton.gap
-                                        : (PttButton.diameter - VoiceButton.diameter) / 2))
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                        // Switched off on Tools > Voice Keyer, it is not drawn and PTT and
+                        // the step box keep their places, as before VOICE.
+                        VoiceButtonGate(settings: app.phoneSettings) { above in
+                            VoiceButton(model: app.voiceKeyer) { voicePanelOpen = true }
+                                .offset(x: placed.minX - pttHome.minX)
+                                .padding(.leading, PttButton.inset + (sideways ? leadingInset : 0)
+                                         + (above ? (PttButton.diameter - VoiceButton.diameter) / 2
+                                            : PttButton.diameter + VoiceButton.gap))
+                                .padding(.bottom, PttButton.bottomInset
+                                         + (above ? PttButton.diameter + VoiceButton.gap
+                                            : (PttButton.diameter - VoiceButton.diameter) / 2))
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                        }
                     }
                 }
             }

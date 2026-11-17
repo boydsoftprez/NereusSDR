@@ -62,12 +62,17 @@ struct VoiceKeyerShotTests {
     }
 
     /// The page under the Tools tab's bar, as ToolsTab draws it.
+    /// This phone's settings for the page's VOICE switch: nothing is written
+    /// to them, so each picture shows it as a new install has it, on.
+    static let pageSettings = PhoneSettings(defaults: UserDefaults(suiteName: "VoiceKeyerShotTests.page")
+                                                ?? UserDefaults(), isPad: false)
+
     private static func page(_ model: VoiceKeyerModel, take: TransmitTakeModel? = nil) -> some View {
         VStack(spacing: 0) {
             ConnectChrome.NavBar(title: "Voice Keyer", back: "Tools") {
                 SetupTagBadge(tag: .core)
             }
-            VoiceKeyerPage(model: model, take: take)
+            VoiceKeyerPage(model: model, take: take, settings: pageSettings)
         }
     }
 

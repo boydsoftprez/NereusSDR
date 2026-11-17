@@ -21,6 +21,10 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), JJ's ruling on PR 797: a chosen file
 //                 is sent as imported, a mic recording is not. AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-11-17 - J.J. Boyd (KG4VCF), JJ's request: Setup's switch takes
+//                 VOICE out of the row and is kept in this computer's
+//                 settings. AI-assisted implementation via Anthropic Claude
+//                 Code.
 // =================================================================
 
 #include <QAction>
@@ -39,6 +43,7 @@
 #include <memory>
 #include <vector>
 
+#include "core/AppSettings.h"
 #include "core/recordings/AudioFileReader.h"
 #include "fakes/FakeRecordingsAccess.h"
 #include "gui/applets/TxKeyingSection.h"
@@ -466,6 +471,53 @@ private slots:
         QCOMPARE(r.access.calls.last().sliceId, 1);
         QCOMPARE(r.access.calls.last().id, QStringLiteral("7"));
         r.voice->closeBox();
+    }
+
+    // Setup > Recordings' switch (VoiceButtonShown, this computer's own):
+    // off, VOICE leaves the row, its box closes and TUNE and MOX close up;
+    // it is kept in AppSettings and a row made later follows it; on, VOICE
+    // is back where it was. A container copy's own hide still applies.
+    void theSwitchTakesVoiceOutOfTheRowAndIsKept()
+    {
+        AppSettings& settings = AppSettings::instance();
+        VoiceButton::setShownSetting(true);
+        Row r;
+        QPushButton* voice = r.section->voiceButton();
+        QPushButton* mox = r.section->moxButton();
+        QPushButton* tune = r.section->tuneButton();
+        QTRY_VERIFY(voice->isVisible());
+        const QRect moxWith = mox->geometry();
+        const QRect voiceWith = voice->geometry();
+        r.voice->openBox();
+        QVERIFY(r.voice->boxOpen());
+
+        VoiceButton::setShownSetting(false);
+        QCOMPARE(settings.value(VoiceButton::shownSettingKey()).toString(), QStringLiteral("False"));
+        QVERIFY(!VoiceButton::shownSetting());
+        QVERIFY(voice->isHidden());
+        QVERIFY(!r.voice->boxOpen());
+        QVERIFY(tune->isVisible() && mox->isVisible());
+        QTRY_VERIFY(mox->geometry().right() > moxWith.right());
+        QVERIFY(std::abs(mox->geometry().right() - voiceWith.right()) <= 2);
+        {
+            Row later;
+            QVERIFY(later.section->voiceButton()->isHidden());
+        }
+        QVERIFY(settings.save());
+        AppSettings reread(settings.filePath());
+        reread.load();
+        QCOMPARE(reread.value(VoiceButton::shownSettingKey()).toString(), QStringLiteral("False"));
+
+        VoiceButton::setShownSetting(true);
+        QCOMPARE(settings.value(VoiceButton::shownSettingKey()).toString(), QStringLiteral("True"));
+        QVERIFY(!voice->isHidden());
+        QTRY_COMPARE(mox->geometry(), moxWith);
+        QCOMPARE(voice->geometry(), voiceWith);
+
+        r.section->parts().setHidden(QStringLiteral("voice"), true);
+        QVERIFY(voice->isHidden());
+        r.section->parts().setHidden(QStringLiteral("voice"), false);
+        QVERIFY(!voice->isHidden());
     }
 
     // ---- The clip recorder.

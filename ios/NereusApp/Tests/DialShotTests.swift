@@ -15,6 +15,8 @@ import UIKit
 /// D12, spec section 5.1 item 8: the real main screen connected to a fake
 /// Core with no dial (a new install), the knob on the waterfall, its step
 /// menu open, the knob in a sheet, the thumbwheel, and the knob sideways.
+/// With VOICE switched off (Tools > Voice Keyer) it is not drawn and PTT and
+/// the thumbwheel's step box stay where they were.
 /// With `NEREUS_MAIN_SHOTS` set to a directory (through
 /// `TEST_RUNNER_NEREUS_MAIN_SHOTS`), each screen is written there as a PNG
 /// for comparing with `03-tuning-dial.jpg`.
@@ -51,7 +53,8 @@ struct DialShotTests {
         band.receive(.context(try #require(BandFlagShotTests.context())))
 
         #expect(settings.dialKind == .off)
-        try await shoot("dial-off", model: model)
+        #expect(settings.voiceButtonShown)
+        let offWithVoice = try await shoot("dial-off", model: model, probe: true)
 
         settings.dialKind = .waterfallKnob
         try await shoot("dial-knob", model: model)
@@ -65,7 +68,21 @@ struct DialShotTests {
         main.tuning.closeDialSheet()
 
         settings.dialKind = .thumbwheel
-        try await shoot("dial-thumbwheel", model: model)
+        let withVoice = try await shoot("dial-thumbwheel", model: model, probe: true)
+
+        // VOICE switched off on Tools > Voice Keyer: it is gone, and PTT and
+        // the thumbwheel's step box keep their places, with no dial and with
+        // the thumbwheel.
+        settings.voiceButtonShown = false
+        let withoutVoice = try await shoot("dial-thumbwheel-no-voice", model: model, probe: true)
+        #expect(withVoice[Self.voiceId] != nil && withoutVoice[Self.voiceId] == nil)
+        #expect(withVoice[Self.pttId] != nil && withVoice[Self.pttId] == withoutVoice[Self.pttId])
+        #expect(withVoice[Self.stepId] != nil && withVoice[Self.stepId] == withoutVoice[Self.stepId])
+        settings.dialKind = .off
+        let offWithoutVoice = try await shoot("dial-off-no-voice", model: model, probe: true)
+        #expect(offWithVoice[Self.voiceId] != nil && offWithoutVoice[Self.voiceId] == nil)
+        #expect(offWithVoice[Self.pttId] != nil && offWithVoice[Self.pttId] == offWithoutVoice[Self.pttId])
+        settings.voiceButtonShown = true
 
         settings.dialKind = .waterfallKnob
         try await shoot("dial-knob-sideways", model: model, sideways: true)
@@ -164,8 +181,22 @@ struct DialShotTests {
 
     /// Draws the main screen upright or sideways, the band fed synthetic
     /// rows, in a window `size` wide upright (an iPhone 17 Pro's by default).
+    static let pttId = "ptt"
+    static let stepId = "dialStep"
+    static let voiceId = "voiceKeyer.voice"
+
+    /// With `probe`, the frames of PTT, the dial's step box and VOICE on
+    /// screen, by accessibility identifier; one that is not drawn is left out.
+    @discardableResult
     private func shoot(_ name: String, model: AppModel, sideways: Bool = false,
-                       size upright: CGSize = CGSize(width: 402, height: 874)) async throws {
+                       size upright: CGSize = CGSize(width: 402, height: 874),
+                       probe: Bool = false) async throws -> [String: CGRect] {
+        // SwiftUI builds its accessibility elements only with accessibility on (SetupTypedEntryTests).
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        if probe {
+            SetupTypedEntryTests.setApplicationAccessibility(true)
+        }
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
         let size = sideways ? CGSize(width: upright.height, height: upright.width) : upright
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
@@ -188,6 +219,16 @@ struct DialShotTests {
         band.reset()
         BandFlagShotTests.feed(band, width: bandDraw.requestedPixels, lines: Int(size.height * 3))
         try await ShotWait.requireBandShown(band, in: window, after: bandDraw)
+        var frames: [String: CGRect] = [:]
+        if probe {
+            // PTT is always drawn; once it is there VOICE, when shown, is too.
+            #expect(await settle(seconds: 10) { IPadShotTests.element(Self.pttId, in: window) != nil })
+            for id in [Self.pttId, Self.stepId, Self.voiceId] {
+                if let element = IPadShotTests.element(id, in: window) {
+                    frames[id] = element.accessibilityFrame
+                }
+            }
+        }
         let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
             window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
         }
@@ -197,6 +238,7 @@ struct DialShotTests {
             try data.write(to: url)
             print("Wrote \(url.path)")
         }
+        return frames
     }
 }
 

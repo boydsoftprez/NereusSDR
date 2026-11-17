@@ -14,6 +14,9 @@
 //   2026-11-15 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 8.
+//   2026-11-17 - J.J. Boyd (KG4VCF), JJ's request: the VOICE button group,
+//                 this computer's switch for VOICE in the TUNE / MOX row.
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/setup/RecordingsSetupPage.h"
@@ -40,6 +43,7 @@
 #include "core/recordings/RecordingNames.h"
 #include "core/recordings/RecordingSettings.h"
 #include "gui/recordings/RecordingsWindow.h"
+#include "gui/recordings/VoiceButton.h"
 
 namespace NereusSDR {
 
@@ -118,6 +122,7 @@ RecordingsSetupPage::RecordingsSetupPage(RecordingsAccess* access, QWidget* pare
     buildFiles();
     buildWhere();
     buildPlayingBack();
+    buildVoiceButton();
 
     setAccess(access);
 }
@@ -335,6 +340,22 @@ void RecordingsSetupPage::buildPlayingBack()
     m_onAirNote = noteLabel(QString(), group);
     m_onAirNote->setObjectName(QStringLiteral("recordingsOnAirNote"));
     layout->addWidget(m_onAirNote);
+}
+
+// This computer's own: not in m_groups, so no Core, or an older one, leaves
+// it usable.
+void RecordingsSetupPage::buildVoiceButton()
+{
+    QGroupBox* group = addSection(QStringLiteral("VOICE button"));
+    auto* layout = group->layout();
+    m_voiceButton = new QCheckBox(QStringLiteral("Show the VOICE button beside TUNE and MOX"), group);
+    m_voiceButton->setObjectName(QStringLiteral("recordingsShowVoiceButton"));
+    m_voiceButton->setChecked(VoiceButton::shownSetting());
+    layout->addWidget(m_voiceButton);
+    connect(m_voiceButton, &QCheckBox::toggled, this, [](bool on) { VoiceButton::setShownSetting(on); });
+    layout->addWidget(noteLabel(QStringLiteral("This computer only. With it off, the Voice keyer panel and the hot "
+                                               "keys still send your messages."),
+                                group));
 }
 
 void RecordingsSetupPage::setAccess(RecordingsAccess* access)

@@ -25,6 +25,9 @@
 //   picture (the band or the Core) no longer flips back and forth near the
 //   band's own edge; the live spectrum is hidden while the past shows.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: The time strip runs every display frame only in the past or
+//   while a rewind plays (stripRunsEveryFrame); live it keeps its old pace.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import CoreGraphics
@@ -282,6 +285,12 @@ final class DsrPanModel {
 
     /// The picture shows the past (paused or playing).
     var inPast: Bool { viewTop != nil || client.dsr?.stretch != nil }
+
+    /// The time strip redraws every display frame only while the picture
+    /// shows the past or this device's rewind plays. Live it redraws as its
+    /// values change, as it did before the per-frame strip, so a phone left
+    /// on the band does not draw it 60 times a second (the phone's heat).
+    var stripRunsEveryFrame: Bool { inPast || followsSound }
 
     /// LIVE is red: the picture or the active slice's sound is in the past,
     /// another slice this device rewound still plays the past, or a key took one live.
