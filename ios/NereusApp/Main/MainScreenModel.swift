@@ -767,9 +767,11 @@ final class MainScreenModel: ObservableObject {
         }
         // The band the pan is on, by the Core's number: the Core's scale for
         // it (CoreBandScale) and its 3D Floor follow it.
-        if let bandNumber = slices.active?.band {
+        if let bandNumber = slices.active?.band, band.settings.scaleBand != String(bandNumber) {
             // Pan 1's band goes to Pan 1, whatever pan Setup's strip or a pill
             // has chosen: on All pans too, whose edit keeps the band it had.
+            // Only when it moved, as for the other pans below: each refresh
+            // otherwise read the display settings again and redrew the band.
             changeDisplay(pan: .first) { $0.enterBand(String(bandNumber)) }
         }
         // Each other open pan follows its own slice's band the same way.

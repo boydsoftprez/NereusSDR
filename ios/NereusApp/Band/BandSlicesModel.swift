@@ -8,6 +8,9 @@
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-10-31: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
 //   read the Core's present empty pan key as its default pan identity.
+// 2026-11-15: The slices' signal readings kept apart from the slice list, so a
+//   reading no longer builds the slices again. J.J. Boyd (KG4VCF), AI-assisted
+//   via Anthropic Claude Code.
 
 import Combine
 import Foundation
@@ -41,12 +44,6 @@ final class BandSlicesModel: ObservableObject {
         var modeLabel: String
         /// The Core pan that owns this slice.
         var panKey: String?
-        var signalDbm: Double?
-        /// The receiver's peak reading (`signalPeakDbm`), which the iPad's
-        /// analog S-meter shows for Signal and Signal Peak.
-        var signalPeakDbm: Double?
-        /// The receiver's average reading (`signalAverageDbm`), the S-meter's Sig Avg.
-        var signalAverageDbm: Double?
         var stepHz: Double?
         var sampleRateHz: Double?
         var locked: Bool
@@ -100,6 +97,64 @@ final class BandSlicesModel: ObservableObject {
         /// This phone only listens to the slice: another device or nobody controls it.
         var listening: Bool { control != .here }
     }
+
+    /// One slice's signal readings, which the Core sends about ten times a
+    /// second (`MultimeterDelayMs`): kept apart from ``Entry`` so a new
+    /// reading wakes only what shows it (the flag's level bar, the
+    /// S-meter, the Live Activity, Roundtable's own reading), not every
+    /// model and view that watches the slices.
+    struct Reading: Equatable {
+        var signalDbm: Double?
+        /// The receiver's peak reading (`signalPeakDbm`), which the iPad's
+        /// analog S-meter shows for Signal and Signal Peak.
+        var signalPeakDbm: Double?
+        /// The receiver's average reading (`signalAverageDbm`), the S-meter's Sig Avg.
+        var signalAverageDbm: Double?
+
+        init(signalDbm: Double? = nil, signalPeakDbm: Double? = nil, signalAverageDbm: Double? = nil) {
+            self.signalDbm = signalDbm
+            self.signalPeakDbm = signalPeakDbm
+            self.signalAverageDbm = signalAverageDbm
+        }
+
+        @MainActor
+        init(_ object: MirrorObject) {
+            self.init(signalDbm: object["signalStrengthDbm"]?.number,
+                      signalPeakDbm: object["signalPeakDbm"]?.number,
+                      signalAverageDbm: object["signalAverageDbm"]?.number)
+        }
+    }
+
+    /// Every mirrored slice's latest ``Reading``, by slice id, published
+    /// only when one of them moves.
+    final class Readings: ObservableObject {
+        @Published fileprivate(set) var bySlice: [Int: Reading]
+
+        init(_ bySlice: [Int: Reading] = [:]) {
+            self.bySlice = bySlice
+        }
+
+        subscript(sliceId: Int) -> Reading {
+            bySlice[sliceId] ?? Reading()
+        }
+    }
+
+    /// The slices' signal readings, published apart from ``entries``.
+    let readings = Readings()
+
+    /// The latest signal readings of the slice `sliceId`; all nil for none.
+    func reading(_ sliceId: Int) -> Reading {
+        readings[sliceId]
+    }
+
+    /// The slice properties the Core's meter pump writes each tick
+    /// (`isRxMeterReading` and `meterReadingNs` in
+    /// src/core/session/StationClient.cpp). ``rebuild()`` reads none of
+    /// them, so a change in these alone only refreshes ``readings``.
+    static let meterProperties: Set<String> = [
+        "signalStrengthDbm", "signalPeakDbm", "signalAverageDbm", "adcPeakDbfs", "adcAverageDbfs",
+        "agcGainDb", "agcPeakDb", "agcAverageDb", "meterReadingNs",
+    ]
 
     /// Who controls a slice this band shows (R-IOS-42, D115).
     enum Control: Equatable {
@@ -1295,13 +1350,59 @@ final class BandSlicesModel: ObservableObject {
         let keys = Set(slices.map(\.key))
         for key in watching.keys where !keys.contains(key) {
             watching[key] = nil
+            watchedSettings[key] = nil
         }
         for object in slices where watching[object.key] == nil {
-            watching[object.key] = object.$values.dropFirst().sink { [weak self] _ in
-                Task { @MainActor in self?.rebuild() }
+            let key = object.key
+            // A slice's meter readings move about ten times a second: those
+            // alone refresh the readings, and the slices are not built again.
+            let readsMeters = object.className == Self.sliceClass
+            if readsMeters {
+                watchedSettings[key] = Self.withoutMeters(object.values)
+            }
+            watching[key] = object.$values.dropFirst().sink { [weak self, weak object] _ in
+                Task { @MainActor in
+                    guard let self else { return }
+                    if readsMeters, let object, !self.settingsMoved(key, object.values) {
+                        self.refreshReadings()
+                    } else {
+                        self.rebuild()
+                    }
+                }
             }
         }
         rebuild()
+    }
+
+    /// Each watched slice's values less its meter readings, as last seen.
+    private var watchedSettings: [String: [String: MirrorValue]] = [:]
+
+    private static func withoutMeters(_ values: [String: MirrorValue]) -> [String: MirrorValue] {
+        values.filter { !meterProperties.contains($0.key) }
+    }
+
+    /// Whether the slice `key` changed in anything but its meter readings
+    /// since last seen; it is then seen as it is now.
+    private func settingsMoved(_ key: String, _ values: [String: MirrorValue]) -> Bool {
+        let settings = Self.withoutMeters(values)
+        guard watchedSettings[key] != settings else {
+            return false
+        }
+        watchedSettings[key] = settings
+        return true
+    }
+
+    /// Reads every mirrored slice's signal readings, published when one moved.
+    private func refreshReadings() {
+        var next: [Int: Reading] = [:]
+        for object in store.objects(ofClass: Self.sliceClass) {
+            if let id = Self.sliceId(object) {
+                next[id] = Reading(object)
+            }
+        }
+        if next != readings.bySlice {
+            readings.bySlice = next
+        }
     }
 
     private func rebuild() {
@@ -1348,9 +1449,6 @@ final class BandSlicesModel: ObservableObject {
                               txAntenna: object["txAntenna"]?.text ?? "",
                               modeLabel: modeLabel,
                               panKey: slicePanKey,
-                              signalDbm: object["signalStrengthDbm"]?.number,
-                              signalPeakDbm: object["signalPeakDbm"]?.number,
-                              signalAverageDbm: object["signalAverageDbm"]?.number,
                               stepHz: object["stepHz"]?.number,
                               sampleRateHz: object["sampleRateHz"]?.number, locked: object["locked"]?.flag ?? false,
                               muted: object["muted"]?.flag ?? false,
@@ -1383,6 +1481,9 @@ final class BandSlicesModel: ObservableObject {
             }
         }
         next.sort { $0.id < $1.id }
+        // The readings first: whatever wakes on the new slices reads them
+        // already in step.
+        refreshReadings()
         if next != entries {
             entries = next
         }

@@ -243,17 +243,19 @@ struct RoundtableAppletRoom: View {
                     RoundtableFirstRunNote(hidden: roundtable.hidden) { firstRunNoteSeen = true }
                 }
                 if let room = roundtable.room {
-                    RoundtableRoomView(roundtable: roundtable, room: room, full: true, keyed: keyed,
-                                       keyedSince: PttButton.keyedSince(transmit.ptt),
-                                       keyedForSeconds: Int(transmit.keyedForSeconds),
-                                       tunedHere: roundtable.tunedToShownRoom,
-                                       stationCallsign: stationCallsign,
-                                       ownDbm: slices.active?.signalDbm,
-                                       sliceLetter: slices.active?.slice.letter ?? "A",
-                                       tuneHere: roundtable.readingRoomId == nil ? nil : { tuneHere(room) },
-                                       narrow: narrow, embedded: embedding,
-                                       frequencyHead: frequencyFirst ? frequencyHead(room) : nil,
-                                       viewing: roundtable.isViewing)
+                    SliceReadingsReader(readings: slices.readings) { readings in
+                        RoundtableRoomView(roundtable: roundtable, room: room, full: true, keyed: keyed,
+                                           keyedSince: PttButton.keyedSince(transmit.ptt),
+                                           keyedForSeconds: Int(transmit.keyedForSeconds),
+                                           tunedHere: roundtable.tunedToShownRoom,
+                                           stationCallsign: stationCallsign,
+                                           ownDbm: slices.active.flatMap { readings[$0.id].signalDbm },
+                                           sliceLetter: slices.active?.slice.letter ?? "A",
+                                           tuneHere: roundtable.readingRoomId == nil ? nil : { tuneHere(room) },
+                                           narrow: narrow, embedded: embedding,
+                                           frequencyHead: frequencyFirst ? frequencyHead(room) : nil,
+                                           viewing: roundtable.isViewing)
+                    }
                 } else {
                     note("Nobody on Roundtable is tuned here.",
                          detail: roundtable.frequencyAvailable ? "Tap a tag on the band to view that frequency."

@@ -595,7 +595,7 @@ struct SliceListTests {
                                                             filterHighHz: 2_900, colour: "#FF00FF",
                                                             lowerSideband: false, txSlice: false),
                                            rxAntenna: "ANT1", txAntenna: "ANT1", modeLabel: "USB", panKey: nil,
-                                           signalDbm: nil, signalPeakDbm: nil, signalAverageDbm: nil, stepHz: nil,
+                                           stepHz: nil,
                                            sampleRateHz: nil, locked: false, muted: false, band: nil, mode: nil,
                                            rade: nil)
         var entryC = entryB
@@ -661,7 +661,7 @@ struct SliceListTests {
                                                                filterLowHz: 100, filterHighHz: 2_900,
                                                                colour: "#FF00FF", lowerSideband: false, txSlice: false),
                                               rxAntenna: "ANT1", txAntenna: "ANT1", modeLabel: "USB", panKey: nil,
-                                              signalDbm: nil, signalPeakDbm: nil, signalAverageDbm: nil, stepHz: nil,
+                                              stepHz: nil,
                                               sampleRateHz: nil, locked: false, muted: false, band: nil, mode: nil,
                                               rade: nil)
             return BandSlicesModel.EdgeMark(entry: entry, below: false)

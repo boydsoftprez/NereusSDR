@@ -47,8 +47,17 @@ struct BandView: UIViewRepresentable {
     }
 
     func updateUIView(_ view: MTKView, context: Context) {
+        // Each change the band draws asks for its own draw (``BandModel``'s
+        // `draws`): an update of the screen draws the band only the first
+        // time and when its tab comes on screen or goes, not each time the
+        // flags, readouts or settings over it move.
+        let first = !context.coordinator.updated
+        context.coordinator.updated = true
+        let shown = context.coordinator.onScreen != onScreen
         context.coordinator.onScreen = onScreen
-        view.setNeedsDisplay()
+        if first || shown {
+            view.setNeedsDisplay()
+        }
     }
 
     static func dismantleUIView(_ view: MTKView, coordinator: Coordinator) {
@@ -80,6 +89,8 @@ struct BandView: UIViewRepresentable {
         private var lineDraws = BandLineDraws()
         /// The band changed since the view last drew.
         private var dirty = false
+        /// The view has had its first update from SwiftUI.
+        var updated = false
         /// The display link is drawing the band now (``step(_:)``).
         private var drawingFromLink = false
         /// Frames in a row with nothing to draw and no line flowing.
