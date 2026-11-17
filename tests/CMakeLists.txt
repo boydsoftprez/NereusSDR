@@ -1194,6 +1194,14 @@ longpath_add_test(tst_rotor_bereich)
 #   Logbuch-Ideen aus einer Logbuch-Kopie (LONGPATH_LOGBOOK_FIXTURE +
 #   LONGPATH_GRAB_DIR); ohne beide uebersprungen.
 longpath_add_test(tst_logbuch_blaetter)
+# tst_zeiger_ohne_farbraum (2026-11-17): der Bewegen-Zeiger aus einem Bild
+#   ohne Farbprofil (Absturz 2026-11-10 in QImage::toCGImage, Qt 6.11.1),
+#   und keine Bildzeigerform mehr direkt im Quelltext.
+longpath_add_test(tst_zeiger_ohne_farbraum)
+if(TEST tst_zeiger_ohne_farbraum)
+    set_tests_properties(tst_zeiger_ohne_farbraum PROPERTIES
+        ENVIRONMENT "LONGPATH_SOURCE_DIR=${CMAKE_SOURCE_DIR}")
+endif()
 # tst_logbuch_bilder (2026-11-08): Bedarfs-Matrix, Band x Stunde und
 #   Richtungsrose -- Rechnung und Einbindung ins Logbuch-Fenster.
 # tst_single_instance_guard (2026-11-08): ein Longpath je Einstellungsordner;

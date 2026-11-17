@@ -959,6 +959,7 @@ set(GUI_SOURCES
     src/gui/widgets/DspQuickPopups.cpp
     src/gui/widgets/DspQuickPopups.h
     src/gui/widgets/BandwidthFilterPane.cpp
+    src/gui/ZeigerOhneFarbraum.cpp
     src/gui/FramelessResizer.cpp
     src/gui/WindowChrome.cpp
     src/gui/ToolWindow.cpp

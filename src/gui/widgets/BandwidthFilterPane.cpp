@@ -8,11 +8,15 @@
 // Modification history (Longpath):
 //   2026-08-20 — Original fuer NereusSDR von Martin Fischer,
 //                 KI-gestuetzt ueber Anthropic Claude (Cowork).
+//   2026-11-17 — Bewegen-Zeiger ohne Farbprofil (bewegenZeiger):
+//                 Absturz 2026-11-10 in QImage::toCGImage, Qt 6.11.1.
+//                 Martin Fischer, KI-gestuetzt ueber Anthropic Claude.
 // =================================================================
 
 #include "gui/widgets/BandwidthFilterPane.h"
 
 #include "gui/StyleConstants.h"
+#include "gui/ZeigerOhneFarbraum.h"
 #include "gui/styles/ThemeQss.h"
 
 #include <QLinearGradient>
@@ -701,11 +705,16 @@ void BandwidthFilterPane::mouseMoveEvent(QMouseEvent* ev)
         const Zone z = zoneAt(x);
         if (z != m_hover) {
             m_hover = z;
-            const Qt::CursorShape want =
-                (z == Zone::LowEdge || z == Zone::HighEdge)
-                    ? Qt::SizeHorCursor
-                    : (z == Zone::Body ? Qt::SizeAllCursor : Qt::ArrowCursor);
-            if (cursor().shape() != want) { setCursor(want); }
+            // Die Mitte zieht den ganzen Filter: der Bewegen-Zeiger, aber
+            // aus einem Bild ohne Farbprofil (gui/ZeigerOhneFarbraum.h --
+            // Qt 6.11.1 stuerzte beim Bau des eigenen ab, 2026-11-10).
+            if (z == Zone::LowEdge || z == Zone::HighEdge) {
+                setCursor(Qt::SizeHorCursor);
+            } else if (z == Zone::Body) {
+                setCursor(bewegenZeiger());
+            } else {
+                setCursor(Qt::ArrowCursor);
+            }
             update();
         }
         return;

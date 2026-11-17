@@ -10,6 +10,10 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-11-17 — Greifpunkt und Titel: Bewegen-Zeiger ohne Farbprofil
+//                 (gui/ZeigerOhneFarbraum.h; Qt 6.11.1 stuerzte beim Bau
+//                 des eigenen ab). Martin Fischer, KI-gestuetzt ueber
+//                 Anthropic Claude.
 // =================================================================
 
 /*  ucMeter.cs
@@ -59,6 +63,7 @@ mw0lge@grange-lane.co.uk
 #include "gui/ScopedChildWidget.h"
 
 #include "gui/StyleConstants.h"
+#include "gui/ZeigerOhneFarbraum.h"
 #include "gui/styles/PopupMenuStyle.h"
 #include "gui/styles/ThemeQss.h"
 #include "FloatingContainer.h"
@@ -199,7 +204,7 @@ void ContainerWidget::buildUI()
     m_grip->setFixedWidth(3);
     m_grip->setStyleSheet(QStringLiteral("background: %1;")
                               .arg(QLatin1String(Style::kAmberText)));
-    m_grip->setCursor(Qt::SizeAllCursor);
+    m_grip->setCursor(bewegenZeiger());
     m_grip->setToolTip(QStringLiteral("Drag to move this container"));
     barLayout->addWidget(m_grip);
 
@@ -208,7 +213,7 @@ void ContainerWidget::buildUI()
     m_titleLabel->setStyleSheet(QStringLiteral(
         "color: %1; font-size: 11px; font-weight: bold; background: transparent;"
         " letter-spacing: 1px;").arg(QLatin1String(Style::kTextPrimary)));
-    m_titleLabel->setCursor(Qt::SizeAllCursor);
+    m_titleLabel->setCursor(bewegenZeiger());
     barLayout->addWidget(m_titleLabel, 1);
 
     const QString btnStyle = QStringLiteral(
@@ -745,7 +750,7 @@ void ContainerWidget::updateLockButton()
             "background: %1; border-radius: 1px; margin: 4px 0;")
             .arg(QLatin1String(m_locked ? Style::kTextInactive
                                         : Style::kAmberText)));
-        m_grip->setCursor(m_locked ? Qt::ArrowCursor : Qt::SizeAllCursor);
+        m_grip->setCursor(m_locked ? QCursor(Qt::ArrowCursor) : bewegenZeiger());
     }
 }
 
