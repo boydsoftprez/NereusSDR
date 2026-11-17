@@ -76,7 +76,7 @@ struct IPadShotTests {
         ])))
         #expect(await settle(seconds: 30) {
             model.main.slices.entries.count == 2 && model.main.coreName != nil
-                && model.main.slices.active?.signalPeakDbm == -79
+                && model.main.slices.active.map { model.main.slices.reading($0.id).signalPeakDbm } == -79
         })
         #expect(await settle(seconds: 30) { model.roundTripMs != nil })
 

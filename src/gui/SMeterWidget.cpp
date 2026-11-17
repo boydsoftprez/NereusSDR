@@ -14,6 +14,16 @@
 //     and renderNeedle's history wedge, for a container copy's dial)
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-15 - The comment on sealDialMenu() describes the parented menu:
+//                 solid over a clear container, closed with the dial.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-15 - The right-click menu is parented to the widget again, so
+//                 closing a floating dial with its menu open takes the menu
+//                 with it; sealDialMenu() still keeps it solid. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-12 - A uniformly scaled dial paints the 298 x 140 plate and
+//                 scales that picture into the widget. Brian Sutton
+//                 (W4KZO), AI-assisted via xAI Grok.
 //   2026-11-04 - rxModeChanged: every real change of the RX mode, for the
 //                 flags (overlay design D40). J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
@@ -188,6 +198,7 @@ mw0lge@grange-lane.co.uk
 #include "SMeterWidget.h"
 #include "gui/instruments/ReadingSource.h"
 #include "gui/meters/MeterPoller.h"
+#include "gui/styles/PopupMenuStyle.h"
 #include "gui/styles/WorkspacePreview.h"
 
 #include <algorithm>
@@ -976,10 +987,106 @@ void SMeterWidget::paintEvent(QPaintEvent*)
     p.setRenderHint(QPainter::Antialiasing);
 
     if (m_faceStyle == FaceStyle::Classic) {
-        paintClassic(p);
+        if (m_uniformScale) {
+            paintClassicUniform(p);
+        } else {
+            paintClassic(p);
+        }
     } else {
         paintVintage(p);
     }
+}
+
+QSize SMeterWidget::minimumSizeHint() const
+{
+    // Small enough that a container copy can shrink with its container.
+    // The Main Panel dial and sMeter.dial keep the original floor.
+    return m_uniformScale ? QSize(64, 30) : QSize(200, 100);
+}
+
+void SMeterWidget::setUniformScale(bool on)
+{
+    if (m_uniformScale == on) {
+        return;
+    }
+    m_uniformScale = on;
+    if (on) {
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        setMinimumSize(minimumSizeHint());
+        setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+        // The stack host gives this widget the leftover height, and a free
+        // canvas may resize it down to the hint below.
+        setProperty("containerStackFill", true);
+        setProperty("freeCanvasMinimum", QSizeF(minimumSizeHint()));
+        setProperty("freeCanvasHint", sizeHint());
+    } else {
+        setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+        setMinimumSize(minimumSizeHint());
+        setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+        setProperty("containerStackFill", false);
+    }
+    m_faceCache = QPixmap();
+    m_faceCacheKey.clear();
+    updatePaintOpacity();
+    updateGeometry();
+    update();
+}
+
+void SMeterWidget::setPlateAlign(Qt::Alignment align)
+{
+    const Qt::Alignment vertical = align & Qt::AlignVertical_Mask;
+    const Qt::Alignment next = (vertical == Qt::AlignTop || vertical == Qt::AlignBottom)
+        ? vertical : Qt::AlignVCenter;
+    if (m_plateAlign == next) {
+        return;
+    }
+    m_plateAlign = next;
+    m_faceCache = QPixmap();
+    m_faceCacheKey.clear();
+    update();
+}
+
+QRectF SMeterWidget::uniformPlate(const QRectF& full) const
+{
+    if (full.width() < 1.0 || full.height() < 1.0) {
+        return full;
+    }
+    int iw = 0;
+    int ih = 0;
+    if (full.width() / full.height() > kPlateMaxAspect) {
+        ih = std::max(1, qRound(full.height()));
+        iw = std::max(1, qRound(ih * kPlateMaxAspect));
+    } else {
+        iw = std::max(1, qRound(full.width()));
+        ih = std::max(1, qRound(iw / kPlateMaxAspect));
+    }
+    iw = std::min(iw, std::max(1, qRound(full.width())));
+    ih = std::min(ih, std::max(1, qRound(full.height())));
+    const int ix = qRound(full.left() + (full.width() - iw) / 2.0);
+    int iy = qRound(full.top());
+    if (m_plateAlign == Qt::AlignBottom) {
+        iy = qRound(full.bottom() - ih);
+    } else if (m_plateAlign != Qt::AlignTop) {
+        iy = qRound(full.top() + (full.height() - ih) / 2.0);
+    }
+    return QRectF(ix, iy, iw, ih);
+}
+
+void SMeterWidget::paintClassicUniform(QPainter& p)
+{
+    const QRectF plate = plateRect();
+    // The area around the plate stays clear, so a transparent container
+    // shows through. The plate itself is filled by paintClassic().
+    if (plate.width() < 1.0 || plate.height() < 1.0) {
+        return;
+    }
+    p.save();
+    p.translate(plate.topLeft());
+    p.scale(plate.width() / qreal(kUniformRefW), plate.height() / qreal(kUniformRefH));
+    m_logicalPaint = true;
+    paintClassic(p);
+    m_logicalPaint = false;
+    p.restore();
 }
 
 // The AetherSDR paint body, unchanged.
@@ -988,11 +1095,12 @@ void SMeterWidget::paintEvent(QPaintEvent*)
 // both faces show the no-reading display.
 void SMeterWidget::paintClassic(QPainter& p)
 {
-    const int w = width();
-    const int h = height();
+    const int w = m_logicalPaint ? kUniformRefW : width();
+    const int h = m_logicalPaint ? kUniformRefH : height();
 
     // Background
-    p.fillRect(rect(), WorkspacePreview::dataBackground(QColor(0x0f, 0x0f, 0x1a), "panel", this));
+    p.fillRect(m_logicalPaint ? QRect(0, 0, kUniformRefW, kUniformRefH) : rect(),
+               WorkspacePreview::dataBackground(QColor(0x0f, 0x0f, 0x1a), "panel", this));
 
     // -- Arc geometry ---------------------------------------------------------
     // Large radius with center far below widget -> shallow ~70 deg arc segment
@@ -1399,7 +1507,9 @@ void SMeterWidget::paintVintage(QPainter& p)
         theme.green = m_powerScaleColor.rgb();
     }
     // NereusSDR-native: the plate keeps the Main Panel dial's proportions.
-    const QRectF bounds = plateRect();
+    // A scaled copy paints that plate at its reference size and scales the
+    // picture; the plate it fits into is plateRect().
+    const QRectF bounds = m_uniformScale ? QRectF(0, 0, kUniformRefW, kUniformRefH) : plateRect();
 
     // -- Static artwork, cached -----------------------------------------------
     const qreal dpr = devicePixelRatioF();
@@ -1412,12 +1522,19 @@ void SMeterWidget::paintVintage(QPainter& p)
     // (the user's colour when set) shows at the corners and beside a
     // centred plate.
     const QColor surround(Qt::transparent);
-    const QString key = QString("%1x%2@%3|%4|%5|%6|%7|%8|%9")
+    QString key = QString("%1x%2@%3|%4|%5|%6|%7|%8|%9")
         .arg(width()).arg(height()).arg(dpr)
         .arg(static_cast<int>(m_faceStyle)).arg(scaleKey).arg(bounds.width())
         .arg(WorkspacePreview::enabled())
         .arg(m_darkMode)
         .arg(m_powerScaleColor.isValid() ? m_powerScaleColor.name() : QString());
+    if (m_uniformScale) {
+        const QRectF plate = plateRect();
+        key += QLatin1Char('|');
+        key += QString::number(qRound(plate.width()));
+        key += QLatin1Char('x');
+        key += QString::number(qRound(plate.height()));
+    }
 
     if (key != m_faceCacheKey || m_faceCache.isNull()) {
         VintageScale scale;
@@ -1554,17 +1671,45 @@ void SMeterWidget::paintVintage(QPainter& p)
             }
         }
 
-        m_faceCache = QPixmap((QSizeF(size()) * dpr).toSize());
-        m_faceCache.setDevicePixelRatio(dpr);
-        // Clear outside the bezel (NereusSDR-native).
-        m_faceCache.fill(Qt::transparent);
-        QPainter fp(&m_faceCache);
-        VintageMeterFace::paintStatic(fp, bounds, surround, theme,
-                                      scale, title, legend);
+        if (m_uniformScale) {
+            const QRectF plate = plateRect();
+            const QSize px = (plate.size() * dpr).toSize().expandedTo(QSize(1, 1));
+            m_faceCache = QPixmap(px);
+            m_faceCache.setDevicePixelRatio(dpr);
+            m_faceCache.fill(Qt::transparent);
+            QPainter fp(&m_faceCache);
+            fp.setRenderHint(QPainter::Antialiasing, true);
+            fp.setRenderHint(QPainter::TextAntialiasing, true);
+            fp.scale(plate.width() / qreal(kUniformRefW), plate.height() / qreal(kUniformRefH));
+            VintageMeterFace::paintStatic(fp, bounds, surround, theme, scale, title, legend);
+        } else {
+            m_faceCache = QPixmap((QSizeF(size()) * dpr).toSize());
+            m_faceCache.setDevicePixelRatio(dpr);
+            // Clear outside the bezel (NereusSDR-native).
+            m_faceCache.fill(Qt::transparent);
+            QPainter fp(&m_faceCache);
+            VintageMeterFace::paintStatic(fp, bounds, surround, theme,
+                                          scale, title, legend);
+        }
         m_faceCacheKey = key;
     }
+    if (m_uniformScale) {
+        const QRectF plate = plateRect();
+        p.drawPixmap(plate.topLeft(), m_faceCache);
+        p.save();
+        p.translate(plate.topLeft());
+        p.scale(plate.width() / qreal(kUniformRefW), plate.height() / qreal(kUniformRefH));
+        paintVintageMoving(p, bounds, theme);
+        p.restore();
+        return;
+    }
     p.drawPixmap(0, 0, m_faceCache);
+    paintVintageMoving(p, bounds, theme);
+}
 
+void SMeterWidget::paintVintageMoving(QPainter& p, const QRectF& bounds, const VintageFaceTheme& themeIn)
+{
+    VintageFaceTheme theme = themeIn;
     const VintageMeterFace::Geometry g = VintageMeterFace::geometryFor(bounds);
     const double u = g.unit;
 
@@ -1695,12 +1840,16 @@ void SMeterWidget::setFollowsSetupFace(bool follow)
 
 void SMeterWidget::updatePaintOpacity()
 {
-    setAttribute(Qt::WA_OpaquePaintEvent, m_faceStyle == FaceStyle::Classic);
+    // A scaled dial leaves the margin around its plate unpainted.
+    setAttribute(Qt::WA_OpaquePaintEvent, m_faceStyle == FaceStyle::Classic && !m_uniformScale);
 }
 
 QRectF SMeterWidget::plateRect() const
 {
     const QRectF full = rect();
+    if (m_uniformScale) {
+        return uniformPlate(full);
+    }
     const double maxWidth = std::round(full.height() * kPlateMaxAspect);
     if (full.width() <= maxWidth) {
         return full;
@@ -2041,6 +2190,22 @@ void SMeterWidget::contextMenuEvent(QContextMenuEvent* ev)
     }
 }
 
+namespace {
+// The dial can sit in a container whose background is clear, and its menu
+// must still draw solid there, in the app's popup colors. The container's
+// clear style sheets are scoped to its own widgets, so they never reach the
+// menu, and these settings keep the menu itself opaque. The dial stays the
+// menu's parent (a QMenu is its own popup window either way), so closing the
+// dial while the menu is open closes the menu with it and exec() returns.
+void sealDialMenu(QMenu* menu)
+{
+    menu->setAttribute(Qt::WA_TranslucentBackground, false);
+    menu->setAttribute(Qt::WA_NoSystemBackground, false);
+    menu->setAutoFillBackground(true);
+    menu->setStyleSheet(QString::fromLatin1(kPopupMenu));
+}
+} // namespace
+
 QMenu* SMeterWidget::buildContextMenu(QObject* parent)
 {
     auto* menu = new QMenu(qobject_cast<QWidget*>(parent));
@@ -2175,6 +2340,11 @@ QMenu* SMeterWidget::buildContextMenu(QObject* parent)
         });
     }
 
+    sealDialMenu(menu);
+    const auto subs = menu->findChildren<QMenu*>();
+    for (QMenu* sub : subs) {
+        sealDialMenu(sub);
+    }
     return menu;
 }
 

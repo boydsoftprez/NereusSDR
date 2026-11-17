@@ -1163,7 +1163,7 @@ struct MainScreen: View {
                              buttonColumnFolded: buttonColumnFolded, display: controls.display,
                              spots: app.spots,
                              readout: main.meterReadout,
-                             flagLevel: { [weak sMeter = main.sMeter] in sMeter?.flagLevel(for: $0) },
+                             flagLevel: { [weak sMeter = main.sMeter] in sMeter?.flagLevel(for: $0, reading: $1) },
                              meterRxMode: main.meterRxMode,
                              firstKeyRefused: BandSlicesModel.refusedForTransmitChoice(transmit.ptt),
                              flagControls: controls.flagControls,

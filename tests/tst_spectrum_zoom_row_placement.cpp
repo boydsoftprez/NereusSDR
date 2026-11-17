@@ -9,12 +9,18 @@
 // same height; with the column folded, or on a tall pan, it stays at the
 // bottom left where it has always been. It moves again when the column
 // folds or opens and when the pan resizes.
+//
+// Roundtable strip review: on a real pan the row never rises above the
+// waterfall's top (into the Roundtable strip or the frequency scale), and
+// it follows the waterfall top when the split changes.
 // =================================================================
 #include <QtTest/QtTest>
 #include <QPushButton>
 
 #include "core/AppSettings.h"
 #include "gui/SpectrumOverlayPanel.h"
+#include "gui/SpectrumWidget.h"
+#include "gui/roundtable/RoundtableTagLayout.h"
 
 using namespace NereusSDR;
 
@@ -110,6 +116,51 @@ private slots:
         // Just right of the column, at the height it always has.
         QCOMPARE(pan.zoomRow()->x(), pan.panel->geometry().right() + 1 + kMargin);
         QCOMPARE(pan.zoomRow()->y(), pan.defaultPlace().y());
+    }
+
+    void row_stays_on_a_short_waterfall_under_the_strip()
+    {
+        // Offscreen there is no GPU: the pan says so once.
+        static QtMessageHandler previous = nullptr;
+        previous = qInstallMessageHandler(
+            [](QtMsgType type, const QMessageLogContext& context, const QString& message) {
+                if (message.startsWith(QLatin1String("QRhiWidget: QRhi is not supported"))) {
+                    return;
+                }
+                previous(type, context, message);
+            });
+        SpectrumWidget widget;
+        widget.setUpdatesEnabled(false);
+        widget.resize(700, 600);
+        auto* panel = new SpectrumOverlayPanel(&widget);
+        panel->move(4, 4);
+        widget.show();
+        QCoreApplication::processEvents();
+        QWidget* row = nullptr;
+        for (QPushButton* b : widget.findChildren<QPushButton*>()) {
+            if (b->text() == QStringLiteral("+") && b->parentWidget()
+                && b->parentWidget()->parentWidget() == &widget) {
+                row = b->parentWidget();
+            }
+        }
+        QVERIFY(row);
+        const auto fromBottom = [&widget, row]() {
+            return std::max(kMargin, widget.height() - (widget.freqScaleHeight() + 4) - row->height() - kMargin);
+        };
+
+        widget.setRoundtableStripShown(true);
+        widget.setSpectrumFrac(0.85f);
+        QVERIFY(widget.roundtableStripLaidOut());
+        // The usual place would reach up into the strip: the row stays under it.
+        QVERIFY(fromBottom() < widget.waterfallTop() + kMargin);
+        QCOMPARE(row->y(), widget.waterfallTop() + kMargin);
+        QVERIFY(!row->geometry().intersects(widget.roundtableStripRectForTest()));
+
+        // A taller waterfall: back at the bottom, as it always was.
+        widget.setSpectrumFrac(0.40f);
+        QVERIFY(fromBottom() >= widget.waterfallTop() + kMargin);
+        QCOMPARE(row->y(), fromBottom());
+        qInstallMessageHandler(previous);
     }
 
     void tall_pan_row_is_unchanged()

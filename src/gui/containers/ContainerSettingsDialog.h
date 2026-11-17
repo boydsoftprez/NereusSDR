@@ -334,6 +334,7 @@ private:
     QCheckBox*   m_hideTitleCheck{nullptr};   // inverse of titleBarVisible
     QCheckBox*   m_minimisesCheck{nullptr};
     QCheckBox*   m_autoHeightCheck{nullptr};
+    QCheckBox*   m_clearFloatingCheck{nullptr};
     QCheckBox*   m_hidesWhenRxNotUsedCheck{nullptr};
     QCheckBox*   m_noControlsCheck{nullptr};
     QCheckBox*   m_highlightCheck{nullptr};

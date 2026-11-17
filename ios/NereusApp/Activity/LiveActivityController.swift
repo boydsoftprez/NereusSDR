@@ -180,6 +180,8 @@ final class LiveActivityController: ObservableObject {
             main.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
             transmit.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
             main.slices.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
+            // The level bar's reading, which the slices publish apart.
+            main.slices.readings.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
             main.catalogFeed.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
         ]
         if let flow {
@@ -244,15 +246,16 @@ final class LiveActivityController: ObservableObject {
             // The level printed as the flag prints it (the Multimeter page's units).
             let meter = main.catalogFeed.catalog?.meters.sMeter
             let readout = main.meterReadout
+            let signalDbm = main.slices.reading(entry.id).signalDbm
             inputs.slice = StationActivityAttributes.Slice(letter: entry.slice.letter, colour: entry.slice.colour,
                                                            frequencyHz: entry.slice.frequencyHz,
                                                            mode: entry.modeLabel,
                                                            bandwidth: entry.slice.bandwidthText,
-                                                           signalDbm: entry.signalDbm,
-                                                           signalText: entry.signalDbm.flatMap {
+                                                           signalDbm: signalDbm,
+                                                           signalText: signalDbm.flatMap {
                                                                readout.text(dbm: $0, meter: meter)
                                                            },
-                                                           signalSpoken: entry.signalDbm.flatMap {
+                                                           signalSpoken: signalDbm.flatMap {
                                                                readout.spoken(dbm: $0, meter: meter)
                                                            })
         }

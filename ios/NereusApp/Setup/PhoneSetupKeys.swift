@@ -64,7 +64,10 @@ final class PhoneSetupKeys: SetupPhoneKeys {
     static let opaqueColourKeys: Set<String> = ["DisplayFillColor", "DisplayTraceColor"]
 
     var changes: AnyPublisher<Void, Never> {
-        let existing = Publishers.Merge4(main.band.$settings.map { _ in () }, main.sMeter.$state.map { _ in () },
+        // Setup reads the meter's settings alone, not its readings, which
+        // move with every display frame.
+        let meter = main.sMeter.$state.map(\.settings).removeDuplicates().map { _ in () }
+        let existing = Publishers.Merge4(main.band.$settings.map { _ in () }, meter,
                                           $filterPresetsMode.map { _ in () }, $paTempUnit.map { _ in () })
             .merge(with: main.$displayEditScope.map { _ in () })
             .merge(with: main.$displayBandChoice.map { _ in () })
