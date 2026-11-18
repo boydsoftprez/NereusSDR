@@ -606,6 +606,29 @@ struct DsrShotTests {
         }
     }
 
+    /// PR 808: Setup > Digital Spectrum Recorder at the first accessibility
+    /// text size (JJ's phone) on a big phone upright and sideways and a small
+    /// one upright, with a named disk and with a disk the Core shows by a long
+    /// path, written as `dsr-phone-walk-setup-ax1-<screen>-<disk>.png`.
+    @Test func setupAtAccessibilityText() async throws {
+        let longPath: [String: Any] = ["root": RecordingsPagesShotTests.longDiskRoot, "name": "",
+                                       "free": 812_000_000_000, "total": 1_000_000_000_000, "sd": false,
+                                       "own": false]
+        for screen in RecordingsPagesShotTests.largeTypeScreens {
+            for (disk, chosen, disks) in [("named-disk", "/media/ssd", [DsrTests.sdCard, DsrTests.ssd]),
+                                          ("long-disk-path", RecordingsPagesShotTests.longDiskRoot,
+                                           [DsrTests.sdCard, longPath])] {
+                let (_, model) = await DsrTests.setup(dsr: DsrTests.dsrPart(disk: chosen), disks: disks)
+                try await shoot("dsr-phone-walk-setup-ax1-\(screen.name)-\(disk)", height: 2400, width: screen.width,
+                                type: .accessibility1, sideways: screen.sideways) {
+                    NavigationStack {
+                        DsrSetupPage(model: model)
+                    }
+                }
+            }
+        }
+    }
+
     /// One page on an upright phone, over the Setup tab's bar, written with `NEREUS_MAIN_SHOTS` set.
     private func shoot<Content: View>(_ name: String, height: CGFloat, tabBar: Bool = true, width: CGFloat = 402,
                                       type: DynamicTypeSize = .large, sideways: Bool = false,

@@ -91,6 +91,18 @@ struct VoiceKeyerShotTests {
         try await walk("older-core", older.model)
     }
 
+    /// PR 808: Tools > Voice Keyer drawn whole at the first accessibility
+    /// text size (JJ's phone) on a big phone upright and sideways and a small
+    /// one upright, written as `tools-voice-keyer-walk-ax1-<screen>.png`.
+    @Test func pageAtAccessibilityText() async throws {
+        let rig = await Keyer.rig()
+        Keyer.publish(rig, Keyer.document(), revision: 1)
+        for screen in RecordingsPagesShotTests.largeTypeScreens {
+            try await shoot("tools-voice-keyer-walk-ax1-\(screen.name)", height: 2400, width: screen.width,
+                            type: .accessibility1, sideways: screen.sideways) { Self.page(rig.model) }
+        }
+    }
+
     /// The page under the Tools tab's bar, as ToolsTab draws it.
     /// This phone's settings for the page's VOICE switch: nothing is written
     /// to them, so each picture shows it as a new install has it, on.
