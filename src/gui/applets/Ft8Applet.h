@@ -651,6 +651,15 @@ private:
     QString      m_pilleZeile;
     int          m_pilleBlock{-1};
     void zeigeDann();
+    /// Ein QSO mit `partner` ist fertig: sein Feld gilt ab jetzt als
+    /// gearbeitet, und was davon schon BLAU in der Liste steht, wird
+    /// sofort umgefaerbt. `locator` darf leer sein -- dann sucht die
+    /// Funktion das Feld in den Zeilen, die der Partner selbst gesendet
+    /// hat. Betreiber am 2026-11-18.
+    void feldGearbeitet(const QString& partner, const QString& locator);
+    /// Alles anhalten wie der Stop-Knopf (Ablauf, Plaetze, CQ-Automatik,
+    /// laufende Sendung). `grund` bleibt in der Statuszeile stehen.
+    void haltAllesAn(const QString& grund);
     void zeigePilleBei(const QPoint& posImViewport);
     void versteckePille();
     /// Leer heisst: diese Zeile laesst sich anstellen.

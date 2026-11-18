@@ -42,10 +42,14 @@
 #include <QSpinBox>
 #include <QTimer>
 #include <QPlainTextEdit>
+#include <QTextBlock>
+#include <QTextCursor>
+#include <QTextDocument>
 #include <QDateTime>
 
 #include "core/Ft8Decoder.h"
 #include "gui/applets/Ft8Applet.h"
+#include "gui/StyleConstants.h"
 #include "models/RadioModel.h"
 #include "models/LogEntry.h"
 #include "core/AppSettings.h"
@@ -1063,6 +1067,56 @@ private slots:
         // Genau an der Grenze noch nach oben: 2380 + 120 = 2500.
         m.setGrundtonHz(2380.0f);
         QCOMPARE(m.tonleiter(3), Ft8TxSource::tonleiter(2380.0f, 3));
+    }
+
+    // ── Eben gearbeitet, also nicht mehr blau (2026-11-18) ────────────
+    //
+    // Betreiber: „die soeben geführten qso … sehe ich im verlauf noch
+    // immer blau. diese sollten sofort farblich geändert werden." Mit
+    // Plaetzen wurde das gearbeitete Feld nie gemerkt, und was schon in
+    // der Liste stand, behielt seine Farbe ohnehin.
+    void einGearbeitetesFeldIstSofortNichtMehrBlau()
+    {
+        stelleEin(3);
+        RadioModel radio;
+        radio.installFt8TxForTest();
+        Ft8Applet applet(&radio);
+        // Ohne gelesenes Logbuch markiert die Liste gar nichts.
+        applet.gridsForTest().merke(QStringLiteral("JO31"));
+        QSignalSpy gemeldet(&applet, &Ft8Applet::qsoFertig);
+
+        const auto farbeVon = [&applet](const QString& stueck) {
+            QTextDocument* doc = applet.listForTest()->document();
+            for (QTextBlock b = doc->begin(); b.isValid(); b = b.next()) {
+                if (!b.text().contains(stueck)) { continue; }
+                QTextCursor c(b);
+                c.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, 1);
+                return c.charFormat().foreground().color();
+            }
+            return QColor();
+        };
+        const QColor blau(QString::fromLatin1(Style::kAccent));
+
+        // Ein Dritter ruft aus demselben Feld CQ: blau, das Feld fehlt.
+        fund(applet, "CQ UN3P MN83", -5.0);
+        QCOMPARE(farbeVon(QStringLiteral("UN3P")), blau);
+
+        // QSO mit einer Station aus MN83, auf einem Platz.
+        fund(applet, "OE5SOS UN0GY MN83", 3.0);
+        fund(applet, "OE5SOS UN0GY R+05", 3.0);
+        applet.fensterZuEndeForTest();
+        QCOMPARE(gemeldet.count(), 1);
+
+        // Die Zeile, die schon dastand, ist sofort nicht mehr blau ...
+        QVERIFY2(farbeVon(QStringLiteral("UN3P")) != blau,
+                 "das eben gearbeitete Feld steht noch blau in der Liste");
+        // ... und eine neue aus demselben Feld auch nicht.
+        fund(applet, "CQ UN7ABC MN83", -9.0);
+        QVERIFY(farbeVon(QStringLiteral("UN7ABC")) != blau);
+        // Ein anderes Feld bleibt blau (Gegenprobe).
+        fund(applet, "CQ JA1XYZ PM95", -12.0);
+        QCOMPARE(farbeVon(QStringLiteral("JA1XYZ")), blau);
+        applet.stopButtonForTest()->click();
     }
 };
 

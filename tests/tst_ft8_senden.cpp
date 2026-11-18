@@ -37,6 +37,7 @@
 #include <QMenu>
 #include <QPushButton>
 #include <QLineEdit>
+#include <QLabel>
 #include <QPlainTextEdit>
 #include <QMouseEvent>
 #include "core/MoxController.h"
@@ -1527,6 +1528,51 @@ private slots:
         applet.setProtocol(Ft8Decoder::Protocol::Ft4);
         QVERIFY2(!applet.listForTest()->toPlainText().contains(QStringLiteral("DL1ABC")),
                  "die FT8-Zeilen stehen nach dem Wechsel auf FT4 noch da");
+    }
+
+    // ── Ein Bandwechsel haelt das Senden an (2026-11-18) ──────────────
+    //
+    // Betreiber: „sobald man einen bandwechsel durchführt dann nicht
+    // mehr automatisch weiter gesendet werden!!!!" Am Geraet lief der
+    // CQ-Ruf nach 20 m -> 30 m einfach weiter, in eine Antenne mit
+    // Stehwelle 2,96.
+    void einBandwechselHaeltDasSendenAn()
+    {
+        AppSettings::instance().setValue(QStringLiteral("StationCallsign"),
+                                         QStringLiteral("OE5SOS"));
+        AppSettings::instance().setValue(QStringLiteral("User/GridSquare"),
+                                         QStringLiteral("JN67"));
+        RadioModel radio;
+        radio.installFt8TxForTest();
+        Ft8Applet applet(&radio);
+        applet.setProtocol(Ft8Decoder::Protocol::Ft8);
+
+        const int id = radio.addSlice();
+        SliceModel* slice = radio.sliceById(id);
+        QVERIFY(slice);
+        slice->setFrequency(14074000.0);          // 20 m
+        applet.setSlice(slice);
+
+        applet.cqRufenButtonForTest()->click();
+        QVERIFY2(applet.sendetGerade(), "der CQ-Ruf ist gar nicht angelaufen");
+        QVERIFY(applet.ablaufForTest().laeuft());
+
+        // Innerhalb des Bandes laeuft er weiter (Gegenprobe).
+        slice->setFrequency(14076000.0);
+        QVERIFY2(applet.ablaufForTest().laeuft(),
+                 "ein Dreh innerhalb des Bandes hat den Ruf angehalten");
+
+        // 20 m -> 30 m.
+        slice->setFrequency(10136000.0);
+        QVERIFY2(!applet.ablaufForTest().laeuft(),
+                 "der Ruf laeuft nach dem Bandwechsel weiter");
+        QVERIFY2(!applet.sendetGerade(),
+                 "nach dem Bandwechsel steht noch eine Sendung an");
+        QVERIFY(!applet.sendeTimerForTest()->isActive());
+        QVERIFY(!radio.moxController()->isMox());
+        const QString zeile = applet.statusForTest()->text();
+        QVERIFY2(zeile.contains(QStringLiteral("band changed")),
+                 qPrintable(zeile));
     }
 };
 

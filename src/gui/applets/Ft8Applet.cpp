@@ -1135,8 +1135,8 @@ void Ft8Applet::setProtocol(Ft8Decoder::Protocol p)
 // gerufen. Und ihre Karenz -- wer auf 15 m eben gearbeitet wurde, ist
 // auf 17 m ein neues QSO und darf gleich wieder.
 //
-// Ein laufender Ablauf wird hier nicht angefasst; das ist die Sache
-// von Stop, nicht eines Skalendrehs.
+// Den laufenden Ablauf haelt beim BANDwechsel `skalaBewegt` an (seit
+// dem 2026-11-18, siehe dort); diese Funktion leert nur.
 void Ft8Applet::leereFuerNeuenOrt(const QString& grund)
 {
     qCInfo(lcFt8Senden).noquote()
@@ -1159,9 +1159,91 @@ void Ft8Applet::skalaBewegt(double skalaHz)
     if (!band.isEmpty() && band != m_listenBand) {
         const bool erstesBand = m_listenBand.isEmpty();
         m_listenBand = band;
-        if (!erstesBand) { leereFuerNeuenOrt(band); }
+        if (!erstesBand) {
+            // ── Ein Bandwechsel haelt ALLES an (2026-11-18) ──────────
+            //
+            // Betreiber: „sobald man einen bandwechsel durchführt dann
+            // nicht mehr automatisch weiter gesendet werden!!!!"
+            //
+            // #475 hatte hier ausdruecklich nur die Liste geleert und
+            // den Ablauf laufen lassen („die Sache von Stop, nicht
+            // eines Skalendrehs"). Das war falsch gedacht: am Geraet
+            // wechselte er von 20 m auf 30 m, der Lauf sendete dort
+            // weiter -- an Stationen, die auf 20 m waren, in eine
+            // Antenne mit Stehwelle 2,96. Erst der Riegel hielt ihn auf.
+            //
+            // Wer das Band wechselt, hat das QSO verlassen. Gesendet
+            // wird auf dem neuen Band erst wieder, wenn er es sagt.
+            // Erst anhalten, dann leeren: so geht auch eine Sendung,
+            // die gerade laeuft, sofort vom Sender.
+            if (m_sendet || m_ablauf.laeuft() || m_mehrfach.aktive() > 0
+                || m_cqAutomatik) {
+                haltAllesAn(tr("stopped — band changed to %1").arg(band));
+            }
+            leereFuerNeuenOrt(band);
+        }
     }
     folgeDerSkala(skalaHz);
+}
+
+void Ft8Applet::haltAllesAn(const QString& grund)
+{
+    qCInfo(lcFt8Senden).noquote() << "Angehalten:" << grund;
+    m_cqAutomatik = false;
+    m_mehrfach.abbrechen();
+    m_ablauf.abbrechen();
+    m_cqVersucheOffen = 0;
+    abbrechen();
+    zeigeAblauf();
+    // NACH zeigeAblauf(), das selbst in die Statuszeile schreibt.
+    m_festerHinweis = grund;
+    if (m_status) { m_status->setText(m_festerHinweis); }
+}
+
+// ── Eben gearbeitet, also nicht mehr blau (2026-11-18) ───────────────
+//
+// Betreiber: „die soeben geführten qso … sehe ich im verlauf noch immer
+// blau. diese sollten sofort farblich geändert werden."
+//
+// Zwei Luecken auf einmal:
+//   * Mit Plaetzen (`meldeFertigePlaetze`) wurde das Feld NIE gemerkt
+//     -- nur der einzelne Ablauf rief `m_grids.merke`. Wer mit
+//     „slots 3" arbeitet, behielt jedes gearbeitete Feld blau bis zum
+//     Neustart.
+//   * Und auch dort galt das Merken nur fuer KUENFTIGE Zeilen: was
+//     schon in der Liste stand, trug seine Fahne `neuesGrid` weiter.
+//
+// Ohne Locator im Ablauf (er hat auf einen Rapport geklickt, nicht auf
+// ein CQ) steht das Feld oft trotzdem in der Liste -- in einer Zeile,
+// die der Partner selbst gesendet hat.
+void Ft8Applet::feldGearbeitet(const QString& partner, const QString& locator)
+{
+    QString feld = locator.trimmed().toUpper();
+    if (feld.isEmpty() && !partner.isEmpty()) {
+        for (int i = m_zeilen.size() - 1; i >= 0; --i) {
+            const Fundzeile& z = m_zeilen.at(i);
+            if (z.eigeneSendung) { continue; }
+            if (senderCallsign(z.nachricht).compare(partner,
+                                                    Qt::CaseInsensitive) != 0) {
+                continue;
+            }
+            const QString l = locatorAusNachricht(z.nachricht);
+            if (!l.isEmpty()) { feld = l; break; }
+        }
+    }
+    if (feld.isEmpty()) { return; }
+    m_grids.merke(feld);
+
+    bool geaendert = false;
+    for (Fundzeile& z : m_zeilen) {
+        if (!z.neuesGrid) { continue; }
+        const QString l = locatorAusNachricht(z.nachricht);
+        if (!l.isEmpty() && !m_grids.istNeu(l)) {
+            z.neuesGrid = false;
+            geaendert = true;
+        }
+    }
+    if (geaendert) { zeichneListe(); }
 }
 
 Ft8Decoder::Protocol Ft8Applet::protocol() const
@@ -1444,6 +1526,7 @@ int Ft8Applet::meldeFertigePlaetze()
         // Ablauf (`zeigeAblauf`, 2026-10-30, HB9ZHK). Ohne ihn macht
         // sein naechster Satz an mich ihn wieder zum Anrufer.
         m_schlange.merkeGearbeitet(fertig.partner(), jetzt);
+        feldGearbeitet(fertig.partner(), fertig.partnerLocator());
         qCInfo(lcFt8Senden).noquote()
             << "QSO fertig (Platz):" << fertig.partner();
         ++zahl;
@@ -2001,7 +2084,7 @@ void Ft8Applet::meldeFertigesQso()
     // Das Feld ist ab jetzt gearbeitet -- ohne auf das naechste
     // Lesen der Datei zu warten. Sonst bliebe die Station, die eben
     // im Logbuch landete, bis zum Neustart blau.
-    m_grids.merke(m_ablauf.partnerLocator());
+    feldGearbeitet(m_ablauf.partner(), m_ablauf.partnerLocator());
     emit qsoFertig(logEintrag(m_ablauf,
                               m_slice ? m_slice->frequency() : 0.0,
                               m_slice && m_slice->dspMode() == DSPMode::DIGL,
