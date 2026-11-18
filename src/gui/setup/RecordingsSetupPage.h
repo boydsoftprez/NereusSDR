@@ -47,6 +47,8 @@
 //   2026-11-17 - J.J. Boyd (KG4VCF), JJ's request: this computer's switch
 //                 for VOICE in the TUNE / MOX row. AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-11-17 - J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code: m_diskFiller (PR 808 crash fix).
 // =================================================================
 
 #include <QJsonObject>
@@ -67,6 +69,8 @@ class QPushButton;
 class QSpinBox;
 
 namespace NereusSDR {
+
+class DiskComboFiller;
 
 class NEREUS_GUI_EXPORT RecordingsSetupPage : public SetupPage {
     Q_OBJECT
@@ -137,6 +141,7 @@ private:
     QLabel* m_formatSize = nullptr;
     QLabel* m_nameExample = nullptr;
     QComboBox* m_disk = nullptr;
+    DiskComboFiller* m_diskFiller = nullptr;
     QLabel* m_sdNote = nullptr;
     QProgressBar* m_usageBar = nullptr;
     QLabel* m_usage = nullptr;

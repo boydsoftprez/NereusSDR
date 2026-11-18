@@ -14,6 +14,10 @@
 //   2026-11-16 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 26.
+//   2026-11-17 - J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code: the disk drop-down is filled in
+//                 place through DiskComboFiller instead of cleared on every
+//                 Core update, which crashed under Qt accessibility (PR 808).
 // =================================================================
 
 #include "gui/setup/DsrSetupPage.h"
@@ -43,6 +47,7 @@
 #include "core/recordings/RecordingSettings.h"
 #include "core/session/RecordingsFacade.h"
 #include "gui/recordings/RecordingsWindow.h"
+#include "gui/setup/DiskComboFiller.h"
 
 namespace NereusSDR {
 
@@ -415,6 +420,7 @@ void DsrSetupPage::buildWhere()
     m_disk->setObjectName(QStringLiteral("dsrDisk"));
     m_disk->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     diskRow->addWidget(m_disk, 1);
+    m_diskFiller = new DiskComboFiller(m_disk, [this] { showDocument(); }, this);
     m_scan = new QPushButton(QStringLiteral("Scan again"), group);
     m_scan->setObjectName(QStringLiteral("dsrScanDisks"));
     diskRow->addWidget(m_scan);
@@ -679,43 +685,34 @@ void DsrSetupPage::showDocument()
         // cannot record at all.
         m_enabled->setChecked(usable && enabled);
 
-        m_disk->clear();
+        // The disks, filled in place: this runs on every update from the
+        // Core (about once a second while it records), so the list is only
+        // rebuilt when its disks change, and never while it is open.
+        QList<DiskComboItem> items;
         int chosenIndex = -1;
-        auto* model = qobject_cast<QStandardItemModel*>(m_disk->model());
         for (const QJsonValue& value : disks) {
             const QJsonObject disk = value.toObject();
             const bool own = disk.value(QStringLiteral("own")).toBool();
             const bool sd = disk.value(QStringLiteral("sd")).toBool();
             const QString root = own ? QString() : disk.value(QStringLiteral("root")).toString();
-            m_disk->addItem(diskText(disk), root);
-            const int index = m_disk->count() - 1;
-            m_disk->setItemData(index, sd, Qt::UserRole + 1);
-            m_disk->setItemData(index, disk.value(QStringLiteral("free")).toInteger(), Qt::UserRole + 2);
-            if (sd && model != nullptr) {
-                if (QStandardItem* item = model->item(index)) {
-                    item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
-                }
-            }
+            items.append(
+                DiskComboItem{diskText(disk), root, sd, disk.value(QStringLiteral("free")).toInteger(), !sd});
             if (chosen.isEmpty() ? own : samePath(root) == chosen) {
-                chosenIndex = index;
+                chosenIndex = static_cast<int>(items.size()) - 1;
             }
         }
         if (chosenIndex < 0 && !chosen.isEmpty()) {
             // The chosen disk is not mounted on the Core now: show it, so
             // the page does not claim another disk is in use.
-            m_disk->addItem(QStringLiteral("%1 (not on the Core now)").arg(QDir::toNativeSeparators(chosen)),
-                            QDir::toNativeSeparators(chosen));
-            chosenIndex = m_disk->count() - 1;
+            items.append(DiskComboItem{
+                QStringLiteral("%1 (not on the Core now)").arg(QDir::toNativeSeparators(chosen)),
+                QDir::toNativeSeparators(chosen), QVariant(), QVariant(), true});
+            chosenIndex = static_cast<int>(items.size()) - 1;
         }
         if (onlySd) {
-            m_disk->addItem(QStringLiteral("No USB disk found"));
-            if (model != nullptr) {
-                if (QStandardItem* item = model->item(m_disk->count() - 1)) {
-                    item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
-                }
-            }
+            items.append(DiskComboItem{QStringLiteral("No USB disk found"), QVariant(), QVariant(), QVariant(), false});
         }
-        m_disk->setCurrentIndex(std::max(chosenIndex, m_disk->count() > 0 ? 0 : -1));
+        m_diskFiller->fill(items, std::max(chosenIndex, items.isEmpty() ? -1 : 0));
 
         // The slider offers what the disk has room for; the box the same.
         const int diskIndex = m_disk->currentIndex();

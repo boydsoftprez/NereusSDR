@@ -2394,6 +2394,8 @@ set(GUI_SOURCES
     src/gui/setup/RecordingsSetupPage.cpp
     # Recording plan Task 26: Setup > Cores > Digital Spectrum Recorder.
     src/gui/setup/DsrSetupPage.cpp
+    # PR 808 crash fix: Core disk drop-downs filled in place.
+    src/gui/setup/DiskComboFiller.cpp
     src/gui/setup/TciLogWindow.cpp
     src/gui/setup/HotKeySetupPages.cpp
     src/gui/setup/KeyboardMapWidget.cpp

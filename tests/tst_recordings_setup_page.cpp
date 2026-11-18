@@ -21,14 +21,22 @@
 //                 switch, this computer's own, on by default, kept in
 //                 AppSettings and usable with no Core. AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-11-17 - J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code: the disk drop-down under repeated
+//                 Core updates with accessibility on and a stale accessible
+//                 cell (PR 808 crash).
 // =================================================================
 
+#include <QAbstractItemView>
+#include <QAccessible>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QGroupBox>
 #include <QJsonArray>
 #include <QLabel>
+#include <QLoggingCategory>
 #include <QPushButton>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QSpinBox>
 #include <QTest>
@@ -95,6 +103,7 @@ private slots:
     void notConnectedDimsEveryGroup();
     void olderCoreSaysWhy();
     void voiceButtonSwitchIsThisComputers();
+    void coreUpdatesDoNotRebuildTheDisks();
 };
 
 void TestRecordingsSetupPage::groupsAndDefaults()
@@ -360,6 +369,56 @@ void TestRecordingsSetupPage::voiceButtonSwitchIsThisComputers()
     }
     box->setChecked(true);
     QCOMPARE(AppSettings::instance().value(VoiceButton::shownSettingKey()).toString(), QStringLiteral("True"));
+    QVERIFY(access.settingsSent.isEmpty());
+}
+
+// PR 808 crash: the same disks with new free figures change only the words
+// in place; other disks reset the list's model instead of removing rows,
+// which crashed Qt's accessibility with a stale cell (see
+// tst_dsr_setup_page).
+void TestRecordingsSetupPage::coreUpdatesDoNotRebuildTheDisks()
+{
+    // Qt warns when it meets the stale cell planted below, then skips it:
+    // expected here, so that category is quiet.
+    QLoggingCategory::setFilterRules(QStringLiteral("qt.accessibility.core.warning=false"));
+    QAccessible::setActive(true);
+    const auto off = qScopeGuard([] {
+        QAccessible::setActive(false);
+        QLoggingCategory::setFilterRules(QString());
+    });
+    FakeRecordingsAccess access;
+    access.setDocument(defaultDocument());
+    RecordingsSetupPage page(&access);
+    QComboBox* combo = page.diskCombo();
+    QCOMPARE(combo->count(), 2);
+
+    const auto staleCell = [combo] {
+        QAccessibleInterface* list = QAccessible::queryAccessibleInterface(combo->view());
+        QVERIFY(list != nullptr && list->tableInterface() != nullptr);
+        QVERIFY(list->child(0) != nullptr && list->child(1) != nullptr);
+        QAccessible::deleteAccessibleInterface(QAccessible::uniqueId(list->child(0)));
+    };
+    staleCell();
+    QSignalSpy removed(combo->model(), &QAbstractItemModel::rowsRemoved);
+    QSignalSpy reset(combo->model(), &QAbstractItemModel::modelReset);
+
+    QJsonArray disks =
+        defaultDocument().value(QStringLiteral("settings")).toObject().value(QStringLiteral("disks")).toArray();
+    for (int n = 1; n <= 3; ++n) {
+        disks[0] = disk(QStringLiteral("/"), QStringLiteral("SSD"), (412 - n) * kGb, true);
+        access.setDocument(withSetting(defaultDocument(), QStringLiteral("disks"), disks));
+        QCOMPARE(combo->itemText(0), QStringLiteral("The Core's own disk (SSD, %1 GB free)").arg(412 - n));
+    }
+    QCOMPARE(reset.count(), 0);
+    QCOMPARE(removed.count(), 0);
+
+    disks.append(disk(QStringLiteral("/Volumes/NVMe"), QStringLiteral("USB disk: NVMe"), 1800 * kGb, false));
+    access.setDocument(withSetting(defaultDocument(), QStringLiteral("disks"), disks));
+    QCOMPARE(reset.count(), 1);
+    QCOMPARE(removed.count(), 0);
+    QCOMPARE(combo->count(), 3);
+    QCOMPARE(combo->currentIndex(), 0);
+    QCOMPARE(combo->itemData(2).toString(), QStringLiteral("/Volumes/NVMe"));
     QVERIFY(access.settingsSent.isEmpty());
 }
 
