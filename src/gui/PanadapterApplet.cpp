@@ -308,6 +308,43 @@ PanadapterApplet::PanadapterApplet(const QString& panId, QWidget* parent)
         .arg(QLatin1String(Style::kAmberDim)));
     zeile->addWidget(m_anzeigeEinheit);
     zeile->addStretch(1);
+    // ── Das S-Meter (2026-11-17) ─────────────────────────────────────
+    // Zwischen Frequenz und SWR, gebaut wie das SWR-Stueck: Name, Wert,
+    // Balken. Dazu klein die dBm -- die S-Stufe sagt „wie stark", die
+    // Zahl sagt es genau, und im Instrument stehen auch beide.
+    m_anzeigeSMeter = new QWidget(m_anzeigeZeile);
+    {
+        auto* sZeile = new QHBoxLayout(m_anzeigeSMeter);
+        sZeile->setContentsMargins(0, 0, 0, 0);
+        sZeile->setSpacing(8);
+        auto* sName = new QLabel(QStringLiteral("S"), m_anzeigeSMeter);
+        sName->setFont(Style::capsFont(sName->font(), Style::kFontCaption));
+        sName->setStyleSheet(QStringLiteral(
+            "QLabel { color: %1; background: transparent; }")
+            .arg(QLatin1String(Style::kAmberDim)));
+        sZeile->addWidget(sName);
+        m_anzeigeSWert = new QLabel(m_anzeigeSMeter);
+        m_anzeigeSWert->setObjectName(QStringLiteral("panReadoutSMeter"));
+        m_anzeigeSWert->setFont(Style::monoFont(m_anzeigeSWert->font(), Style::kFontReading));
+        m_anzeigeSWert->setMinimumWidth(92);   // „S9+60": gleich breit, nichts zappelt
+        sZeile->addWidget(m_anzeigeSWert);
+        m_anzeigeSBalken = new QProgressBar(m_anzeigeSMeter);
+        m_anzeigeSBalken->setRange(0, 1000);
+        m_anzeigeSBalken->setTextVisible(false);
+        m_anzeigeSBalken->setFixedSize(120, 8);
+        sZeile->addWidget(m_anzeigeSBalken);
+        m_anzeigeSDbm = new QLabel(m_anzeigeSMeter);
+        m_anzeigeSDbm->setObjectName(QStringLiteral("panReadoutSMeterDbm"));
+        m_anzeigeSDbm->setFont(Style::capsFont(m_anzeigeSDbm->font(), Style::kFontCaption));
+        m_anzeigeSDbm->setMinimumWidth(64);
+        m_anzeigeSDbm->setStyleSheet(QStringLiteral(
+            "QLabel { color: %1; background: transparent; }")
+            .arg(QLatin1String(Style::kAmberDim)));
+        sZeile->addWidget(m_anzeigeSDbm);
+    }
+    zeile->addWidget(m_anzeigeSMeter);
+    // Etwas Luft zum SWR, wenn beide stehen.
+    zeile->addSpacing(12);
     m_anzeigeSwr = new QWidget(m_anzeigeZeile);
     auto* swrZeile = new QHBoxLayout(m_anzeigeSwr);
     swrZeile->setContentsMargins(0, 0, 0, 0);
@@ -336,6 +373,7 @@ PanadapterApplet::PanadapterApplet(const QString& panId, QWidget* parent)
     swrZeile->addWidget(m_anzeigeSwrWarnung);
     zeile->addWidget(m_anzeigeSwr);
     aktualisiereAnzeigeSwr();
+    aktualisiereAnzeigeSMeter();
     m_anzeigeZeile->hide();
     layout->addWidget(m_anzeigeZeile, 0);
 
@@ -548,13 +586,21 @@ void PanadapterApplet::setSwrReadoutShown(bool on)
     aktualisiereAnzeigeZeile();
 }
 
+void PanadapterApplet::setSMeterReadoutShown(bool on)
+{
+    if (m_zeigeSMeter == on) { return; }
+    m_zeigeSMeter = on;
+    aktualisiereAnzeigeZeile();
+}
+
 void PanadapterApplet::aktualisiereAnzeigeZeile()
 {
     if (!m_anzeigeZeile) { return; }
     m_anzeigeFrequenz->setVisible(m_zeigeFrequenz);
     m_anzeigeEinheit->setVisible(m_zeigeFrequenz);
     m_anzeigeSwr->setVisible(m_zeigeSwr);
-    m_anzeigeZeile->setVisible(m_zeigeFrequenz || m_zeigeSwr);
+    if (m_anzeigeSMeter) { m_anzeigeSMeter->setVisible(m_zeigeSMeter); }
+    m_anzeigeZeile->setVisible(m_zeigeFrequenz || m_zeigeSwr || m_zeigeSMeter);
     // Der Streifen haengt sonst in die Flaeche unter dem Kopf -- das waere
     // jetzt die Zeile. Siehe repositionStatusOverlay().
     repositionStatusOverlay();
@@ -568,10 +614,51 @@ void PanadapterApplet::onReading(int bindingId, double value)
         m_vorlaufW = value;
     } else if (bindingId == MeterBinding::TxSwr) {
         m_swrWert = value;
+    } else if (bindingId == MeterBinding::SignalAvg) {
+        // Derselbe Wert, den das S-Meter-Instrument zeigt (Signal Avg).
+        m_signalDbm = value;
+        m_signalGemessen = true;
+        aktualisiereAnzeigeSMeter();
+        return;
     } else {
         return;
     }
     aktualisiereAnzeigeSwr();
+}
+
+// Bevor der erste Wert da ist, steht ein Strich -- keine Zahl, die wie
+// eine Messung aussaehe (dieselbe Regel wie beim SWR ohne Leistung).
+// Text und Balken kommen aus der einen Skala in ReadingSource: „S7",
+// „S9+20", bis S9 gleichmaessig, darueber gestaucht, und ueber der
+// S9-Grenze von 2 m um 20 dB versetzt.
+void PanadapterApplet::aktualisiereAnzeigeSMeter()
+{
+    if (!m_anzeigeSWert) { return; }
+    const ReadingDescriptor* skala = readingFor(MeterBinding::SignalAvg);
+    const bool gemessen = m_signalGemessen && skala != nullptr;
+    const QString farbe = QLatin1String(gemessen ? Style::kAmberText : Style::kAmberDim);
+    m_anzeigeSWert->setText(gemessen ? skala->text(m_signalDbm)
+                                     : QString::fromUtf8("\xe2\x80\x94"));
+    m_anzeigeSWert->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; background: transparent; }").arg(farbe));
+    m_anzeigeSDbm->setText(gemessen
+                               ? QStringLiteral("%1 dBm").arg(qRound(m_signalDbm))
+                               : QString());
+    m_anzeigeSBalken->setValue(gemessen ? qRound(skala->valueFraction(m_signalDbm) * 1000.0) : 0);
+    m_anzeigeSBalken->setStyleSheet(QStringLiteral(
+        "QProgressBar { background: %1; border: 1px solid %2; border-radius: 4px; }"
+        "QProgressBar::chunk { background: %3; border-radius: 2px; }")
+        .arg(QLatin1String(Style::kButtonBg), QLatin1String(Style::kBorder), farbe));
+}
+
+QString PanadapterApplet::sMeterReadoutTextForTest() const
+{
+    return m_anzeigeSWert ? m_anzeigeSWert->text() : QString();
+}
+
+int PanadapterApplet::sMeterReadoutBarForTest() const
+{
+    return m_anzeigeSBalken ? m_anzeigeSBalken->value() : -1;
 }
 
 // Ohne Leistung gibt es kein SWR: im Empfang steht ein Strich statt einer
@@ -886,6 +973,11 @@ QMenu* PanadapterApplet::buildDisplayMenu(QObject* parent)
     zeileSwr->setChecked(m_zeigeSwr);
     connect(zeileSwr, &QAction::toggled, this,
             [this](bool an) { setSwrReadoutShown(an); });
+    QAction* zeileSMeter = menu->addAction(tr("S-meter readout"));
+    zeileSMeter->setCheckable(true);
+    zeileSMeter->setChecked(m_zeigeSMeter);
+    connect(zeileSMeter, &QAction::toggled, this,
+            [this](bool an) { setSMeterReadoutShown(an); });
     menu->addSeparator();
 
     // Durchlass und Bandbreite (2026-11-08): die vier Entwuerfe, die der

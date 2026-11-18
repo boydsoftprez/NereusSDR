@@ -19,6 +19,7 @@
 //                 KI-gestuetzt ueber Anthropic Claude (Cowork).
 // =================================================================
 #include <QtTest>
+#include <QDir>
 #include <QMenu>
 #include <QPushButton>
 #include <QSignalSpy>
@@ -123,6 +124,93 @@ private slots:
         QCOMPARE(applet.swrReadoutTextForTest(), QStringLiteral("1.40"));
         applet.onReading(MeterBinding::TxPower, 0.0);
         QCOMPARE(applet.swrReadoutTextForTest(), strich);     // zurueck im Empfang
+    }
+
+    // ── Das S-Meter als dritte Wahl (2026-11-17) ────────────────────
+    //
+    // Betreiber: „S-Meter soll auch optional im Panadapter zu sehen
+    // sein." Derselbe Weg wie Frequenz und SWR: ein Haken im Zahnrad,
+    // ab Werk aus, und er traegt die Zeile auch allein.
+    void dasSMeterIstDieDritteWahl()
+    {
+        PanadapterApplet applet(QStringLiteral("A"));
+        applet.resize(900, 400);
+        applet.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&applet, kFensterFrist));
+        QWidget* zeile = applet.readoutRowForTest();
+        QVERIFY(zeile);
+        QVERIFY2(!applet.sMeterReadoutShown(), "ab Werk aus");
+        QVERIFY(!zeile->isVisible());
+
+        QMenu* m = applet.buildDisplayMenuForTesting();
+        QAction* sMeter = nullptr;
+        for (QAction* a : m->actions()) {
+            if (a->text() == QStringLiteral("S-meter readout")) { sMeter = a; }
+        }
+        QVERIFY2(sMeter, "der Haken steht im Zahnrad");
+        QVERIFY(sMeter->isCheckable() && !sMeter->isChecked());
+
+        sMeter->trigger();
+        QVERIFY(applet.sMeterReadoutShown());
+        QVERIFY2(zeile->isVisible(), "das S-Meter traegt die Zeile auch allein");
+        sMeter->trigger();
+        QVERIFY2(!zeile->isVisible(), "aus: Zeile weg");
+        delete m;
+    }
+
+    // Vor dem ersten Wert ein Strich; dann S-Stufe und Balken aus der
+    // EINEN Skala (ReadingSource) -- dieselbe wie im S-Meter-Instrument.
+    void dasSMeterZeigtSStufen()
+    {
+        PanadapterApplet applet(QStringLiteral("A"));
+        const QString strich = QString::fromUtf8("\xe2\x80\x94");
+        QCOMPARE(applet.sMeterReadoutTextForTest(), strich);
+        QCOMPARE(applet.sMeterReadoutBarForTest(), 0);
+
+        // S9 = -73 dBm, eine S-Stufe = 6 dB (Kurzwelle).
+        applet.onReading(MeterBinding::SignalAvg, -73.0);
+        QCOMPARE(applet.sMeterReadoutTextForTest(), QStringLiteral("S9"));
+        const int beiS9 = applet.sMeterReadoutBarForTest();
+        QVERIFY2(beiS9 > 0 && beiS9 < 1000,
+                 qPrintable(QStringLiteral("Balken bei S9: %1").arg(beiS9)));
+
+        applet.onReading(MeterBinding::SignalAvg, -103.0);
+        QCOMPARE(applet.sMeterReadoutTextForTest(), QStringLiteral("S4"));
+        QVERIFY2(applet.sMeterReadoutBarForTest() < beiS9, "schwaecher: kuerzerer Balken");
+
+        applet.onReading(MeterBinding::SignalAvg, -53.0);
+        QCOMPARE(applet.sMeterReadoutTextForTest(), QStringLiteral("S9+20"));
+        QVERIFY2(applet.sMeterReadoutBarForTest() > beiS9, "staerker: laengerer Balken");
+
+        // Andere Messgroessen ruehren es nicht an.
+        applet.onReading(MeterBinding::TxSwr, 3.0);
+        QCOMPARE(applet.sMeterReadoutTextForTest(), QStringLiteral("S9+20"));
+    }
+
+    // Ein Bild fuer den Betreiber (LONGPATH_BILD_DIR): alle drei Stuecke
+    // der Zeile nebeneinander. Gruen heisst, dass es da ist -- nicht,
+    // dass es gut aussieht.
+    void dieZeileAlsBild()
+    {
+        PanadapterApplet applet(QStringLiteral("A"));
+        applet.resize(1100, 300);
+        SliceModel slice;
+        slice.setFrequency(14074000.0);
+        applet.updateStatusOverlay(&slice, 0);
+        applet.setFrequencyReadoutShown(true);
+        applet.setSMeterReadoutShown(true);
+        applet.setSwrReadoutShown(true);
+        applet.onReading(MeterBinding::SignalAvg, -67.0);
+        applet.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&applet, kFensterFrist));
+        QWidget* zeile = applet.readoutRowForTest();
+        QVERIFY(zeile && zeile->isVisible());
+        const QByteArray ziel = qgetenv("LONGPATH_BILD_DIR");
+        if (!ziel.isEmpty()) {
+            QDir().mkpath(QString::fromLocal8Bit(ziel));
+            zeile->grab().save(QString::fromLocal8Bit(ziel)
+                               + QStringLiteral("/pan-anzeigezeile-s-meter.png"));
+        }
     }
 
     void itsEntriesActuallyFire()

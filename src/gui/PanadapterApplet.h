@@ -181,12 +181,24 @@ public:
     bool frequencyReadoutShown() const { return m_zeigeFrequenz; }
     void setSwrReadoutShown(bool on);
     bool swrReadoutShown() const { return m_zeigeSwr; }
+    // ── Das S-Meter als dritte Wahl (2026-11-17) ────────────────────
+    //
+    // Betreiber: „S-Meter soll auch optional im Panadapter zu sehen
+    // sein." Derselbe Platz und derselbe Weg wie Frequenz und SWR: ein
+    // Haken im Zahnrad, ab Werk aus, der Stand im Layoutprofil. Skala,
+    // Text („S7", „S9+20") und der 2-m-Versatz kommen aus ReadingSource
+    // (readingFor) -- dieselbe Quelle wie das S-Meter-Instrument, keine
+    // zweite Skala.
+    void setSMeterReadoutShown(bool on);
+    bool sMeterReadoutShown() const { return m_zeigeSMeter; }
     /// Aus der einen Verteilung der Messwerte (MainWindow), wie
     /// FrequencyApplet::onReading -- dieselbe Quelle, dieselbe Zahl.
     void onReading(int bindingId, double value);
     /// Die Zeile, wie sie gerade zu sehen ist; leer, wenn keine Frequenz da.
     QString frequencyReadoutTextForTest() const;
     QString swrReadoutTextForTest() const;
+    QString sMeterReadoutTextForTest() const;
+    int sMeterReadoutBarForTest() const;
     QWidget* readoutRowForTest() const { return m_anzeigeZeile; }
 
     /// Dasselbe fuer das Zahnrad-Menue: eine Pruefung soll die
@@ -279,6 +291,7 @@ private:
     void aktualisiereAnzeigeZeile();
     void zeigeAnzeigeFrequenz(double hz);
     void aktualisiereAnzeigeSwr();
+    void aktualisiereAnzeigeSMeter();
 
     QString                 m_panId;
     SpectrumWidget*         m_spectrum {nullptr};
@@ -294,6 +307,14 @@ private:
     QProgressBar*           m_anzeigeSwrBalken {nullptr};
     double                  m_vorlaufW {0.0};
     double                  m_swrWert {1.0};
+    // Das S-Meter in der Anzeigezeile, siehe setSMeterReadoutShown().
+    bool                    m_zeigeSMeter {false};
+    QWidget*                m_anzeigeSMeter {nullptr};
+    QLabel*                 m_anzeigeSWert {nullptr};
+    QLabel*                 m_anzeigeSDbm {nullptr};
+    QProgressBar*           m_anzeigeSBalken {nullptr};
+    double                  m_signalDbm {0.0};
+    bool                    m_signalGemessen {false};
     QMetaObject::Connection m_anzeigeVerbindung;
     QLabel*                 m_titleLabel {nullptr};
     QLabel*                 m_grip {nullptr};

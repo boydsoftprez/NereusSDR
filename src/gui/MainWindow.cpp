@@ -10522,7 +10522,8 @@ void MainWindow::populateDefaultMeter()
                         if (!pan) { continue; }
                         zeilen.insert(pan->panId(),
                                       QVariantMap{{QStringLiteral("frequency"), pan->frequencyReadoutShown()},
-                                                  {QStringLiteral("swr"), pan->swrReadoutShown()}});
+                                                  {QStringLiteral("swr"), pan->swrReadoutShown()},
+                                                  {QStringLiteral("smeter"), pan->sMeterReadoutShown()}});
                     }
                     s.insert(QStringLiteral("panReadouts"), zeilen);
                 }
@@ -11451,6 +11452,7 @@ void MainWindow::populateDefaultMeter()
                         const QVariantMap z = zeilen.value(pan->panId()).toMap();
                         pan->setFrequencyReadoutShown(z.value(QStringLiteral("frequency")).toBool());
                         pan->setSwrReadoutShown(z.value(QStringLiteral("swr")).toBool());
+                        pan->setSMeterReadoutShown(z.value(QStringLiteral("smeter")).toBool());
                     }
                 }
 
