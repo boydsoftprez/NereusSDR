@@ -14,6 +14,9 @@
 // 2026-11-17: PR 808 design calls, upright on an iPad the Recordings
 //   panel's switch dims with why. J.J. Boyd (KG4VCF), AI-assisted via
 //   Claude Code.
+// 2026-11-18: PR 808, the Disk menu held to the row's width so a disk shown
+//   by a long path no longer widens the page; the title drawn inline, where
+//   it wraps. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusMirror
@@ -333,7 +336,7 @@ struct RecordingSettingsPage: View {
                 RecordingsAppletSwitch(settings: phone)
             }
         }
-        .setupPageTitle(Self.title)
+        .setupPageTitle(Self.title, wraps: true)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 SetupTagBadge(tag: .core)
@@ -480,6 +483,7 @@ struct RecordingSettingsPage: View {
             }
             .accessibilityLabel("Disk")
             .accessibilityValue(model.diskShortText)
+            .setupBoundedValue()
         }
         .accessibilityIdentifier("recordingSettings.disk")
     }

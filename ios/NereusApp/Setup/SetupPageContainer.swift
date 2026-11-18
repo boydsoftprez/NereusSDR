@@ -284,6 +284,32 @@ struct SetupValueRowLayout<Label: View, Value: View>: View {
     }
 }
 
+/// Holds a value row's menu to the room the row has. A menu on iOS sizes
+/// itself to its label's whole text, so a long disk path (a disk with no
+/// name, shown by its path) made the menu, then the row, then the whole
+/// Setup page wider than the screen, cutting every line at both edges.
+/// The frame takes exactly the room the row offers, the menu's text is
+/// cut short inside it, and the value still sits where it did: at the
+/// trailing edge beside its label, at the leading edge under it at the
+/// accessibility text sizes.
+struct SetupBoundedValue: ViewModifier {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    func body(content: Content) -> some View {
+        let stacked = SetupValueRowLayout<EmptyView, EmptyView>.stacks(dynamicTypeSize)
+        content
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: stacked ? .leading : .trailing)
+            .layoutPriority(1)
+    }
+}
+
+extension View {
+    /// See ``SetupBoundedValue``.
+    func setupBoundedValue() -> some View {
+        modifier(SetupBoundedValue())
+    }
+}
+
 /// Where a value row's label and value were laid out, for the tests'
 /// large-type checks; nil (the default) records nothing.
 @MainActor

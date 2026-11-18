@@ -128,6 +128,56 @@ struct RecordingsPagesShotTests {
         }
     }
 
+    /// The text sizes JJ's phone showed Recording settings cut off at both
+    /// edges with (PR 808): one step larger, the largest before the
+    /// accessibility sizes, and three accessibility sizes, on a big phone
+    /// upright (393 points, an iPhone 18 Pro), a small one upright and a big
+    /// one sideways. Every row's words must lie inside the screen.
+    nonisolated static let largeTypes: [DynamicTypeSize] = [.xLarge, .xxxLarge, .accessibility1, .accessibility2, .accessibility3]
+    nonisolated static let largeTypeScreens: [(name: String, width: CGFloat, sideways: Bool)] = [
+        ("big-upright", 393, false), ("small-upright", 375, false), ("big-sideways", 852, true)]
+    nonisolated static let settingsRowIds = [
+        "recordingSettings.hear", "recordingSettings.myVoice", "recordingSettings.together",
+        "recordingSettings.apart", "recordingSettings.autoStart", "recordingSettings.autoStop",
+        "recordingSettings.quiet", "recordingSettings.mp3", "recordingSettings.wav", "recordingSettings.nameExample",
+        "recordingSettings.disk", "recordingSettings.recordings", "recordingSettings.onAirUseTxEq",
+        "recordingSettings.onAirUsePhaseRotator"]
+
+    @Test(arguments: largeTypes)
+    func settingsAtLargerText(_ type: DynamicTypeSize) async throws {
+        // SwiftUI builds its accessibility elements, whose frames are
+        // checked, only with application accessibility on (SetupTypedEntryTests).
+        let wasOn = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer {
+            SetupTypedEntryTests.setApplicationAccessibility(wasOn)
+        }
+        // A disk the Core names by a long path alone, as a USB stick mounted by its id is.
+        var longPath = Self.document()
+        if var settings = longPath["settings"] as? [String: Any] {
+            settings["disk"] = Self.longDiskRoot
+            settings["disks"] = [["root": Self.longDiskRoot, "name": "", "free": 812_000_000_000,
+                                  "total": 1_000_000_000_000, "sd": false, "own": false]]
+            longPath["settings"] = settings
+        }
+        for screen in Self.largeTypeScreens {
+            for (disk, document) in [("named-disk", Self.document()), ("long-disk-path", longPath)] {
+                let rig = await Flag.rig(version: 3, connected: true)
+                Flag.publish(rig, document, revision: 1)
+                let settings = RecordingSettingsModel(client: rig.client)
+                try await shoot("setup-recording-settings-type-\(type)-\(screen.name)-\(disk)", height: 3200,
+                                width: screen.width,
+                                type: type, sideways: screen.sideways, tab: .setup, inside: Self.settingsRowIds) {
+                    NavigationStack {
+                        RecordingSettingsPage(model: settings)
+                    }
+                }
+            }
+        }
+    }
+
+    nonisolated static let longDiskRoot = "/media/nereus/3f0c9a2e-7b1d-4c55-9e7a-2b8d6f4a1c90"
+
     /// The page under the Tools tab's bar, as ToolsTab draws it.
     private static func page(_ model: RecordingsListModel) -> some View {
         VStack(spacing: 0) {
@@ -141,7 +191,7 @@ struct RecordingsPagesShotTests {
     /// One page over the tab bar on an upright phone, written with `NEREUS_MAIN_SHOTS` set.
     private func shoot<Content: View>(_ name: String, height: CGFloat = 874, width: CGFloat = 402,
                                       scheme: ColorScheme = .dark, type: DynamicTypeSize = .large,
-                                      sideways: Bool = false, tab: AppTab = .tools,
+                                      sideways: Bool = false, tab: AppTab = .tools, inside ids: [String] = [],
                                       @ViewBuilder content: () -> Content) async throws {
         let size = CGSize(width: width, height: height)
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
@@ -173,6 +223,16 @@ struct RecordingsPagesShotTests {
             let url = URL(fileURLWithPath: directory).appendingPathComponent("\(name).png")
             try? data.write(to: url)
             print("Wrote \(url.path)")
+        }
+        // Each named row lies inside the screen's width, cut at neither edge.
+        for id in ids {
+            guard let element = IPadShotTests.element(id, in: window) else {
+                Issue.record("\(name): no \(id)")
+                continue
+            }
+            let frame = element.accessibilityFrame
+            #expect(frame.minX >= 0 && frame.maxX <= width + 0.5,
+                    "\(name): \(id) runs from \(frame.minX) to \(frame.maxX) on a screen \(width) wide")
         }
     }
 }
