@@ -11,9 +11,6 @@
 //   each disk's free space. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-17: Screen walk for PR 808, the page's title is drawn inline, where
 //   it wraps, not cut short. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
-// 2026-11-18: PR 808, the Disk menu held to the row's width so a disk shown
-//   by a long path no longer widens the page. J.J. Boyd (KG4VCF),
-//   AI-assisted via Claude Code.
 
 import Foundation
 import NereusMirror
@@ -442,7 +439,6 @@ struct DsrSetupPage: View {
             }
             .accessibilityLabel("Disk")
             .accessibilityValue(model.diskShortText)
-            .setupBoundedValue()
         }
         // As SetupMenuRow greys a row that cannot change.
         .setupGreyed(model.reason != nil)
