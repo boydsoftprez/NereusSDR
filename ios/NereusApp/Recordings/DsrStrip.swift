@@ -34,6 +34,10 @@
 //   and folded tag on the pan (DsrFlagPastChip); the PAST tag on the
 //   spectrum shows only where no flag does. J.J. Boyd (KG4VCF), AI-assisted
 //   via Claude Code.
+// 2026-11-17: PR 808 final overlaps: the play label's room
+//   (playLabelRoom), which the folded tags keep off; a full flag over it
+//   moves the label below the flag. J.J. Boyd (KG4VCF), AI-assisted via
+//   Claude Code.
 
 import CoreGraphics
 import NereusBand
@@ -539,6 +543,35 @@ struct DsrClockGlyph: View {
 /// past spectrum is the band's own trace, drawn by its renderer
 /// (``DsrPanModel/pastTrace``, PR 808).
 struct DsrPictureLayer: View {
+    /// The play label's offset inside the play line's frame.
+    static let playLabelInset = CGSize(width: 4, height: 3)
+    /// The room the play label ("▶ hh:mm:ss  Slice X", 10.5-point
+    /// monospaced at a fixed size, about 128 points) takes, with a little
+    /// over: what the folded tags keep off (PR 808 final overlaps).
+    static let playLabelSize = CGSize(width: 140, height: 17)
+
+    /// The gap kept between the play label and a flag it drops below.
+    static let playLabelGap: CGFloat = 3
+
+    /// Where the play label sits on a waterfall at `waterfall`, as
+    /// ``playLine`` draws it: at the waterfall's top, or below any flag or
+    /// folded tag in `below` that would cover it (a full flag taller than
+    /// a sideways spectrum hangs over the waterfall's top).
+    static func playLabelRoom(waterfall: CGRect, below: [CGRect] = []) -> CGRect {
+        var room = CGRect(x: waterfall.minX + playLabelInset.width, y: waterfall.minY + 1 + playLabelInset.height,
+                          width: playLabelSize.width, height: playLabelSize.height)
+        var moved = true
+        while moved {
+            moved = false
+            for rect in below where rect.minX < room.maxX && room.minX < rect.maxX
+                && rect.minY < room.maxY && room.minY < rect.maxY {
+                room.origin.y = rect.maxY + playLabelGap
+                moved = true
+            }
+        }
+        return room
+    }
+
     let model: DsrPanModel
     @ObservedObject var band: BandModel
     let layout: BandLayout
@@ -549,6 +582,8 @@ struct DsrPictureLayer: View {
     /// A flag or folded tag on this pan shows PAST (``DsrFlagPastChip``),
     /// so the PAST tag on the spectrum stays away (PR 808).
     var pastOnFlag = false
+    /// The flags and folded tags, which the play label drops below (PR 808 final overlaps).
+    var flags: [CGRect] = []
     /// What the PAST tag keeps clear of: the flags with their round
     /// buttons, folded tags, the button column and
     /// the edge markers (PR 808 screen walk). With no flag on the pan it
@@ -697,6 +732,10 @@ struct DsrPictureLayer: View {
 
     private var playLine: some View {
         let moment = model.playedMoment ?? model.top
+        let lineTop = layout.waterfall.minY + 1
+        let room = Self.playLabelRoom(waterfall: CGRect(x: place.picture.minX, y: layout.waterfall.minY,
+                                                        width: place.picture.width, height: layout.waterfall.height),
+                                      below: flags)
         return ZStack(alignment: .topLeading) {
             Rectangle()
                 .fill(Color.white.opacity(0.85))
@@ -707,9 +746,9 @@ struct DsrPictureLayer: View {
                 .padding(.horizontal, 4)
                 .padding(.vertical, 1)
                 .background(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).fill(Color.black.opacity(0.6)))
-                .offset(x: 4, y: 3)
+                .offset(x: Self.playLabelInset.width, y: room.minY - lineTop)
         }
-        .offset(x: place.picture.minX, y: layout.waterfall.minY + 1)
+        .offset(x: place.picture.minX, y: lineTop)
     }
 }
 

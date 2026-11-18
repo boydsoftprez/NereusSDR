@@ -42,6 +42,9 @@
 //   Roundtable's tags keep off other devices' slice labels; a sideways
 //   flag panel with no room above PTT takes the whole band.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: PR 808 final overlaps: a folded tag keeps off the frequency
+//   scale and, in the past, the play label; the play label drops below a
+//   flag over it. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import NereusBand
@@ -279,6 +282,13 @@ struct BandGestureLayer: View {
         let olderRade = Set(entries.filter { $0.rade?.wraps == true }.map(\.id))
         // In the past each folded tag ends with PAST (PR 808).
         let pastShows = dsr?.inPast == true
+        // A folded tag never sits on the frequency scale's numbers, nor on
+        // the play label ("▶ time Slice A") at the waterfall's top while it
+        // shows: one that would drops below them (PR 808 final overlaps).
+        let scaleRow = CGRect(x: 0, y: layout.frequencyScale.minY, width: layout.size.width,
+                              height: layout.frequencyScale.height)
+        let tagKeepOut = [scaleRow]
+            + (pastShows && dsr?.followsSound == true ? [DsrPictureLayer.playLabelRoom(waterfall: layout.waterfall)] : [])
         func place(top: CGFloat) -> [FlagPlacement] {
             FlagLayout.layout(slices: entries.map(\.slice), activeSliceId: slices.activeSliceId,
                               geometry: geometry,
@@ -296,7 +306,7 @@ struct BandGestureLayer: View {
                                   }
                                   return measured[slice.id] ?? fixed
                               },
-                              sideColumn: column, top: top)
+                              sideColumn: column, top: top, keepOut: tagKeepOut)
         }
         // While another slice's band shows, the flags start under Back to
         // your band; sideways, where the band is short, they stay at the top
@@ -391,6 +401,7 @@ struct BandGestureLayer: View {
                                 // Every flag and folded tag shows PAST; the tag only where none does.
                                 // (A slice placed off the band's edge shows no flag.)
                                 pastOnFlag: placements.contains { $0.rect.intersects(CGRect(origin: .zero, size: layout.size)) },
+                                flags: flagAndTagRects,
                                 avoid: flagAndTagRects + markerRects + edgeRects
                                     + (buttonColumnFolded.map { [BandColumnLayout.frame(bandHeight: layout.size.height,
                                                                                          leadingInset: leadingInset,

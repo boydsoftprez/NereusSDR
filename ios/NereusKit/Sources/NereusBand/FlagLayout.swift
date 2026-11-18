@@ -102,12 +102,15 @@ public enum FlagLayout {
     /// keeps `flagSize`'s width. `sideColumn` is the round buttons' column
     /// beside each full flag, part of the flag's footprint. `top` is where
     /// the flags start: below the Back to your band bar while the band
-    /// shows another slice's display.
+    /// shows another slice's display. `keepOut` is what a folded tag never
+    /// sits on (the frequency scale, the recorder's play label): a tag that
+    /// would land on one drops below it, as below a flag (PR 808).
     public static func layout(slices: [BandSlice], activeSliceId: Int?, geometry: BandGeometry,
                               flagSize: CGSize = FlagLayout.flagSize,
                               foldedSize: (BandSlice) -> CGSize = { FlagLayout.foldedSize(frequencyText: $0.frequencyText) },
                               flagHeight: (BandSlice) -> CGFloat = { _ in FlagLayout.flagSize.height },
-                              sideColumn: CGSize = FlagLayout.sideColumnSize(), top: CGFloat = 0)
+                              sideColumn: CGSize = FlagLayout.sideColumnSize(), top: CGFloat = 0,
+                              keepOut: [CGRect] = [])
         -> [FlagPlacement] {
         let width = Double(geometry.size.width)
         // The active slice first, then the others in slice order.
@@ -142,7 +145,7 @@ public enum FlagLayout {
             var moved = true
             while moved {
                 moved = false
-                for other in placed where overlaps(other, rect) {
+                for other in placed + keepOut where overlaps(other, rect) {
                     rect.origin.y = other.maxY + stackGap
                     moved = true
                 }

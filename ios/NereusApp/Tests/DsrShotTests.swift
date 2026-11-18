@@ -147,6 +147,43 @@ struct DsrShotTests {
         }
     }
 
+    /// A folded tag keeps off the frequency scale's numbers and, in the past,
+    /// off the play label (PR 808 final overlaps): two slices, folded close
+    /// together and apart, live and in the past, at every walk shape, as
+    /// `dsr-phone-tags-<case>-<live|past>-<shape>.png`.
+    @Test(arguments: [FlagCase.folded, .twoSlices], WalkShape.all)
+    func tagsKeepOffTheScale(_ flagCase: FlagCase, _ shape: WalkShape) async throws {
+        for past in [false, true] {
+            try await shootPan(past ? .past : .live, size: shape.pan, type: shape.type,
+                               name: "dsr-phone-tags-\(flagCase.rawValue)-\(past ? "past" : "live")-\(shape)",
+                               slices: flagCase.slices) { model, _, _, _ in
+                #expect(model.inPast == past)
+            }
+        }
+    }
+
+    /// A saved whole-pan stretch open (the Core's `dsr.stretch`, as a saved
+    /// recording plays): the chip on the flag and the folded tag reads SAVED,
+    /// not PAST (PR 808 final overlaps), as
+    /// `dsr-phone-saved-on-folded-<shape>.png`. SAVE's own bracket, still
+    /// being chosen, is not a saved stretch, so it keeps PAST.
+    @Test func savedOnTheFlag() async throws {
+        let shape = WalkShape(small: true, sideways: false, larger: false)
+        try await shootPan(.past, size: shape.pan, type: shape.type, name: "dsr-phone-saved-on-folded-\(shape)",
+                           slices: FlagCase.folded.slices) { model, _, _, rig in
+            let moment = model.playedMoment ?? model.top
+            let entry: [String: Any] = ["slice": 0, "utcNs": Int64((moment * 1e9).rounded()), "frequencyHz": 7_240_500,
+                                        "liveFrequencyHz": 7_236_400]
+            var dsr = DsrTests.dsrPart(rewound: [entry])
+            dsr["stretch"] = ["id": "r-1", "fromUtcNs": Int64(((moment - 60) * 1e9).rounded()),
+                              "toUtcNs": Int64(((moment + 60) * 1e9).rounded())]
+            RecordingFlagTests.publish(rig, DsrTests.document(dsr: dsr), revision: 3)
+            model.documentChanged()
+            #expect(await ShotWait.until { model.client.dsr?.stretch != nil })
+            #expect(model.inPast)
+        }
+    }
+
     /// The band's view holds while in the past (PR 808 part 2, JJ's video:
     /// the scale jumped 5 kHz as the rewind retuned the slice): a new
     /// context centre and a retuned slice leave it where it was; live, it

@@ -39,6 +39,24 @@ import Testing
         #expect(placements[1].rect.height == FlagLayout.foldedHeight)
     }
 
+    /// PR 808 final overlaps: a folded tag that would land on the frequency
+    /// scale (or the recorder's play label) drops below it; the full flag
+    /// stays where it was, and a keep-out the tag misses moves nothing.
+    @Test func aFoldedTagDropsBelowWhatItKeepsOff() {
+        let slices = [Self.slice(0, 7_236_000), Self.slice(1, 7_238_000)]
+        let geometry = Self.geometry(width: Self.phoneWidth, centerHz: 7_237_000, spanHz: 10_000)
+        let plain = FlagLayout.layout(slices: slices, activeSliceId: 0, geometry: geometry)
+        let scale = CGRect(x: 0, y: FlagLayout.flagSize.height + 10, width: Self.phoneWidth, height: 18)
+        let label = CGRect(x: 0, y: scale.maxY + 1, width: Self.phoneWidth, height: 17)
+        let kept = FlagLayout.layout(slices: slices, activeSliceId: 0, geometry: geometry, keepOut: [scale, label])
+        #expect(kept[0] == plain[0])
+        #expect(kept[1].isFolded)
+        #expect(kept[1].rect.minY == label.maxY + FlagLayout.stackGap)
+        #expect(!kept[1].rect.intersects(scale) && !kept[1].rect.intersects(label))
+        let below = CGRect(x: 0, y: 260, width: Self.phoneWidth, height: 18)
+        #expect(FlagLayout.layout(slices: slices, activeSliceId: 0, geometry: geometry, keepOut: [below]) == plain)
+    }
+
     @Test func twoSlicesThatFoldOnAPhoneStayFullOnAnIPad() {
         // 2.5 kHz on a 10 kHz span: 97 points on the phone, 298 on the
         // iPad, past the flag and its button column (246).
