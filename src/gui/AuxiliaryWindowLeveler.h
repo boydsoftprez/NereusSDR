@@ -49,6 +49,33 @@
 // dort leer): unter Windows/X11 liegen Werkzeugfenster nicht auf einer
 // hoeheren Ebene, dort war nie etwas verdeckt.
 //
+// ── Heruntergestuft heisst nicht: hinter das eigene Fenster (2026-11-18) ─
+//
+// Betreiber, mit Bild: „sobald ich auf claude zum beispiel klicke
+// verschwinden alle fenster vom longpath! das darf nicht sein."
+//
+// Meine Behebung vom 2026-11-15 war die halbe. Die Paletten verstecken
+// sich seither nicht mehr -- aber beim Herunterstufen auf die normale
+// Ebene ordnet AppKit sie neu ein, und die meisten landen HINTER dem
+// eigenen Hauptfenster. An seiner laufenden App gemessen, waehrend
+// Claude vorne war (Fensterdienst, von vorne nach hinten):
+//
+//     Claude
+//     FT8 Decoder
+//     Longpath-Hauptfenster
+//     FT8 Slots            <- dahinter
+//     Panadapter           <- dahinter
+//     TX                   <- dahinter
+//
+// Am 15.11. hatte ich nur `kCGWindowIsOnscreen` gelesen -- das sagt, ob
+// ein Fenster in der Liste steht, nicht, ob man es sieht.
+//
+// Jetzt ordnet der Filter jedes gestufte Fenster nach dem Herunterstufen
+// unmittelbar UEBER das Fenster ein, aus dem heraus es aufgegangen ist
+// (`ordneUeber`, MacFloatingWindowBehavior). Das aktiviert nichts und
+// holt nichts vor fremde Programme: die Panels liegen danach genau wie
+// das Hauptfenster hinter der aktiven App -- nur eben vor ihm.
+//
 // =================================================================
 // Modification history (Longpath):
 //   2026-09-21 -- Created for Longpath by Martin Fischer (OE5SOS),
@@ -56,6 +83,8 @@
 // =================================================================
 
 #pragma once
+
+#include <functional>
 
 #include <QList>
 #include <QObject>
@@ -89,6 +118,16 @@ public:
 
     bool eventFilter(QObject* watched, QEvent* event) override;
 
+    /// Der Wechsel selbst: Ebenen setzen und, wenn Longpath NICHT mehr
+    /// die aktive App ist, jedes gestufte Fenster ueber sein
+    /// Elternfenster einordnen. Oeffentlich, damit ein Pruefstand ihn
+    /// ohne echten Programmwechsel fahren kann.
+    void wechsel(bool aktiv);
+
+    /// Wer einordnet. Vorgabe: `ordneUeber` (Cocoa; sonst ein No-Op). Ein
+    /// Pruefstand haengt hier eine Attrappe ein und liest die Reihenfolge.
+    void setOrdner(std::function<void(QWidget* fenster, QWidget* anker)> ordner);
+
     // Fuer Tests: was der Filter gerade gehoben hat.
     QSet<QWidget*> trackedForTest() const { return m_tracked; }
     // Fuer Tests: die Fenster, zuletzt benutztes zuerst.
@@ -108,6 +147,10 @@ private:
     QList<QPointer<QWidget>> m_recent;
     void touch(QWidget* top);
     void restoreRecentOrder();
+    /// Jedes gestufte, sichtbare Fenster ueber sein Elternfenster --
+    /// das zuletzt benutzte zuoberst.
+    void ordneUeberDieEltern();
+    std::function<void(QWidget*, QWidget*)> m_ordner;
 };
 
 } // namespace Longpath

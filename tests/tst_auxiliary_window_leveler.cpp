@@ -18,6 +18,7 @@
 #include <QDialog>
 #include <QMessageBox>
 #include <QMenu>
+#include <QPair>
 
 #include "gui/AuxiliaryWindowLeveler.h"
 #include "FensterFrist.h"
@@ -132,6 +133,78 @@ private slots:
         QWidget child(&main);
         child.show();
         QVERIFY(!AuxiliaryWindowLeveler::wirdGestuft(&child));
+
+        qApp->removeEventFilter(&leveler);
+    }
+
+    // ── Heruntergestuft heisst nicht: hinter das eigene Fenster ─────
+    //
+    // Betreiber 2026-11-18, mit Bild: „sobald ich auf claude zum
+    // beispiel klicke verschwinden alle fenster vom longpath!" An seiner
+    // laufenden App gemessen: drei von vier Panels lagen hinter dem
+    // Hauptfenster, sobald Longpath nicht mehr die aktive App war.
+    //
+    // Die Fensterebene selbst ist Cocoa-Sache; hier haengt eine Attrappe
+    // an der Stelle, die einordnet, und der Lauf liest, WER ueber WEN
+    // gelegt wird und in welcher Folge.
+    void beimVerlassenKommenDiePanelsUeberIhrHauptfenster()
+    {
+        AuxiliaryWindowLeveler leveler;
+        qApp->installEventFilter(&leveler);
+        QList<QPair<QWidget*, QWidget*>> rufe;
+        leveler.setOrdner([&rufe](QWidget* fenster, QWidget* anker) {
+            rufe.append(qMakePair(fenster, anker));
+        });
+
+        QWidget main;
+        main.resize(600, 400);
+        main.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&main, kFensterFrist));
+
+        QWidget pan(&main, Qt::Tool);
+        QWidget tx(&main, Qt::Tool);
+        QDialog logbuch(&main);
+        QWidget versteckt(&main, Qt::Tool);
+        for (QWidget* w : {&pan, &tx, static_cast<QWidget*>(&logbuch)}) {
+            w->resize(200, 120);
+            w->show();
+            QVERIFY(QTest::qWaitForWindowExposed(w, kFensterFrist));
+        }
+        versteckt.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&versteckt, kFensterFrist));
+        versteckt.hide();
+
+        // Der Betreiber fasst zuletzt den Panadapter an.
+        QTest::mouseClick(&tx, Qt::LeftButton);
+        QTest::mouseClick(&pan, Qt::LeftButton);
+
+        // Zurueck in die App: da wird nichts unter das Hauptfenster
+        // sortiert -- die Paletten liegen ohnehin eine Ebene hoeher.
+        leveler.wechsel(true);
+        QVERIFY2(rufe.isEmpty(), "beim Zurueckkommen wurde eingeordnet");
+
+        // Weg aus der App.
+        leveler.wechsel(false);
+        QVERIFY2(!rufe.isEmpty(),
+                 "beim Verlassen der App wurde KEIN Panel ueber das "
+                 "Hauptfenster gelegt -- sie rutschen dahinter");
+
+        QList<QWidget*> geordnet;
+        for (const auto& r : std::as_const(rufe)) {
+            QCOMPARE(r.second, &main);              // immer ueber das Hauptfenster
+            geordnet << r.first;
+        }
+        // Jedes sichtbare gestufte Fenster genau einmal -- Paletten UND
+        // das gewoehnliche Nebenfenster --, das verborgene nicht.
+        QCOMPARE(geordnet.count(&pan), 1);
+        QCOMPARE(geordnet.count(&tx), 1);
+        QCOMPARE(geordnet.count(static_cast<QWidget*>(&logbuch)), 1);
+        QVERIFY(!geordnet.contains(&versteckt));
+        QVERIFY(!geordnet.contains(&main));
+        // Das zuletzt benutzte zuerst: jedes weitere schiebt sich
+        // darunter, also bleibt es zuoberst.
+        QCOMPARE(geordnet.first(), &pan);
+        QVERIFY(geordnet.indexOf(&pan) < geordnet.indexOf(&tx));
 
         qApp->removeEventFilter(&leveler);
     }

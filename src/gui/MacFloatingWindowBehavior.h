@@ -67,6 +67,15 @@ class QWidget;
 namespace Longpath {
 void enableFullScreenAuxiliaryBehavior(QWidget* window);
 void setPaletteWindowLevel(QWidget* window, bool floating);
+/// `fenster` in seiner Fensterebene unmittelbar UEBER `anker` einordnen,
+/// ohne es zu aktivieren und ohne das Programm nach vorne zu holen
+/// (`orderWindow:NSWindowAbove relativeTo:`).
+///
+/// Gebraucht, wenn Longpath nicht die aktive App ist (2026-11-18): die
+/// Paletten werden dann auf die normale Ebene heruntergestuft -- und
+/// rutschten dabei HINTER das eigene Hauptfenster. Siehe
+/// AuxiliaryWindowLeveler.h.
+void ordneUeber(QWidget* fenster, QWidget* anker);
 // Holt das ganze Programm nach vorne (2026-11-08, fuer den zweiten Start:
 // SingleInstanceGuard). activateWindow() allein macht unter macOS nur das
 // Fenster zum Schluesselfenster eines schon aktiven Programms.
@@ -83,6 +92,7 @@ bool anyMouseButtonDown();
 namespace Longpath {
 inline void enableFullScreenAuxiliaryBehavior(QWidget*) {}
 inline void setPaletteWindowLevel(QWidget*, bool) {}
+inline void ordneUeber(QWidget*, QWidget*) {}
 inline void activateThisApplication() {}
 inline bool anyMouseButtonDown()
 { return QGuiApplication::mouseButtons() != Qt::NoButton; }

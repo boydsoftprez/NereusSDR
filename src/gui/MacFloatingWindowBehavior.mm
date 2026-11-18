@@ -122,6 +122,30 @@ void setPaletteWindowLevel(QWidget* widget, bool floating)
     }
 }
 
+void ordneUeber(QWidget* fenster, QWidget* anker)
+{
+    if (!fenster || !anker || fenster == anker) { return; }
+    // Dieselbe Offscreen-Falle wie oben: kein Cocoa, kein NSView.
+    if (QGuiApplication::platformName() != QLatin1String("cocoa")) { return; }
+    QWindow* qf = fenster->windowHandle();
+    QWindow* qa = anker->windowHandle();
+    // Kein winId() hier: ein Fenster, das noch kein natives hat, ist
+    // auch nicht zu sehen -- es gibt nichts einzuordnen, und winId()
+    // wuerde eines erzwingen.
+    if (!qf || !qa) { return; }
+    NSView* vf = (__bridge NSView*)reinterpret_cast<void*>(qf->winId());
+    NSView* va = (__bridge NSView*)reinterpret_cast<void*>(qa->winId());
+    if (!vf || !va) { return; }
+    NSWindow* nf = vf.window;
+    NSWindow* na = va.window;
+    if (!nf || !na || !nf.isVisible) { return; }
+    // Unmittelbar ueber den Anker, in derselben Ebene. Aktiviert nichts
+    // und holt nichts vor fremde Programme: liegt der Anker hinter dem
+    // Fenster einer anderen App, liegt das Panel danach ebenfalls
+    // dahinter -- nur eben VOR dem eigenen Hauptfenster.
+    [nf orderWindow:NSWindowAbove relativeTo:na.windowNumber];
+}
+
 void activateThisApplication()
 {
     [NSApp activateIgnoringOtherApps:YES];

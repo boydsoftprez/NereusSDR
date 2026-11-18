@@ -104,16 +104,68 @@ void AuxiliaryWindowLeveler::applyLevel(QWidget* w) const
 
 void AuxiliaryWindowLeveler::onApplicationStateChanged()
 {
+    wechsel(qApp->applicationState() == Qt::ApplicationActive);
+}
+
+void AuxiliaryWindowLeveler::setOrdner(std::function<void(QWidget*, QWidget*)> ordner)
+{
+    m_ordner = std::move(ordner);
+}
+
+void AuxiliaryWindowLeveler::wechsel(bool aktiv)
+{
     for (QWidget* w : m_tracked) {
-        if (w->isVisible()) { applyLevel(w); }
+        if (w->isVisible()) { setPaletteWindowLevel(w, aktiv); }
     }
     // Zurueck in der App: macOS zeigt die Paletten wieder und legt sie
     // dabei alle VOR das Fenster, das der Betreiber zuletzt vorne hatte
     // (Test 2026-09-26: nach Finder -> Longpath lagen Rotor/Log und
     // Panadapter wieder vor dem Logbuch). Einen Takt spaeter, wenn AppKit
     // fertig sortiert hat, die zuletzt gesehene Reihenfolge herstellen.
-    if (qApp->applicationState() == Qt::ApplicationActive) {
+    if (aktiv) {
         QTimer::singleShot(50, this, [this]() { restoreRecentOrder(); });
+        return;
+    }
+
+    // ── Nicht mehr die aktive App (2026-11-18) ───────────────────────
+    //
+    // Heruntergestuft ordnet AppKit die Paletten neu ein, und die
+    // meisten landen hinter dem eigenen Hauptfenster (Messung im Kopf).
+    // Also gleich und noch einmal einen Takt spaeter ueber ihr
+    // Elternfenster: AppKit sortiert beim Programmwechsel selbst noch
+    // um, und der zweite Durchgang gilt dem Stand danach.
+    ordneUeberDieEltern();
+    QTimer::singleShot(60, this, [this]() {
+        if (qApp->applicationState() != Qt::ApplicationActive) {
+            ordneUeberDieEltern();
+        }
+    });
+}
+
+void AuxiliaryWindowLeveler::ordneUeberDieEltern()
+{
+    const auto ordne = [this](QWidget* fenster) {
+        if (!fenster || !fenster->isVisible() || fenster->isMinimized()) { return; }
+        QWidget* eltern = fenster->parentWidget();
+        QWidget* anker = eltern ? eltern->window() : nullptr;
+        if (!anker || anker == fenster || !anker->isVisible()) { return; }
+        if (m_ordner) { m_ordner(fenster, anker); }
+        else          { ordneUeber(fenster, anker); }
+    };
+
+    // `ordneUeber` setzt ein Fenster UNMITTELBAR ueber seinen Anker --
+    // was danach kommt, schiebt sich also darunter. Darum das zuletzt
+    // benutzte zuerst: es bleibt zuoberst.
+    QSet<QWidget*> erledigt;
+    for (const QPointer<QWidget>& p : m_recent) {
+        QWidget* w = p.data();
+        if (!w || !m_tracked.contains(w)) { continue; }
+        ordne(w);
+        erledigt.insert(w);
+    }
+    // Und was noch nie angefasst wurde (gleich nach dem Start).
+    for (QWidget* w : m_tracked) {
+        if (!erledigt.contains(w)) { ordne(w); }
     }
 }
 
