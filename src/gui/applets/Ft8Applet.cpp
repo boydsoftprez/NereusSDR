@@ -1801,7 +1801,11 @@ bool Ft8Applet::sucheFreieStelle(bool nurWennBelegt)
     if (!m_tonFeld) { return false; }
     const QVector<int> belegt = belegteToene();
     const int von  = tonUntergrenze();
-    const int bis  = kSendeTonMaxHz;
+    // Die SUCHE geht nicht an den oberen Rand (2026-11-18): dort ist
+    // es frei, weil dort kaum jemand hoert. Von Hand darf der
+    // Betreiber weiter bis kSendeTonMaxHz stellen.
+    const int bis  = std::min(kSendeTonMaxHz,
+                              int(Ft8Mehrfach::kPlatzObergrenzeHz));
     const int alt  = m_tonFeld->value();
 
     if (belegt.isEmpty()) {
@@ -1897,9 +1901,12 @@ QVector<Ft8TxSource::Platz> Ft8Applet::mehrfachPlaetze()
             // ueberein -- und das CQ laege auf derselben Tonlage wie
             // eine laufende Station. Zwei Nachrichten auf einem Ton
             // ueberlagern sich zu Matsch, und beide sind weg.
+            // Dieselbe Leiter wie die Plaetze selbst (seit dem
+            // 2026-11-18 mit Richtung, siehe `Ft8Mehrfach::tonleiter`)
+            // -- sonst laege das CQ ueber dem Grundton, waehrend die
+            // Plaetze darunter stapeln.
             const QVector<float> toene =
-                Ft8TxSource::tonleiter(float(m_sendeTonHz),
-                                       Ft8Mehrfach::kMaxPlaetze);
+                m_mehrfach.tonleiter(Ft8Mehrfach::kMaxPlaetze);
             float frei = 0.0f;
             for (const float t : toene) {
                 bool belegtVonPlatz = false;

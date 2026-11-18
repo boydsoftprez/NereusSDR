@@ -1010,6 +1010,60 @@ private slots:
                      QStringLiteral("not transmitting")),
                  qPrintable(applet.statusForTest()->text()));
     }
+
+    // ── Die Plaetze gehen nicht an den oberen Rand (2026-11-18) ───────
+    //
+    // Am Geraet: Grundton 2710 Hz, drei Plaetze auf 2710/2770/2830 Hz,
+    // 49 Sendungen, zwei QSOs. „leider bekomme ich fast keine qsos
+    // zusammen auf ft8". PSK Reporter: 68 Meldungen bei 2700, drei bei
+    // 2800 Hz.
+    void amOberenRandStapelnDiePlaetzeNachUnten()
+    {
+        Ft8Mehrfach m;
+        m.setEigeneDaten(QStringLiteral("OE5SOS"), QStringLiteral("JN67"));
+        m.setPlaetze(3);
+        m.setGrundtonHz(2710.0f);
+        QVERIFY(m.nimmVonHand(QStringLiteral("UN3P"), -12));
+        QVERIFY(m.nimmVonHand(QStringLiteral("R8LDJ"), -9));
+        QVERIFY(m.nimmVonHand(QStringLiteral("UB9CBF"), -15));
+        const QVector<Ft8TxSource::Platz> p = m.naechsteNachrichten();
+        QCOMPARE(p.size(), 3);
+        // Der Grundton bleibt, wo der Betreiber ihn hingestellt hat ...
+        QCOMPARE(p.at(0).toneHz, 2710.0f);
+        // ... und nichts liegt mehr DARUEBER.
+        QCOMPARE(p.at(1).toneHz, 2650.0f);
+        QCOMPARE(p.at(2).toneHz, 2590.0f);
+    }
+
+    // Die Richtung haengt an der EINGESTELLTEN Platzzahl: laeuft erst
+    // einer von dreien, liegt der zweite schon darunter, wenn er
+    // dazukommt -- und der erste springt nicht um.
+    void dieRichtungStehtFestBevorDerZweiteKommt()
+    {
+        Ft8Mehrfach m;
+        m.setEigeneDaten(QStringLiteral("OE5SOS"), QStringLiteral("JN67"));
+        m.setPlaetze(3);
+        m.setGrundtonHz(2450.0f);          // 2450 + 2*60 = 2570 > 2500
+        QVERIFY(m.nimmVonHand(QStringLiteral("UN3P"), -12));
+        QCOMPARE(m.naechsteNachrichten().first().toneHz, 2450.0f);
+        QVERIFY(m.nimmVonHand(QStringLiteral("R8LDJ"), -9));
+        const QVector<Ft8TxSource::Platz> p = m.naechsteNachrichten();
+        QCOMPARE(p.at(0).toneHz, 2450.0f);
+        QCOMPARE(p.at(1).toneHz, 2390.0f);
+    }
+
+    // In der Bandmitte bleibt alles, wie MSHV es macht.
+    void inDerMitteBleibtEsBeiMshv()
+    {
+        Ft8Mehrfach m;
+        m.setEigeneDaten(QStringLiteral("OE5SOS"), QStringLiteral("JN67"));
+        m.setPlaetze(3);
+        m.setGrundtonHz(1500.0f);
+        QCOMPARE(m.tonleiter(3), Ft8TxSource::tonleiter(1500.0f, 3));
+        // Genau an der Grenze noch nach oben: 2380 + 120 = 2500.
+        m.setGrundtonHz(2380.0f);
+        QCOMPARE(m.tonleiter(3), Ft8TxSource::tonleiter(2380.0f, 3));
+    }
 };
 
 QTEST_MAIN(TstFt8MultiAnswering)

@@ -129,11 +129,34 @@ int Ft8Mehrfach::verarbeite(const QString& nachricht, int snr)
     return vorangekommen;
 }
 
+QVector<float> Ft8Mehrfach::tonleiter(int anzahl) const
+{
+    // Passt der volle Stapel unter die Grenze, bleibt es bei MSHV.
+    const float oberster = m_grundtonHz
+        + Ft8TxSource::kPlatzAbstandHz * static_cast<float>(m_plaetze - 1);
+    if (m_plaetze <= 1 || oberster <= kPlatzObergrenzeHz) {
+        return Ft8TxSource::tonleiter(m_grundtonHz, anzahl);
+    }
+
+    // Sonst nach unten, mit derselben Schrittweite und derselben
+    // unteren Klammer wie die MSHV-Leiter.
+    QVector<float> aus;
+    if (anzahl <= 0) { return aus; }
+    aus.reserve(anzahl);
+    for (int i = 0; i < anzahl; ++i) {
+        float f0 = m_grundtonHz
+                   - Ft8TxSource::kPlatzAbstandHz * static_cast<float>(i);
+        if (f0 < Ft8TxSource::kMinTonHz) { f0 = Ft8TxSource::kMinTonHz; }
+        if (f0 > Ft8TxSource::kMaxTonHz) { f0 = Ft8TxSource::kMaxTonHz; }
+        aus.append(f0);
+    }
+    return aus;
+}
+
 QVector<Ft8TxSource::Platz> Ft8Mehrfach::naechsteNachrichten() const
 {
     QVector<Ft8TxSource::Platz> raus;
-    const QVector<float> toene =
-        Ft8TxSource::tonleiter(m_grundtonHz, m_laufend.size());
+    const QVector<float> toene = tonleiter(m_laufend.size());
 
     for (int i = 0; i < m_laufend.size(); ++i) {
         if (!m_laufend[i].laeuft()) { continue; }
@@ -195,8 +218,7 @@ QVector<Ft8Ablauf> Ft8Mehrfach::nimmFertige()
 QVector<Ft8Mehrfach::Belegung> Ft8Mehrfach::belegung() const
 {
     QVector<Belegung> raus;
-    const QVector<float> toene =
-        Ft8TxSource::tonleiter(m_grundtonHz, m_laufend.size());
+    const QVector<float> toene = tonleiter(m_laufend.size());
     for (int i = 0; i < m_laufend.size(); ++i) {
         Belegung b;
         b.partner = m_laufend[i].partner();

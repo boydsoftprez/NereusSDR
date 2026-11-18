@@ -95,6 +95,33 @@ public:
     void setGrundtonHz(float hz);
     float grundtonHz() const { return m_grundtonHz; }
 
+    /// Ueber dieser Tonlage soll kein Platz liegen, wenn es sich
+    /// vermeiden laesst.
+    ///
+    /// ── Warum (2026-11-18) ──────────────────────────────────────────
+    ///
+    /// Am Geraet, 20 m: Grundton 2710 Hz, drei Plaetze -- also 2710,
+    /// 2770 und 2830 Hz. 49 Sendungen, zwei QSOs. Betreiber: „leider
+    /// bekomme ich fast keine qsos zusammen auf ft8". PSK Reporter
+    /// derselben zwei Stunden: 68 Empfangsmeldungen bei 2700 Hz, drei
+    /// bei 2800. Wer mit einem SSB-Filter von 300 bis 2700 Hz hoert --
+    /// und das tun viele --, bekommt einen Platz bei 2770 oder 2830 Hz
+    /// gar nicht mit. Der dritte lag sogar ueber der Grenze, die das
+    /// Fenster fuer die Sendetonlage selbst setzt (2800 Hz).
+    ///
+    /// Die MSHV-Leiter (`Ft8TxSource::tonleiter`) stapelt immer nach
+    /// OBEN. Passt der Stapel der eingestellten Platzzahl nicht unter
+    /// diese Grenze, stapeln wir nach UNTEN: der Grundton bleibt, wo
+    /// der Betreiber ihn hingestellt hat, die weiteren Plaetze liegen
+    /// darunter statt darueber.
+    static constexpr float kPlatzObergrenzeHz = 2500.0f;
+
+    /// Die Tonlagen der ersten `anzahl` Plaetze. Die RICHTUNG haengt an
+    /// der eingestellten Platzzahl (`plaetze()`), nicht an `anzahl` und
+    /// nicht daran, wie viele gerade laufen -- sonst spraenge ein
+    /// laufender Platz um, sobald ein anderer dazukommt.
+    QVector<float> tonleiter(int anzahl) const;
+
     /// Jemand hat mich gerufen. Ist ein Platz frei, geht er sofort
     /// darauf; sonst in die Warteschlange. Ein Rufzeichen, das schon
     /// auf einem Platz oder in der Schlange steht, wird NICHT doppelt
