@@ -275,6 +275,7 @@ warren@wpratt.com
 #include "models/bandstack/BandStackController.h"
 #include "widgets/CommandBar.h"
 #include "widgets/ProfileRail.h"
+#include "widgets/KlickMarke.h"
 #include "widgets/WidgetPicker.h"
 #include "gui/LayoutProfiles.h"
 #include "gui/widgets/DspQuickPopups.h"
@@ -6831,6 +6832,11 @@ void MainWindow::buildUI()
     });
 
     new KlickHoltNachVorne([this](QWidget* w) { return klickHoltNachVorne(w); }, this);
+    // Und jeder Druck auf einen Knopf leuchtet kurz im Orange des Plus
+    // (Betreiber 2026-11-17: „Das klicken auf Buttons sollte besser
+    // farblich markiert sein"). Eine Stelle fuer alle Knoepfe -- siehe
+    // widgets/KlickMarke.h, warum kein Stilblatt das kann.
+    new KlickMarke(this);
 
     // Ein Geraet hinter CAT hat keinen KiwiSDR neben sich. Stand der
     // Panadapter noch aus einer anderen Sitzung auf KIWI, verwarf er jeden

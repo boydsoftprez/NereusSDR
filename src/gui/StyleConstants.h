@@ -411,6 +411,19 @@ constexpr auto kTxKeyText       = "#17130a";
 constexpr auto kTxKeyDimTop     = "#7a5a2c";
 constexpr auto kTxKeyDimBottom  = "#634c24";
 constexpr auto kTxKeyDimBorder  = "#9a763c";
+// ── Das Orange des Plus (2026-11-12 / 2026-11-17) ───────────────────
+//
+// Die Taste zum Hinzufuegen: dieselbe Familie wie die Sendetaste, nur
+// heller und gelber, damit sie nicht mit ihr verwechselt wird. Bis zum
+// 2026-11-17 standen die drei Werte als namenlose Zahlen in
+// PlusGlyph::paintEvent. Einen Namen bekommen sie, weil sie jetzt an
+// einer zweiten Stelle gebraucht werden -- Betreiber: „Das klicken auf
+// Buttons sollte besser farblich markiert sein, verwende das Orange wie
+// beim PLUS Zeichen." Die Klickmarke (widgets/KlickMarke) nimmt genau
+// diese drei.
+constexpr auto kPlusTop         = "#f0b44c";
+constexpr auto kPlusBottom      = "#d18f2a";
+constexpr auto kPlusBorder      = "#f5c56a";
 // Grund der Zeile, die als naechste drankommt (FT8 „THEN", 2026-11-15):
 // ein Hauch Messing auf kPanelBg -- man sieht, wer dran ist, ohne dass
 // die Zeile leuchtet.

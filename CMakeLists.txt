@@ -887,6 +887,7 @@ set(GUI_SOURCES
     src/gui/instruments/FrequencyInstrument.cpp
     src/gui/instruments/FrequencyInstrument.h
     src/gui/widgets/CommandBar.cpp
+    src/gui/widgets/KlickMarke.cpp
     src/gui/widgets/WidgetPicker.cpp
     src/gui/widgets/WidgetPicker.h
     src/gui/widgets/CommandBar.h

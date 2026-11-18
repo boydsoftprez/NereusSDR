@@ -5831,6 +5831,10 @@ longpath_add_test(tst_kiwi_tracking_follows_the_slice)
 # 2026-09-21: Nebenfenster (Channel Strip, Logbuch, Setup, Meldungen) auf
 # die Ebene der schwebenden Paletten -- welche Fenster der Filter anfasst.
 longpath_add_test(tst_auxiliary_window_leveler)
+# 2026-11-17: jeder Druck auf einen Knopf leuchtet kurz im Orange des
+# Plus (Betreiber: „Das klicken auf Buttons sollte besser farblich
+# markiert sein") -- eine Stelle fuer alle Knoepfe.
+longpath_add_test(tst_klickmarke)
 # 2026-11-15: ein Fenster, das aufgeht, kommt auf den Schirm, an dem
 # gearbeitet wird -- und bleibt stehen, wenn es schon dort liegt
 # (Betreiber: „wenn ich das logbuch aufmache mit dem plus sehe ich es nur

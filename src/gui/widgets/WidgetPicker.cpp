@@ -688,9 +688,11 @@ protected:
         // heller und gelber, damit sie nicht mit ihr verwechselt wird.
         // Das Atmen hebt und senkt die Helligkeit der Flaeche, der
         // Zeiger hellt sie auf, der offene Auswaehler dunkelt sie ab.
-        const QColor obenRuhe(0xf0, 0xb4, 0x4c);
-        const QColor untenRuhe(0xd1, 0x8f, 0x2a);
-        const QColor randRuhe(0xf5, 0xc5, 0x6a);
+        // Seit 2026-11-17 mit Namen (StyleConstants.h): die Klickmarke
+        // braucht dieselben drei.
+        const QColor obenRuhe(QString::fromLatin1(Style::kPlusTop));
+        const QColor untenRuhe(QString::fromLatin1(Style::kPlusBottom));
+        const QColor randRuhe(QString::fromLatin1(Style::kPlusBorder));
         const QColor zeichen(QString::fromLatin1(Style::kTxKeyText));
 
         const qreal wachheit = std::max(m_hover, m_turn);
@@ -789,6 +791,9 @@ AddWidgetButton::AddWidgetButton(AppletVisibilityController* vis,
     // und der geerbte Innenabstand aus `Style::kButtonStyle` kann
     // nichts mehr verdruecken.
     auto* plus = new PlusGlyph(this);
+    // Keine Klickmarke: das Plus IST schon das Orange und antwortet auf
+    // den Druck mit seiner eigenen Bewegung (KlickMarke.h).
+    plus->setProperty("klickmarke", false);
     plus->setToolTip(tr("Add or remove a widget"));
     m_glyph = plus;
     col->addWidget(plus);
