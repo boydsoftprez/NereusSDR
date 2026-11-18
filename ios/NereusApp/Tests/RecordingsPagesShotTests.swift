@@ -165,9 +165,12 @@ struct RecordingsPagesShotTests {
                 let rig = await Flag.rig(version: 3, connected: true)
                 Flag.publish(rig, document, revision: 1)
                 let settings = RecordingSettingsModel(client: rig.client)
-                try await shoot("setup-recording-settings-type-\(type)-\(screen.name)-\(disk)", height: 3200,
+                // 2700 points: at 3x a taller window draws blank (past the
+                // 8192-pixel limit); a page taller still gets a -bottom picture.
+                try await shoot("setup-recording-settings-type-\(type)-\(screen.name)-\(disk)", height: 2700,
                                 width: screen.width,
-                                type: type, sideways: screen.sideways, tab: .setup, inside: Self.settingsRowIds) {
+                                type: type, sideways: screen.sideways, tab: .setup, inside: Self.settingsRowIds,
+                                bottomToo: true) {
                     NavigationStack {
                         RecordingSettingsPage(model: settings)
                     }
@@ -192,7 +195,7 @@ struct RecordingsPagesShotTests {
     private func shoot<Content: View>(_ name: String, height: CGFloat = 874, width: CGFloat = 402,
                                       scheme: ColorScheme = .dark, type: DynamicTypeSize = .large,
                                       sideways: Bool = false, tab: AppTab = .tools, inside ids: [String] = [],
-                                      @ViewBuilder content: () -> Content) async throws {
+                                      bottomToo: Bool = false, @ViewBuilder content: () -> Content) async throws {
         let size = CGSize(width: width, height: height)
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
@@ -214,16 +217,19 @@ struct RecordingsPagesShotTests {
             window.rootViewController = nil
         }
         await ShotWait.laidOut(window)
-        let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
-            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        func write(_ name: String) {
+            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
+            #expect(image.size == size)
+            if let directory = ProcessInfo.processInfo.environment["NEREUS_MAIN_SHOTS"], !directory.isEmpty,
+               let data = image.pngData() {
+                let url = URL(fileURLWithPath: directory).appendingPathComponent("\(name).png")
+                try? data.write(to: url)
+                print("Wrote \(url.path)")
+            }
         }
-        #expect(image.size == size)
-        if let directory = ProcessInfo.processInfo.environment["NEREUS_MAIN_SHOTS"], !directory.isEmpty,
-           let data = image.pngData() {
-            let url = URL(fileURLWithPath: directory).appendingPathComponent("\(name).png")
-            try? data.write(to: url)
-            print("Wrote \(url.path)")
-        }
+        write(name)
         // Each named row lies inside the screen's width, cut at neither edge.
         for id in ids {
             guard let element = IPadShotTests.element(id, in: window) else {
@@ -234,5 +240,18 @@ struct RecordingsPagesShotTests {
             #expect(frame.minX >= 0 && frame.maxX <= width + 0.5,
                     "\(name): \(id) runs from \(frame.minX) to \(frame.maxX) on a screen \(width) wide")
         }
+        // A page taller than the window: its foot, scrolled to the end.
+        if bottomToo, let scroll = Self.scrollViews(in: window).max(by: { $0.contentSize.height < $1.contentSize.height }) {
+            let end = scroll.contentSize.height + scroll.adjustedContentInset.bottom - scroll.bounds.height
+            if end > 1 {
+                scroll.setContentOffset(CGPoint(x: 0, y: end), animated: false)
+                await ShotWait.laidOut(window)
+                write("\(name)-bottom")
+            }
+        }
+    }
+
+    private static func scrollViews(in view: UIView) -> [UIScrollView] {
+        ((view as? UIScrollView).map { [$0] } ?? []) + view.subviews.flatMap(scrollViews(in:))
     }
 }
