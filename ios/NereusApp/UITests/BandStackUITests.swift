@@ -804,7 +804,7 @@ final class BandStackUITests: XCTestCase {
         XCTAssertTrue(sheet.waitForExistence(timeout: 10), "Display did not open")
         for _ in 0..<6 where !(button.exists && button.isHittable) {
             if sheet.identifier == "displayPill" {
-                sheet.swipeUp()
+                dragPillRows(sheet)
             } else {
                 // Along the older sheet's left edge, clear of its sliders, which would take the drag.
                 sheet.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.85))
@@ -816,6 +816,36 @@ final class BandStackUITests: XCTestCase {
             save("band-stack-switch-not-reached")
         }
         XCTAssertTrue(reached, "Display has no Band stack switch")
+    }
+
+    /// Drags the pill's rows up from a line of words in their lower half. A slider takes a drag
+    /// that starts on it or beside it, greyed or not, and since the pill ends above PTT (PR 808)
+    /// both its middle and its left edge land on the View tab's sliders.
+    @MainActor
+    private func dragPillRows(_ sheet: XCUIElement) {
+        let rows = sheet.scrollViews.firstMatch
+        guard let tree = try? rows.snapshot() else {
+            XCTFail("The pill has no rows to scroll")
+            return
+        }
+        let area = tree.frame
+        var words: [CGRect] = []
+        func walk(_ node: any XCUIElementSnapshot) {
+            if node.elementType == .staticText, node.frame.midY > area.midY, node.frame.maxY < area.maxY - 8 {
+                words.append(node.frame)
+            }
+            node.children.forEach(walk)
+        }
+        walk(tree)
+        // The tallest, a note of two lines, lies furthest from the sliders around it.
+        guard let start = words.max(by: { $0.height < $1.height }) else {
+            XCTFail("The pill's rows show no words to drag from")
+            return
+        }
+        let origin = rows.coordinate(withNormalizedOffset: .zero)
+        origin.withOffset(CGVector(dx: start.midX - area.minX, dy: start.midY - area.minY))
+            .press(forDuration: 0.05,
+                   thenDragTo: origin.withOffset(CGVector(dx: start.midX - area.minX, dy: area.height * 0.15)))
     }
 
     /// Opens Display, sets the switch and closes Display.
