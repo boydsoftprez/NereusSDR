@@ -41,6 +41,7 @@
 #include <QtTest>
 #include <QApplication>
 #include <QDialog>
+#include <QAction>
 #include <QDockWidget>
 #include <QFile>
 #include <QJsonArray>
@@ -51,6 +52,7 @@
 #include "core/AppSettings.h"
 #include "gui/LayoutProfiles.h"
 #include "gui/MainWindow.h"
+#include "gui/ToolWindow.h"
 #include "gui/applets/AppletKeys.h"
 #include "gui/applets/KombiApplet.h"
 #include "FensterFrist.h"
@@ -311,6 +313,73 @@ private slots:
                      qPrintable(QStringLiteral("%1 steht in FT8 immer noch doppelt: ")
                                     .arg(id) + text(ft8)));
         }
+    }
+
+    // 4. Betreiber, 2026-11-18: „ich kann im ft8 profil keinen rotor
+    //    hinzufügen als window."
+    //
+    //    In FT8 liegt Rotor/Log im Kombi-Feld (kombiInhalt: RotorLog, Rx)
+    //    und das Feld ist dort nicht zu sehen. Der Eintrag „Rotor / Log"
+    //    steht dabei auf „an"; der erste Klick schaltete ihn nur aus, der
+    //    zweite lief in die Wache von `detachRotorPanel()` („liegt im
+    //    Feld, bleibt dort", #473). Es gab keinen Weg zum Fenster.
+    //
+    //    Gegangen wird der echte Weg: der Eintrag im Containers-Menue,
+    //    ausgeloest wie von einer Hand. EIN Klick muss reichen, gleich
+    //    wie der Haken vorher stand.
+    void derBedienerHoltDenRotorAlsFenster()
+    {
+        QVERIFY(m_profile->activate(QStringLiteral("FT8")));
+        warten();
+
+        // Die Voraussetzung, sonst prueft der Fall nichts: Rotor/Log
+        // liegt in einem Kombi-Feld, und ein eigenes Fenster gibt es nicht.
+        const auto imFeld = []() {
+            for (QWidget* w : QApplication::allWidgets()) {
+                auto* feld = qobject_cast<KombiApplet*>(w);
+                if (!feld) { continue; }
+                for (QWidget* seite : feld->seiten()) {
+                    if (seite && seite->objectName() == QStringLiteral("RotorLog")) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        };
+        QVERIFY2(imFeld(), "Voraussetzung fehlt: Rotor/Log liegt in FT8 "
+                           "nicht im Kombi-Feld");
+        QVERIFY2(!m_mw->rotorWindowForTest(),
+                 "Voraussetzung fehlt: Rotor/Log hat schon ein eigenes Fenster");
+
+        QAction* eintrag = nullptr;
+        for (QAction* a : m_mw->findChildren<QAction*>()) {
+            if (a->isCheckable() && a->text() == QStringLiteral("Rotor / Log")) {
+                eintrag = a;
+                break;
+            }
+        }
+        QVERIFY2(eintrag, "kein Eintrag „Rotor / Log\" im Containers-Menue");
+
+        eintrag->trigger();
+        QTest::qWait(400);
+
+        QWidget* fenster = m_mw->rotorWindowForTest();
+        QVERIFY2(fenster, "nach dem Klick auf „Rotor / Log\" gibt es kein "
+                          "Rotor-Fenster");
+        QVERIFY2(fenster->isVisible(), "das Rotor-Fenster ist da, aber verborgen");
+        QVERIFY2(!imFeld(), "Rotor/Log steht nach dem Herausholen weiter in "
+                            "der Liste eines Kombi-Feldes -- ein Panel liegt "
+                            "an EINEM Ort");
+        QVERIFY2(eintrag->isChecked(),
+                 "der Eintrag steht auf „aus\", obwohl das Fenster offen ist");
+
+        // Und das Profil weiss es: die Aufnahme fuehrt den Rotor nicht
+        // mehr im Feld. Sonst holt ihn der naechste Wechsel zurueck.
+        const QVariantMap ft8 = aufnahme(QStringLiteral("FT8"));
+        QVERIFY2(!ft8.value(QStringLiteral("kombiInhalt")).toStringList()
+                      .contains(QStringLiteral("RotorLog")),
+                 qPrintable(QStringLiteral("FT8 fuehrt Rotor/Log weiter im Feld: ")
+                            + text(ft8)));
     }
 
     // Kein cleanupTestCase(): das Hauptfenster bleibt bis zum Prozessende

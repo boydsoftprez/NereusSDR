@@ -1170,6 +1170,11 @@ private:
     // Schnittstelle, und ein Test soll den ECHTEN Weg gehen duerfen,
     // ohne dass die Klasse dafuer aufgemacht wird.
     Q_INVOKABLE void detachRotorPanel();
+    /// Der Bediener verlangt Rotor/Log als Fenster, es liegt aber in
+    /// einem Kombi-Feld: das Feld gibt es frei, es bekommt sein Fenster.
+    /// Wahr, wenn genau das geschehen ist. Nur fuer die Wege, die ein
+    /// Mensch geht (Plus, Containers-Menue) -- nie fuer Start und Profil.
+    bool holeRotorAusDemKombiFeld();
     Q_INVOKABLE void dockRotorPanel();
 
     // Applet-Leiste neben (false) oder unter (true) den Panadapter legen.

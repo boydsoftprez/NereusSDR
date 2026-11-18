@@ -11732,6 +11732,7 @@ void MainWindow::populateDefaultMeter()
         m_addWidget = new AddWidgetButton(m_appletVis, m_commandBar);
         connect(m_addWidget, &AddWidgetButton::toggled, this,
                 [this](const QString& id, bool visible) {
+            if (id == QLatin1String("WinRotorLog")) { holeRotorAusDemKombiFeld(); }
             if (visible) { bringAppletToFront(id); }
         });
         m_commandBar->addTrailing(m_addWidget);
@@ -13482,6 +13483,7 @@ void MainWindow::buildMenuBar()
                         checked ? QStringLiteral("True")
                                 : QStringLiteral("False"));
                 }
+                if (id == QLatin1String("WinRotorLog")) { holeRotorAusDemKombiFeld(); }
                 if (checked) { bringAppletToFront(id); }
                 // Betreiber 2026-08-30, ueber einen Regressionstest
                 // gefunden: dieser Weg fehlte im Gegensatz zum
@@ -19618,6 +19620,58 @@ void MainWindow::detachRotorPanel()
     if (m_appletVis) {
         m_appletVis->setVisible(QStringLiteral("WinRotorLog"), true);
     }
+}
+
+// ── Der Bediener verlangt Rotor/Log als Fenster (2026-11-18) ────────
+//
+// Betreiber: „ich kann im ft8 profil keinen rotor hinzufügen als
+// window."
+//
+// Sein FT8-Profil fuehrt Rotor/Log im Feld „Combined" (kombiInhalt:
+// RotorLog, Rx), und das Feld ist dort nicht zu sehen. Die Karte hinter
+// dem Plus stand dabei auf „an" (WinRotorLog ist im Profil wahr): der
+// erste Klick schaltete sie nur AUS, der zweite lief in die Wache von
+// `detachRotorPanel()` -- „liegt im Feld, bleibt dort" (#473). Die Wache
+// ist fuer Start und Profil richtig; fuer einen Griff des Bedieners war
+// sie eine Sackgasse ohne Ausgang und ohne ein Wort.
+//
+// Darum hier, und NUR auf den beiden Wegen, die ein Mensch geht (das
+// Plus und das Containers-Menue): liegt Rotor/Log in einem Kombi-Feld
+// und hat kein eigenes Fenster, gibt das Feld es frei -- auf dem Weg,
+// den das Feld kennt (`gibFrei`, wie „Open as window" am Reiter) -- und
+// es bekommt sein Fenster, vorne und auf dem Arbeitsschirm. Gleich,
+// wohin der Klick die Karte gerade geschaltet hat: wer bei einem Rotor,
+// der kein Fenster hat, auf „Rotor / Log" klickt, will ihn sehen.
+//
+// Nicht in `applyWindowVisibility()`: dorthin kommt auch jeder
+// Profilwechsel, und der soll den Rotor im Feld lassen.
+bool MainWindow::holeRotorAusDemKombiFeld()
+{
+    if (m_shuttingDown || m_rotorWindow) { return false; }
+    for (KombiApplet* feld : kombiFelder()) {
+        if (!feld) { continue; }
+        const QList<QWidget*> seiten = feld->seiten();
+        for (QWidget* seite : seiten) {
+            if (!qobject_cast<RotorLogbookPanel*>(seite)) { continue; }
+            qCInfo(lcConnection).noquote()
+                << "Rotor/Log: der Bediener verlangt das Fenster -- das Feld"
+                << feld->appletId() << "gibt es frei";
+            feld->gibFrei(seite);
+            detachRotorPanel();
+            if (!m_rotorWindow) {
+                qCWarning(lcConnection)
+                    << "Rotor/Log: aus dem Feld geloest, aber kein Fenster entstanden";
+                return false;
+            }
+            holeAufDenArbeitsschirm(m_rotorWindow);
+            if (m_layoutProfiles) {
+                m_layoutProfiles->captureIntoCurrent();
+                m_layoutProfiles->save();
+            }
+            return true;
+        }
+    }
+    return false;
 }
 
 void MainWindow::dockRotorPanel()
