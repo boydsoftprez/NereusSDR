@@ -112,6 +112,13 @@ public:
     /// Steht die Skala auf einer FT8- oder FT4-Anrufstelle, folgt der
     /// Dekoder ihr (2026-11-15). Oeffentlich fuer den Pruefstand.
     void folgeDerSkala(double skalaHz);
+    /// Die Skala hat sich bewegt: bei einem anderen BAND die Liste
+    /// leeren, dann `folgeDerSkala`.
+    void skalaBewegt(double skalaHz);
+    /// Band oder Verfahren (FT8/FT4) hat gewechselt: was in der Liste
+    /// steht und wer wartet, wurde woanders gehoert und ist hier nicht
+    /// mehr zu erreichen. Betreiber am 2026-11-17.
+    void leereFuerNeuenOrt(const QString& grund);
 
     void setProtocol(Ft8Decoder::Protocol p);
     Ft8Decoder::Protocol protocol() const;
@@ -633,6 +640,9 @@ private:
     Longpath::Ft8DannListe* m_dann{nullptr};
     /// frequencyChanged der Scheibe -> folgeDerSkala.
     QMetaObject::Connection m_skalaVerbindung;
+    /// Das Band, auf dem die Zeilen der Liste gehoert wurden
+    /// (`bandFuerLog`). Leer, solange noch keines bekannt ist.
+    QString m_listenBand;
     /// Laesst das Alter jede Sekunde weiterlaufen -- nur solange
     /// jemand wartet.
     QTimer*      m_dannUhr{nullptr};

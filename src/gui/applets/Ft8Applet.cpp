@@ -1105,12 +1105,63 @@ void Ft8Applet::setProtocol(Ft8Decoder::Protocol p)
     // arbeiten, die nichts mehr bedeuten.
     m_toeneJePeriode.clear();
 
+    // Ein echter Wechsel, nicht jedes Setzen: beim Aufbau und aus
+    // `folgeDerSkala` kommt auch das Verfahren herein, das schon gilt.
+    const bool wechsel = m_stream && m_stream->protocol() != p;
+
     if (m_stream) { m_stream->setProtocol(p); }
     const bool ft4 = (p == Ft8Decoder::Protocol::Ft4);
     if (m_ft8Btn) { m_ft8Btn->setChecked(!ft4); }
     if (m_ft4Btn) { m_ft4Btn->setChecked(ft4); }
     m_lastPeriodCount = -1;
+    if (wechsel) {
+        leereFuerNeuenOrt(ft4 ? QStringLiteral("FT4") : QStringLiteral("FT8"));
+    }
     updateStatus();
+}
+
+// ── Neuer Ort, leere Liste (2026-11-17) ──────────────────────────────
+//
+// Betreiber: „Generell sollte bei einem Bandwechsel von FT4 auf FT8 …
+// alle calls vom vorigen band gelöscht werden."
+//
+// Die Liste blieb ueber jeden Wechsel stehen. Nach 15 m -> 17 m standen
+// die Stationen von 15 m weiter da, und nichts an ihnen sagte, dass
+// sie hier nicht mehr zu hoeren sind: ein Doppelklick rief ins Leere.
+// Dasselbe zwischen FT8 und FT4 -- die Skala steht dann woanders, und
+// wer eben FT8 machte, hoert einen FT4-Anruf nicht.
+//
+// Mit der Liste geht die Schlange: wer wartet, hat auf dem ALTEN Band
+// gerufen. Und ihre Karenz -- wer auf 15 m eben gearbeitet wurde, ist
+// auf 17 m ein neues QSO und darf gleich wieder.
+//
+// Ein laufender Ablauf wird hier nicht angefasst; das ist die Sache
+// von Stop, nicht eines Skalendrehs.
+void Ft8Applet::leereFuerNeuenOrt(const QString& grund)
+{
+    qCInfo(lcFt8Senden).noquote()
+        << "Liste geleert:" << m_zeilen.size() << "Zeilen,"
+        << m_schlange.wartende(QDateTime::currentMSecsSinceEpoch())
+        << "wartend — jetzt" << grund;
+    m_zeilen.clear();
+    m_toeneJePeriode.clear();
+    m_schlange.leeren();
+    zeichneListe();
+    zeigeDann();
+}
+
+void Ft8Applet::skalaBewegt(double skalaHz)
+{
+    // `bandFuerLog`, nicht selbst gerechnet: es beachtet den
+    // Transverter. Ausserhalb jedes Bandes (leer) gilt das alte weiter
+    // -- ein Dreh ueber die Bandkante ist noch kein neuer Ort.
+    const QString band = bandFuerLog(skalaHz);
+    if (!band.isEmpty() && band != m_listenBand) {
+        const bool erstesBand = m_listenBand.isEmpty();
+        m_listenBand = band;
+        if (!erstesBand) { leereFuerNeuenOrt(band); }
+    }
+    folgeDerSkala(skalaHz);
 }
 
 Ft8Decoder::Protocol Ft8Applet::protocol() const
@@ -1125,8 +1176,8 @@ void Ft8Applet::setSlice(SliceModel* slice)
     QObject::disconnect(m_skalaVerbindung);
     if (m_slice) {
         m_skalaVerbindung = connect(m_slice.data(), &SliceModel::frequencyChanged,
-                                    this, &Ft8Applet::folgeDerSkala);
-        folgeDerSkala(m_slice->frequency());
+                                    this, &Ft8Applet::skalaBewegt);
+        skalaBewegt(m_slice->frequency());
     }
     updateAudioTap();
     updateStatus();

@@ -1441,6 +1441,93 @@ private slots:
         QCOMPARE(router.pullSamples(puffer.data(), 512), 512);
         for (float v : puffer) { QCOMPARE(v, 0.0f); }
     }
+
+    // =================================================================
+    // Neuer Ort, leere Liste (2026-11-17)
+    // =================================================================
+    //
+    // Betreiber: „Generell sollte bei einem Bandwechsel von FT4 auf FT8
+    // … alle calls vom vorigen band gelöscht werden." Bis heute blieb
+    // die Liste ueber jeden Wechsel stehen; ein Doppelklick auf eine
+    // Zeile von 15 m rief auf 17 m ins Leere.
+    void einBandwechselLeertDieListe()
+    {
+        AppSettings::instance().setValue(QStringLiteral("StationCallsign"),
+                                         QStringLiteral("OE5SOS"));
+        RadioModel radio;
+        radio.installFt8TxForTest();
+        Ft8Applet applet(&radio);
+        applet.setProtocol(Ft8Decoder::Protocol::Ft8);
+
+        const int id = radio.addSlice();
+        SliceModel* slice = radio.sliceById(id);
+        QVERIFY(slice);
+        slice->setFrequency(21074000.0);          // 15 m
+        applet.setSlice(slice);
+
+        const auto fund = [&applet](const QString& text) {
+            Ft8Decode d;
+            d.text   = text;
+            d.snrDb  = -10;
+            d.freqHz = 1500.0;
+            applet.fundForTest(d);
+        };
+        const auto liste = [&applet]() {
+            return applet.listForTest()->toPlainText();
+        };
+
+        fund(QStringLiteral("CQ DL1ABC JO31"));
+        fund(QStringLiteral("OE5SOS F5XYZ JN18"));   // ruft mich -> wartet
+        QVERIFY2(liste().contains(QStringLiteral("DL1ABC")), qPrintable(liste()));
+        const qint64 jetzt = QDateTime::currentMSecsSinceEpoch();
+
+        // Innerhalb des Bandes: nichts geschieht. Gegenprobe, ohne die
+        // das Leeren darunter auch ein „leert bei jedem Dreh" sein
+        // koennte.
+        slice->setFrequency(21076000.0);
+        QVERIFY2(liste().contains(QStringLiteral("DL1ABC")),
+                 "ein Dreh innerhalb des Bandes hat die Liste geleert");
+
+        const int wartendVorher = applet.schlangeForTest().wartende(jetzt);
+
+        // 15 m -> 17 m.
+        slice->setFrequency(18100000.0);
+        QVERIFY2(!liste().contains(QStringLiteral("DL1ABC")),
+                 qPrintable(QStringLiteral("die Zeilen von 15 m stehen noch da: %1")
+                                .arg(liste())));
+        QVERIFY2(!liste().contains(QStringLiteral("F5XYZ")), qPrintable(liste()));
+        QCOMPARE(applet.schlangeForTest().wartende(jetzt), 0);
+        Q_UNUSED(wartendVorher);
+
+        // Und was auf dem neuen Band kommt, steht wieder da.
+        fund(QStringLiteral("CQ EA4IPN IN80"));
+        QVERIFY2(liste().contains(QStringLiteral("EA4IPN")), qPrintable(liste()));
+    }
+
+    void derWechselZwischenFt8UndFt4LeertDieListe()
+    {
+        RadioModel radio;
+        radio.installFt8TxForTest();
+        Ft8Applet applet(&radio);
+        applet.setProtocol(Ft8Decoder::Protocol::Ft8);
+
+        Ft8Decode d;
+        d.text   = QStringLiteral("CQ DL1ABC JO31");
+        d.snrDb  = -10;
+        d.freqHz = 1500.0;
+        applet.fundForTest(d);
+        QVERIFY(applet.listForTest()->toPlainText().contains(QStringLiteral("DL1ABC")));
+
+        // Dasselbe Verfahren noch einmal gesetzt (so kommt es beim
+        // Aufbau und aus der Skalenfolge): die Liste bleibt.
+        applet.setProtocol(Ft8Decoder::Protocol::Ft8);
+        QVERIFY2(applet.listForTest()->toPlainText().contains(QStringLiteral("DL1ABC")),
+                 "dasselbe Verfahren noch einmal gesetzt hat die Liste geleert");
+
+        applet.setProtocol(Ft8Decoder::Protocol::Ft4);
+        QVERIFY2(!applet.listForTest()->toPlainText().contains(QStringLiteral("DL1ABC")),
+                 "die FT8-Zeilen stehen nach dem Wechsel auf FT4 noch da");
+    }
 };
 
 QTEST_MAIN(TstFt8Senden)
