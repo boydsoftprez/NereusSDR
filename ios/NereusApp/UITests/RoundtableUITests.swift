@@ -20,6 +20,8 @@
 // AI-assisted via Anthropic Claude Code.
 // 2026-11-18: The sheet stays where its handle is let go, down to its smallest height,
 // and a long drag down closes it. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-18: SAVE, a tag and the card the sheet's top edge would cut are hidden whole,
+// and back at the smallest height. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import XCTest
 
@@ -353,7 +355,72 @@ final class RoundtableUITests: XCTestCase {
         XCTAssertEqual(holdLog(app), "none")
     }
 
+    /// What the sheet's top edge would cut on the band (SAVE, a tag, the talker card)
+    /// is hidden whole while the edge runs through it, and is back at the smallest height.
+    @MainActor
+    func testWhatTheSheetEdgeWouldCutIsHiddenWhole() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "An iPad shows the applet or the panel")
+        let app = launch(frequency: true)
+        // The card on your own frequency carries its room's tag identifier.
+        let card = app.descendants(matching: .any)["roundtableTag.\(Self.ownRoom)"]
+        let tag = app.descendants(matching: .any)["roundtableTag.lsb-7225000"]
+        let saveButton = app.descendants(matching: .any)["dsr.save"]
+        XCTAssertTrue(card.waitForExistence(timeout: 30))
+        XCTAssertTrue(tag.waitForExistence(timeout: 10))
+        XCTAssertTrue(saveButton.waitForExistence(timeout: 10))
+        // Where they stand on the band, before the sheet opens.
+        let cardFrame = card.frame
+        let tagFrame = tag.frame
+        let saveFrame = saveButton.frame
+        let sheet = try openSheet(app)
+        let handle = app.buttons["roundtableHandle"]
+        XCTAssertTrue(handle.waitForExistence(timeout: 10))
+        // The edge through SAVE: SAVE is hidden.
+        moveEdge(of: sheet, handle: handle, to: saveFrame.midY)
+        waitUntil("SAVE cut by the sheet's edge is still on the band") { !saveButton.exists }
+        try save("roundtable-ui-edge-save")
+        // Through the tag row: the tag is hidden.
+        moveEdge(of: sheet, handle: handle, to: tagFrame.midY)
+        waitUntil("a tag cut by the sheet's edge is still on the band") { !tag.exists }
+        try save("roundtable-ui-edge-tags")
+        // Through the card's middle: the card is hidden, and the flag stays.
+        moveEdge(of: sheet, handle: handle, to: cardFrame.midY)
+        waitUntil("the card cut by the sheet's edge is still on the band") { !card.exists }
+        XCTAssertTrue(app.descendants(matching: .any)["flagA"].exists)
+        try save("roundtable-ui-edge-card")
+        // Down in short drags to the smallest height: all three are whole again.
+        var top = sheet.frame.minY
+        for _ in 0..<20 {
+            drag(handle, by: 40)
+            Thread.sleep(forTimeInterval: 0.5)
+            if abs(sheet.frame.minY - top) < 1 {
+                break
+            }
+            top = sheet.frame.minY
+        }
+        XCTAssertTrue(sheet.exists, "short drags closed the sheet")
+        waitUntil("the card did not come back at the smallest height") { card.exists }
+        waitUntil("the tag did not come back at the smallest height") { tag.exists }
+        waitUntil("SAVE did not come back at the smallest height") { saveButton.exists }
+        XCTAssertLessThanOrEqual(card.frame.maxY, sheet.frame.minY, "the card is above the sheet")
+        try save("roundtable-ui-edge-smallest")
+        XCTAssertEqual(holdLog(app), "none")
+    }
+
     // MARK: Helpers
+
+    /// The sheet's top moved to `y` on the screen by a drag on its handle; a
+    /// move too short for the drag to start goes up first and comes back.
+    @MainActor
+    private func moveEdge(of sheet: XCUIElement, handle: XCUIElement, to y: CGFloat) {
+        if abs(y - sheet.frame.minY) < 20 {
+            drag(handle, by: -60)
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        drag(handle, by: y - sheet.frame.minY)
+        waitUntil("the sheet's top did not reach \(y)") { abs(sheet.frame.minY - y) < 6 }
+        Thread.sleep(forTimeInterval: 0.5)
+    }
 
     /// A slow drag of `dy` points from the middle of `element`, held at its end.
     @MainActor

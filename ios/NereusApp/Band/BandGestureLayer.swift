@@ -24,6 +24,9 @@
 // 2026-11-16: A drag in from the right edge over the recorder's time strip
 // is the edge's swipe again (or moves the band with the edge Off).
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-18: The Roundtable sheet's top edge goes to the tag layer and the
+// recorder's strip, which hide whole what it would cut. J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code.
 
 import Combine
 import NereusBand
@@ -153,6 +156,9 @@ struct BandGestureLayer: View {
     /// The Digital Spectrum Recorder's strip, map and past picture (Pan 1
     /// only; the recording design's sections 6.7 and 6.8); nil shows none.
     var dsr: DsrPanModel?
+    /// The open Roundtable sheet's top edge, in this band's points: the tags,
+    /// the talker card, LIVE and SAVE it would cut are hidden whole. Nil: no sheet.
+    var roundtableEdge: RoundtablePanelEdge?
     @Environment(\.uprightBandWidth) private var uprightWidth
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -379,6 +385,7 @@ struct BandGestureLayer: View {
                                     + (buttonColumnFolded.map { [BandColumnLayout.frame(bandHeight: layout.size.height,
                                                                                          leadingInset: leadingInset, folded: $0)] } ?? []),
                                    usableWidth: arrows.minX,
+                                   panelEdge: roundtableEdge,
                                    otherFlagHz: Set(flags.filter { !$0.1.isFolded && $0.0.id != slices.activeSliceId }
                                     .map { Int64($0.0.slice.frequencyHz.rounded()) }),
                                    readReports: { context in
@@ -464,7 +471,8 @@ struct BandGestureLayer: View {
                     DsrStripLayer(model: dsr, place: dsrPlace,
                                   secondsPerPoint: Double(band.settings.waterfallPeriodMs) / 1000,
                                   edge: stripEdge(layout: layout, geometry: geometry, entries: entries,
-                                                  placements: placements))
+                                                  placements: placements),
+                                  panelEdge: roundtableEdge)
                 }
             }
         }

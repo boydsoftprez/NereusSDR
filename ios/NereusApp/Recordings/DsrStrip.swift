@@ -12,6 +12,9 @@
 // 2026-11-16: A drag in from the right edge over the strip is the band's
 //   edge swipe (spec 11.3), not time (DsrStripEdge). J.J. Boyd (KG4VCF),
 //   AI-assisted via Claude Code.
+// 2026-11-18: LIVE, SAVE, the clock and SAVE's handles hide whole while the
+//   Roundtable sheet's top edge would cut them (RoundtablePanelEdge).
+//   J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import CoreGraphics
 import NereusBand
@@ -95,6 +98,10 @@ struct DsrStripLayer: View {
     var secondsPerPoint: Double = 0.1
     /// The band's edge zone; nil leaves every drag on the strip to time.
     var edge: DsrStripEdge?
+    /// The open Roundtable sheet's top edge in the band's points: LIVE, SAVE,
+    /// the clock and a handle it would cut are hidden whole, out of reach of
+    /// a tap and VoiceOver. The strip and the map are covered, as before.
+    var panelEdge: RoundtablePanelEdge?
     @State private var dragStart: Double?
     @State private var mapFinger: CGFloat?
     /// What the drag on the strip is: not yet known, time, or the edge's.
@@ -290,41 +297,47 @@ struct DsrStripLayer: View {
 
     private func buttons(usable: Bool) -> some View {
         ZStack(alignment: .topLeading) {
-            Button {
-                Task { await model.goLive() }
-            } label: {
-                DsrButtonLabel(text: "LIVE", look: model.liveLit ? .red : .plain, size: DsrStripPlace.buttonSize)
+            if !RoundtablePanelEdge.hides(place.live, under: panelEdge) {
+                Button {
+                    Task { await model.goLive() }
+                } label: {
+                    DsrButtonLabel(text: "LIVE", look: model.liveLit ? .red : .plain, size: DsrStripPlace.buttonSize)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("dsr.live")
+                .accessibilityLabel("Live")
+                .accessibilityHint(model.liveLit ? "Back to live" : "Already live")
+                .offset(x: place.live.minX, y: place.live.minY)
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("dsr.live")
-            .accessibilityLabel("Live")
-            .accessibilityHint(model.liveLit ? "Back to live" : "Already live")
-            .offset(x: place.live.minX, y: place.live.minY)
-            Button {
-                model.toggleSave()
-            } label: {
-                DsrButtonLabel(text: "SAVE", look: model.saving ? .yellowOn : .yellow, size: DsrStripPlace.buttonSize)
-                    .opacity(usable ? 1 : 0.42)
+            if !RoundtablePanelEdge.hides(place.save, under: panelEdge) {
+                Button {
+                    model.toggleSave()
+                } label: {
+                    DsrButtonLabel(text: "SAVE", look: model.saving ? .yellowOn : .yellow, size: DsrStripPlace.buttonSize)
+                        .opacity(usable ? 1 : 0.42)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("dsr.save")
+                .accessibilityLabel("Save a stretch")
+                .accessibilityHint(model.reason ?? "Puts a bracket on the time strip")
+                .offset(x: place.save.minX, y: place.save.minY)
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("dsr.save")
-            .accessibilityLabel("Save a stretch")
-            .accessibilityHint(model.reason ?? "Puts a bracket on the time strip")
-            .offset(x: place.save.minX, y: place.save.minY)
-            Button {
-                model.openTimeSheet()
-            } label: {
-                DsrClockGlyph()
-                    .frame(width: DsrStripPlace.buttonSize.width, height: DsrStripPlace.clockHeight)
-                    .background(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).fill(Color(white: 0.165)))
-                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).stroke(Color(white: 0.33)))
-                    .opacity(usable ? 1 : 0.42)
+            if !RoundtablePanelEdge.hides(place.clock, under: panelEdge) {
+                Button {
+                    model.openTimeSheet()
+                } label: {
+                    DsrClockGlyph()
+                        .frame(width: DsrStripPlace.buttonSize.width, height: DsrStripPlace.clockHeight)
+                        .background(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).fill(Color(white: 0.165)))
+                        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).stroke(Color(white: 0.33)))
+                        .opacity(usable ? 1 : 0.42)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("dsr.clock")
+                .accessibilityLabel("Go to a time")
+                .accessibilityHint(model.reason ?? "Type a time to go to")
+                .offset(x: place.clock.minX, y: place.clock.minY)
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("dsr.clock")
-            .accessibilityLabel("Go to a time")
-            .accessibilityHint(model.reason ?? "Type a time to go to")
-            .offset(x: place.clock.minX, y: place.clock.minY)
         }
     }
 
@@ -333,7 +346,7 @@ struct DsrStripLayer: View {
     private var handles: some View {
         ZStack(alignment: .topLeading) {
             ForEach(0..<2, id: \.self) { which in
-                if let y = handleY(which) {
+                if let y = handleY(which), !RoundtablePanelEdge.hides(handleRect(y), under: panelEdge) {
                     Circle()
                         .fill(DsrColours.yellow)
                         .overlay(Circle().stroke(Color(white: 0.07), lineWidth: 2))
@@ -364,6 +377,12 @@ struct DsrStripLayer: View {
     }
 
     static let space = "dsrStrip"
+
+    /// A handle's round face at `y` down the band, where the strip offsets it.
+    private func handleRect(_ y: CGFloat) -> CGRect {
+        CGRect(x: place.strip.minX + 8, y: y - DsrStripPlace.handleSize / 2,
+               width: DsrStripPlace.handleSize, height: DsrStripPlace.handleSize)
+    }
 
     private func handleMoment(_ which: Int) -> Double? {
         model.bracket.map { which == 0 ? $0.0 : $0.1 }

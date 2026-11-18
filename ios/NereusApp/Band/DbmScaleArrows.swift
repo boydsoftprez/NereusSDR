@@ -1,5 +1,8 @@
 // NereusSDR for iOS: the dBm scale's two arrow buttons: the scale's top by 10 dB, or in 3D, 3D Floor by 1 dB
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-11-18: The arrows hide whole while the Roundtable sheet's top edge would cut
+// them (RoundtablePanelEdge). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import NereusBand
 import SwiftUI
@@ -19,6 +22,9 @@ struct DbmScaleArrows: View {
     @ObservedObject var band: BandModel
     /// Sideways, the phone's rounded edge on the right, which the arrows keep inside.
     var trailingInset: CGFloat = 0
+    /// The open Roundtable sheet's top edge in the band's points: while it
+    /// would cut the arrows they are hidden whole. Nil: no sheet.
+    var panelEdge: RoundtablePanelEdge?
 
     static let raiseLabel = "Raise the scale's top 10 dB"
     static let lowerLabel = "Lower the scale's top 10 dB"
@@ -30,30 +36,32 @@ struct DbmScaleArrows: View {
             let rect = BandLayout(size: proxy.size, scale: 1, settings: band.shownSettings).dbmArrows
             let floor = display.arrowsMoveFloor
             let reason = !floor && display.scaleGreyed ? display.scaleNote : nil
-            VStack(spacing: 0) {
-                arrow("\u{25B2}", label: floor ? Self.floorUpLabel : Self.raiseLabel,
-                      enabled: floor ? display.canRaiseFloor : display.canRaiseTop, reason: reason, id: "dbmRaise") {
-                    if floor {
-                        display.nudgeFloor(up: true)
-                    } else {
-                        display.nudgeTop(up: true)
+            if !RoundtablePanelEdge.hides(rect.offsetBy(dx: -trailingInset, dy: 0), under: panelEdge) {
+                VStack(spacing: 0) {
+                    arrow("\u{25B2}", label: floor ? Self.floorUpLabel : Self.raiseLabel,
+                          enabled: floor ? display.canRaiseFloor : display.canRaiseTop, reason: reason, id: "dbmRaise") {
+                        if floor {
+                            display.nudgeFloor(up: true)
+                        } else {
+                            display.nudgeTop(up: true)
+                        }
+                    }
+                    Rectangle().fill(BandColours.zoomBorder).frame(height: 1)
+                    arrow("\u{25BC}", label: floor ? Self.floorDownLabel : Self.lowerLabel,
+                          enabled: floor ? display.canLowerFloor : display.canLowerTop, reason: reason, id: "dbmLower") {
+                        if floor {
+                            display.nudgeFloor(up: false)
+                        } else {
+                            display.nudgeTop(up: false)
+                        }
                     }
                 }
-                Rectangle().fill(BandColours.zoomBorder).frame(height: 1)
-                arrow("\u{25BC}", label: floor ? Self.floorDownLabel : Self.lowerLabel,
-                      enabled: floor ? display.canLowerFloor : display.canLowerTop, reason: reason, id: "dbmLower") {
-                    if floor {
-                        display.nudgeFloor(up: false)
-                    } else {
-                        display.nudgeTop(up: false)
-                    }
-                }
+                .frame(width: rect.width, height: rect.height)
+                .background(BandColours.zoomBackground, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(BandColours.zoomBorder, lineWidth: 1))
+                .clipShape(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .offset(x: rect.minX - trailingInset, y: rect.minY)
             }
-            .frame(width: rect.width, height: rect.height)
-            .background(BandColours.zoomBackground, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
-            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(BandColours.zoomBorder, lineWidth: 1))
-            .clipShape(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
-            .offset(x: rect.minX - trailingInset, y: rect.minY)
         }
     }
 

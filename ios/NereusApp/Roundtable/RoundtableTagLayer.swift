@@ -28,6 +28,9 @@
 // 2026-11-03: Overlay redesign card, placement and tags (design D10, D11, D13 to D15,
 // D17 to D20), per-item widths as the desktop's layoutRoundtableTags.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-18: A tag, a +N or the card the Roundtable sheet's top edge would cut is
+// hidden whole, with its tick, until the edge leaves it (RoundtablePanelEdge).
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import SwiftUI
 import UIKit
@@ -1615,6 +1618,9 @@ struct RoundtableTagLayer: View {
     var panKeepOut: [CGRect] = []
     /// The pan's width less the dBm scale; nil is all of `geometryWidth`.
     var usableWidth: CGFloat? = nil
+    /// The open Roundtable sheet's top edge in this layer's points: a tag, a
+    /// +N or the card it would cut is hidden whole, with its tick. Nil: no sheet.
+    var panelEdge: RoundtablePanelEdge? = nil
     /// Where other slices' full flags stand, each saying what is on its own frequency.
     var otherFlagHz: Set<Int64> = []
     /// iPhone (D17) or iPad (D18); nil goes by the width class and the device.
@@ -1686,13 +1692,21 @@ struct RoundtableTagLayer: View {
                 tags: tags, card: card, cardRoom: activeContext?.id, format: roundtable.signalFormat,
                 spokenHz: roundtable.frequencyAvailable ? otherFlagHz : [], foot: foot, panWidth: usableWidth ?? geometryWidth, hzPerPoint: hzPerPoint,
                 lowHz: lowHz, flags: flagRects, keepOut: panKeepOut, compact: isCompact)
-            let placements = arrangement.placements
             let byId = Dictionary(arrangement.shown.map { ($0.roomId, $0) }, uniquingKeysWith: { first, _ in first })
+            // What the Roundtable sheet's top edge would cut is hidden whole, its
+            // tick too; nothing else moves (RoundtablePanelEdge).
+            let edge = panelEdge
+            let placements = arrangement.placements.filter { placement in
+                !RoundtablePanelEdge.hides(tagRect(placement, byId: byId), under: edge)
+            }
+            let placedCard: RoundtablePlacedCard? = arrangement.card.flatMap { placed in
+                RoundtablePanelEdge.hides(placed.rect, under: edge) ? nil : placed
+            }
             let stale = display == .stale
             let dimmed = display == .dimmed
             ZStack(alignment: .topLeading) {
                 ticks(placements, byId: byId, stale: stale, dimmed: dimmed)
-                if let card, let placed = arrangement.card {
+                if let card, let placed = placedCard {
                     cardTick(card, placed: placed, dimmed: dimmed)
                     cardButton(card, placed: placed, tag: tags.first { $0.roomId == activeContext?.id },
                                dimmed: dimmed)
@@ -1819,6 +1833,12 @@ struct RoundtableTagLayer: View {
             return RoundtableTagLayout.height
         }
         return RoundtableTagLayout.tagHeight(tag)
+    }
+
+    /// Where a tag or a +N stands on the pan, as the layer offsets it: its foot on the row's.
+    private func tagRect(_ placement: RoundtableTagPlacement, byId: [String: RoundtableTag]) -> CGRect {
+        let height = placedHeight(placement, byId: byId)
+        return CGRect(x: CGFloat(placement.left), y: foot - height, width: CGFloat(placement.width), height: height)
     }
 
     @ViewBuilder

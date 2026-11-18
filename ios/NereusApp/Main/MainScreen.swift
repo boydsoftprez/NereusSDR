@@ -33,6 +33,8 @@
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-18: The Roundtable sheet sits where its handle was let go, never under its
 // smallest height, and opens again there. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-18: The sheet's top edge goes to the band, which hides whole what the edge
+// would cut. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -404,7 +406,9 @@ struct MainScreen: View {
             } else {
                 bandLayers(main.controls(for: .first), sideways: sideways, leadingInset: sideways ? leadingInset : 0,
                            trailingInset: sideways ? trailingInset : 0, swipesHere: swipesOn,
-                           buttonColumnFolded: column ? columnFolded : nil)
+                           buttonColumnFolded: column ? columnFolded : nil,
+                           roundtableEdge: roundtableEdge(sideways: sideways, leadingInset: sideways ? leadingInset : 0,
+                                                          trailingInset: sideways ? trailingInset : 0))
             }
             GeometryReader { proxy in
                 if let audio = app.audio {
@@ -859,6 +863,22 @@ struct MainScreen: View {
         return (top, max(0, bottom - top))
     }
 
+    /// The open sheet's top edge on the band, where ``roundtablePlace`` puts it
+    /// (live while its handle is dragged), for what on the band it would cut;
+    /// nil while the sheet is closed. Pan 1 alone, unstacked: a stacked pan's
+    /// points start lower down the band.
+    private func roundtableEdge(sideways: Bool, leadingInset: CGFloat, trailingInset: CGFloat) -> RoundtablePanelEdge? {
+        guard let detent = roundtableSheet, bandSize.height > 0 else {
+            return nil
+        }
+        let place = Self.roundtablePlace(bandHeight: bandSize.height, detent: detent,
+                                         gaugesFoot: transmit.ptt.transmitting ? gaugesFoot : nil,
+                                         dialStrip: dialStrip, smallest: roundtableSmallest)
+        return RoundtableSheet.edge(top: place.top, bandWidth: bandSize.width, sideways: sideways,
+                                    leadingInset: leadingInset, trailingInset: trailingInset,
+                                    sidewaysWidth: Self.roundtableSidewaysWidth)
+    }
+
     /// A dial is on that keeps the strip under the open sheet: the
     /// waterfall knob or the thumbwheel (the sheet knob rises over the band).
     private var dialStrip: Bool {
@@ -1147,7 +1167,8 @@ struct MainScreen: View {
     @ViewBuilder
     private func bandLayers(_ controls: PanControls, sideways: Bool, leadingInset: CGFloat, trailingInset: CGFloat,
                             swipesHere: Bool, foot: Bool = true, buttonColumnFolded: Bool? = nil,
-                            menuBinding: Binding<BandMenuAnchor?>? = nil) -> some View {
+                            menuBinding: Binding<BandMenuAnchor?>? = nil,
+                            roundtableEdge: RoundtablePanelEdge? = nil) -> some View {
         let band = controls.band.band
         let slices = controls.band.slices
         let first = controls.pan == .first
@@ -1187,8 +1208,9 @@ struct MainScreen: View {
                              swipes: swipesHere ? swipes : nil,
                              bandStack: controls.bandStack, radioOnAir: transmit.coreOnAir,
                              recordings: app.recordingFlag, openAllRecordings: openAllRecordings,
-                             openRecordingSettings: openRecordingSettings, dsr: first ? app.dsr : nil)
-            DbmScaleArrows(display: controls.display, band: band, trailingInset: trailingInset)
+                             openRecordingSettings: openRecordingSettings, dsr: first ? app.dsr : nil,
+                             roundtableEdge: roundtableEdge)
+            DbmScaleArrows(display: controls.display, band: band, trailingInset: trailingInset, panelEdge: roundtableEdge)
             BandReadouts(band: band, trailingInset: trailingInset)
             TransmitDisplayBanner(band: band)
             StackNotice(band: band, sideways: sideways)

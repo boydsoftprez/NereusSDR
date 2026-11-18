@@ -19,6 +19,8 @@
 // (design D22, D24 to D27, D36, D38). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-11-18: Your own frequency has no Tune and no note. J.J. Boyd (KG4VCF),
 // AI-assisted via Anthropic Claude Code.
+// 2026-11-18: A tag the Roundtable sheet's top edge cuts is hidden whole.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import Foundation
 import NereusBand
@@ -571,6 +573,66 @@ struct RoundtableToolsPageTests {
             let tag = try #require(SetupTypedEntryTests.element("roundtableTag.usb-7250000", in: window))
             _ = tag.accessibilityActivate()
             #expect(tuned.ids == ["usb-7250000", "lsb-7258100"])
+        }
+        await model.disconnect()
+    }
+
+    @Test("the sheet's top edge through a tag hides it whole; below the tag row, at the smallest height, it is back")
+    func tagsHideWholeUnderTheSheetEdge() async throws {
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        let (model, station) = try await shotStation()
+        try await station.deliverRoundtable(Self.bandScene())
+        #expect(await settle { model.roundtable.rooms.count == Self.bandRooms.count })
+        // The tag row's top is 300, so its one-line tags stand from 300 to 322.
+        let layer = { (edge: RoundtablePanelEdge?) in
+            RoundtableTagLayer(roundtable: model.roundtable, sliceIds: [0], geometryWidth: 402,
+                               lowHz: BandFlagShotTests.centre - BandFlagShotTests.span / 2,
+                               hzPerPoint: BandFlagShotTests.span / 402, top: 300, tickFoot: 330, flagRects: [],
+                               keyed: false, sliceLetter: "A", panelEdge: edge) { _ in }
+                .frame(width: 402, height: 874)
+                .background(Color.black)
+        }
+        // No sheet: the tag and the +N show. Only the tag's own width is taken
+        // from the window (a top safe area moves nothing sideways).
+        var span: ClosedRange<CGFloat> = 0...0
+        do {
+            let (window, _) = try host(layer(nil))
+            defer {
+                window.isHidden = true
+                window.rootViewController = nil
+            }
+            await ShotWait.laidOut(window)
+            let tag = try #require(SetupTypedEntryTests.element("roundtableTag.usb-7250000", in: window))
+            #expect(SetupTypedEntryTests.element("roundtableFold", in: window) != nil)
+            let frame = window.convert(tag.accessibilityFrame, from: window.screen.coordinateSpace)
+            span = (frame.minX + 1)...(frame.maxX - 1)
+        }
+        // A middle stop: the edge runs through that tag, at 311 in the layer's own points.
+        do {
+            let edge = RoundtablePanelEdge(top: 311, minX: span.lowerBound, maxX: span.upperBound)
+            let (window, _) = try host(layer(edge))
+            defer {
+                window.isHidden = true
+                window.rootViewController = nil
+            }
+            await ShotWait.laidOut(window)
+            // The +N beside it is drawn, so the tag's absence is not a layer still to draw.
+            #expect(await settle { SetupTypedEntryTests.element("roundtableFold", in: window) != nil })
+            #expect(SetupTypedEntryTests.element("roundtableTag.usb-7250000", in: window) == nil,
+                    "a tag the sheet's edge cuts is still on the band")
+        }
+        // The smallest height: the edge below the tag row, and the tag is back.
+        do {
+            let edge = RoundtablePanelEdge(top: 600, minX: span.lowerBound, maxX: span.upperBound)
+            let (window, _) = try host(layer(edge))
+            defer {
+                window.isHidden = true
+                window.rootViewController = nil
+            }
+            await ShotWait.laidOut(window)
+            #expect(await settle { SetupTypedEntryTests.element("roundtableTag.usb-7250000", in: window) != nil })
         }
         await model.disconnect()
     }

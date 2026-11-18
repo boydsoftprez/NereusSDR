@@ -34,8 +34,45 @@
 // 2026-11-18: The sheet stays where the handle is let go, from its smallest height
 // (one station row showing) to full; a tap goes between full and that height, which
 // the app keeps until it quits. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-18: RoundtablePanelEdge: a thing on the band the sheet's top edge would cut
+// in two is hidden whole until the edge leaves it. J.J. Boyd (KG4VCF), AI-assisted via
+// Anthropic Claude Code.
 
 import SwiftUI
+
+/// The open Roundtable sheet's top edge on the band, in the band's points
+/// (the band's top-left is 0, 0), across the sheet's width. A thing on the
+/// band that the edge would cut in two (a tag, the talker card, LIVE or
+/// SAVE) is hidden whole while it does, as at full height nothing shows
+/// half; it comes back once the edge leaves it. A thing wholly under the
+/// sheet is covered, as before. The trace, grid, waterfall and scales are
+/// not things: the sheet covers them as it always has.
+struct RoundtablePanelEdge: Equatable {
+    /// The sheet's top, in points down the band.
+    var top: CGFloat
+    /// The sheet's left and right edges: the band's width upright, the
+    /// sheet's narrower column on a phone on its side.
+    var minX: CGFloat = -.infinity
+    var maxX: CGFloat = .infinity
+
+    /// How far the edge may reach into a thing's top or bottom before it
+    /// counts as cut: a thing whose foot the edge only grazes stays.
+    static let tolerance: CGFloat = 1
+
+    /// The edge runs through `frame`, more than ``tolerance`` inside its
+    /// top and its bottom, within the sheet's width.
+    func cuts(_ frame: CGRect) -> Bool {
+        guard frame.maxX > minX, frame.minX < maxX else {
+            return false
+        }
+        return frame.minY + Self.tolerance < top && top < frame.maxY - Self.tolerance
+    }
+
+    /// `frame` is hidden under `edge`; no sheet hides nothing.
+    static func hides(_ frame: CGRect, under edge: RoundtablePanelEdge?) -> Bool {
+        edge?.cuts(frame) ?? false
+    }
+}
 
 /// The Roundtable sheet (spec 11.3, D17, U2, U3, U14): a flag's Roundtable
 /// line opens it at half height over the band, or at the height its handle
@@ -146,6 +183,19 @@ struct RoundtableSheet: View {
     @MainActor static var lastFirstStationBottom: CGFloat = 0
     /// The coordinate space of the sheet, for the room's place in it.
     nonisolated static let space = "roundtableSheetSpace"
+
+    /// The sheet's top edge on a band `bandWidth` wide, its top `top` points down:
+    /// the band's whole width upright; on its side, the sheet's column at
+    /// most ``MainScreen/roundtableSidewaysWidth`` wide against the right inset,
+    /// as MainScreen places it.
+    static func edge(top: CGFloat, bandWidth: CGFloat, sideways: Bool, leadingInset: CGFloat,
+                     trailingInset: CGFloat, sidewaysWidth: CGFloat) -> RoundtablePanelEdge {
+        guard sideways else {
+            return RoundtablePanelEdge(top: top, minX: 0, maxX: bandWidth)
+        }
+        let right = bandWidth - trailingInset
+        return RoundtablePanelEdge(top: top, minX: max(leadingInset, right - sidewaysWidth), maxX: right)
+    }
 
     /// The sheet's smallest height: the handle and title row above the room,
     /// the room down to its first station row, then the Tune bar (a viewed

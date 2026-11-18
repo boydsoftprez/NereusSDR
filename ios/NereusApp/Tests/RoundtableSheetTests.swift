@@ -31,6 +31,8 @@
 // 2026-11-18: The sheet's height where the handle is let go: its smallest, the close
 // drag, the tap, the session's memory and the earlier turns at full only.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-18: What the sheet's top edge would cut is hidden whole (RoundtablePanelEdge).
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import Foundation
 import NereusBand
@@ -554,6 +556,82 @@ struct RoundtableSheetTests {
         #expect(!RoundtableSheet.showsEarlier(.at(top: 20, bandHeight: 600), bandHeight: 600, viewing: false))
         #expect(!RoundtableSheet.showsEarlier(.half, bandHeight: 600, viewing: false))
         #expect(!RoundtableSheet.showsEarlier(.full, bandHeight: 600, viewing: true))
+    }
+
+    // MARK: What the sheet's top edge would cut
+
+    @Test("the sheet's top edge through a thing on the band hides it whole; clear of it, over it or at its edge, it stays")
+    func panelEdgeCuts() {
+        let tag = CGRect(x: 100, y: 300, width: 80, height: 22)
+        // Not touched: the sheet's top is below it.
+        #expect(!RoundtablePanelEdge(top: 400).cuts(tag))
+        // Partly covered: hidden.
+        #expect(RoundtablePanelEdge(top: 311).cuts(tag))
+        #expect(RoundtablePanelEdge(top: 301.5).cuts(tag))
+        #expect(RoundtablePanelEdge(top: 320.5).cuts(tag))
+        // Fully under the sheet: covered by it, as before, not hidden.
+        #expect(!RoundtablePanelEdge(top: 250).cuts(tag))
+        #expect(!RoundtablePanelEdge(top: 0).cuts(tag))
+        // At its edge, or reaching 1 point or less into it: it stays.
+        #expect(RoundtablePanelEdge.tolerance == 1)
+        #expect(!RoundtablePanelEdge(top: 322).cuts(tag))
+        #expect(!RoundtablePanelEdge(top: 321).cuts(tag))
+        #expect(!RoundtablePanelEdge(top: 300).cuts(tag))
+        #expect(!RoundtablePanelEdge(top: 301).cuts(tag))
+        // On its side the sheet is a column: a thing beside it is not cut.
+        #expect(!RoundtablePanelEdge(top: 311, minX: 200, maxX: 700).cuts(tag))
+        #expect(RoundtablePanelEdge(top: 311, minX: 150, maxX: 700).cuts(tag))
+        // No sheet hides nothing.
+        #expect(!RoundtablePanelEdge.hides(tag, under: nil))
+        #expect(RoundtablePanelEdge.hides(tag, under: RoundtablePanelEdge(top: 311)))
+    }
+
+    @Test("the edge runs across the band upright and across the sheet's column on its side")
+    func panelEdgeWidth() {
+        #expect(RoundtableSheet.edge(top: 200, bandWidth: 390, sideways: false, leadingInset: 0, trailingInset: 0,
+                                     sidewaysWidth: MainScreen.roundtableSidewaysWidth)
+                == RoundtablePanelEdge(top: 200, minX: 0, maxX: 390))
+        // On its side: at most 546 wide against the right inset...
+        #expect(RoundtableSheet.edge(top: 0, bandWidth: 844, sideways: true, leadingInset: 47, trailingInset: 47,
+                                     sidewaysWidth: MainScreen.roundtableSidewaysWidth)
+                == RoundtablePanelEdge(top: 0, minX: 797 - 546, maxX: 797))
+        // ...and never left of the left inset.
+        #expect(RoundtableSheet.edge(top: 0, bandWidth: 500, sideways: true, leadingInset: 47, trailingInset: 47,
+                                     sidewaysWidth: MainScreen.roundtableSidewaysWidth)
+                == RoundtablePanelEdge(top: 0, minX: 47, maxX: 453))
+    }
+
+    @Test("a thing the edge cuts at a middle stop is back at the smallest height, and was whole at half")
+    func panelEdgeMiddleAndSmallest() {
+        // A 600-point band, its smallest height 200: the talker card from 160 to 220.
+        let card = CGRect(x: 8, y: 160, width: 176, height: 60)
+        func edge(_ detent: RoundtableSheet.Detent) -> RoundtablePanelEdge {
+            let place = MainScreen.roundtablePlace(bandHeight: 600, detent: detent, gaugesFoot: nil, dialStrip: false,
+                                                   smallest: 200)
+            return RoundtableSheet.edge(top: place.top, bandWidth: 390, sideways: false, leadingInset: 0,
+                                        trailingInset: 0, sidewaysWidth: MainScreen.roundtableSidewaysWidth)
+        }
+        #expect(edge(.at(top: 180, bandHeight: 600)).cuts(card))
+        #expect(!edge(.at(top: 590, bandHeight: 600)).cuts(card), "the smallest height (top 400) leaves it whole")
+        #expect(!edge(.half).cuts(card), "half (top 288) leaves it whole")
+        #expect(!edge(.full).cuts(card), "full covers it, as before")
+    }
+
+    @Test("LIVE, SAVE and the clock: the one the edge runs through is hidden, the rest stay")
+    func panelEdgeRecorderButtons() {
+        // The waterfall from 300 to 600 on a 390-point band: LIVE 305 to 327, SAVE 331 to 353, the clock at the foot.
+        let place = DsrStripPlace(waterfall: CGRect(x: 0, y: 300, width: 390, height: 300), trailingInset: 0)
+        #expect(place.live == CGRect(x: 390 - 44 + 3, y: 305, width: 38, height: 22))
+        #expect(place.save == CGRect(x: 390 - 44 + 3, y: 331, width: 38, height: 22))
+        let throughSave = RoundtablePanelEdge(top: 342, minX: 0, maxX: 390)
+        #expect(throughSave.cuts(place.save))
+        #expect(!throughSave.cuts(place.live), "LIVE above the edge stays")
+        #expect(!throughSave.cuts(place.clock), "the clock under the sheet is covered, not hidden")
+        let throughLive = RoundtablePanelEdge(top: 316, minX: 0, maxX: 390)
+        #expect(throughLive.cuts(place.live) && !throughLive.cuts(place.save))
+        // The smallest height: the edge below both, which stay.
+        let low = RoundtablePanelEdge(top: 500, minX: 0, maxX: 390)
+        #expect(!low.cuts(place.live) && !low.cuts(place.save) && !low.cuts(place.clock))
     }
 
     @Test("the hold PTT reads Hold where the tap PTT reads Tap")
