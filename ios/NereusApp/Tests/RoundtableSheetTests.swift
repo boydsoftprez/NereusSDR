@@ -28,6 +28,9 @@
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-11-03: Pins follow the overlay redesign truth rules and wording (design D2, D3, D5, D6, D8).
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-18: The sheet's height where the handle is let go: its smallest, the close
+// drag, the tap, the session's memory and the earlier turns at full only.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import Foundation
 import NereusBand
@@ -459,6 +462,98 @@ struct RoundtableSheetTests {
         #expect(MainScreen.keepsStrip(.waterfallKnob) && MainScreen.keepsStrip(.thumbwheel))
         #expect(!MainScreen.keepsStrip(.off) && !MainScreen.keepsStrip(.sheetKnob))
         #expect(PttButton.holdDiameter < PttButton.diameter && PttButton.holdClearance == 24)
+    }
+
+    @Test("the smallest height adds the room's top, its first station row, the Tune bar and the box")
+    func sheetSmallest() {
+        #expect(RoundtableSheet.smallest(roomTop: 62, firstStationBottom: 52.4, tuneBar: 0, composer: 75) == 190)
+        #expect(RoundtableSheet.smallest(roomTop: 62, firstStationBottom: 52, tuneBar: 49, composer: 75) == 238)
+    }
+
+    @Test("a drag holds the top between full and the smallest height, and the place never goes under it")
+    func sheetDragClamps() {
+        // A 600-point band, its smallest height 200: the top goes no lower than 400.
+        #expect(RoundtableSheet.dragTop(startTop: 288, translation: -1000, fullHeight: 600, smallest: 200) == 0)
+        #expect(RoundtableSheet.dragTop(startTop: 288, translation: 1000, fullHeight: 600, smallest: 200) == 400)
+        #expect(RoundtableSheet.dragTop(startTop: 288, translation: -88, fullHeight: 600, smallest: 200) == 200)
+        // A height lower than the smallest (one made before the Tune bar came) sits at the smallest.
+        let low = MainScreen.roundtablePlace(bandHeight: 600, detent: .init(top: 0.95), gaugesFoot: nil,
+                                             dialStrip: false, smallest: 200)
+        #expect(low.top == 400 && low.height == 200)
+        // With the dial strip, the smallest height stands on the strip.
+        let strip = MainScreen.roundtablePlace(bandHeight: 600, detent: .init(top: 0.95), gaugesFoot: nil,
+                                               dialStrip: true, smallest: 200)
+        #expect(strip.top == 600 - 92 - 200 && strip.height == 200)
+        // Full and half are as they were.
+        #expect(MainScreen.roundtablePlace(bandHeight: 600, detent: .full, gaugesFoot: nil, dialStrip: false,
+                                           smallest: 200).top == 0)
+        #expect(MainScreen.roundtablePlace(bandHeight: 600, detent: .half, gaugesFoot: nil, dialStrip: false,
+                                           smallest: 200).top == 288)
+    }
+
+    @Test("let go, the sheet stays where it is; let go over 60 points below its smallest height, it closes")
+    func sheetDragEnds() {
+        let stay = RoundtableSheet.dragEnded(startTop: 288, translation: -100, bandHeight: 600, fullHeight: 600,
+                                             smallest: 200)
+        #expect(stay == .stay(.at(top: 188, bandHeight: 600)))
+        #expect(MainScreen.roundtablePlace(bandHeight: 600, detent: .at(top: 188, bandHeight: 600), gaugesFoot: nil,
+                                           dialStrip: false, smallest: 200).top == 188)
+        // Past full it stays at full.
+        #expect(RoundtableSheet.dragEnded(startTop: 288, translation: -400, bandHeight: 600, fullHeight: 600,
+                                          smallest: 200) == .stay(.full))
+        // Under the smallest height by up to 60 points it settles at the smallest...
+        #expect(RoundtableSheet.dragEnded(startTop: 288, translation: 172, bandHeight: 600, fullHeight: 600,
+                                          smallest: 200) == .stay(.at(top: 400, bandHeight: 600)))
+        // ...and by more, it closes.
+        #expect(RoundtableSheet.closeBeyondSmallest == 60)
+        #expect(RoundtableSheet.dragEnded(startTop: 288, translation: 173, bandHeight: 600, fullHeight: 600,
+                                          smallest: 200) == .close)
+    }
+
+    @Test("a tap goes to full and back to the dragged height; never dragged, or dragged near full, back to half")
+    func sheetToggle() {
+        let dragged = RoundtableSheet.Detent.at(top: 150, bandHeight: 600)
+        #expect(RoundtableSheet.toggled(dragged, lastDragged: dragged, bandHeight: 600) == .full)
+        #expect(RoundtableSheet.toggled(.full, lastDragged: dragged, bandHeight: 600) == dragged)
+        // Never dragged: half and full, as before.
+        #expect(RoundtableSheet.toggled(.half, lastDragged: nil, bandHeight: 600) == .full)
+        #expect(RoundtableSheet.toggled(.full, lastDragged: nil, bandHeight: 600) == .half)
+        // Dragged to full, or within a few points of it: back to half.
+        let nearFull = RoundtableSheet.Detent.at(top: 5, bandHeight: 600)
+        #expect(RoundtableSheet.toggled(.full, lastDragged: nearFull, bandHeight: 600) == .half)
+        #expect(RoundtableSheet.toggled(.full, lastDragged: .full, bandHeight: 600) == .half)
+        // Near full counts as full: the tap goes back down.
+        #expect(RoundtableSheet.toggled(nearFull, lastDragged: nearFull, bandHeight: 600) == .half)
+    }
+
+    @Test("the sheet opens at the height last dragged to while the app runs, else half, and saves nothing")
+    func sheetSessionMemory() throws {
+        #expect(RoundtableSheet.opening(lastDragged: nil) == .half)
+        let dragged = RoundtableSheet.Detent.at(top: 150, bandHeight: 600)
+        #expect(RoundtableSheet.opening(lastDragged: dragged) == dragged)
+        // Kept on the app, which a fresh launch makes anew: nothing in the settings.
+        let suite = "roundtable-sheet-memory-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(phoneSettings: PhoneSettings(defaults: defaults))
+        #expect(model.roundtableSheetDragged == nil)
+        let before = Set(defaults.dictionaryRepresentation().keys)
+        model.roundtableSheetDragged = dragged
+        // Closed and opened again, the same height.
+        #expect(RoundtableSheet.opening(lastDragged: model.roundtableSheetDragged) == dragged)
+        #expect(Set(defaults.dictionaryRepresentation().keys) == before)
+        // A new app (a fresh launch) opens at half.
+        #expect(RoundtableSheet.opening(lastDragged: AppModel(phoneSettings: PhoneSettings(defaults: defaults))
+            .roundtableSheetDragged) == .half)
+    }
+
+    @Test("the earlier turns show at full height only, on your own frequency")
+    func sheetEarlierAtFull() {
+        #expect(RoundtableSheet.showsEarlier(.full, bandHeight: 600, viewing: false))
+        #expect(RoundtableSheet.showsEarlier(.at(top: 5, bandHeight: 600), bandHeight: 600, viewing: false))
+        #expect(!RoundtableSheet.showsEarlier(.at(top: 20, bandHeight: 600), bandHeight: 600, viewing: false))
+        #expect(!RoundtableSheet.showsEarlier(.half, bandHeight: 600, viewing: false))
+        #expect(!RoundtableSheet.showsEarlier(.full, bandHeight: 600, viewing: true))
     }
 
     @Test("the hold PTT reads Hold where the tap PTT reads Tap")

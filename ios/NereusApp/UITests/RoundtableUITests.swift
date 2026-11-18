@@ -18,6 +18,8 @@
 // AI-assisted via Anthropic Claude Code.
 // 2026-11-18: Your own frequency has no Tune and no note. J.J. Boyd (KG4VCF),
 // AI-assisted via Anthropic Claude Code.
+// 2026-11-18: The sheet stays where its handle is let go, down to its smallest height,
+// and a long drag down closes it. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import XCTest
 
@@ -291,7 +293,75 @@ final class RoundtableUITests: XCTestCase {
         XCTAssertTrue(question.exists, "the question closed with no Core to take the answer")
     }
 
+    /// The handle's drag: the sheet stays where it is let go, between its smallest
+    /// height and full. A tap goes to full and back to that height, the sheet opens
+    /// there again, and a drag let go well below its smallest height closes it.
+    @MainActor
+    func testTheSheetStaysWhereTheHandleIsLetGo() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "An iPad shows the applet or the panel")
+        let app = launch(frequency: true)
+        var sheet = try openSheet(app)
+        let handle = app.buttons["roundtableHandle"]
+        XCTAssertTrue(handle.waitForExistence(timeout: 10))
+        let half = sheet.frame.minY
+        // Up 120 points: it stays there, neither half nor full.
+        drag(handle, by: -120)
+        waitUntil("the sheet did not stay where the handle was let go") { abs(sheet.frame.minY - (half - 120)) < 6 }
+        Thread.sleep(forTimeInterval: 0.5)
+        let middle = sheet.frame.minY
+        try save("roundtable-ui-free-height-middle")
+        // A tap goes to full, and the next back to the dragged height.
+        handle.tap()
+        waitUntil("the tap did not make the sheet full height") { sheet.frame.minY < middle - 100 }
+        handle.tap()
+        waitUntil("the tap did not bring back the dragged height") { abs(sheet.frame.minY - middle) < 2 }
+        // Closed and opened again, it opens at the dragged height.
+        app.buttons["roundtableClose"].tap()
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10))
+        sheet = try openSheet(app)
+        waitUntil("the sheet did not open at the dragged height") { abs(sheet.frame.minY - middle) < 2 }
+        // Down in short drags until it stops: its smallest height, still open.
+        var top = sheet.frame.minY
+        for _ in 0..<20 {
+            drag(handle, by: 40)
+            Thread.sleep(forTimeInterval: 0.5)
+            if abs(sheet.frame.minY - top) < 1 {
+                break
+            }
+            top = sheet.frame.minY
+        }
+        XCTAssertTrue(sheet.exists, "short drags closed the sheet")
+        let person = app.descendants(matching: .any)["roundtableViewPerson"].firstMatch
+        let box = app.descendants(matching: .any)["roundtableBox"]
+        XCTAssertTrue(person.exists && box.exists)
+        XCTAssertLessThanOrEqual(person.frame.maxY, box.frame.minY, "the first station row is under the box")
+        XCTAssertGreaterThan(person.frame.minY, sheet.frame.minY, "the first station row is above the sheet")
+        print("Roundtable sheet smallest height: \(sheet.frame.height) points, top \(sheet.frame.minY)")
+        try save("roundtable-ui-free-height-smallest")
+        // Closed and opened again at its smallest height, it still shows that station row.
+        let smallest = sheet.frame.minY
+        app.buttons["roundtableClose"].tap()
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10))
+        sheet = try openSheet(app)
+        waitUntil("the sheet did not open again at its smallest height") { abs(sheet.frame.minY - smallest) < 2 }
+        waitUntil("the reopened sheet hides its first station row") {
+            person.exists && person.frame.maxY <= box.frame.minY && person.frame.minY > sheet.frame.minY
+        }
+        // A drag let go well below the smallest height closes the sheet.
+        drag(handle, by: 200)
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10), "a long drag down did not close the sheet")
+        XCTAssertEqual(holdLog(app), "none")
+    }
+
     // MARK: Helpers
+
+    /// A slow drag of `dy` points from the middle of `element`, held at its end.
+    @MainActor
+    private func drag(_ element: XCUIElement, by dy: CGFloat) {
+        let start = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: dy)),
+                    withVelocity: 300, thenHoldForDuration: 0.1)
+    }
 
     @MainActor
     private func openSheet(_ app: XCUIApplication, dismissNote: Bool = true) throws -> XCUIElement {

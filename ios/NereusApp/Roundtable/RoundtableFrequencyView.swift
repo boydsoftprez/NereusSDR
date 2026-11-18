@@ -11,6 +11,8 @@
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-11-18: Your own frequency leaves Tune out, with its note, so the list and
 // messages take the room. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-18: The first station row's bottom goes up to the phone's sheet, whose
+// smallest height shows down to it. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import NereusModels
 import SwiftUI
@@ -88,6 +90,17 @@ enum RoundtableFrequencyText {
                         linkUp: Bool, familyReachable: Bool = true) -> Bool {
         let writesMode = family != sliceFamily && family != "fdvu" && family != "fdvl"
         return !keyed && tunable && linkUp && familyReachable && sliceHz != nil && (hz != sliceHz || writesMode)
+    }
+}
+
+/// The bottom of a frequency view's first station row (or its "Nobody here"),
+/// in the room's scroll (``RoundtableRoomView/contentSpace``): the phone's
+/// sheet at its smallest height shows down to it.
+struct RoundtableFirstStationKey: PreferenceKey {
+    static let defaultValue: CGFloat? = nil
+
+    static func reduce(value: inout CGFloat?, nextValue: () -> CGFloat?) {
+        value = value ?? nextValue()
     }
 }
 
@@ -238,9 +251,10 @@ struct RoundtableFrequencyView: View {
     private var people: some View {
         if data.onFrequency.isEmpty {
             note("Nobody here")
+                .background(firstStationMark)
         } else {
             VStack(alignment: .leading, spacing: 2) {
-                ForEach(Array(data.onFrequency.enumerated()), id: \.offset) { _, person in
+                ForEach(Array(data.onFrequency.enumerated()), id: \.offset) { index, person in
                     HStack(spacing: 5) {
                         RoundtableGlyphView(glyph: person.keyed ? (isDouble ? .doubled : .talking) : .quiet,
                                             size: RoundtableTagLayout.glyphSize)
@@ -268,10 +282,18 @@ struct RoundtableFrequencyView: View {
                             .fixedSize()
                     }
                     .frame(height: 14)
+                    .background { if index == 0 { firstStationMark } }
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier("roundtableViewPerson")
                 }
             }
+        }
+    }
+
+    private var firstStationMark: some View {
+        GeometryReader { proxy in
+            Color.clear.preference(key: RoundtableFirstStationKey.self,
+                                   value: proxy.frame(in: .named(RoundtableRoomView.contentSpace)).maxY)
         }
     }
 

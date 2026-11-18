@@ -21,6 +21,12 @@ These reach phones and iPads with the app's next build, not with this download.
   gone when the slice is already on that frequency, so the list and messages
   reach down to the message box. Looking at another frequency still shows
   **Tune slice A here** as before.
+- **The iPhone's Roundtable panel stays where you let go of its grab bar.**
+  Drag the bar to any height, from just one station showing up to full, to
+  see more of the spectrum when only one or two people are on the frequency.
+  A drag well below the smallest height closes the panel. A tap on the bar
+  goes between full and your height, and the panel opens at your height again
+  until the app is closed.
 
 ## [2026.11.1] - 2026-11-08
 

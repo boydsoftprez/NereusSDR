@@ -20,6 +20,8 @@
 //   (DsrPanModel.activeSliceHz). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-16: Every tune of the active slice reaches the recorder
 //   (DsrPanModel.sliceTuned). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-18: The Roundtable sheet's dragged height, kept until the app quits.
+//   J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import Combine
 import Foundation
@@ -148,6 +150,9 @@ final class AppModel: ObservableObject {
     /// and the sheet, tied to this app, so it stops reading as connected
     /// once the app and its session are gone.
     lazy var roundtable = RoundtableModel(mirror: mirror, commands: commands, records: records, settings: settings, catalogFeed: main.catalogFeed, phoneSettings: phoneSettings, owner: self)
+    /// The height the Roundtable sheet's handle was last dragged to: the sheet
+    /// opens there again until the app quits. Never saved.
+    var roundtableSheetDragged: RoundtableSheet.Detent?
     /// The Panadapter tab's swipes (spec 11.3, S1): the band reads its edges, the root its tab bar.
     lazy var swipes = SwipeShortcutModel(settings: phoneSettings)
     /// The speaker at the radio, as the Sound panel shows it: one level and
