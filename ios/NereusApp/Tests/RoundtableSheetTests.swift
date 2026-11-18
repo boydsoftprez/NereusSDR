@@ -33,6 +33,8 @@
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-11-18: What the sheet's top edge would cut is hidden whole (RoundtablePanelEdge).
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-18: A hidden flag takes no drag. J.J. Boyd (KG4VCF), AI-assisted via
+// Anthropic Claude Code.
 
 import Foundation
 import NereusBand
@@ -660,6 +662,41 @@ struct RoundtableSheetTests {
         // Each flag on its own: one lower down, wholly under the sheet at the middle stop, is covered, not hidden.
         let lower = CGRect(x: 100, y: 200, width: 200, height: 180)
         #expect(!BandGestureLayer.flagHidden(flag: lower, column: nil, under: middle))
+    }
+
+    @Test("a drag that starts where a hidden flag stands is the band's there, not that slice's")
+    func panelEdgeHiddenFlagTakesNoDrag() {
+        let geometry = BandGeometry(centerHz: 7_245_000, spanHz: 48_000, size: CGSize(width: 390, height: 300),
+                                    dbmRange: -140 ... -40)
+        // A on lower sideband (its passband left of its line), B on upper.
+        let a = BandSlice(id: 0, frequencyHz: 7_236_400, filterLowHz: -2_900, filterHighHz: -100, colour: "#102030",
+                          lowerSideband: true)
+        let b = BandSlice(id: 1, frequencyHz: 7_255_000, filterLowHz: 100, filterHighHz: 2_900, colour: "#102030",
+                          lowerSideband: false)
+        let placements = FlagLayout.layout(slices: [a, b], activeSliceId: 0, geometry: geometry)
+        let flags = [(id: 0, placement: placements[0]), (id: 1, placement: placements[1])]
+        let flag = placements[0].rect
+        // On A's flag at its far end from A's line, clear of A's passband.
+        let line = CGFloat(geometry.x(forHz: a.frequencyHz))
+        let onFlag = CGPoint(x: flag.midX > line ? flag.maxX - 2 : flag.minX + 2, y: flag.midY)
+        func target(_ placements: [FlagPlacement], at point: CGPoint) -> TuneGestures.DragTarget {
+            TuneGestures.dragTarget(at: point, slices: [a, b], placements: placements, activeSliceId: 0,
+                                    geometry: geometry, tunable: [0, 1])
+        }
+        #expect(target(placements, at: onFlag) == .slice(0), "a shown flag takes the drag")
+        // The sheet's edge through A's flag alone.
+        let edge = RoundtablePanelEdge(top: flag.midY)
+        let hidden = BandGestureLayer.hiddenFlags(flags, columns: [:], under: edge)
+        #expect(hidden == [0])
+        let touch = BandGestureLayer.touchPlacements(flags, hidden: hidden)
+        #expect(touch[1] == placements[1], "the flag the edge does not cut is unchanged")
+        #expect(target(touch, at: onFlag) == .band, "a hidden flag takes no drag")
+        // The passband stays in sight, and a drag on it still tunes its slice.
+        let passband = CGPoint(x: geometry.x(forHz: 7_236_400 - 1_500), y: 280)
+        #expect(target(touch, at: passband) == .slice(0))
+        // No sheet: nothing hidden, every flag takes its drag.
+        #expect(BandGestureLayer.hiddenFlags(flags, columns: [:], under: nil).isEmpty)
+        #expect(BandGestureLayer.touchPlacements(flags, hidden: []) == placements)
     }
 
     @Test("the hold PTT reads Hold where the tap PTT reads Tap")
