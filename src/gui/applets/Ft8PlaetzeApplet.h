@@ -32,17 +32,72 @@
 // Zwei Fenster, die beide in `Ft8Mehrfach` hineingreifen, haetten
 // jedes seine eigene Meinung darueber, welcher Zug gerade dran ist.
 //
+// ── Die Anordnung folgt der Groesse (2026-11-18) ───────────────────
+//
+// Betreiber, am Morgen, an dem zwei Stationen zum ersten Mal
+// gleichzeitig hinausgingen: „FT8 SLOTS sollte man auch nebeneinander
+// anordnen können und soll sich automatsich an die Größe des Fenster
+// anpassen!"
+//
+// Bis dahin standen die Kacheln immer untereinander. Zog er das
+// Fenster breit und niedrig, blieb rechts alles leer und die dritte
+// Kachel verschwand unten -- ohne Rollbalken, weil die Mindesthoehe
+// des Applets fest auf 150 stand und die der Flaeche darin unterging.
+//
+// Jetzt ist die Anordnung eine reine Rechnung aus Stand, Breite und
+// Hoehe (`Ft8PlaetzeAnordnung`): so viele Spalten, wie Kacheln in
+// ihrer Mindestbreite nebeneinander passen. Kein Schalter. Die
+// Kacheln selbst -- Inhalt, Schrift, Farben -- sind dieselben.
+//
 // Modification history (Longpath):
 //   2026-10-30 — Original fuer Longpath von Martin Fischer (OE5SOS),
 //                 KI-gestuetzt ueber Anthropic Claude (Cowork).
+//   2026-11-18 — Die Kacheln ordnen sich nach der Groesse des Panels
+//                 (nebeneinander / Raster / untereinander). Martin
+//                 Fischer (OE5SOS), KI-gestuetzt ueber Anthropic
+//                 Claude (Claude Code).
 // =================================================================
 
 #include "AppletWidget.h"
 #include "Ft8PlatzStand.h"
 
+#include <QPointer>
+#include <QRect>
+#include <QVector>
+
 class QLabel;
+class QScrollArea;
 
 namespace Longpath {
+
+/// Wo was steht. Reine Daten, aus Stand, Breite und Hoehe gerechnet
+/// -- die Malflaeche malt danach, und ein Prueflauf liest dieselben
+/// Rechtecke, statt Bildpunkte zu zaehlen.
+struct Ft8PlaetzeAnordnung {
+    /// Spalten des Platz-Rasters.
+    int spalten{1};
+    /// Je Kachel ein Rechteck, in der Reihenfolge von
+    /// `Ft8PlaetzeStand::plaetze`. IMMER vollzaehlig.
+    QVector<QRect> kacheln;
+    /// Die Streifen der freien Plaetze, die Platz gefunden haben. Kann
+    /// kuerzer sein als die Zahl der freien Plaetze -- sie weichen
+    /// zuerst. Der n-te Eintrag gehoert zum Platz `kacheln.size()+n+1`.
+    QVector<QRect> freie;
+    /// Wie die freien Plaetze dastehen.
+    enum class Freie {
+        Voll,     ///< jeder in seiner Zelle des Platz-Rasters
+        Dicht,    ///< reine Frei-Zeilen enger gepackt, mehrere je Zeile
+        Gewichen  ///< reine Frei-Zeilen sind weg (die Kopfzeile zaehlt)
+    };
+    Freie freieArt{Freie::Voll};
+    /// Die Warteschlange: Oberkante der Trennlinie (-1: keine) und je
+    /// Wartendem die Zeile.
+    int wartendeY{-1};
+    QVector<QRect> wartende;
+    /// Was diese Anordnung an Hoehe braucht: bis unter das Letzte,
+    /// das gemalt wird, und eine Handbreit darunter.
+    int hoehe{0};
+};
 
 /// Die Malfläche. Getrennt vom Applet, damit ein Prueflauf sie ohne
 /// RadioModel aufziehen und abgreifen kann.
@@ -55,11 +110,45 @@ public:
     void setzeStand(const Ft8PlaetzeStand& s);
     const Ft8PlaetzeStand& stand() const { return m_stand; }
 
-    /// Die Hoehe, die der aktuelle Stand braucht. Das Panel waechst
-    /// mit der Zahl der Plaetze statt eine feste Hoehe zu behaupten.
+    /// Die Hoehe, die der aktuelle Stand in der Breite des
+    /// Groessenhinweises braucht (eine Spalte, alle freien Plaetze).
+    /// Das Panel waechst mit der Zahl der Plaetze statt eine feste
+    /// Hoehe zu behaupten.
     int noetigeHoehe() const;
 
     QSize sizeHint() const override;
+
+    // ── Die Anordnung (2026-11-18) ──────────────────────────────
+    //
+    // Eine Rechnung, drei Fragen: was gemalt wird (`anordnung()`),
+    // was mindestens Platz haben MUSS (`pflichtHoehe`: Kopf, Kacheln,
+    // Wartende -- darunter rollt der Gastgeber) und was das Panel
+    // gern haette (`wunschHoehe`: dazu jeder freie Platz).
+
+    /// Fuer eine gegebene Groesse.
+    Ft8PlaetzeAnordnung anordnungFuer(int breite, int hoehe) const;
+    /// Fuer die Groesse, die die Flaeche gerade hat.
+    Ft8PlaetzeAnordnung anordnung() const
+    { return anordnungFuer(width(), height()); }
+
+    int pflichtHoehe(int breite) const;
+    int wunschHoehe(int breite) const;
+
+    /// Die Mindestbreite EINER Kachel: aus den Rechtecken, in die
+    /// `maleKachel` schreibt, und der Breite dessen, was hineinsoll.
+    /// Nie kleiner als das, was ein gewoehnliches Rufzeichen und ein
+    /// langer Landesname brauchen -- sonst sprange das Raster mit
+    /// jedem neuen Partner um.
+    int kachelMindestbreite() const;
+    /// Die Breite, unter der eine Kachel beschnitten wuerde.
+    int mindestBreite() const { return kachelMindestbreite() + 2 * kRandX; }
+
+    /// Die Breite, fuer die `sizeHint()` und `noetigeHoehe()` rechnen.
+    static constexpr int kHinweisBreite = 320;
+    static constexpr int kKopfH      = 22;
+    /// Unter dem Letzten, das gemalt wird. Knapp: nach dieser Hoehe
+    /// entscheidet sich, ob der Gastgeber rollt.
+    static constexpr int kFussH      = 4;
 
     // ── Die Masze aus dem gewaehlten Blatt ─────────────────────
     static constexpr int kKachelH   = 92;
@@ -83,10 +172,24 @@ protected:
 private:
     /// Gibt die Hoehe zurueck, die sie gebraucht hat.
     int  maleKopfzeile(QPainter& p);
-    void maleKachel(QPainter& p, int y, int nummer, const Ft8PlatzStand& z);
+    void maleKachel(QPainter& p, const QRect& r, int nummer,
+                    const Ft8PlatzStand& z);
     /// Ein freier Platz als Streifen (Entwurf B).
-    void maleFreien(QPainter& p, int y, int nummer);
-    void maleWartende(QPainter& p, int y);
+    void maleFreien(QPainter& p, const QRect& r, int nummer);
+    void maleWartende(QPainter& p, const Ft8PlaetzeAnordnung& a);
+
+    /// Wie breit ein Wartender mindestens stehen muss, damit sein
+    /// Land neben Rufzeichen und Rapport noch Platz hat.
+    int warteMindestbreite() const;
+    /// Wie schmal ein freier Streifen werden darf.
+    int freiMindestbreite() const;
+
+    /// Die eine Rechnung hinter `anordnungFuer`, `pflichtHoehe`,
+    /// `wunschHoehe` und `noetigeHoehe`. `spaltenFest` > 0 legt die
+    /// Spaltenzahl fest, statt sie aus der Breite zu nehmen.
+    Ft8PlaetzeAnordnung rechne(int breite, int hoehe, int spaltenFest) const;
+    /// „sent -05   rcvd +12" -- gemalt und gemessen aus EINER Quelle.
+    static QString rapportZeile(const Ft8PlatzStand& z);
 
     Ft8PlaetzeStand m_stand;
 };
@@ -121,10 +224,33 @@ public slots:
 
 public:
     Ft8PlaetzeFlaeche* flaecheForTest() const { return m_flaeche; }
+    QLabel*            leerForTest() const { return m_leer; }
+
+    /// Unter dieser Hoehe luegt das Fenster (2026-10-30): der leere
+    /// Hinweis in lesbarer Breite, und mehr als eine Kachel.
+    static constexpr int kMindestH = 150;
+
+protected:
+    void resizeEvent(QResizeEvent* ev) override;
+    bool event(QEvent* ev) override;
+    bool eventFilter(QObject* wer, QEvent* ev) override;
 
 private:
+    /// Der Rollbereich, in dem das Applet als Fenster steckt -- oder
+    /// nullptr, solange es in der Spalte sitzt.
+    QScrollArea* rollbereich() const;
+
+    /// Was das Applet mindestens braucht, damit keine belegte Kachel
+    /// abgeschnitten wird. Siehe die Begruendung in der .cpp: die
+    /// Mindesthoehe haengt an der BREITE, und die Breite haengt am
+    /// Rollbalken, den die Mindesthoehe erst hervorruft.
+    void richteMindestmasseEin();
+
     Ft8PlaetzeFlaeche* m_flaeche{nullptr};
     QLabel*            m_leer{nullptr};
+    /// Der Sichtbereich, den wir gerade belauschen (Elternwechsel).
+    QPointer<QWidget>  m_belauscht;
+    bool               m_richtetEin{false};
 };
 
 }  // namespace Longpath

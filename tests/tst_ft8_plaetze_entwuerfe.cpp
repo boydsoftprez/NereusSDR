@@ -25,9 +25,15 @@
 #include <QPainter>
 #include <QStandardPaths>
 
+#include <memory>
+
 #include "gui/StyleConstants.h"
+#include "gui/applets/AppletFloatingWindow.h"
 #include "gui/applets/Ft8PlaetzeApplet.h"
 #include "gui/applets/Ft8PlatzStand.h"
+#include "gui/styles/AppTheme.h"
+#include "models/RadioModel.h"
+#include "FensterFrist.h"
 
 using namespace Longpath;
 
@@ -428,6 +434,138 @@ private slots:
         const QString pfad = ziel + QStringLiteral("/ft8-plaetze-B-eingebaut.png");
         QVERIFY2(bild.save(pfad), qPrintable(pfad));
         qInfo().noquote() << "Blatt:" << pfad;
+    }
+
+    // ── Die Anordnung nach der Groesse (2026-11-18) ──────────────────
+    //
+    // Betreiber: „FT8 SLOTS sollte man auch nebeneinander anordnen
+    // können und soll sich automatsich an die Größe des Fenster
+    // anpassen!"
+    //
+    // Je Zustand EIN Bild, und zwar vom echten Fenster
+    // (`AppletFloatingWindow` mit Titelleiste und Rollbereich) in der
+    // Groesse, die im Dateinamen steht -- nicht von der Flaeche
+    // allein. Ob drei Kacheln nebeneinander passen, haengt am
+    // Rollbalken und an der Titelleiste mit, und beides hat die
+    // Flaeche nicht.
+    //
+    // Braucht LONGPATH_GRAB_DIR **und** LONGPATH_ENTWURF=1 (die CI
+    // setzt das erste fuer ihre eigenen Abgriffe). Mit
+    // QT_SCALE_FACTOR=2 entstehen die Bilder in 144 dpi, also in
+    // wirklicher Groesse.
+    void anordnungNachGroesse()
+    {
+        const QString ziel = qEnvironmentVariable("LONGPATH_GRAB_DIR");
+        if (ziel.isEmpty() || qEnvironmentVariable("LONGPATH_ENTWURF")
+                                  != QLatin1String("1")) {
+            QSKIP("Werkzeug: braucht LONGPATH_GRAB_DIR und LONGPATH_ENTWURF=1.");
+        }
+        QDir().mkpath(ziel);
+        applyDarkPalette(*qApp);
+        applyAppBaselineQss(*qApp);
+
+        // Was auf den Kacheln steht, wie an einem Morgen auf 20 m.
+        auto stand = [](int belegt, int gesamt, int wartende = 0) {
+            static const struct {
+                const char* ruf; const char* land; int ton;
+                const char* zug; int stufe; int gesendet; int empfangen;
+            } quellen[] = {
+                { "R6FMM",  "European Russia",      2710, "Tx3",  3,  -5,  -11 },
+                { "UN6LN",  "Kazakhstan",           2770, "Tx2",  2, -14,  -99 },
+                { "JS6TWW", "Japan",                2830, "Tx1",  1, -99,  -99 },
+                { "HB9ZHK", "Switzerland",          2890, "RR73", 4,   3,   -2 },
+                { "DL1ABC", "Fed. Rep. of Germany", 2950, "Tx2",  2,  -8,  -99 },
+                { "9A6T",   "Croatia",              3010, "Tx1",  1, -99,  -99 } };
+            Ft8PlaetzeStand s;
+            s.plaetzeGesamt = gesamt;
+            s.sendet = belegt > 0;
+            for (int i = 0; i < belegt; ++i) {
+                Ft8PlatzStand z;
+                z.partner   = QString::fromLatin1(quellen[i].ruf);
+                z.land      = QString::fromLatin1(quellen[i].land);
+                z.tonHz     = quellen[i].ton;
+                z.zug       = QString::fromLatin1(quellen[i].zug);
+                z.stufe     = quellen[i].stufe;
+                z.gesendet  = quellen[i].gesendet;
+                z.empfangen = quellen[i].empfangen;
+                s.plaetze.append(z);
+            }
+            static const struct { const char* ruf; const char* land; int snr; }
+                schlange[] = { { "PD4RJ", "Netherlands", -9 },
+                               { "F5PZT", "France",      4 },
+                               { "OE3TVJ", "Austria",   -17 } };
+            for (int i = 0; i < wartende; ++i) {
+                s.wartende.append(Ft8WartenderStand{
+                    QString::fromLatin1(schlange[i].ruf),
+                    QString::fromLatin1(schlange[i].land), schlange[i].snr});
+            }
+            return s;
+        };
+
+        struct Zustand {
+            const char*     name;
+            int             breite;
+            int             hoehe;
+            Ft8PlaetzeStand stand;
+        };
+        const QVector<Zustand> zustaende{
+            { "a-seine-groesse-2-von-3",          365, 340, stand(2, 3) },
+            { "b-breit-niedrig-3-von-3",          760, 180, stand(3, 3) },
+            { "c-schmal-hoch-3-von-3",            240, 520, stand(3, 3) },
+            { "d-sechs-plaetze-4-belegt",         560, 330, stand(4, 6) },
+            { "e-leer",                           365, 340, Ft8PlaetzeStand{} },
+            { "f-leer-schmal",                    200, 340, Ft8PlaetzeStand{} },
+            { "g-seine-groesse-3-von-3",          365, 340, stand(3, 3) },
+            { "h-etwas-breiter-3-von-3",          460, 300, stand(3, 3) },
+            { "i-breit-niedrig-2-von-3",          760, 180, stand(2, 3) },
+            { "j-seine-groesse-2-von-6-dicht",    365, 340, stand(2, 6) },
+            { "k-breit-mit-wartenden",            760, 260, stand(2, 3, 3) },
+            // Sein Bild vom 2026-11-18: rund 1040 x 340, „1 of 4", eine
+            // Kachel ueber die ganze Breite, drei „free" darunter.
+            { "l-sein-bild-1-von-4",             1040, 340, stand(1, 4) },
+            { "m-sein-bild-3-von-4",             1040, 340, stand(3, 4) },
+            // Zu klein fuer drei untereinander: ein Rollbalken, keine
+            // abgeschnittene Kachel.
+            { "n-zu-klein-3-von-3-rollt",         365, 280, stand(3, 3) },
+        };
+
+        for (const Zustand& z : zustaende) {
+            RadioModel radio;
+            auto* panel = new Ft8PlaetzeApplet(&radio, nullptr);
+            panel->zeigeStand(z.stand);
+            AppletFloatingWindow fenster(panel, QStringLiteral("Ft8Slots"),
+                                         0, nullptr);
+            fenster.resize(z.breite, z.hoehe);
+            fenster.show();
+            QVERIFY(QTest::qWaitForWindowExposed(&fenster, kFensterFrist));
+            // Eine feste, kleine Zahl von Runden: Mindesthoehe ->
+            // Rollbereich -> Rollbalken -> Breite -> Mindesthoehe.
+            for (int runde = 0; runde < 12; ++runde) {
+                QCoreApplication::sendPostedEvents();
+                QCoreApplication::processEvents();
+            }
+            QCOMPARE(fenster.size(), QSize(z.breite, z.hoehe));
+
+            QImage bild = fenster.grab().toImage();
+            // 72 dpi je Punkt mal Geraetefaktor: mit QT_SCALE_FACTOR=2
+            // sind das 144 dpi, und das Bild oeffnet sich in
+            // wirklicher Groesse.
+            const int dpm = int(72.0 * bild.devicePixelRatio() / 0.0254);
+            bild.setDotsPerMeterX(dpm);
+            bild.setDotsPerMeterY(dpm);
+            const QString pfad = ziel + QStringLiteral("/ft8-slots-%1-%2x%3.png")
+                .arg(QLatin1String(z.name)).arg(z.breite).arg(z.hoehe);
+            QVERIFY2(bild.save(pfad), qPrintable(pfad));
+
+            const Ft8PlaetzeAnordnung a = panel->flaecheForTest()->anordnung();
+            qInfo().noquote()
+                << "Blatt:" << pfad
+                << "| Spalten" << a.spalten
+                << "| Kacheln" << a.kacheln.size()
+                << "| freie" << a.freie.size()
+                << "| Kachel mind." << panel->flaecheForTest()->kachelMindestbreite()
+                << "| Flaeche" << panel->flaecheForTest()->size();
+        }
     }
 };
 

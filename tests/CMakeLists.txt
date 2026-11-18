@@ -5995,6 +5995,11 @@ longpath_add_test(tst_ft8_warteschlange)
 longpath_add_test(tst_grids_gearbeitet)
 longpath_add_test(tst_applet_fenstermasse)
 longpath_add_test(tst_ft8_plaetze_panel)
+# tst_ft8_plaetze_anordnung (2026-11-18): „FT8 Slots" ordnet sich nach
+#   der Groesse des Fensters -- nebeneinander, Raster, untereinander.
+#   Am echten AppletFloatingWindow und am Abgriff gemessen, nicht an der
+#   Rechnung: Rollbereich, Mindestmasze und Rollbalken reden mit.
+longpath_add_test(tst_ft8_plaetze_anordnung)
 longpath_add_test(tst_panel_automatik)
 longpath_add_test(tst_ft8_dxpedition)
 # 2026-11-04: Typ 5, der EU-VHF-Contest. Dieselbe Klasse wie
