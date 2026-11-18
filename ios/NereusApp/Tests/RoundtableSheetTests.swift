@@ -634,6 +634,34 @@ struct RoundtableSheetTests {
         #expect(!low.cuts(place.live) && !low.cuts(place.save) && !low.cuts(place.clock))
     }
 
+    @Test("a flag the edge cuts hides whole with its round buttons, each flag on its own, and is back at the smallest height")
+    func panelEdgeFlags() {
+        // A 600-point band, its smallest height 200.
+        func edge(_ detent: RoundtableSheet.Detent) -> RoundtablePanelEdge {
+            let place = MainScreen.roundtablePlace(bandHeight: 600, detent: detent, gaugesFoot: nil, dialStrip: false,
+                                                   smallest: 200)
+            return RoundtableSheet.edge(top: place.top, bandWidth: 390, sideways: false, leadingInset: 0,
+                                        trailingInset: 0, sidewaysWidth: MainScreen.roundtableSidewaysWidth)
+        }
+        let flag = CGRect(x: 100, y: 4, width: 200, height: 180)
+        let column = CGRect(x: 70, y: 4, width: 26, height: 150)
+        let middle = edge(.at(top: 90, bandHeight: 600))
+        #expect(middle.top == 90)
+        #expect(BandGestureLayer.flagHidden(flag: flag, column: column, under: middle))
+        #expect(BandGestureLayer.flagHidden(flag: flag, column: nil, under: middle))
+        // The smallest height (top 400): whole again.
+        #expect(!BandGestureLayer.flagHidden(flag: flag, column: column, under: edge(.at(top: 590, bandHeight: 600))))
+        // Full covers it, as before; no sheet hides nothing.
+        #expect(!BandGestureLayer.flagHidden(flag: flag, column: column, under: edge(.full)))
+        #expect(!BandGestureLayer.flagHidden(flag: flag, column: column, under: nil))
+        // The edge through its round buttons alone hides the flag too.
+        let short = CGRect(x: 100, y: 4, width: 200, height: 100)
+        #expect(BandGestureLayer.flagHidden(flag: short, column: column, under: RoundtablePanelEdge(top: 130)))
+        // Each flag on its own: one lower down, wholly under the sheet at the middle stop, is covered, not hidden.
+        let lower = CGRect(x: 100, y: 200, width: 200, height: 180)
+        #expect(!BandGestureLayer.flagHidden(flag: lower, column: nil, under: middle))
+    }
+
     @Test("the hold PTT reads Hold where the tap PTT reads Tap")
     func holdWords() {
         let idle = PttController.Snapshot()

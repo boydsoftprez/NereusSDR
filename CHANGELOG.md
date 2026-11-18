@@ -26,9 +26,9 @@ These reach phones and iPads with the app's next build, not with this download.
   see more of the spectrum when only one or two people are on the frequency.
   A drag well below the smallest height closes the panel. A tap on the bar
   goes between full and your height, and the panel opens at your height again
-  until the app is closed. A Roundtable tag, the talker card, LIVE, SAVE or the
-  dBm arrows that the panel's top edge would cut in half are hidden until the
-  edge moves off them.
+  until the app is closed. A receiver flag, a Roundtable tag, the talker card,
+  LIVE, SAVE or the dBm arrows that the panel's top edge would cut in half are
+  hidden until the edge moves off them.
 
 ## [2026.11.1] - 2026-11-08
 

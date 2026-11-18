@@ -20,7 +20,7 @@
 // AI-assisted via Anthropic Claude Code.
 // 2026-11-18: The sheet stays where its handle is let go, down to its smallest height,
 // and a long drag down closes it. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
-// 2026-11-18: SAVE, a tag and the card the sheet's top edge would cut are hidden whole,
+// 2026-11-18: SAVE, a tag, the card and the flag the sheet's top edge would cut are hidden whole,
 // and back at the smallest height. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import XCTest
@@ -355,7 +355,7 @@ final class RoundtableUITests: XCTestCase {
         XCTAssertEqual(holdLog(app), "none")
     }
 
-    /// What the sheet's top edge would cut on the band (SAVE, a tag, the talker card)
+    /// What the sheet's top edge would cut on the band (SAVE, a tag, the talker card, the flag)
     /// is hidden whole while the edge runs through it, and is back at the smallest height.
     @MainActor
     func testWhatTheSheetEdgeWouldCutIsHiddenWhole() throws {
@@ -372,6 +372,9 @@ final class RoundtableUITests: XCTestCase {
         let cardFrame = card.frame
         let tagFrame = tag.frame
         let saveFrame = saveButton.frame
+        let flag = app.descendants(matching: .any)["flagA"]
+        XCTAssertTrue(flag.exists)
+        let flagFrame = flag.frame
         let sheet = try openSheet(app)
         let handle = app.buttons["roundtableHandle"]
         XCTAssertTrue(handle.waitForExistence(timeout: 10))
@@ -386,8 +389,12 @@ final class RoundtableUITests: XCTestCase {
         // Through the card's middle: the card is hidden, and the flag stays.
         moveEdge(of: sheet, handle: handle, to: cardFrame.midY)
         waitUntil("the card cut by the sheet's edge is still on the band") { !card.exists }
-        XCTAssertTrue(app.descendants(matching: .any)["flagA"].exists)
+        XCTAssertTrue(flag.exists)
         try save("roundtable-ui-edge-card")
+        // Through the flag: the flag and its round buttons are hidden.
+        moveEdge(of: sheet, handle: handle, to: flagFrame.midY)
+        waitUntil("the flag cut by the sheet's edge is still on the band") { !flag.exists }
+        try save("roundtable-ui-edge-flag")
         // Down in short drags to the smallest height: all three are whole again.
         var top = sheet.frame.minY
         for _ in 0..<20 {
@@ -402,6 +409,7 @@ final class RoundtableUITests: XCTestCase {
         waitUntil("the card did not come back at the smallest height") { card.exists }
         waitUntil("the tag did not come back at the smallest height") { tag.exists }
         waitUntil("SAVE did not come back at the smallest height") { saveButton.exists }
+        waitUntil("the flag did not come back at the smallest height") { flag.exists }
         XCTAssertLessThanOrEqual(card.frame.maxY, sheet.frame.minY, "the card is above the sheet")
         try save("roundtable-ui-edge-smallest")
         XCTAssertEqual(holdLog(app), "none")
