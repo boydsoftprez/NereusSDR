@@ -108,8 +108,155 @@ struct DsrShotTests {
         try await shootPan(.past, size: small.screen, type: .large, name: "dsr-phone-motion", motion: true)
     }
 
+    /// Where the pan's slices stand for the PAST-on-the-flag pictures (PR 808
+    /// part 2), on the shots' band of 7.2205 to 7.2685 MHz.
+    enum FlagCase: String, CaseIterable, Sendable {
+        /// The flag hangs right of its slice, at the band's left.
+        case flagLeft = "flag-left"
+        /// The flag hangs left of its slice, at the band's right.
+        case flagRight = "flag-right"
+        /// Two slices close together: one flag folds to its one-line tag.
+        case folded
+        /// The only slice is off this band: no flag, so the PAST tag shows on the spectrum.
+        case noFlag = "no-flag"
+        /// Two slices apart, each with its full flag.
+        case twoSlices = "two-slices"
+
+        /// Each slice's index and frequency; the first is active.
+        var slices: [(Int, Double)] {
+            switch self {
+            case .flagLeft: return [(0, 7_224_000)]
+            case .flagRight: return [(0, 7_265_000)]
+            case .folded: return [(0, 7_236_400), (1, 7_238_000)]
+            case .noFlag: return [(0, 7_300_000)]
+            case .twoSlices: return [(0, 7_226_000), (1, 7_262_000)]
+            }
+        }
+    }
+
+    /// PAST and its time on every flag's top line and folded tag, and the
+    /// PAST tag only where no flag shows (PR 808 part 2), on the small and
+    /// the big iPhone upright, as `dsr-phone-past-on-<case>-<shape>.png`.
+    @Test(arguments: FlagCase.allCases, [false, true])
+    func pastOnTheFlag(_ flagCase: FlagCase, _ big: Bool) async throws {
+        let shape = WalkShape(small: !big, sideways: false, larger: false)
+        try await shootPan(.past, size: shape.pan, type: shape.type, name: "dsr-phone-past-on-\(flagCase.rawValue)-\(shape)",
+                           slices: flagCase.slices) { model, band, _, _ in
+            #expect(model.inPast)
+            #expect(band.viewHeld())
+        }
+    }
+
+    /// The band's view holds while in the past (PR 808 part 2, JJ's video:
+    /// the scale jumped 5 kHz as the rewind retuned the slice): a new
+    /// context centre and a retuned slice leave it where it was; live, it
+    /// follows the Core again.
+    @Test func theViewHoldsInThePast() async throws {
+        let shape = WalkShape(small: true, sideways: false, larger: false)
+        try await shootPan(.past, size: shape.pan, type: shape.type, name: "dsr-phone-view-held") { model, band, mirror, _ in
+            let held = band.view
+            mirror.apply(FlagButtonsShotTests.slice(0, hz: 7_237_400, active: true))
+            band.receive(.context(try #require(BandFlagShotTests.context(centreHz: BandFlagShotTests.centre + 5_000))))
+            #expect(band.view == held)
+            #expect(await ShotWait.until { model.inPast })
+            #expect(band.view == held)
+            // A zoom asked in the past moves it.
+            let zoomed = TuneGestures.View(centerHz: held.centerHz, spanHz: held.spanHz / 2)
+            band.requestView(zoomed)
+            #expect(band.view == zoomed)
+        }
+    }
+
+    /// The past over a slow link (PR 808 part 2, JJ on cellular): the past
+    /// plays for six seconds with each answer held back by `delayMs`. The
+    /// spectrum keeps its last picture between answers (never empty once
+    /// the first came), the view never moves, and "Drawing" never covers
+    /// the picture. Prints how often the spectrum changed and the largest
+    /// share of the picture still waiting.
+    @Test(arguments: [100, 800])
+    func thePastOverASlowLink(_ delayMs: Int) async throws {
+        let shape = WalkShape(small: true, sideways: false, larger: false)
+        try await shootPan(.past, size: shape.pan, type: shape.type,
+                           name: "dsr-phone-slow-link-\(delayMs)ms") { model, band, _, rig in
+            let geometry = try #require(band.pointGeometry(size: shape.pan)?.geometry)
+            let base = model.clock()
+            let start = CACurrentMediaTime()
+            model.clock = { base + (CACurrentMediaTime() - start) }
+            let delay = Double(delayMs) / 1000
+            var seen: [Int: Double] = [:]
+            var answered: Set<Int> = []
+            let view = band.view
+            var spectra = 0
+            var emptySamples = 0
+            var samples = 0
+            var mostWaiting = 0.0
+            var drawingShown = false
+            var lastFrame: DsrPastFrames?
+            var gaps: [Double] = []
+            var lastChange = CACurrentMediaTime()
+            while CACurrentMediaTime() < start + 6 {
+                let now = CACurrentMediaTime()
+                let all = rig.sent.invokes
+                for index in 0..<all.count where !answered.contains(index) {
+                    let asked = seen[index] ?? now
+                    seen[index] = asked
+                    guard now - asked >= delay else {
+                        continue
+                    }
+                    answered.insert(index)
+                    let invoke = all[index]
+                    func number(_ name: String) -> Int64? {
+                        invoke.args.first { $0.name == name }.flatMap { entry in
+                            if case .i64(let value) = entry.value { return value }
+                            return nil
+                        }
+                    }
+                    switch invoke.verb {
+                    case "dsr.spectrum":
+                        let moment = Double(number("utcNs") ?? 0) / 1e9
+                        await Flag.answer(rig, index, values: Self.frames([moment], geometry: geometry))
+                    case "dsr.rows":
+                        // As the Core answers: the rows asked for, from the newest down.
+                        let to = Double(number("toUtcNs") ?? 0) / 1e9
+                        let from = Double(number("fromUtcNs") ?? 0) / 1e9
+                        let count = Int(min(number("rowCount") ?? 0, 600))
+                        let spp = max(model.secondsPerPoint, 0.001)
+                        let moments = (0..<count).map { to - Double($0) * spp }.filter { $0 >= from - spp / 2 }
+                        let values = await Task.detached { Self.frames(moments, geometry: geometry) }.value
+                        await Flag.answer(rig, index, values: values)
+                    default:
+                        break
+                    }
+                }
+                samples += 1
+                if model.pastSpectrum == nil {
+                    emptySamples += 1
+                }
+                if let frame = model.pastSpectrum, frame.utcNs != lastFrame?.utcNs {
+                    spectra += 1
+                    gaps.append(now - lastChange)
+                    lastChange = now
+                    lastFrame = frame
+                }
+                mostWaiting = max(mostWaiting, model.missingShare)
+                drawingShown = drawingShown || model.drawingText != nil
+                #expect(band.view == view)
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            let longest = gaps.dropFirst().max() ?? 0
+            print("slow link \(delayMs) ms: \(spectra) past spectra in 6 s, longest hold \(String(format: "%.2f", longest)) s, "
+                  + "empty in \(emptySamples) of \(samples) samples, most waiting \(String(format: "%.2f", mostWaiting)), "
+                  + "Drawing shown \(drawingShown)")
+            #expect(emptySamples == 0)
+            #expect(!drawingShown)
+            #expect(spectra >= 2)
+        }
+    }
+
     private func shootPan(_ frame: PanState, size: CGSize, type: DynamicTypeSize, name: String,
-                          motion: Bool = false) async throws {
+                          motion: Bool = false, slices: [(Int, Double)]? = nil,
+                          check: ((DsrPanModel, BandModel, MirrorStore, Flag.Rig) async throws -> Void)? = nil)
+        async throws {
         let mirror = MirrorStore(send: { _ in })
         mirror.apply(.hello(LinkMessage.Hello(major: 1, minor: 11, settingsSchema: 0, peer: "nereusd")))
         mirror.apply(.capabilities(LinkMessage.Capabilities(properties: [
@@ -122,7 +269,9 @@ struct DsrShotTests {
             .init(ordinal: 0, name: "json", value: .utf8(json)),
             .init(ordinal: 1, name: "revision", value: .i64(1)),
         ])))
-        mirror.apply(FlagButtonsShotTests.slice(0, hz: 7_236_400, active: true))
+        for (index, hz) in slices ?? [(0, 7_236_400)] {
+            mirror.apply(FlagButtonsShotTests.slice(index, hz: hz, active: index == 0))
+        }
         let main = MainScreenModel(mirror: mirror, settings: SettingsProxyClient(send: { _ in }), commands: nil,
                                    operations: BandSubscriber.Operations(subscribe: { _ in }, unsubscribe: { _ in },
                                                                           retuneClarity: { _ in }))
@@ -135,10 +284,12 @@ struct DsrShotTests {
         // As AppModel wires it: the past spectrum drawn by the band's renderer.
         band.pastTrace = { [weak model] in model?.pastTrace }
         model.pastSpectrumChanged = { [weak band] in band?.pastTraceChanged() }
+        band.viewHeld = { [weak model] in model?.inPast ?? false }
         band.endpointId = 1
         let context = try #require(BandFlagShotTests.context())
         band.receive(.context(context))
-        #expect(await ShotWait.until { main.slices.entries.count == 1 && main.slices.catalog != nil })
+        let sliceCount = (slices ?? [(0, 7_236_400)]).count
+        #expect(await ShotWait.until { main.slices.entries.count == sliceCount && main.slices.catalog != nil })
         let settings = PhoneSettings(defaults: UserDefaults(suiteName: "DsrShotTests") ?? .standard)
 
         let window = try BandFlagShotTests.window(size: size)
@@ -221,6 +372,9 @@ struct DsrShotTests {
         if motion {
             try await playPast(rig, model, geometry: geometry)
         }
+        if let check {
+            try await check(model, band, mirror, rig)
+        }
         await ShotWait.laidOut(window)
         try RadeFlagShotTests.write(window, name: name)
     }
@@ -239,8 +393,20 @@ struct DsrShotTests {
                 case "dsr.spectrum":
                     await Flag.answer(rig, index, values: Self.frames([moment], geometry: geometry))
                 case "dsr.rows":
-                    let count = Int(model.waterfallPoints) + 60
-                    let moments = (0..<count).map { moment + 20 - Double($0) * model.secondsPerPoint }
+                    // As the Core answers: the rows asked for, from the newest down.
+                    // (Rows around the played moment instead left the asked
+                    // stretch's newest rows out, and the model does not ask twice.)
+                    func number(_ name: String) -> Int64? {
+                        all[index].args.first { $0.name == name }.flatMap { entry in
+                            if case .i64(let value) = entry.value { return value }
+                            return nil
+                        }
+                    }
+                    let to = Double(number("toUtcNs") ?? 0) / 1e9
+                    let from = Double(number("fromUtcNs") ?? 0) / 1e9
+                    let count = Int(min(number("rowCount") ?? 0, 600))
+                    let spp = max(model.secondsPerPoint, 0.001)
+                    let moments = (0..<count).map { to - Double($0) * spp }.filter { $0 >= from - spp / 2 }
                     // Made off the main thread: in a debug build making the rows
                     // takes long enough to stall the picture the video watches.
                     let values = await Task.detached { Self.frames(moments, geometry: geometry) }.value

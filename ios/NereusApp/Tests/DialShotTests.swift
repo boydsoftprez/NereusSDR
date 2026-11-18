@@ -185,7 +185,9 @@ struct DialShotTests {
             appMajors: [1], now: Date.init, browser: nil))
         // The tester's screen: the thumbwheel with its step box beside PTT.
         settings.dialKind = .thumbwheel
+        Self.offerRecordings(model)
         let dsr = model.dsr
+        #expect(dsr.usable, "the recorder takes Save on the walk's Core")
         for time in ["live", "past"] {
             if time == "past" {
                 // Ten minutes back and let go: the picture stays in the past.
@@ -199,6 +201,29 @@ struct DialShotTests {
             }
         }
         await model.disconnect()
+    }
+
+    /// The fake Core has no recorder: give the mirror the recordings capability
+    /// at the recorder's version on top of what it advertised, and the
+    /// recordings document with the recorder keeping, so Save opens.
+    private static func offerRecordings(_ model: AppModel) {
+        var properties: [LinkMessage.PropertyEntry] = model.mirror.capabilities.compactMap { name, value in
+            let wire: LinkMessage.PropertyValue
+            switch value {
+            case .bool(let flag): wire = .bool(flag)
+            case .int(let whole): wire = .i64(whole)
+            case .double(let real): wire = .f64(real)
+            case .text(let text): wire = .utf8(text)
+            case .enumeration(let whole): wire = .enumeration(whole)
+            }
+            return name == RecordingsClient.capabilityName ? nil : .init(ordinal: 0, name: name, value: wire)
+        }
+        properties.append(.init(ordinal: 0, name: RecordingsClient.capabilityName,
+                                value: .i64(RecordingsClient.dsrVersion)))
+        model.mirror.apply(.capabilities(LinkMessage.Capabilities(properties: properties)))
+        model.recordings.handle(.stateChanged(.ready))
+        RecordingFlagTests.publish(DsrTests.document(dsr: DsrTests.dsrPart()), mirror: model.mirror,
+                                   client: model.recordings, revision: 1)
     }
 
     /// Opens `state` over the band, draws the screen and closes it again.
@@ -530,8 +555,11 @@ struct SheetWalkState {
             .init(name: "flag-dsp", opens: .flag(.panel(0, .dsp))),
             .init(name: "flag-dsp-foot", opens: .flag(.panel(0, .dsp)), scrolledToFoot: true),
             .init(name: "flag-audio", opens: .flag(.panel(0, .audio))),
+            .init(name: "flag-audio-foot", opens: .flag(.panel(0, .audio)), scrolledToFoot: true),
             .init(name: "flag-mode", opens: .flag(.panel(0, .mode))),
+            .init(name: "flag-mode-foot", opens: .flag(.panel(0, .mode)), scrolledToFoot: true),
             .init(name: "flag-xrit", opens: .flag(.panel(0, .xrit))),
+            .init(name: "flag-xrit-foot", opens: .flag(.panel(0, .xrit)), scrolledToFoot: true),
             .init(name: "flag-antennas", opens: .flag(.antennas(0))),
             .init(name: "flag-more", opens: .flag(.more(0))),
             .init(name: "save", opens: .save),

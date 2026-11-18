@@ -9,6 +9,9 @@
 // 2026-11-17: J.J. Boyd (KG4VCF), AI-assisted via Claude Code:
 //   pastTrace, the recorder's past spectrum drawn as the live trace is, and
 //   continuousLookBackSeconds, the band's own reach back to its newest gap (PR 808).
+// 2026-11-17: J.J. Boyd (KG4VCF), AI-assisted via Claude Code:
+//   viewHeld, the band's view holds where it was while the recorder shows
+//   the past, so a rewind's retune never moves the scale (PR 808 part 2).
 
 import Combine
 import Foundation
@@ -449,6 +452,13 @@ final class BandModel: ObservableObject {
     /// and the frequencies it spans, drawn in the live trace's place by the
     /// same path (its colour, fill and width); read on each draw.
     var pastTrace: () -> (trace: [Float], coverage: BandCoverage)? = { nil }
+    /// The recorder shows the past on this band: the view holds where it
+    /// was when the past began, and moves only when asked (a zoom, a pan,
+    /// a band stack recall), never by the slice the rewind retunes; read on
+    /// each draw (PR 808 part 2).
+    var viewHeld: () -> Bool = { false }
+    /// The view held while ``viewHeld``; nil live.
+    private var heldView: TuneGestures.View?
     /// Where the finger is on the band while it drags it, for the cursor
     /// frequency readout; nil when no finger is down.
     @Published var cursorHz: Double?
@@ -1095,6 +1105,20 @@ final class BandModel: ObservableObject {
     /// desktop's does), else the Core's context. The Core's frames are drawn
     /// where their own frequencies fall in it (D74).
     var view: TuneGestures.View {
+        let shown = askedOrContextView
+        guard viewHeld() else {
+            heldView = nil
+            return shown
+        }
+        if let heldView {
+            return heldView
+        }
+        heldView = shown.spanHz > 0 ? shown : nil
+        return shown
+    }
+
+    /// The view asked for, else the Core's context.
+    private var askedOrContextView: TuneGestures.View {
         if let requestedView, requestedView.spanHz > 0 {
             return requestedView
         }
@@ -1165,6 +1189,10 @@ final class BandModel: ObservableObject {
             kept.rxViewSpanHz = view.spanHz
             settings = kept
             keepSettings(kept)
+        }
+        if heldView != nil, view.spanHz > 0 {
+            // Asked while the past holds the view: the past follows the ask.
+            heldView = view
         }
         guard view != requestedView else {
             return

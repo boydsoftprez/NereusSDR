@@ -45,6 +45,9 @@
 //   and its step box wait and PTT stays over it and keys; sheets end above
 //   PTT (pttClearance); the band's button column gives way to a flag's
 //   panel. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: PR 808 part 2: sideways, the dBm scale's arrows give way to
+//   a flag's panel, which takes the whole band there. J.J. Boyd (KG4VCF),
+//   AI-assisted via Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -1238,7 +1241,14 @@ struct MainScreen: View {
                              recordings: app.recordingFlag, openAllRecordings: openAllRecordings,
                              openRecordingSettings: openRecordingSettings, dsr: first ? app.dsr : nil,
                              savePanelHere: savePanelHere, sheetOver: sheetOver)
-            DbmScaleArrows(display: controls.display, band: band, trailingInset: trailingInset)
+            if sideways {
+                // A flag's panel takes the whole band sideways: the arrows give way to it.
+                ColumnGate(flags: controls.flagControls) {
+                    DbmScaleArrows(display: controls.display, band: band, trailingInset: trailingInset)
+                }
+            } else {
+                DbmScaleArrows(display: controls.display, band: band, trailingInset: trailingInset)
+            }
             // Pan 1's LIVE is the recorder strip's: the band's own would sit over it.
             BandReadouts(band: band, trailingInset: trailingInset, lookBackLive: !first)
             TransmitDisplayBanner(band: band)

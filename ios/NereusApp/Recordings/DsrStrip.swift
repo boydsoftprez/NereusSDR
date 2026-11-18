@@ -30,6 +30,10 @@
 //   strip and its handles stay on it; the past spectrum is drawn by the
 //   band's renderer, not here.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: PR 808 part 2, PAST and its time go on every flag's top line
+//   and folded tag on the pan (DsrFlagPastChip); the PAST tag on the
+//   spectrum shows only where no flag does. J.J. Boyd (KG4VCF), AI-assisted
+//   via Claude Code.
 
 import CoreGraphics
 import NereusBand
@@ -542,8 +546,13 @@ struct DsrPictureLayer: View {
     let place: DsrStripPlace
     /// The letter of the slice that plays.
     var sliceLetter = "A"
+    /// A flag or folded tag on this pan shows PAST (``DsrFlagPastChip``),
+    /// so the PAST tag on the spectrum stays away (PR 808).
+    var pastOnFlag = false
     /// What the PAST tag keeps clear of: the flags with their round
-    /// buttons, folded tags and the button column (PR 808 screen walk).
+    /// buttons, folded tags, the button column and
+    /// the edge markers (PR 808 screen walk). With no flag on the pan it
+    /// stays at the spectrum's top left, moved clear of those.
     var avoid: [CGRect] = []
 
     /// The PAST tag's measured size.
@@ -560,7 +569,7 @@ struct DsrPictureLayer: View {
                     .background(Color.black.frame(width: layout.waterfall.width, height: layout.waterfall.height)
                         .offset(x: layout.waterfall.minX, y: layout.waterfall.minY), alignment: .topLeading)
             }
-            if model.inPast {
+            if model.inPast, !pastOnFlag {
                 pastTag
             }
             if let stretch = model.stretch {
@@ -701,6 +710,48 @@ struct DsrPictureLayer: View {
                 .offset(x: 4, y: 3)
         }
         .offset(x: place.picture.minX, y: layout.waterfall.minY + 1)
+    }
+}
+
+/// PAST (SAVED for an opened stretch) and the moment played, small, in a
+/// flag's top line over its filter width and TX, and at the end of a
+/// folded tag (PR 808, the manager's call: the past is the whole pan's
+/// state, so every flag on the pan shows it). Draws nothing live; takes no
+/// touch, so the flag's buttons under it keep theirs.
+struct DsrFlagPastChip: View {
+    let model: DsrPanModel
+
+    /// The chip's size, fixed so the folded tag's width is known before it draws.
+    static let size = CGSize(width: 84, height: 12)
+    /// The gap before it at the end of a folded tag.
+    static let foldedGap: CGFloat = 6
+
+    var body: some View {
+        if model.inPast {
+            TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+                chip
+            }
+            .allowsHitTesting(false)
+        }
+    }
+
+    private var chip: some View {
+        HStack(spacing: 4) {
+            Text(model.client.dsr?.stretch != nil ? "SAVED" : "PAST")
+                .font(.system(size: 8.5, weight: .bold))
+                .tracking(0.4)
+                .foregroundStyle(WorkspacePalette.keyedRim)
+            Text(DsrPanModel.hms(model.playedMoment ?? model.top))
+                .font(.system(size: 8.5, design: .monospaced))
+                .foregroundStyle(Color(red: 1, green: 0.82, blue: 0.82))
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.8)
+        .frame(width: Self.size.width, height: Self.size.height)
+        .background(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).fill(Color(red: 58 / 255, green: 13 / 255, blue: 13 / 255)))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).stroke(DsrColours.red, lineWidth: 0.75))
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("dsr.flagPast")
     }
 }
 

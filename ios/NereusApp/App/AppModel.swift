@@ -26,6 +26,8 @@
 // 2026-11-17: PR 808: the past spectrum is the band's own trace drawing, and
 //   the band draws the past itself only as far as its picture runs whole.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: PR 808 part 2: the band's view holds while the recorder shows
+//   the past (BandModel.viewHeld). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -1310,6 +1312,8 @@ final class AppModel: ObservableObject {
         band.liveSpectrumHidden = { [weak model] in model?.hidesLiveSpectrum ?? false }
         // The past spectrum is drawn by the band's renderer, as the live trace is.
         band.pastTrace = { [weak model] in model?.pastTrace }
+        // While the past shows, the band's view holds (PR 808 part 2).
+        band.viewHeld = { [weak model] in model?.inPast ?? false }
         model.pastSpectrumChanged = { [weak band] in band?.pastTraceChanged() }
     }
 

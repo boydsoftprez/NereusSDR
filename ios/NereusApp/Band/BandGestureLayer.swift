@@ -37,6 +37,11 @@
 //   is drawn over PTT and VOICE (savePanelHere); the dial and its step box
 //   wait while a flag's menu or panel or a sheet is open (sheetOver).
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: PR 808 part 2: PAST on every flag and folded tag (the tag on
+//   the spectrum only where no flag shows it, clear of the edge markers);
+//   Roundtable's tags keep off other devices' slice labels; a sideways
+//   flag panel with no room above PTT takes the whole band.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import NereusBand
@@ -208,9 +213,10 @@ struct BandGestureLayer: View {
             }
         }
         .overlay {
-            if let tuning, settings.dialKind != .off, !sheetOver {
+            if let tuning, settings.dialKind != .off, !sheetOver, dsr?.saving != true {
                 // While a flag's menu or panel is open the dial and its step box
                 // wait, so they never cover its controls (JJ, PR 808); PTT stays.
+                // They wait under the Save banner too, which would cover part of them.
                 DialGate(controls: flagControls) {
                     GeometryReader { proxy in
                         if let axes = band.pointGeometry(size: proxy.size) {
@@ -271,11 +277,13 @@ struct BandGestureLayer: View {
         let measured = flagHeights
         let column = FlagLayout.sideColumnSize(button: FlagSideButtons.diameter(large: large))
         let olderRade = Set(entries.filter { $0.rade?.wraps == true }.map(\.id))
+        // In the past each folded tag ends with PAST (PR 808).
+        let pastShows = dsr?.inPast == true
         func place(top: CGFloat) -> [FlagPlacement] {
             FlagLayout.layout(slices: entries.map(\.slice), activeSliceId: slices.activeSliceId,
                               geometry: geometry,
                               foldedSize: { slice in
-                                  entries.first(where: { $0.id == slice.id }).map(FoldedTagView.size(for:))
+                                  entries.first(where: { $0.id == slice.id }).map { FoldedTagView.size(for: $0, past: pastShows) }
                                     ?? FlagLayout.foldedSize(frequencyText: slice.frequencyText)
                               },
                               flagHeight: { slice in
@@ -380,7 +388,10 @@ struct BandGestureLayer: View {
                 // The past over the waterfall, under everything that takes a touch.
                 DsrPictureLayer(model: dsr, band: band, layout: layout, geometry: geometry, place: dsrPlace,
                                 sliceLetter: slices.active?.slice.letter ?? "A",
-                                avoid: flagAndTagRects + markerRects
+                                // Every flag and folded tag shows PAST; the tag only where none does.
+                                // (A slice placed off the band's edge shows no flag.)
+                                pastOnFlag: placements.contains { $0.rect.intersects(CGRect(origin: .zero, size: layout.size)) },
+                                avoid: flagAndTagRects + markerRects + edgeRects
                                     + (buttonColumnFolded.map { [BandColumnLayout.frame(bandHeight: layout.size.height,
                                                                                          leadingInset: leadingInset,
                                                                                          folded: $0)] } ?? []))
@@ -412,7 +423,9 @@ struct BandGestureLayer: View {
                                    tickFoot: layout.strip.minY,
                                    flagRects: placements.map(\.rect) + columns.values.sorted { $0.minX < $1.minX }, keyed: keyed,
                                    sliceLetter: slices.active?.slice.letter ?? "A",
+                                   // Other devices' slice labels share the tag row's height (PR 808: tags piled on them).
                                    panKeepOut: [arrows] + markerRects
+                                    + others.compactMap { BandMenuHit.stationRect($0.slice, geometry: geometry, layout: layout) }
                                     + (buttonColumnFolded.map { [BandColumnLayout.frame(bandHeight: layout.size.height,
                                                                                          leadingInset: leadingInset, folded: $0)] } ?? []),
                                    usableWidth: arrows.minX,
@@ -461,11 +474,15 @@ struct BandGestureLayer: View {
             if let flagControls, let store = flagControls.store {
                 WideChipLayer(store: store, controls: flagControls, rect: chipRect, large: large)
             }
-            if !dialStrip {
+            if !dialStrip, !sheetOver, dsr?.saving != true {
                 // Under the Roundtable sheet zoom waits with the band; the strip keeps PTT and the dial only.
-                ZoomButtons(zoomOut: { zoom(by: 1 / TuneGestures.buttonZoomFactor, geometry: geometry) },
-                            zoomIn: { zoom(by: TuneGestures.buttonZoomFactor, geometry: geometry) })
-                    .offset(x: zoomAt.x, y: zoomAt.y)
+                // Like the dial, zoom waits while a flag's menu or panel, a sheet or the
+                // Save banner is open, so it is never half covered (JJ, PR 808).
+                DialGate(controls: flagControls) {
+                    ZoomButtons(zoomOut: { zoom(by: 1 / TuneGestures.buttonZoomFactor, geometry: geometry) },
+                                zoomIn: { zoom(by: TuneGestures.buttonZoomFactor, geometry: geometry) })
+                        .offset(x: zoomAt.x, y: zoomAt.y)
+                }
             }
             if let tuning {
                 // Over the flags: a tap outside the step menu closes it, and a drag there moves the band.
@@ -500,7 +517,8 @@ struct BandGestureLayer: View {
                     FlagPopoverLayer(controls: flagControls, slices: slices, flags: fullFlags, columns: columns,
                                      // The whole band, waterfall included: menus and panels hang over it.
                                      bandSize: layout.size, sideways: sideways, large: large,
-                                     transmitReason: transmitReason, wideChip: chipRect)
+                                     transmitReason: transmitReason, wideChip: chipRect,
+                                     ptt: PttButton.frame(bandSize: layout.size, leadingInset: leadingInset))
                 }
                 if let tuning {
                     StepMenuLayer(tuning: tuning, flags: flags, bandWidth: geometry.size.width, large: large,
@@ -624,7 +642,8 @@ struct BandGestureLayer: View {
                         openRoundtable: toggleRoundtableLine.map { toggle in {
                             controls?.close()
                             toggle(id)
-                        } })
+                        } },
+                        past: dsr)
                 .onTapGesture(coordinateSpace: .local) { point in
                     // Even if an ancestor recognises the tap, the DIV target never selects its band slice.
                     guard !entry.diversityOn || !FlagMetrics(large: large).diversity.contains(point) else { return }
@@ -669,7 +688,7 @@ struct BandGestureLayer: View {
             FoldedTagView(entry: entry, activate: {
                 controls?.close()
                 slices.activate(id)
-            }, openDiversity: { controls?.openDiversity(entry) })
+            }, openDiversity: { controls?.openDiversity(entry) }, past: dsr)
                 .offset(x: rect.minX, y: rect.minY)
         }
     }
