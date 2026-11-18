@@ -8235,7 +8235,9 @@ void MainWindow::populateDefaultMeter()
     if (activeSpectrumWidget() && m_radioModel) {
         auto pushSpectrumCal = [this](double db) {
             if (activeSpectrumWidget()) {
-                activeSpectrumWidget()->setDbmCalOffset(static_cast<float>(db));
+                // Vom Geraet gerechnet: nicht in die Einstellungsdatei.
+                activeSpectrumWidget()->setDbmCalOffset(static_cast<float>(db),
+                                                        /*merken=*/false);
             }
         };
         connect(m_radioModel, &RadioModel::rxMeterOffsetChanged,

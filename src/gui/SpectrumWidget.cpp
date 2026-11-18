@@ -2456,14 +2456,30 @@ void SpectrumWidget::setHeatmapEnabled(bool on)
     update();  // Kurvenfarbe: nach Pegel statt flach, beim naechsten Rahmen
 }
 
-void SpectrumWidget::setDbmCalOffset(float db)
+void SpectrumWidget::setDbmCalOffset(float db, bool merken)
 {
     db = qBound(-30.0f, db, 30.0f);
     if (qFuzzyCompare(m_dbmCalOffset, db)) {
         return;
     }
     m_dbmCalOffset = db;
-    scheduleSettingsSave();
+    // ── Der Wert vom Geraet wird nicht gespeichert (2026-11-18) ──────
+    //
+    // Am Geraet gemessen, zehn Minuten FT8 an der Flex: die
+    // Einstellungsdatei (2,9 MB, 13 740 Eintraege) wurde 29-mal ganz neu
+    // geschrieben, 26-mal davon mit genau EINER Aenderung --
+    // `DisplayCalOffset`, je zweimal pro Sendedurchgang (Tasten und
+    // Loesen stellen den Messversatz um, RadioModel meldet ihn, und
+    // dieser Setter bestellte jedes Mal das Speichern). macOS hat die
+    // Sitzung davor selbst gemeldet: 2,1 GB in 75 Minuten ("disk
+    // writes"), und jedes Schreiben haelt den Hauptfaden an.
+    //
+    // Der Versatz vom Geraet ist ein gerechneter Wert: er kommt bei
+    // jedem Start und bei jedem Wechsel neu. Gespeichert wird nur, was
+    // der Bediener selbst einstellt (Setup > Display).
+    if (merken) {
+        scheduleSettingsSave();
+    }
     markOverlayDirty();  // dBm scale strip labels shift
     // 2026-05-22 calibration fix: ensure FFT vertex VBO re-runs so the
     // updated m_dbmCalOffset reaches the rendered trace position, not just

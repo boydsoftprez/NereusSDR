@@ -352,6 +352,15 @@ longpath_add_test(tst_per_band_nf_priming)
 # ── Task 2.11: Clarity + NF-aware grid coexistence (Longpath-original) ────
 longpath_add_test(tst_clarity_nf_grid_coexistence)
 
+# ── Der Messversatz vom Geraet bestellt kein Speichern (2026-11-18) ───────
+# Zehn Minuten FT8: 26 von 29 Neuschreibungen der 2,9-MB-Einstellungsdatei
+# kamen von DisplayCalOffset, zweimal je Sendedurchgang.
+longpath_add_test(tst_cal_offset_bestellt_kein_speichern)
+if(TEST tst_cal_offset_bestellt_kein_speichern)
+    set_tests_properties(tst_cal_offset_bestellt_kein_speichern PROPERTIES
+        ENVIRONMENT "LONGPATH_SOURCE_DIR=${CMAKE_SOURCE_DIR}")
+endif()
+
 # ── Phase 3I radio-connector tests ────────────────────────────────────────
 longpath_add_test(tst_hpsdr_enums)
 longpath_add_test(tst_board_capabilities)

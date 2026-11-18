@@ -795,7 +795,12 @@ public:
     // Display calibration offset added to every bin before it's mapped
     // to screen Y. Ported from Thetis Display.RX1DisplayCalOffset
     // (display.cs:1372). Range: -30 .. +30 dB.
-    void setDbmCalOffset(float db);
+    //
+    // `merken = false` fuer den Wert, den das Geraet selbst liefert
+    // (RadioModel::rxMeterOffsetChanged): er wird bei jedem Start und bei
+    // jedem Wechsel neu gerechnet und muss nicht in die Einstellungsdatei.
+    // Siehe setDbmCalOffset() in der .cpp fuer die Messung dazu.
+    void setDbmCalOffset(float db, bool merken = true);
     float dbmCalOffset() const { return m_dbmCalOffset; }
 
     // Trace colour (Phase 3G-8 commit 6 wiring). Single colour used for
