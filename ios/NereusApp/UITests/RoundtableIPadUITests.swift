@@ -7,6 +7,8 @@
 // 2026-11-04: One inspector: the panel on your own frequency with the column hidden, and the
 // same tag returning to your own in the column (overlay design D24, D38).
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-18: Your own frequency has no Tune and no note. J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code.
 
 import XCTest
 
@@ -145,8 +147,9 @@ final class RoundtableIPadUITests: XCTestCase {
         let panel = app.descendants(matching: .any)["roundtableFrequencyPopover"]
         XCTAssertTrue(panel.waitForExistence(timeout: 10), "the line did not open the panel")
         XCTAssertFalse(app.descendants(matching: .any)["roundtableSheet"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["roundtableViewTuneReason"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.descendants(matching: .any)["roundtableBox"].exists, "your own keeps its box")
+        XCTAssertTrue(app.descendants(matching: .any)["roundtableBox"].waitForExistence(timeout: 10), "your own keeps its box")
+        XCTAssertFalse(app.descendants(matching: .any)["roundtableViewTune"].exists, "your own has no Tune")
+        XCTAssertFalse(app.descendants(matching: .any)["roundtableViewTuneReason"].exists, "your own has no Tune note")
         try save("roundtable-ipad-ui-panel-own")
         let tag = app.descendants(matching: .any)["roundtableTag.lsb-7225000"]
         XCTAssertTrue(tag.waitForExistence(timeout: 10))

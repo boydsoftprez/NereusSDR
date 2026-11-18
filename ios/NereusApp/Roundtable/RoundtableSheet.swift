@@ -29,6 +29,8 @@
 // phone's on its side. It read the sheet's own height, so half height on an
 // iPad's band snapped back to full and the handle did nothing. J.J. Boyd
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-18: Your own frequency has no Tune bar, sideways too: the room takes its
+// height. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import SwiftUI
 
@@ -121,9 +123,6 @@ struct RoundtableSheet: View {
     }
     /// A frequency is being viewed, not your own (overlay design D21).
     private var viewing: Bool { roundtable.isViewing }
-    /// A short landscape sheet needs its height for the reports: your own frequency's
-    /// greyed Tune, which has nothing to do there, sits with them, not pinned.
-    private var ownTuneScrolls: Bool { compactLandscape && !viewing }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -296,15 +295,16 @@ struct RoundtableSheet: View {
                                frequencyHead: AnyView(
                                 RoundtableFrequencyHost(roundtable: roundtable, slices: slices, contextId: room.id,
                                                         viewing: viewing, keyed: transmit.ptt.transmitting, linkUp: linkUp,
-                                                        panLevel: panLevel, showsBack: false, showsTune: ownTuneScrolls,
+                                                        panLevel: panLevel, showsBack: false, showsTune: false,
                                                         onTune: { _, _ in }, onBack: back)),
-                               frequencyFoot: ownTuneScrolls ? nil : AnyView(
+                               // Your own frequency has no Tune: the room takes its height.
+                               frequencyFoot: viewing ? AnyView(
                                 RoundtableFrequencyTuneBar(roundtable: roundtable, slices: slices, contextId: room.id,
-                                                           viewing: viewing, keyed: transmit.ptt.transmitting, linkUp: linkUp,
+                                                           keyed: transmit.ptt.transmitting, linkUp: linkUp,
                                                            onTune: { hz, family in
                                                                slices.tune(toHz: hz, family: family)
                                                                close()
-                                                           })),
+                                                           })) : nil,
                                showsEarlier: !viewing && detent == .full, viewing: viewing)
                 // Your own frequency's id changes with every tune step, and its received
                 // messages do not: the view keeps its scroll, seen state and typed name.

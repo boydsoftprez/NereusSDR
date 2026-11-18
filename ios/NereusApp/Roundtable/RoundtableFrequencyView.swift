@@ -9,6 +9,8 @@
 // 2026-11-04: One inspector on iPhone and iPad: your own frequency greys Tune with its
 // reason, and the panel takes your own frequency too (overlay design D22, D24, D36).
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-18: Your own frequency leaves Tune out, with its note, so the list and
+// messages take the room. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import NereusModels
 import SwiftUI
@@ -76,11 +78,6 @@ enum RoundtableFrequencyText {
                                        old: false, peak: panPeak, label: "Your pan")] + card.rows
     }
 
-    /// D22: why Tune is greyed on your own frequency.
-    static func alreadyHere(sliceLetter: String) -> String {
-        "Slice \(sliceLetter) is already here"
-    }
-
     /// D22: Tune is off while keyed, when already there, and when the radio's
     /// own connection or the slice itself will not take it. "Already there"
     /// counts the family: a Tune from an LSB view moves a USB slice's mode too.
@@ -96,8 +93,8 @@ enum RoundtableFrequencyText {
 
 /// One frequency: the head, how far it is from your slice, who is on it and
 /// what each listener reads, then Tune. Your own frequency reads the same with
-/// `viewing` false, and its Tune is greyed, never hidden, with the reason shown
-/// (overlay design D22, D28; overlay.js peekBody).
+/// `viewing` false and has no Tune: the slice is already there, so the list and
+/// messages take its room (overlay design D22, D28; overlay.js peekBody).
 struct RoundtableFrequencyView: View {
     /// The room view's identity on your own frequency, whichever frequency that is.
     /// A view of another frequency takes that room's own id: it is another place.
@@ -118,7 +115,7 @@ struct RoundtableFrequencyView: View {
     var showsBack = true
     /// Sits between Back and the head: the applet's frequency line, live line and rail.
     var banner: AnyView? = nil
-    /// Off where the Tune is pinned outside the scrolling head.
+    /// Off where the Tune is pinned outside the scrolling head. Your own frequency has none.
     var showsTune = true
     let onTune: () -> Void
     let onBack: () -> Void
@@ -180,7 +177,7 @@ struct RoundtableFrequencyView: View {
                 caption("On frequency \u{00B7} \(data.onFrequency.count)", trailing: "Tuned", colour: RoundtableColours.dim)
                 people
                 readings
-                if showsTune {
+                if showsTune && viewing {
                     tuneButton
                 }
             }
@@ -312,36 +309,20 @@ struct RoundtableFrequencyView: View {
     }
 
     private var tuneButton: some View {
-        RoundtableFrequencyTuneButton(sliceLetter: sliceLetter, canTune: viewing && canTune, own: !viewing, action: onTune)
+        RoundtableFrequencyTuneButton(sliceLetter: sliceLetter, canTune: canTune, action: onTune)
     }
 }
 
-/// "Tune slice A here", in the view or pinned under it.
+/// "Tune slice A here", in the view of another frequency or pinned under it.
 struct RoundtableFrequencyTuneButton: View {
     let sliceLetter: String
     let canTune: Bool
-    /// Your own frequency: greyed, and says why (D22).
-    var own = false
     let action: () -> Void
 
     private static let tuneFill = Color(red: 0x2F / 255, green: 0x5F / 255, blue: 0x92 / 255)
     private static let tuneEdge = Color(red: 0x5E / 255, green: 0x8D / 255, blue: 0xB8 / 255)
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            tune
-            if own {
-                Text(RoundtableFrequencyText.alreadyHere(sliceLetter: sliceLetter))
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(RoundtableColours.dim)
-                    .lineLimit(1)
-                    .padding(.bottom, 4)
-                    .accessibilityIdentifier("roundtableViewTuneReason")
-            }
-        }
-    }
-
-    private var tune: some View {
         Button(action: action) {
             Text("Tune slice \(sliceLetter) here")
                 .font(.system(size: 11, weight: .semibold))
@@ -360,13 +341,12 @@ struct RoundtableFrequencyTuneButton: View {
 }
 
 /// Tune pinned above the composer, so a half-height sheet always reaches it while
-/// the view scrolls behind.
+/// the view scrolls behind. Only a view of another frequency has one: on your
+/// own, the hosts leave the bar out and the room takes its height.
 struct RoundtableFrequencyTuneBar: View {
     @ObservedObject var roundtable: RoundtableModel
     @ObservedObject var slices: BandSlicesModel
     let contextId: String
-    /// Viewing another frequency; false is your own, where Tune has nothing to do.
-    var viewing = true
     let keyed: Bool
     let linkUp: Bool
     let onTune: (Int64, String) -> Void
@@ -376,10 +356,9 @@ struct RoundtableFrequencyTuneBar: View {
         let active = slices.active
         RoundtableFrequencyTuneButton(
             sliceLetter: active?.slice.letter ?? "A",
-            canTune: viewing && RoundtableFrequencyHost.canTune(data, active: active, keyed: keyed,
-                                                                tunable: active.map(slices.isTunable) ?? false, linkUp: linkUp,
-                                                                modes: slices.catalog?.offeredModes ?? []),
-            own: !viewing,
+            canTune: RoundtableFrequencyHost.canTune(data, active: active, keyed: keyed,
+                                                     tunable: active.map(slices.isTunable) ?? false, linkUp: linkUp,
+                                                     modes: slices.catalog?.offeredModes ?? []),
             action: { onTune(data.hz, data.family) })
             .padding(.horizontal, 10)
             .background(RoundtableColours.ground)
@@ -560,10 +539,10 @@ struct RoundtableFrequencyPopover: View {
                                                                 viewing: viewing, keyed: keyed,
                                                                 linkUp: linkUp, panLevel: panLevel, showsBack: false,
                                                                 showsTune: false, onTune: { _, _ in }, onBack: onBack)),
-                                       frequencyFoot: AnyView(
+                                       // Your own frequency has no Tune: the room takes its height.
+                                       frequencyFoot: viewing ? AnyView(
                                         RoundtableFrequencyTuneBar(roundtable: roundtable, slices: slices, contextId: room.id,
-                                                                   viewing: viewing, keyed: keyed, linkUp: linkUp,
-                                                                   onTune: onTune)),
+                                                                   keyed: keyed, linkUp: linkUp, onTune: onTune)) : nil,
                                        showsEarlier: !viewing, viewing: viewing)
                         // As the sheet: your own frequency's id changes with every tune step.
                         .id(viewing ? room.id : RoundtableFrequencyView.ownViewId)

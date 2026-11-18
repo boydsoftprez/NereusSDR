@@ -12,6 +12,16 @@
   tag and the details open over the waterfall, or upward over the spectrum when
   the waterfall is too short.
 
+### iPhone and iPad app
+
+These reach phones and iPads with the app's next build, not with this download.
+
+- **More room in the Roundtable panel on your own frequency.** The grayed
+  **Tune slice A here** button and its **Slice A is already here** note are
+  gone when the slice is already on that frequency, so the list and messages
+  reach down to the message box. Looking at another frequency still shows
+  **Tune slice A here** as before.
+
 ## [2026.11.1] - 2026-11-08
 
 Changes since desktop/Core 2026.11.0. Update the Core and desktop together.

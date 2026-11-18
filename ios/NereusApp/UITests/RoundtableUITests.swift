@@ -16,6 +16,8 @@
 // 2026-11-05: These run upright on an iPad, where the flag line opens the
 // sheet; on its side it scrolls the column instead. J.J. Boyd (KG4VCF),
 // AI-assisted via Anthropic Claude Code.
+// 2026-11-18: Your own frequency has no Tune and no note. J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code.
 
 import XCTest
 
@@ -68,9 +70,9 @@ final class RoundtableUITests: XCTestCase {
         XCTAssertTrue(line.waitForExistence(timeout: 30))
         let before = flag.label
         let sheet = try openSheet(app)
-        XCTAssertTrue(app.descendants(matching: .any)["roundtableViewTuneReason"].waitForExistence(timeout: 10))
-        XCTAssertFalse(app.descendants(matching: .any)["roundtableViewTune"].isEnabled)
-        XCTAssertTrue(app.descendants(matching: .any)["roundtableBox"].exists, "your own keeps its box")
+        XCTAssertTrue(app.descendants(matching: .any)["roundtableBox"].waitForExistence(timeout: 10), "your own keeps its box")
+        XCTAssertFalse(app.descendants(matching: .any)["roundtableViewTune"].exists, "your own has no Tune")
+        XCTAssertFalse(app.descendants(matching: .any)["roundtableViewTuneReason"].exists, "your own has no Tune note")
         try save("roundtable-ui-one-sheet-own")
         line.tap()
         XCTAssertTrue(sheet.waitForNonExistence(timeout: 10), "the same line did not close the sheet")
@@ -108,8 +110,8 @@ final class RoundtableUITests: XCTestCase {
         try save("roundtable-ui-more")
         XCTAssertTrue(app.buttons["Cancel"].exists)
         XCTAssertFalse(app.buttons["Read reports"].exists)
-        // The sheet's own Tune is the only one: the menu has none.
-        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Tune slice'")).count, 1)
+        // Your own frequency has no Tune, and the menu adds none.
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Tune slice'")).count, 0)
         app.buttons["Cancel"].tap()
         XCTAssertTrue(signal.waitForNonExistence(timeout: 10))
     }
