@@ -355,6 +355,11 @@ longpath_add_test(tst_clarity_nf_grid_coexistence)
 # ── Der Messversatz vom Geraet bestellt kein Speichern (2026-11-18) ───────
 # Zehn Minuten FT8: 26 von 29 Neuschreibungen der 2,9-MB-Einstellungsdatei
 # kamen von DisplayCalOffset, zweimal je Sendedurchgang.
+longpath_add_test(tst_kurvenpuffer_nur_wenn_gezeichnet)
+if(TEST tst_kurvenpuffer_nur_wenn_gezeichnet)
+    set_tests_properties(tst_kurvenpuffer_nur_wenn_gezeichnet PROPERTIES
+        ENVIRONMENT "LONGPATH_SOURCE_DIR=${CMAKE_SOURCE_DIR}")
+endif()
 longpath_add_test(tst_cal_offset_bestellt_kein_speichern)
 if(TEST tst_cal_offset_bestellt_kein_speichern)
     set_tests_properties(tst_cal_offset_bestellt_kein_speichern PROPERTIES

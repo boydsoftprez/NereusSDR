@@ -14113,10 +14113,32 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             fillVerts[fi + 11] = 0.0f;
         }
 
-        batch->updateDynamicBuffer(m_fftLineVbo, 0,
-            static_cast<size_t>(n) * 2 * kFftVertStride * nStrips * sizeof(float), lineVerts.constData());
-        batch->updateDynamicBuffer(m_fftFillVbo, 0,
-            n * 2 * kFftVertStride * sizeof(float), fillVerts.constData());
+        // ── Nur fuellen, was in diesem Bild auch gezeichnet wird ─────
+        //
+        // Betreiber, 2026-11-18: „das beenden dauert immer sehr lange."
+        // Am haengenden Prozess aufgenommen (sample, 64 s): der
+        // Hauptfaden stand in releaseResources() -> ~QMetalBuffer ->
+        // QMetalBuffer::destroy(), Speicher 23 GB, Spitze 42 GB.
+        //
+        // Metal schreibt eine Aenderung an einem dynamischen Puffer erst
+        // dann wirklich, wenn der Puffer in einem Zeichenbefehl gebunden
+        // wird; bis dahin haengt sie mit einer Kopie der Daten in einer
+        // Liste. Im 3D-Modus (bei ihm eingestellt) zeichnet der Durchgang
+        // unten die 2D-Kurve gar nicht -- Kurve, Fuellung und Peak-Hold
+        // wurden trotzdem in JEDEM Bild neu hineingeschoben. Die Listen
+        // wuchsen ueber die ganze Sitzung und wurden erst beim Beenden
+        // abgeraeumt. Dasselbe fuer die Fuellung, wenn sie aus ist.
+        const KurvenPuffer puffer = kurvenPufferFuellen(
+            m_renderMode, m_fftFillPipeline && m_fftLinePipeline, m_panFill,
+            m_peakHoldEnabled && m_pxPeakHold.size() == m_renderedPixels.size());
+        if (puffer.linie) {
+            batch->updateDynamicBuffer(m_fftLineVbo, 0,
+                static_cast<size_t>(n) * 2 * kFftVertStride * nStrips * sizeof(float), lineVerts.constData());
+        }
+        if (puffer.fuellung) {
+            batch->updateDynamicBuffer(m_fftFillVbo, 0,
+                n * 2 * kFftVertStride * sizeof(float), fillVerts.constData());
+        }
 
         // Peak hold VBO lives alongside the line VBO -- generated here,
         // drawn in the render pass after the main line. When peak hold
@@ -14124,8 +14146,7 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
         // m_peakHoldHasData.  Per-display-pixel array (m_pxPeakHold) is
         // sized to m_renderedPixels in updateSpectrumLinear.
         m_peakHoldHasData = false;
-        if (m_peakHoldEnabled && m_pxPeakHold.size() == m_renderedPixels.size()
-            && m_fftPeakVbo) {
+        if (puffer.peakHold && m_fftPeakVbo) {
             // Same ribbon treatment as the live trace above, but
             // narrower -- 0.75x the line width, matching the CPU/
             // QPainter fallback's own convention (drawSpectrum():
