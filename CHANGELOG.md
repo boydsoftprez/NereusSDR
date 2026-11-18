@@ -1,5 +1,110 @@
 # Changelog
 
+## [0.11.0] - 2026-11-18
+
+55 Stände seit 0.10.0. Der größte Teil ist **FT8**: tiefer dekodiert,
+mehrere Stationen gleichzeitig, und die Liste sagt nur noch, was
+wirklich fehlt. Dazu Fenster, die an ihrem Platz und vorne bleiben,
+das neu geordnete Logbuch mit Upload zu QRZ und Wavelog, der TS-590
+als bedienbares Gerät und die erste Stufe von Roundtable.
+
+### FT8 und FT4
+
+- **A-priori-Dekodierung** (#445) — gemessen 4 dB tiefer (−18 → −22 dB).
+- **Mehrere Plätze** (#450, #464, #471, #481): alle eingestellten Plätze
+  sind zu sehen, angeklickte Stationen gehen gleichzeitig hinaus, die
+  Antworten auch — und was das Gerät nicht sendet, steht nicht als
+  gesendet da. Am oberen Rand stapeln die Plätze nach unten.
+- **Die Warteschlange in der QSO-Karte** („THEN“), und der Dekoder folgt
+  der Skala: FT8 oder FT4 muss nicht mehr eigens gewählt werden (#460).
+- **Die Liste:** Blau heißt nur noch „dieses Feld fehlt ganz“ (#472),
+  „New grid“ zeigt nur echte Lücken (#447), und ein Band- oder
+  Verfahrenswechsel leert sie (#475).
+- **Locatorjagd** im FT8-Fenster, Felder je Band; ein Knopf, eine
+  Weltkarte, eine Liste der fehlenden Felder (#435, #444).
+- **Eine falsch gehende Uhr** sieht nicht mehr aus wie ein totes Band
+  (#448).
+- **Ein Bandwechsel hält das Senden an**, und eben Gearbeitetes ist
+  nicht mehr blau (#482). An der Flex bleibt das FT8-Bild auch nach dem
+  Bandwechsel auf dem Durchlassbereich (#485).
+- **FT8 Slots:** die Karten ordnen sich nach der Größe des Fensters
+  (#483).
+
+### Fenster und Schirme
+
+- **Die Panels bleiben vor dem Hauptfenster**, auch wenn man in ein
+  anderes Programm klickt (#480), und Longpath wird dabei nicht mehr
+  schwarz (#459).
+- **Mehrere Bildschirme:** ein neu geöffnetes Fenster kommt auf den
+  Schirm, an dem gearbeitet wird, und nach vorne (#459).
+- **Fenster wandern nicht mehr** bei jedem Start (#443); ihre Lage
+  gehört zu ihrem Hauptfenster (#439). Start immer in Profil 1 (#437).
+- **Ein Panel liegt an einem Ort:** das TX-Fenster bleibt im
+  FT8-Profil (#462), Rotor/Log bleibt im Kombi-Feld (#473) — und ein
+  Klick auf „Rotor / Log“ holt es von dort als eigenes Fenster (#486).
+- **Das Profil stellt die Betriebsart:** ein FT8-Profil schaltet von
+  selbst auf DIGI (#459).
+
+### Bedienung
+
+- **Jeder Knopfdruck leuchtet** kurz im Orange des Plus (#465).
+- **Ein Plus, rechts oben** — das zweite unten rechts ist weg; die
+  Pfeile der Menüleiste sind gelb und damit zu sehen (#474).
+- **S-Meter wahlweise im Panadapter**, als dritte Wahl der
+  Anzeigezeile (#466).
+- **RIT/XIT dort, wo die Frequenz steht** (#456).
+- **Mac: F1–F12 sind F-Tasten**, solange Longpath vorne ist (#419).
+- **Bandstapel:** je Band gespeicherte Stellen, als Applet und als
+  Marken an der Skala (#428). Ein Abstimmschritt und eine Abtastrate
+  je Scheibe, auf jedem Band (#433).
+
+### Logbuch
+
+- **Log · Browse · Statistics** — neu geordnet, Rotor/Log aufgeräumt,
+  die Kugel in voller Schärfe (#442).
+- **Jedes QSO sofort an QRZ und Wavelog**, mit Warteliste für das,
+  was nicht ankam (#469).
+- Der Pfeil neben 3D verschwindet nicht mehr hinter dem Logbuch (#446);
+  ein Doppelklick auf einen Spot trägt ihn ins Logbuch (#439).
+
+### TS-590
+
+- **Bedienfeld** im Programm (#416), **XIT**, damit Split am Gerät
+  fahrbar wird (#452), Panorama ±6 kHz statt 40 kHz (#441).
+- **Sprachspeicher für den Contest:** kürzen, anhören, Vorlauf, fester
+  Pegel (#449).
+
+### Roundtable
+
+- **Stufe 1: wer sonst auf der Frequenz ist** (#454) — aus Upstream
+  übernommen. Vor der ersten Antwort auf die Frage im Spot Hub baut
+  Longpath keine Verbindung auf.
+
+### Ton und Empfang
+
+- **„Kein Ton“ war zweimal der Mac:** Longpath erkennt den stummen
+  Systemausgang und sagt es (#458); der Hauptausgang startet nie stumm
+  (#447).
+- **AGC-T** zeigte 98 dB daneben (#438).
+- **RX-Driftausgleich:** der Bus zählt den Gerätetakt, wie Thetis
+  (#431).
+- **Antenne:** eine Ablage, nicht zwei (#417).
+- **Mitschrift:** kein Stau im Arbeiter, ganze Sätze (#440).
+
+### Behoben
+
+- **Langes Beenden und wachsender Speicher im 3D-Panadapter** (#489):
+  Kurve, Füllung und Peak-Hold wurden in jedem Bild in Puffer
+  geschoben, die im 3D-Modus nie gezeichnet werden. Gemessen an der
+  Flex: vorher 23 GB nach 75 Minuten und 64 s zum Beenden, danach
+  unter 1 GB nach zweieinhalb Stunden und 0,4 s.
+- **Die Einstellungsdatei wurde bei jedem Sendedurchgang zweimal ganz
+  neu geschrieben** (#487) — der Messversatz vom Gerät bestellt kein
+  Speichern mehr.
+- Absturz beim Bewegen-Zeiger ohne Farbprofil unter Qt 6.11.1 (#463).
+- Absturz beim Beenden und beim Profilwechsel mit TS-590 (#416).
+- Ein Bau ohne Contestprogramm behält die Contest-Anordnung (#432).
+
 ## [0.10.0] - 2026-11-11
 
 37 Stände seit 0.9.0. Der größte Teil ist das **Logbuch**: aus der
