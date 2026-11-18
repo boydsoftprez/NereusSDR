@@ -171,7 +171,10 @@ struct AccessibilityOn {
 /// on this list crashes Qt 6.11.0.
 void leaveAStaleCell(QComboBox* combo)
 {
-    QVERIFY(QAccessible::isActive());
+    // QAccessible::isActive() is not asserted: on Linux offscreen there is no
+    // accessibility bridge, so it stays false after setActive(true). The
+    // cells below are still built and one left stale; the crash path itself
+    // runs where a bridge is active (macOS).
     QAccessibleInterface* list = QAccessible::queryAccessibleInterface(combo->view());
     QVERIFY(list != nullptr);
     QVERIFY(list->tableInterface() != nullptr);
