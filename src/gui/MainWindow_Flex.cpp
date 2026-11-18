@@ -84,6 +84,7 @@
 #include <cmath>
 
 #include "core/FlexFrequenzSpur.h"
+#include "core/DigiFrequenzen.h"
 #include "core/FlexFensterZug.h"
 #include <algorithm>
 #include "gui/SpectrumWidget.h"
@@ -1234,7 +1235,27 @@ void MainWindow::wireFlex()
                 sw->setFrequencyRange(mitte, breite);
             } else if (folgt) {
                 // Nur die Mitte: die Breite ist die des Betreibers.
-                sw->setCenterFrequency(mitte);
+                //
+                // Steht das Digi-Bild (FT8/FT4), bleibt seine Mitte --
+                // die Mitte der Maschine ist die Skala, und die liegt
+                // am linken Rand des Bandes, nicht in seiner Mitte
+                // (2026-11-18, siehe `fensterMitteBeimFolgen`).
+                double ziel = mitte;
+                if (const SliceModel* const sl = m_radioModel
+                        ? m_radioModel->sliceById(m_flexTargetSliceId)
+                        : nullptr) {
+                    const qint64 skala = qint64(std::llround(sl->frequency()));
+                    const auto a = DigiFrequenzen::bildausschnitt(skala);
+                    const bool aufStelle =
+                        DigiFrequenzen::stehtSchonDort(
+                            skala, DigiFrequenzen::Digimodus::Ft8)
+                        || DigiFrequenzen::stehtSchonDort(
+                            skala, DigiFrequenzen::Digimodus::Ft4);
+                    ziel = FlexFensterZug::fensterMitteBeimFolgen(
+                        mitte, sw->bandwidth(), a.mitteHz, a.breiteHz,
+                        aufStelle);
+                }
+                sw->setCenterFrequency(ziel);
             }
             // Sonst: NICHTS. Eine reine Mittenverschiebung der
             // Maschine kommt fast immer davon, dass der Betreiber

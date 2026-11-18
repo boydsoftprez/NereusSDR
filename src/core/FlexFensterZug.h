@@ -139,5 +139,46 @@ inline bool nachzugZieht(double fensterMitteHz, double panMitteHz,
     return std::abs(fensterMitteHz - panMitteHz) > breiteHz * totbandAnteil;
 }
 
+/// Auf welche Mitte das Fenster gestellt wird, wenn es der Maschine
+/// FOLGT, ohne ihre Breite zu nehmen.
+///
+/// ── Das FT8-Bild bleibt auf dem Durchlassbereich (2026-11-18) ──────
+///
+/// Am Geraet, Bandwechsel 10 m -> 15 m im FT8-Profil:
+///   11:37:44.978  FT8 — Bild auf 21.0755 MHz, 3.5 kHz
+///   11:37:45.233  Ausschnitt selbst nachgefuehrt 20.974–21.174 MHz
+///   11:37:45.233  Ausschnitt gesetzt auf "Pan_pan-0": 21.074 MHz, 3.5 kHz
+/// Das Digi-Bild hatte die Mitte richtig auf die Mitte des
+/// Durchlassbereichs gestellt (Skala + 1550 Hz, siehe
+/// `DigiFrequenzen::bildausschnitt`); 255 ms spaeter zog das Folgen sie
+/// auf die Mitte der MASCHINE, und das ist die Skala. Bei 3,5 kHz
+/// Breite lag das Band damit von der Bildmitte bis ueber den rechten
+/// Rand hinaus -- alles oberhalb 1750 Hz war nicht mehr zu sehen.
+/// Betreiber: „signal ft8 im panadapter sollte standarmäßig in der
+/// mitte sein."
+///
+/// Steht die Skala auf einer Digi-Anrufstelle und hat das Fenster noch
+/// die Breite des Digi-Bildes (der Betreiber hat also nicht selbst
+/// gezoomt), dann ist die Mitte des Digi-Bildes die richtige. Sonst
+/// die der Maschine, wie bisher.
+///
+/// \param maschinenMitteHz   Mitte des Ausschnitts der Maschine
+/// \param fensterBreiteHz    Breite, die das Fenster gerade zeigt
+/// \param digiMitteHz        Mitte des Digi-Bildes fuer die Skala
+/// \param digiBreiteHz       Breite des Digi-Bildes (0 = keines)
+/// \param aufDigiAnrufstelle steht die Skala auf FT8/FT4/…?
+inline double fensterMitteBeimFolgen(double maschinenMitteHz,
+                                     double fensterBreiteHz,
+                                     double digiMitteHz,
+                                     double digiBreiteHz,
+                                     bool aufDigiAnrufstelle)
+{
+    if (aufDigiAnrufstelle && digiBreiteHz > 0.0
+        && std::abs(fensterBreiteHz - digiBreiteHz) < 1.0) {
+        return digiMitteHz;
+    }
+    return maschinenMitteHz;
+}
+
 } // namespace FlexFensterZug
 } // namespace Longpath

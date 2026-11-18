@@ -126,6 +126,31 @@ private slots:
         QVERIFY(!nachzugZieht(7090000.0, 7074000.0, kBreite, 0.10));
         QVERIFY(nachzugZieht(7090000.0, 7074000.0, kBreite, 0.01));
     }
+
+    // ── Das FT8-Bild bleibt auf dem Durchlassbereich (2026-11-18) ────
+    //
+    // Am Geraet nach einem Bandwechsel: das Digi-Bild stand richtig
+    // auf 21.0755 MHz / 3,5 kHz, 255 ms spaeter zog das Folgen die
+    // Mitte auf die Skala (21.074). Betreiber: „signal ft8 im
+    // panadapter sollte standarmäßig in der mitte sein."
+    void dasDigiBildBehaeltSeineMitte()
+    {
+        using FlexFensterZug::fensterMitteBeimFolgen;
+        const double skala = 21074000.0;
+        const double digiMitte = 21075550.0, digiBreite = 3500.0;
+        // Auf der Anrufstelle, Fenster hat die Digi-Breite: Digi-Mitte.
+        QCOMPARE(fensterMitteBeimFolgen(skala, 3500.0, digiMitte,
+                                        digiBreite, true), digiMitte);
+        // Der Betreiber hat selbst gezoomt: die Maschine gilt.
+        QCOMPARE(fensterMitteBeimFolgen(skala, 20000.0, digiMitte,
+                                        digiBreite, true), skala);
+        // Nicht auf einer Anrufstelle: die Maschine gilt.
+        QCOMPARE(fensterMitteBeimFolgen(21200000.0, 3500.0, 21201550.0,
+                                        digiBreite, false), 21200000.0);
+        // Kein Digi-Bild bekannt: die Maschine gilt.
+        QCOMPARE(fensterMitteBeimFolgen(skala, 3500.0, 0.0, 0.0, true),
+                 skala);
+    }
 };
 
 QTEST_APPLESS_MAIN(TstFlexFensterzug)
