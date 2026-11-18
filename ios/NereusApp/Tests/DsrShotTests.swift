@@ -132,6 +132,9 @@ struct DsrShotTests {
         model.ownSeconds = { [weak band] in band?.mostLookBackSeconds ?? 0 }
         model.lookBack = { [weak band] seconds in band?.lookBack(seconds: seconds) }
         band.liveSpectrumHidden = { [weak model] in model?.hidesLiveSpectrum ?? false }
+        // As AppModel wires it: the past spectrum drawn by the band's renderer.
+        band.pastTrace = { [weak model] in model?.pastTrace }
+        model.pastSpectrumChanged = { [weak band] in band?.pastTraceChanged() }
         band.endpointId = 1
         let context = try #require(BandFlagShotTests.context())
         band.receive(.context(context))
@@ -189,7 +192,7 @@ struct DsrShotTests {
                 try await DsrTests.rewindHere(rig, model, moment: model.top, revision: 2)
             }
             if frame == .ipadPast {
-                model.toggleSave()
+                model.toggleSave(stripPoints: model.waterfallPoints)
             }
             #expect(await ShotWait.until { model.pastSpectrum != nil && model.drawingText == nil })
             #expect(frame == .paused ? !model.followsSound : model.rewound != nil)
@@ -201,7 +204,8 @@ struct DsrShotTests {
             try await answerRows(rig, model, geometry: geometry, share: 0.3)
             #expect(await ShotWait.until { model.drawingText != nil && !model.rows.isEmpty })
         case .save:
-            model.toggleSave()
+            // As SAVE's tap does: the bracket opens inside the strip.
+            model.toggleSave(stripPoints: model.waterfallPoints)
             #expect(model.saving)
         case .olderCore:
             model.toggleSave()

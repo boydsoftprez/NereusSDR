@@ -6,6 +6,9 @@
 //   panLevel, the level Roundtable's frequency view shows as Your pan (overlay design D23).
 // 2026-11-17: J.J. Boyd (KG4VCF), AI-assisted via Claude Code:
 //   liveSpectrumHidden, so the recorder's past spectrum replaces the live one.
+// 2026-11-17: J.J. Boyd (KG4VCF), AI-assisted via Claude Code:
+//   pastTrace, the recorder's past spectrum drawn as the live trace is, and
+//   continuousLookBackSeconds, the band's own reach back to its newest gap (PR 808).
 
 import Combine
 import Foundation
@@ -442,6 +445,10 @@ final class BandModel: ObservableObject {
     /// The live spectrum is left out of the band (the recorder shows the
     /// past one in its place); read on each draw.
     var liveSpectrumHidden: () -> Bool = { false }
+    /// While the live spectrum is left out: the recorder's past spectrum
+    /// and the frequencies it spans, drawn in the live trace's place by the
+    /// same path (its colour, fill and width); read on each draw.
+    var pastTrace: () -> (trace: [Float], coverage: BandCoverage)? = { nil }
     /// Where the finger is on the band while it drags it, for the cursor
     /// frequency readout; nil when no finger is down.
     @Published var cursorHz: Double?
@@ -843,6 +850,56 @@ final class BandModel: ObservableObject {
         return max(0, newest - oldest - visibleWaterfallSeconds)
     }
 
+    /// How far back the band's own waterfall runs whole: back to the
+    /// newest stretch it was not sent (sound only while locked or in
+    /// another app), where its rows jump by more than
+    /// ``continuousGapSeconds``, or to the newest row drawn over other
+    /// frequencies than the newest (the view moved since);
+    /// ``mostLookBackSeconds`` when there is neither. The recorder draws
+    /// the past from the Core past this (PR 808: the band's own picture
+    /// left those stretches black, and a moved view's rows short of the
+    /// pan's edge).
+    var continuousLookBackSeconds: Double {
+        let most = mostLookBackSeconds
+        let history = state.history
+        guard history.hasPresentationTimeline, let newest = history.presentationTime(age: 0) else {
+            return most
+        }
+        let key = ContinuityKey(lines: history.linesAppended, count: history.count)
+        if continuity?.key != key {
+            let gap = max(Self.continuousGapSeconds, 4 * secondsPerLine)
+            let newestCoverage = history.coverage(storageRow: history.storageRow(age: 0))
+            var oldest = newest
+            var age = 1
+            while age < history.count, let time = history.presentationTime(age: age), oldest - time <= gap {
+                if let newestCoverage, let coverage = history.coverage(storageRow: history.storageRow(age: age)),
+                   coverage != newestCoverage {
+                    break
+                }
+                oldest = time
+                age += 1
+            }
+            continuity = (key, newest - oldest)
+        }
+        return min(most, max(0, (continuity?.span ?? 0) - visibleWaterfallSeconds))
+    }
+
+    /// Rows further apart than this mark a stretch the band was not sent.
+    nonisolated static let continuousGapSeconds = 1.0
+
+    private struct ContinuityKey: Equatable {
+        let lines: UInt64
+        let count: Int
+    }
+
+    /// The last ``continuousLookBackSeconds`` walk: for which rows, and the span it found.
+    private var continuity: (key: ContinuityKey, span: Double)?
+
+    /// The recorder's past spectrum changed: the band draws it.
+    func pastTraceChanged() {
+        redraw()
+    }
+
     func lookBack(seconds: Double) {
         guard state.history.hasPresentationTimeline, let newest = state.history.presentationTime(age: 0) else {
             lookBack(lines: Int((seconds / secondsPerLine).rounded()), visibleLines: visibleLines)
@@ -1066,6 +1123,10 @@ final class BandModel: ObservableObject {
         overlays.peakHold = state.peakHold
         overlays.lookBackLines = lookBackLines
         overlays.liveSpectrumHidden = liveSpectrumHidden()
+        if overlays.liveSpectrumHidden, let past = pastTrace() {
+            overlays.pastTrace = past.trace
+            overlays.pastTraceCoverage = past.coverage
+        }
         overlays.waterfallTimeAxis = waterfallTimeAxis
         if drawsStack {
             overlays.stacked = StackedTraceOverlay(noiseFloorDbm: stackFloorDbm, glide: stackGlide(at: clock()),

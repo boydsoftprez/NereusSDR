@@ -26,6 +26,10 @@
 //   SAVE, never over it. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-17: PR 808 design calls, the PAST tag moves clear of a flag and
 //   its round buttons. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: PR 808 sheet overlap: SAVE opens its bracket inside the
+//   strip and its handles stay on it; the past spectrum is drawn by the
+//   band's renderer, not here.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import CoreGraphics
 import NereusBand
@@ -349,7 +353,7 @@ struct DsrStripLayer: View {
             .accessibilityHint(model.liveLit || bandLooksBack ? "Back to live" : "Already live")
             .offset(x: place.live.minX, y: place.live.minY)
             Button {
-                model.toggleSave()
+                model.toggleSave(stripPoints: Double(place.strip.height))
             } label: {
                 DsrButtonLabel(text: "SAVE", look: model.saving ? .yellowOn : .yellow, size: DsrStripPlace.buttonSize)
                     .opacity(usable ? 1 : 0.42)
@@ -423,10 +427,12 @@ struct DsrStripLayer: View {
         }
         let moment = which == 0 ? bracket.0 : bracket.1
         let y = place.waterfall.minY + (model.top - moment) / max(model.secondsPerPoint, 0.001)
-        guard y >= place.waterfall.minY - 2, y <= place.waterfall.maxY + 2 else {
+        guard y >= place.waterfall.minY - 2 else {
             return nil
         }
-        return y
+        // A handle never leaves the strip: a bracket that runs on below it (the
+        // shortest stretch at a fast waterfall) keeps its handle above the clock (PR 808).
+        return min(y, place.strip.maxY - CGFloat(DsrPanModel.bracketClockRoomPoints))
     }
 }
 
@@ -525,8 +531,9 @@ struct DsrClockGlyph: View {
 
 /// What the past puts over the band, under the flags and touching nothing:
 /// the Core's rows over the waterfall, SAVE's yellow band, "Drawing", the
-/// PAST tag and the past spectrum, the line of the moment played, and the
-/// recorder's notes.
+/// PAST tag, the line of the moment played, and the recorder's notes. The
+/// past spectrum is the band's own trace, drawn by its renderer
+/// (``DsrPanModel/pastTrace``, PR 808).
 struct DsrPictureLayer: View {
     let model: DsrPanModel
     @ObservedObject var band: BandModel
@@ -552,9 +559,6 @@ struct DsrPictureLayer: View {
                     .offset(x: image.rect.minX, y: image.rect.minY)
                     .background(Color.black.frame(width: layout.waterfall.width, height: layout.waterfall.height)
                         .offset(x: layout.waterfall.minX, y: layout.waterfall.minY), alignment: .topLeading)
-            }
-            if model.inPast, let spectrum = model.pastSpectrum {
-                pastSpectrum(spectrum)
             }
             if model.inPast {
                 pastTag
@@ -666,29 +670,6 @@ struct DsrPictureLayer: View {
             }
         }
         return (CGSize(width: spectrum.minX + gap, height: top), false)
-    }
-
-    /// The past spectrum in the live one's place: the band leaves its live
-    /// trace out while the past shows (``DsrPanModel/hidesLiveSpectrum``).
-    private func pastSpectrum(_ frame: DsrPastFrames) -> some View {
-        Canvas { context, size in
-            guard frame.rowCount > 0, frame.binCount > 1 else {
-                return
-            }
-            var trace = Path()
-            for bin in 0..<frame.binCount {
-                let hz = frame.firstBinHz + Double(bin) * frame.hzPerBin
-                let point = CGPoint(x: geometry.x(forHz: hz), y: geometry.y(forDbm: Double(frame.dbm(row: 0, bin: bin))))
-                if bin == 0 {
-                    trace.move(to: point)
-                } else {
-                    trace.addLine(to: point)
-                }
-            }
-            context.stroke(trace, with: .color(Color(white: 0.92)), lineWidth: 1.2)
-        }
-        .frame(width: layout.spectrum.width, height: layout.spectrum.height)
-        .offset(x: layout.spectrum.minX, y: layout.spectrum.minY)
     }
 
     private func bracketBand(_ stretch: (from: Double, to: Double)) -> some View {

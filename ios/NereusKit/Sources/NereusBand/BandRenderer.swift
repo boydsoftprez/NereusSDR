@@ -8,6 +8,8 @@
 // 2026-11-17: J.J. Boyd (KG4VCF), AI-assisted via Claude Code:
 //   leave the live trace, peak hold and extras out while
 //   BandOverlays.liveSpectrumHidden (the recorder's past spectrum).
+// 2026-11-17: J.J. Boyd (KG4VCF), AI-assisted via Claude Code:
+//   the past spectrum drawn through the live trace's path (PR 808).
 
 import CoreGraphics
 import Foundation
@@ -640,16 +642,21 @@ public final class BandRenderer {
         }
         let beforeTrace = over.count
         var drawsTrace = false
-        if flat, live, let frame, !frame.traceDbm.isEmpty {
+        // The live trace, or while it is left out the recorder's past one,
+        // drawn the same way: one drawing path for both (PR 808).
+        let shownTrace: (trace: [Float], coverage: BandCoverage?)? = live
+            ? frame.flatMap { $0.traceDbm.isEmpty ? nil : ($0.traceDbm, overlays.frameCoverage) }
+            : overlays.pastTrace.flatMap { $0.count > 1 ? ($0, overlays.pastTraceCoverage) : nil }
+        if flat, let shownTrace {
             // The trace changes with each frame the Core sends, about half
             // the draws: kept between frames until a new frame, view or look.
-            let key = TraceKey(trace: frame.traceDbm, coverage: overlays.frameCoverage, geometry: geometry,
+            let key = TraceKey(trace: shownTrace.trace, coverage: shownTrace.coverage, geometry: geometry,
                                colour: settings.traceColour, lineColour: settings.traceLineColourDrawn,
                                fill: settings.traceFill, gradient: settings.traceGradient,
                                fillAlpha: Self.fillAlpha(settings), width: settings.traceWidthPixels(scale: overlays.scale))
             if traceKey != key {
                 builtVertices.removeAll(keepingCapacity: true)
-                addTrace(frame.traceDbm, coverage: overlays.frameCoverage, geometry: geometry, settings: settings,
+                addTrace(shownTrace.trace, coverage: shownTrace.coverage, geometry: geometry, settings: settings,
                          scale: overlays.scale, to: &builtVertices)
                 traceVertices.store(builtVertices, frame: frameNumber, device: device)
                 traceKey = key

@@ -9,6 +9,11 @@
 //   the past spectrum keeps up while the sound plays, the hours are asked
 //   again as the recorder changes, one save at a time.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: PR 808 sheet overlap round: SAVE's bracket opens inside the
+//   strip's height and rides with the picture until a handle is moved, so
+//   both handles stay on screen; the past spectrum goes to the band's own
+//   trace drawing (pastTrace, pastSpectrumChanged).
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-16: Rewind plays on release (JJ's design change): letting go of
 //   the strip, a pick on the hours map or a typed time plays the active
 //   slice from the picture's top at the frequency it is on; a tap in the
@@ -32,6 +37,7 @@
 import Combine
 import CoreGraphics
 import Foundation
+import NereusBand
 import NereusMirror
 import NereusModels
 import Observation
@@ -148,11 +154,29 @@ final class DsrPanModel {
     /// The past picture last drawn and what it was drawn from.
     @ObservationIgnored var pictureCache: (key: String, image: CGImage)?
     /// The spectrum at the picture's top moment, while in the past.
-    private(set) var pastSpectrum: DsrPastFrames?
+    private(set) var pastSpectrum: DsrPastFrames? {
+        didSet {
+            pastSpectrumChanged()
+        }
+    }
+    /// Told when ``pastSpectrum`` changes: the band draws it again.
+    @ObservationIgnored var pastSpectrumChanged: () -> Void = {}
     /// Every kept hour, newest first.
     private(set) var hours: [DsrHour] = []
     /// SAVE's bracket, two moments in either order; nil while SAVE is off.
-    private(set) var bracket: (Double, Double)?
+    /// Until a handle is moved it rides with the picture, the same points
+    /// below its top (``bracketPoints``), so both handles stay on the strip
+    /// while the picture runs live or follows the sound (PR 808).
+    var bracket: (Double, Double)? {
+        if let bracketPoints {
+            return (top - bracketPoints.0 * secondsPerPoint, top - bracketPoints.1 * secondsPerPoint)
+        }
+        return heldBracket
+    }
+    /// The bracket as points below the picture's top, until a handle moves.
+    private(set) var bracketPoints: (Double, Double)?
+    /// The bracket's moments once a handle has moved.
+    private var heldBracket: (Double, Double)?
     /// A note over the waterfall: the Core's words for a save, a refusal or a reason.
     private(set) var note: String?
     /// "Nothing was kept at this frequency then." while the active slice
@@ -315,6 +339,18 @@ final class DsrPanModel {
     /// drawn: the band leaves its live trace out, and until the first past
     /// answer arrives the spectrum stays empty under the PAST tag.
     var hidesLiveSpectrum: Bool { inPast && usable }
+
+    /// The past spectrum as the band's renderer draws a trace: its first
+    /// row's dBm and the frequencies its bins span, while the live one is
+    /// hidden (PR 808: drawn by the live trace's path, not a separate line).
+    var pastTrace: (trace: [Float], coverage: BandCoverage)? {
+        guard hidesLiveSpectrum, let frame = pastSpectrum, frame.rowCount > 0, frame.binCount > 1 else {
+            return nil
+        }
+        let trace = (0..<frame.binCount).map { frame.dbm(row: 0, bin: $0) }
+        let span = Double(frame.binCount) * frame.hzPerBin
+        return (trace, BandCoverage(centerHz: frame.firstBinHz - frame.hzPerBin / 2 + span / 2, spanHz: span))
+    }
 
     /// Who draws the picture at its top now: the Core past the band's own
     /// reach (or for a saved stretch), else the band. Going back to the
@@ -797,23 +833,35 @@ final class DsrPanModel {
     var saving: Bool { bracket != nil }
 
     /// SAVE: puts the bracket up below the picture's top, or takes it down.
-    func toggleSave() {
+    /// `stripPoints`, the strip's height: the lower handle sits above the
+    /// clock inside it, so both handles show the moment SAVE opens (PR 808).
+    func toggleSave(stripPoints: Double? = nil) {
         guard usable else {
             showReasonNote()
             return
         }
         if bracket != nil {
-            bracket = nil
+            cancelSave()
             return
         }
-        let end = top - Self.bracketTopPoints * secondsPerPoint
+        let spp = max(secondsPerPoint, 0.001)
+        var foot = Self.bracketFootPoints
+        if let stripPoints {
+            foot = min(foot, max(Self.bracketTopPoints + 1, stripPoints - Self.bracketClockRoomPoints))
+        }
         // Never shorter than the desktop's shortest stretch, however fast the waterfall runs.
-        let start = min(top - Self.bracketFootPoints * secondsPerPoint, end - Self.minBracketSeconds)
-        bracket = (end, start)
+        foot = max(foot, Self.bracketTopPoints + Self.minBracketSeconds / spp)
+        heldBracket = nil
+        bracketPoints = (Self.bracketTopPoints, foot)
     }
 
+    /// The room the lower handle keeps above the strip's foot: the clock
+    /// button, its margin and half a handle.
+    nonisolated static let bracketClockRoomPoints = 50.0
+
     func cancelSave() {
-        bracket = nil
+        bracketPoints = nil
+        heldBracket = nil
     }
 
     /// One of the bracket's handles moved to `pointsDown` from the picture's top.
@@ -821,13 +869,15 @@ final class DsrPanModel {
         guard var bracket else {
             return
         }
+        // A handle moved: the bracket stays on its moments from here.
+        bracketPoints = nil
         let moment = min(clock() - 1, top - max(0, min(waterfallPoints, pointsDown)) * secondsPerPoint)
         if which == 0 {
             bracket.0 = moment
         } else {
             bracket.1 = moment
         }
-        self.bracket = bracket
+        heldBracket = bracket
     }
 
     /// The handle's step for VoiceOver's adjust: one tick of the strip, ten points.
@@ -907,7 +957,7 @@ final class DsrPanModel {
         do {
             let note = try await client.saveStretch(fromUtcNs: Int64((stretch.from * 1e9).rounded()),
                                                     toUtcNs: Int64((stretch.to * 1e9).rounded()), kind: kind)
-            bracket = nil
+            cancelSave()
             showNote(note.isEmpty ? (kind == .wholePan ? "Whole pan saved to Recordings on the Core."
                                                        : "Sound saved to Recordings on the Core.") : note)
         } catch {

@@ -32,6 +32,11 @@
 // 2026-11-17: PR 808 design calls, zoom left of the time strip on a
 //   sideways phone; the PAST tag keeps clear of the flags. J.J. Boyd
 //   (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: PR 808 sheet overlap: the time strip draws under the flags'
+//   menus and panels and the step menu; on the main screen SAVE's panel
+//   is drawn over PTT and VOICE (savePanelHere); the dial and its step box
+//   wait while a flag's menu or panel or a sheet is open (sheetOver).
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import NereusBand
@@ -164,6 +169,13 @@ struct BandGestureLayer: View {
     /// The Digital Spectrum Recorder's strip, map and past picture (Pan 1
     /// only; the recording design's sections 6.7 and 6.8); nil shows none.
     var dsr: DsrPanModel?
+    /// SAVE's panel is drawn here, at the band's foot; false when the
+    /// screen draws it over its own floating buttons instead (MainScreen,
+    /// PR 808: nothing floats over the save banner).
+    var savePanelHere = true
+    /// A sheet is open over the band (the screen's drop sheets): the dial
+    /// and its step box wait under it, as under a flag's menu or panel (JJ, PR 808).
+    var sheetOver = false
     @Environment(\.uprightBandWidth) private var uprightWidth
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -196,11 +208,15 @@ struct BandGestureLayer: View {
             }
         }
         .overlay {
-            if let tuning, settings.dialKind != .off {
-                GeometryReader { proxy in
-                    if let axes = band.pointGeometry(size: proxy.size) {
-                        DialLayer(tuning: tuning, slices: slices, settings: settings, layout: axes.layout,
-                                  sideways: sideways, trailingInset: trailingInset, strip: dialStrip)
+            if let tuning, settings.dialKind != .off, !sheetOver {
+                // While a flag's menu or panel is open the dial and its step box
+                // wait, so they never cover its controls (JJ, PR 808); PTT stays.
+                DialGate(controls: flagControls) {
+                    GeometryReader { proxy in
+                        if let axes = band.pointGeometry(size: proxy.size) {
+                            DialLayer(tuning: tuning, slices: slices, settings: settings, layout: axes.layout,
+                                      sideways: sideways, trailingInset: trailingInset, strip: dialStrip)
+                        }
                     }
                 }
             }
@@ -211,7 +227,7 @@ struct BandGestureLayer: View {
             }
         }
         .overlay(alignment: .bottom) {
-            if let dsr, dsr.saving {
+            if savePanelHere, let dsr, dsr.saving {
                 // SAVE's panel, left of the strip and the hours map, so the
                 // handles on the strip stay free beside it: on a short pan
                 // (a small phone, or sideways) the panel stood over them.
@@ -469,6 +485,17 @@ struct BandGestureLayer: View {
             // open menu or panel (a slider, a scroll) is that control's
             // alone and never moves, tunes or zooms the band behind it.
             ZStack(alignment: .topLeading) {
+                if let dsr {
+                    // Over the band's drag: a drag on the strip moves time, never the band.
+                    // A drag in from the right edge stays the band's swipe (spec 11.3).
+                    // Under the flags' menus and panels and the step menu: they cover it
+                    // as they cover the band (PR 808, the strip was drawn over them).
+                    DsrStripLayer(model: dsr, place: dsrPlace,
+                                  secondsPerPoint: Double(band.settings.waterfallPeriodMs) / 1000,
+                                  edge: stripEdge(layout: layout, geometry: geometry, entries: entries,
+                                                  placements: placements),
+                                  bandLooksBack: band.lookBackLines > 0)
+                }
                 if let flagControls {
                     FlagPopoverLayer(controls: flagControls, slices: slices, flags: fullFlags, columns: columns,
                                      // The whole band, waterfall included: menus and panels hang over it.
@@ -478,15 +505,6 @@ struct BandGestureLayer: View {
                 if let tuning {
                     StepMenuLayer(tuning: tuning, flags: flags, bandWidth: geometry.size.width, large: large,
                                   part: .menu)
-                }
-                if let dsr {
-                    // Over the band's drag: a drag on the strip moves time, never the band.
-                    // A drag in from the right edge stays the band's swipe (spec 11.3).
-                    DsrStripLayer(model: dsr, place: dsrPlace,
-                                  secondsPerPoint: Double(band.settings.waterfallPeriodMs) / 1000,
-                                  edge: stripEdge(layout: layout, geometry: geometry, entries: entries,
-                                                  placements: placements),
-                                  bandLooksBack: band.lookBackLines > 0)
                 }
             }
         }
@@ -1163,6 +1181,31 @@ struct StepMenuLayer: View {
 
 /// The open number pad at the foot of the band, over a clear layer whose
 /// tap closes it.
+/// Draws the dial only while no flag has a menu or panel open.
+private struct DialGate<Content: View>: View {
+    let controls: FlagControls?
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        if let controls {
+            Observing(controls: controls, content: content)
+        } else {
+            content()
+        }
+    }
+
+    private struct Observing: View {
+        @ObservedObject var controls: FlagControls
+        @ViewBuilder let content: () -> Content
+
+        var body: some View {
+            if controls.open == nil {
+                content()
+            }
+        }
+    }
+}
+
 private struct PadLayer: View {
     @ObservedObject var tuning: BandTuningModel
 

@@ -143,6 +143,146 @@ struct DialShotTests {
         await model.disconnect()
     }
 
+    /// The PR 808 sheet walk: the main screen with the recorder's strip on
+    /// Pan 1 and the thumbwheel on, with every sheet, flag menu and panel,
+    /// band panel and tab that opens over the band, LIVE and then in the past
+    /// (PAST paused), written as `sheet-walk-<shape>-<live|past>-<state>.png`.
+    /// Runs only with `NEREUS_SHEET_WALK` set (`TEST_RUNNER_NEREUS_SHEET_WALK`)
+    /// to `phone` (the four iPhone shapes) or `ipad` (upright and on its side,
+    /// on an iPad simulator); otherwise it does nothing.
+    @Test(arguments: SheetWalkShape.allCases)
+    func sheetsOverTheBand(_ shape: SheetWalkShape) async throws {
+        guard let wanted = ProcessInfo.processInfo.environment["NEREUS_SHEET_WALK"],
+              wanted == (shape.iPad ? "ipad" : "phone") else {
+            return
+        }
+        let suite = "DialShotTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = PhoneSettings(defaults: defaults)
+        let model = AppModel(phoneSettings: settings, mediaPeerFactory: { QuietDialPeer() },
+                             displaySettings: BandDisplaySettingsStore(defaults: defaults))
+        let station = try FakeStation(additions: .all)
+        await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
+                            transportFactory: station.transportFactory, clock: HeartbeatSoonLinkClock())
+        #expect(await station.waitUntilLive())
+        try await MainScreenShotTests.fill(station)
+        await station.deliver(.delta(LinkMessage.Delta(key: "slice:0", properties: [
+            .init(ordinal: 6, name: "stepHz", value: .i64(1000)),
+        ])))
+        let main = model.main
+        #expect(await settle(seconds: 30) {
+            main.slices.entries.count == 2 && main.coreName != nil && main.band.catalog != nil
+        })
+        let band = main.band
+        band.endpointId = 1
+        band.receive(.context(try #require(BandFlagShotTests.context())))
+        let flow = ConnectionFlow(app: model, dependencies: ConnectionFlow.Dependencies(
+            keyStore: KeychainKeyStore(item: InMemorySecretItem()),
+            stations: PairedStationStore(item: InMemorySecretItem()), kind: .phone,
+            transportFactory: station.transportFactory, clock: TestLinkClock(),
+            microphone: ConnectionFlowTests.FakeMicrophone(), network: ConnectionFlowTests.FakeNetwork(),
+            appMajors: [1], now: Date.init, browser: nil))
+        // The tester's screen: the thumbwheel with its step box beside PTT.
+        settings.dialKind = .thumbwheel
+        let dsr = model.dsr
+        for time in ["live", "past"] {
+            if time == "past" {
+                // Ten minutes back and let go: the picture stays in the past.
+                dsr.drag(from: dsr.top, by: -600 / dsr.secondsPerPoint)
+                dsr.dragEnded()
+                #expect(dsr.inPast)
+            }
+            for state in SheetWalkState.all(column: shape.column) {
+                let name = "sheet-walk-\(shape.rawValue)-\(time)-\(state.name)"
+                try await shootWalk(name, model: model, flow: flow, shape: shape, state: state)
+            }
+        }
+        await model.disconnect()
+    }
+
+    /// Opens `state` over the band, draws the screen and closes it again.
+    private func shootWalk(_ name: String, model: AppModel, flow: ConnectionFlow, shape: SheetWalkShape,
+                           state: SheetWalkState) async throws {
+        let main = model.main
+        let dsr = model.dsr
+        let size = shape.size
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(origin: CGPoint(x: 0, y: shape.sideways ? 120 : 0), size: size)
+        window.windowLevel = .alert + 1
+        let root = SheetWalkRoot(model: model, flow: flow, state: state, iPad: shape.iPad)
+            .environment(\.horizontalSizeClass, shape.iPad ? .regular : .compact)
+            .preferredColorScheme(.dark)
+        let host = ShotHosting.host(root)
+        host.additionalSafeAreaInsets = shape.safeArea
+        host.view.frame = CGRect(origin: .zero, size: size)
+        window.rootViewController = host
+        window.isHidden = false
+        defer {
+            main.flagControls.close()
+            main.tuning.closePad()
+            main.tuning.closeStepMenu()
+            if dsr.saving {
+                dsr.cancelSave()
+            }
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        if state.tab == .panadapter {
+            let bandDraw = try await ShotWait.requireBandLaidOut(main.band, in: window)
+            main.band.reset()
+            BandFlagShotTests.feed(main.band, width: bandDraw.requestedPixels, lines: Int(size.height * 3))
+            try await ShotWait.requireBandShown(main.band, in: window, after: bandDraw)
+        }
+        switch state.opens {
+        case .flag(let popover):
+            main.flagControls.toggle(popover)
+        case .save:
+            dsr.toggleSave(stripPoints: dsr.waterfallPoints)
+        case .saveAndFlag:
+            dsr.toggleSave(stripPoints: dsr.waterfallPoints)
+            main.flagControls.toggle(.panel(0, .dsp))
+        case .pad:
+            main.tuning.openPad(sliceId: 0)
+        case .stepMenu:
+            main.tuning.toggleDialStepMenu()
+        case .tap(let id):
+            // SwiftUI builds its accessibility elements only with accessibility on.
+            let accessibility = SetupTypedEntryTests.applicationAccessibility()
+            SetupTypedEntryTests.setApplicationAccessibility(true)
+            defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+            #expect(await settle(seconds: 10) { IPadShotTests.element(id, in: window) != nil }, "\(name)")
+            _ = IPadShotTests.element(id, in: window)?.accessibilityActivate()
+        case .none:
+            break
+        }
+        try await Task.sleep(for: .milliseconds(700))
+        if state.scrolledToFoot {
+            // Every scrolling view at its foot: the last row is where PTT must stay clear of it.
+            await ShotWait.laidOut(window)
+            for scroll in Self.scrollViews(in: window) where scroll.contentSize.height > scroll.bounds.height {
+                scroll.setContentOffset(CGPoint(x: 0, y: scroll.contentSize.height - scroll.bounds.height
+                                                    + scroll.adjustedContentInset.bottom), animated: false)
+            }
+            try await Task.sleep(for: .milliseconds(300))
+        }
+        await ShotWait.laidOut(window)
+        let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        if let directory = ProcessInfo.processInfo.environment["NEREUS_MAIN_SHOTS"], !directory.isEmpty,
+           let data = image.pngData() {
+            let url = URL(fileURLWithPath: directory).appendingPathComponent("\(name).png")
+            try data.write(to: url)
+            print("Wrote \(url.path)")
+        }
+    }
+
+    private static func scrollViews(in view: UIView) -> [UIScrollView] {
+        (view as? UIScrollView).map { [$0] } ?? [] + view.subviews.flatMap { scrollViews(in: $0) }
+    }
+
     /// Task 61, fix round 1: a flick on the pop-up knob at 30 rad/s, then
     /// the coast drawn at nine moments on a test clock, `coast-0.png` at
     /// the release to `coast-8.png` where it has stopped: the grip keeps
@@ -320,4 +460,143 @@ private final class QuietDialPeer: MediaPeerConnection, @unchecked Sendable {
     func addRemoteCandidate(_ candidate: String, mid: String) throws {}
     func setExpectedAudioSsrc(_ ssrc: UInt32?) {}
     func close() {}
+}
+
+/// The screens the sheet walk draws (``DialShotTests/sheetsOverTheBand(_:)``):
+/// the smallest and largest iPhone upright and sideways, and an iPad
+/// upright and on its side, with each one's safe area.
+enum SheetWalkShape: String, CaseIterable, Sendable {
+    case smallUpright = "small-upright"
+    case smallSideways = "small-sideways"
+    case bigUpright = "big-upright"
+    case bigSideways = "big-sideways"
+    case iPadUpright = "ipad-upright"
+    case iPadSideways = "ipad-sideways"
+
+    var iPad: Bool { self == .iPadUpright || self == .iPadSideways }
+    var sideways: Bool { self == .smallSideways || self == .bigSideways || self == .iPadSideways }
+    /// The band's button column shows: the iPad, and the phone held sideways.
+    var column: Bool { iPad || sideways }
+
+    var size: CGSize {
+        switch self {
+        case .iPadUpright: return CGSize(width: 1024, height: 1366)
+        case .iPadSideways: return CGSize(width: 1366, height: 1024)
+        default:
+            let shape = WalkShape(small: self == .smallUpright || self == .smallSideways, sideways: sideways,
+                                  larger: false)
+            return shape.screen
+        }
+    }
+
+    var safeArea: UIEdgeInsets {
+        switch self {
+        case .iPadUpright: return UIEdgeInsets(top: 24, left: 0, bottom: 20, right: 0)
+        case .iPadSideways: return UIEdgeInsets(top: 24, left: 0, bottom: 20, right: 0)
+        default:
+            return WalkShape(small: self == .smallUpright || self == .smallSideways, sideways: sideways,
+                             larger: false).safeArea
+        }
+    }
+}
+
+/// One thing open over the band in the sheet walk, or a tab in its place.
+struct SheetWalkState {
+    enum Opens {
+        case none
+        case flag(FlagPopover)
+        case save
+        case saveAndFlag
+        case pad
+        case stepMenu
+        /// A button tapped through its accessibility element.
+        case tap(String)
+    }
+
+    let name: String
+    var opens: Opens = .none
+    var sheet: OpenSheet?
+    var rxPanelOpen = false
+    var txPanelOpen = false
+    var roundtable: RoundtableSheet.Detent?
+    var columnMenu: BandColumnMenu?
+    var tab: AppTab = .panadapter
+    /// The open sheet's or panel's rows scrolled to their foot.
+    var scrolledToFoot = false
+
+    static func all(column: Bool) -> [SheetWalkState] {
+        var states: [SheetWalkState] = [
+            .init(name: "band"),
+            .init(name: "flag-dsp", opens: .flag(.panel(0, .dsp))),
+            .init(name: "flag-dsp-foot", opens: .flag(.panel(0, .dsp)), scrolledToFoot: true),
+            .init(name: "flag-audio", opens: .flag(.panel(0, .audio))),
+            .init(name: "flag-mode", opens: .flag(.panel(0, .mode))),
+            .init(name: "flag-xrit", opens: .flag(.panel(0, .xrit))),
+            .init(name: "flag-antennas", opens: .flag(.antennas(0))),
+            .init(name: "flag-more", opens: .flag(.more(0))),
+            .init(name: "save", opens: .save),
+            .init(name: "save-flag-dsp", opens: .saveAndFlag),
+            .init(name: "pad", opens: .pad),
+            .init(name: "step-menu", opens: .stepMenu),
+            .init(name: "voice-panel", opens: .tap("voiceKeyer.voice")),
+            .init(name: "sound", opens: .tap(Toolbar.Item.speaker.rawValue)),
+            .init(name: "sheet-pan", sheet: .pan),
+            .init(name: "sheet-display", sheet: .display),
+            .init(name: "sheet-display-foot", sheet: .display, scrolledToFoot: true),
+            .init(name: "sheet-slices", sheet: .slices),
+            .init(name: "rx-panel", rxPanelOpen: true),
+            .init(name: "tx-panel", txPanelOpen: true),
+            .init(name: "roundtable", roundtable: .half),
+            .init(name: "tab-modes", tab: .modes),
+            .init(name: "tab-tools", tab: .tools),
+            .init(name: "tab-radio", tab: .radio),
+            .init(name: "tab-setup", tab: .setup),
+        ]
+        if column {
+            for (name, menu) in [("band", BandColumnMenu.band), ("antenna", .antenna), ("display", .display),
+                                 ("vax", .vax), ("attenuator", .attenuator)] {
+                states.append(.init(name: "column-\(name)", columnMenu: menu))
+            }
+        }
+        return states
+    }
+}
+
+/// The app's root as `RootView` lays it out: every tab in one stack, the
+/// one chosen shown, the main screen with the walk's sheet or panel open.
+private struct SheetWalkRoot: View {
+    @ObservedObject var model: AppModel
+    let flow: ConnectionFlow
+    let state: SheetWalkState
+    let iPad: Bool
+
+    var body: some View {
+        GeometryReader { proxy in
+            let sideways = proxy.size.width > proxy.size.height
+            VStack(spacing: 0) {
+                ZStack {
+                    MainScreen(app: model, main: model.main, rxPanelOpen: state.rxPanelOpen,
+                               txPanelOpen: state.txPanelOpen,
+                               sheet: state.sheet, columnMenu: state.columnMenu, roundtableSheet: state.roundtable)
+                        .tabShown(state.tab == .panadapter)
+                    switch state.tab {
+                    case .panadapter:
+                        EmptyView()
+                    case .modes:
+                        ModesTab(app: model, main: model.main, flow: flow)
+                    case .tools:
+                        ToolsTab(app: model, flow: flow, spots: model.spots)
+                    case .radio:
+                        RadioView(app: model, main: model.main, flow: flow)
+                    case .setup:
+                        SetupTab(app: model, flow: flow, router: SetupRouter(), buildTag: nil)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                TabBar(selection: .constant(state.tab), sideways: sideways, iPad: iPad)
+            }
+            .environment(\.uprightBandWidth, proxy.uprightBandWidth)
+        }
+        .background(ChromeColours.bar.ignoresSafeArea())
+    }
 }

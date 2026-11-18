@@ -38,6 +38,13 @@
 // 2026-11-17: PR 808 design calls, on a sideways phone VOICE sits above
 //   PTT and zoom left of the time strip. J.J. Boyd (KG4VCF), AI-assisted
 //   via Claude Code.
+// 2026-11-17: PR 808 sheet overlap: VOICE gives way to what the band has
+//   open (a flag's menu or panel, the number pad, a step menu, the dial's
+//   sheet, SAVE's panel, a drop sheet), and SAVE's panel is drawn over PTT
+//   and VOICE. JJ's call: while a sheet, flag menu or panel is open the dial
+//   and its step box wait and PTT stays over it and keys; sheets end above
+//   PTT (pttClearance); the band's button column gives way to a flag's
+//   panel. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -396,6 +403,8 @@ struct MainScreen: View {
         let keyed = transmit.ptt.transmitting
         let pttMaxX = bandSize.width - (sideways ? trailingInset : 0) - PttButton.inset
         // Two columns of four where one does not fit (DC14); the chip keeps right of them.
+        // A drop sheet is open over the band (with the column, Display is the pill instead).
+        let sheetOver = sheet.map { !(column && $0 == .display) } ?? false
         let columnWidth = BandColumnLayout.columnWidth(
             columns: columnFolded || stacked ? 1 : BandColumnLayout.columns(bandHeight: bandSize.height))
         return ZStack(alignment: .topLeading) {
@@ -403,12 +412,12 @@ struct MainScreen: View {
             if stacked {
                 PanStack(stack: panStack) { pan in
                     stackedPan(pan, sideways: sideways, leadingInset: sideways ? leadingInset : 0,
-                               trailingInset: sideways ? trailingInset : 0, foot: pan == footPan)
+                               trailingInset: sideways ? trailingInset : 0, foot: pan == footPan, sheetOver: sheetOver)
                 }
             } else {
                 bandLayers(main.controls(for: .first), sideways: sideways, leadingInset: sideways ? leadingInset : 0,
                            trailingInset: sideways ? trailingInset : 0, swipesHere: swipesOn,
-                           buttonColumnFolded: column ? columnFolded : nil)
+                           buttonColumnFolded: column ? columnFolded : nil, savePanelHere: false, sheetOver: sheetOver)
             }
             GeometryReader { proxy in
                 if let audio = app.audio {
@@ -441,6 +450,8 @@ struct MainScreen: View {
             }
             .allowsHitTesting(false)
             if column && !stacked {
+                // A flag's panel spans the band: the column gives way while it is open (PR 808).
+                ColumnGate(flags: main.controls(for: .first).flagControls) {
                 BandButtonColumn(pan: .first, open: $columnMenu, folded: $columnFolded, main: main,
                                  displayTab: $displayTab, leadingInset: sideways ? leadingInset : 0,
                                  trailingInset: sideways ? trailingInset : 0,
@@ -457,6 +468,26 @@ struct MainScreen: View {
                                      app.phoneNavigation?.followDisplayPan(pan)
                                  }, pttHold: pttHold)
                     .environment(\.displayPeek, $displayPeek)
+                }
+            }
+            // With the column, Display is its pill, never the drop sheet. Under PTT,
+            // which stays and keys while a sheet is open (JJ, PR 808).
+            if let sheet, !(column && sheet == .display) {
+                Color.black.opacity(0.001)
+                    .contentShape(Rectangle())
+                    .onTapGesture { self.sheet = nil }
+                    .accessibilityLabel("Close the sheet")
+                    .accessibilityAddTraits(.isButton)
+                dropped(sheet)
+                    .environment(\.displayPeek, $displayPeek)
+                    .frame(maxWidth: sideways ? DropSheet<EmptyView, EmptyView>.sidewaysWidth : .infinity)
+                    .padding(.top, 4)
+                    // It ends above PTT, which stays and keys while it is open (JJ, PR 808).
+                    .padding(.bottom, PttButton.sheetClearance)
+                    .padding(.horizontal, 8)
+                    .padding(.leading, sideways ? leadingInset : 0)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .transition(.opacity)
             }
             if roundtableSheet == nil || dialStrip {
                 // With the Roundtable sheet open and a dial on, PTT stays here, in the strip, press and hold.
@@ -494,18 +525,29 @@ struct MainScreen: View {
                                 $0.offsetBy(dx: 0, dy: pttFlagsTop).intersects(aboveRect)
                             }
                             let above = wheelOn || (sideways && !layoutNow.isIPad && !flagAbove)
-                            VoiceButton(model: app.voiceKeyer) { voicePanelOpen = true }
-                                .offset(x: placed.minX - pttHome.minX)
-                                .padding(.leading, PttButton.inset + (sideways ? leadingInset : 0)
-                                         + (above ? (PttButton.diameter - VoiceButton.diameter) / 2
-                                            : PttButton.diameter + VoiceButton.gap))
-                                .padding(.bottom, PttButton.bottomInset
-                                         + (above ? PttButton.diameter + VoiceButton.gap
-                                            : (PttButton.diameter - VoiceButton.diameter) / 2))
-                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                            // VOICE came with PR 797 and floats with PTT: it gives way to
+                            // what the band has open, so it never covers a panel or menu.
+                            let footControls = main.controls(for: footPan)
+                            BandOpenGate(flags: footControls.flagControls, tuning: footControls.tuning,
+                                         dsr: footPan == .first ? app.dsr : nil, covered: sheetOver) {
+                                VoiceButton(model: app.voiceKeyer) { voicePanelOpen = true }
+                                    .offset(x: placed.minX - pttHome.minX)
+                                    .padding(.leading, PttButton.inset + (sideways ? leadingInset : 0)
+                                             + (above ? (PttButton.diameter - VoiceButton.diameter) / 2
+                                                : PttButton.diameter + VoiceButton.gap))
+                                    .padding(.bottom, PttButton.bottomInset
+                                             + (above ? PttButton.diameter + VoiceButton.gap
+                                                : (PttButton.diameter - VoiceButton.diameter) / 2))
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                            }
                         }
                     }
                 }
+            }
+            if !stacked {
+                // SAVE's panel at the band's foot, over PTT and VOICE: nothing floats
+                // over it (PR 808). With the iPad's pans stacked it stays on Pan 1's band.
+                DsrSaveLayer(model: app.dsr, slices: main.slices, trailingInset: sideways ? trailingInset : 0)
             }
             // A spot's details or a badge's list, over PTT and under the covers.
             SpotLayer.Popups(spots: app.spots, sideways: sideways)
@@ -648,25 +690,10 @@ struct MainScreen: View {
                                              width: RxPanel.width + (sideways ? max(leadingInset, trailingInset) : 0)))
                 .transition(.move(edge: rxPanelEntry))
             }
-            // With the column, Display is its pill, never the drop sheet.
-            if let sheet, !(column && sheet == .display) {
-                Color.black.opacity(0.001)
-                    .contentShape(Rectangle())
-                    .onTapGesture { self.sheet = nil }
-                    .accessibilityLabel("Close the sheet")
-                    .accessibilityAddTraits(.isButton)
-                dropped(sheet)
-                    .environment(\.displayPeek, $displayPeek)
-                    .frame(maxWidth: sideways ? DropSheet<EmptyView, EmptyView>.sidewaysWidth : .infinity)
-                    .padding(.top, 4)
-                    .padding(.bottom, 8)
-                    .padding(.horizontal, 8)
-                    .padding(.leading, sideways ? leadingInset : 0)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .transition(.opacity)
-            }
         }
         .coordinateSpace(name: BandColumnLayout.space)
+        // Sheets and panels over the band end above PTT (JJ, PR 808).
+        .environment(\.pttClearance, PttButton.sheetClearance)
         .onGeometryChange(for: CGSize.self) { $0.size } action: { bandSize = $0 }
         .onPreferenceChange(BandColumnFrameKey.self) { columnBoxes = $0 }
         .clipped()
@@ -784,7 +811,7 @@ struct MainScreen: View {
     /// One pan in the stack: its band, its column with its menus and pill,
     /// and the band menu a hold on its empty band opens.
     private func stackedPan(_ pan: PanIdentity, sideways: Bool, leadingInset: CGFloat,
-                            trailingInset: CGFloat, foot: Bool) -> some View {
+                            trailingInset: CGFloat, foot: Bool, sheetOver: Bool) -> some View {
         let controls = main.controls(for: pan)
         let open = Binding<BandColumnMenu?>(get: { columnPan == pan ? columnMenu : nil }, set: { menu in
             if menu != nil {
@@ -815,7 +842,9 @@ struct MainScreen: View {
         })
         return ZStack(alignment: .topLeading) {
             bandLayers(controls, sideways: sideways, leadingInset: leadingInset, trailingInset: trailingInset,
-                       swipesHere: swipesOn, foot: foot, buttonColumnFolded: folded.wrappedValue, menuBinding: menu)
+                       swipesHere: swipesOn, foot: foot, buttonColumnFolded: folded.wrappedValue, menuBinding: menu,
+                       sheetOver: sheetOver)
+            ColumnGate(flags: controls.flagControls) {
             BandButtonColumn(pan: pan, open: open, folded: folded, main: main, displayTab: $displayTab,
                              leadingInset: leadingInset, trailingInset: trailingInset,
                              openSetup: {
@@ -834,6 +863,7 @@ struct MainScreen: View {
                              // The PTT sits on the pan at the foot: that pan's note keeps clear of it where it is held.
                              pttHold: pan == panStack.open.last ? pttHold : nil)
                 .environment(\.displayPeek, $displayPeek)
+            }
             if let anchor = menu.wrappedValue {
                 BandMenuLayer(anchor: anchor, display: controls.display, scale: controls.bandScale,
                               pan: controls.sheet, sideways: sideways, leadingInset: leadingInset,
@@ -1160,7 +1190,8 @@ struct MainScreen: View {
     @ViewBuilder
     private func bandLayers(_ controls: PanControls, sideways: Bool, leadingInset: CGFloat, trailingInset: CGFloat,
                             swipesHere: Bool, foot: Bool = true, buttonColumnFolded: Bool? = nil,
-                            menuBinding: Binding<BandMenuAnchor?>? = nil) -> some View {
+                            menuBinding: Binding<BandMenuAnchor?>? = nil, savePanelHere: Bool = true,
+                            sheetOver: Bool = false) -> some View {
         let band = controls.band.band
         let slices = controls.band.slices
         let first = controls.pan == .first
@@ -1170,6 +1201,9 @@ struct MainScreen: View {
             // The sound-only marks sit over the band and beneath every
             // control on it, so one scrolling down passes under the dial.
             BandAwayMarks(band: band)
+                // In the past the recorder's picture and its time label stand
+                // there: the marks for stretches the band was not sent wait (PR 808).
+                .opacity(first && app.dsr.inPast ? 0 : 1)
             if strip {
                 // The strip under the Roundtable sheet that keeps PTT and the dial.
                 RoundtableColours.ground
@@ -1202,7 +1236,8 @@ struct MainScreen: View {
                              swipes: swipesHere ? swipes : nil,
                              bandStack: controls.bandStack, radioOnAir: transmit.coreOnAir,
                              recordings: app.recordingFlag, openAllRecordings: openAllRecordings,
-                             openRecordingSettings: openRecordingSettings, dsr: first ? app.dsr : nil)
+                             openRecordingSettings: openRecordingSettings, dsr: first ? app.dsr : nil,
+                             savePanelHere: savePanelHere, sheetOver: sheetOver)
             DbmScaleArrows(display: controls.display, band: band, trailingInset: trailingInset)
             // Pan 1's LIVE is the recorder strip's: the band's own would sit over it.
             BandReadouts(band: band, trailingInset: trailingInset, lookBackLive: !first)
@@ -1533,5 +1568,57 @@ private struct SoundNotice: View {
             styled[range].foregroundColor = ChromeColours.textBright
         }
         return Text(styled)
+    }
+}
+
+/// Draws `content` only while the band has nothing open over it: no drop
+/// sheet, flag's menu or panel, number pad, step menu or dial sheet, and no
+/// SAVE panel (PR 808: VOICE, which floats with PTT, covered them; JJ:
+/// VOICE hides while a sheet is open, PTT stays).
+private struct BandOpenGate<Content: View>: View {
+    @ObservedObject var flags: FlagControls
+    @ObservedObject var tuning: BandTuningModel
+    let dsr: DsrPanModel?
+    /// A drop sheet is open over the band.
+    var covered = false
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        let open = covered || flags.open != nil || tuning.pad != nil || tuning.stepMenuSliceId != nil || tuning.dialSheetOpen
+            || dsr?.saving == true
+        if !open {
+            content()
+        }
+    }
+}
+
+/// The band's button column, hidden while a flag's panel spans the band
+/// over it (PR 808: nothing on the band draws over an open panel).
+private struct ColumnGate<Content: View>: View {
+    @ObservedObject var flags: FlagControls
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        if case .panel = flags.open {
+            EmptyView()
+        } else {
+            content()
+        }
+    }
+}
+
+/// SAVE's panel at the band's foot, left of the time strip and its map so
+/// the handles stay free, drawn over the band's floating buttons.
+private struct DsrSaveLayer: View {
+    let model: DsrPanModel
+    @ObservedObject var slices: BandSlicesModel
+    let trailingInset: CGFloat
+
+    var body: some View {
+        if model.saving {
+            DsrSavePanel(model: model, sliceFrequencyHz: slices.entries.first { $0.id == 0 }?.slice.frequencyHz)
+                .padding(.trailing, trailingInset + DsrStripPlace.stripWidth + DsrStripPlace.mapWidth)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        }
     }
 }

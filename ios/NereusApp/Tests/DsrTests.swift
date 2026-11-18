@@ -427,6 +427,28 @@ struct DsrTests {
         #expect(!model.saving && model.note == "Saving to Recordings.")
     }
 
+    /// PR 808: SAVE opens with both handles inside the strip (the lower one
+    /// above the clock), and the bracket rides with the picture's top, so the
+    /// handles stay on the strip as time runs, until a handle is moved.
+    @Test func saveFitsTheStripAndRidesWithThePicture() async throws {
+        let (_, model, _) = await Self.pan()
+        var now = Self.now
+        model.clock = { now }
+        model.toggleSave(stripPoints: 200)
+        // The lower handle 150 points down, 50 above the strip's foot.
+        let opened = try #require(model.stretch)
+        #expect(opened.from == now - 150 * Self.spp && opened.to == now - 70 * Self.spp)
+        now += 20
+        let rode = try #require(model.stretch)
+        #expect(rode.from == opened.from + 20 && rode.to == opened.to + 20)
+        model.moveHandle(0, toPointsDown: 60)
+        let held = try #require(model.stretch)
+        now += 20
+        #expect(model.stretch?.from == held.from && model.stretch?.to == held.to)
+        model.cancelSave()
+        #expect(!model.saving)
+    }
+
     /// The clock's sheet takes a typed time, says when one is too old, and
     /// says how to type one.
     @Test func theTimeSheetGoesToATypedTime() async {
