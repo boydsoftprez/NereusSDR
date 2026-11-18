@@ -16,6 +16,18 @@
 // FT8-Dekoder anklicken, obwohl ohne Funkgeraet keine Datenbetriebsart
 // steht.
 //
+// ── Seit dem 2026-11-18 gibt es nur noch EINES ──────────────────────
+//
+// Betreiber: „Das gelbe Plus rechts unten bitte komplett löschen,
+// rechts oben alleine reicht!" Seit das Plus oben eine orange-gelbe
+// Taste ist (2026-11-12), stand dieselbe Taste zweimal im Bild.
+//
+// Der Lauf heisst weiter wie die Datei -- die Lehre dahinter gilt
+// unveraendert („alles muss erreichbar sein, sonst findet das nie
+// wer") --, prueft aber jetzt: es gibt GENAU ein Plus, es sitzt in der
+// Befehlsleiste (die nie ausgeblendet wird), und es kann alles, was
+// vorher beide konnten.
+//
 // =================================================================
 // Modification history (Longpath):
 //   2026-11-12 — Original fuer Longpath von Martin Fischer,
@@ -64,28 +76,33 @@ private slots:
         QTest::qWait(300);
     }
 
-    void beidePlusZeigenDasselbe()
+    void esGibtGenauEinPlusUndEsKannAlles()
     {
         const QList<AddWidgetButton*> plus = m_mw->findChildren<AddWidgetButton*>();
-        QCOMPARE(plus.size(), 2);
+        QVERIFY2(plus.size() == 1,
+                 qPrintable(QStringLiteral("erwartet genau ein Plus, gefunden: %1 -- "
+                                           "das untere sollte weg sein")
+                                .arg(plus.size())));
+        AddWidgetButton* p = plus.first();
 
-        QList<QStringList> karten;
-        for (AddWidgetButton* p : plus) {
-            p->openPicker();
-            WidgetPicker* w = p->picker();
-            QVERIFY(w);
-            w->setCategory(WidgetPicker::allCategory());
-            QStringList e = w->entries();
-            e.sort();
-            karten << e;
-            QVERIFY2(e.contains(QStringLiteral("Ft8Decoder")),
-                     "der FT8-Dekoder fehlt in einem Auswaehler");
-            QVERIFY2(w->isEnabled(QStringLiteral("Ft8Decoder")),
-                     "in einem Auswaehler ist der FT8-Dekoder grau -- "
-                     "der Einschalter fehlt dort");
-            w->close();
-        }
-        QCOMPARE(karten.at(0), karten.at(1));
+        // Es sitzt in der Befehlsleiste, nicht mehr lose ueber der
+        // Arbeitsflaeche -- und es ist zu sehen.
+        QVERIFY2(p->parentWidget() != m_mw->centralWidget(),
+                 "das Plus haengt wieder lose ueber der Arbeitsflaeche");
+        QVERIFY2(p->isVisible(), "das eine Plus ist nicht zu sehen");
+
+        // Und es kann alles: der FT8-Dekoder ist da und anklickbar,
+        // obwohl ohne Funkgeraet keine Datenbetriebsart steht.
+        p->openPicker();
+        WidgetPicker* w = p->picker();
+        QVERIFY(w);
+        w->setCategory(WidgetPicker::allCategory());
+        const QStringList e = w->entries();
+        QVERIFY2(e.contains(QStringLiteral("Ft8Decoder")),
+                 "der FT8-Dekoder fehlt im Auswaehler");
+        QVERIFY2(w->isEnabled(QStringLiteral("Ft8Decoder")),
+                 "im Auswaehler ist der FT8-Dekoder grau -- der Einschalter fehlt");
+        w->close();
     }
 };
 

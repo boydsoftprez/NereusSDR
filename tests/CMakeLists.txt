@@ -5835,6 +5835,9 @@ longpath_add_test(tst_auxiliary_window_leveler)
 # Plus (Betreiber: „Das klicken auf Buttons sollte besser farblich
 # markiert sein") -- eine Stelle fuer alle Knoepfe.
 longpath_add_test(tst_klickmarke)
+# 2026-11-17: die „»"-Taste der Menueleiste im Orange des Plus
+# (Betreiber: „die beiden kleinen pfeile … die sieht keiner").
+longpath_add_test(tst_menue_pfeile)
 # 2026-11-15: ein Fenster, das aufgeht, kommt auf den Schirm, an dem
 # gearbeitet wird -- und bleibt stehen, wenn es schon dort liegt
 # (Betreiber: „wenn ich das logbuch aufmache mit dem plus sehe ich es nur

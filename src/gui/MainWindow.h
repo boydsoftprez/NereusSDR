@@ -1338,11 +1338,6 @@ private:
     /// Was in den Einstellungen steht; Vorgabe ist die Leiste.
     Qt::Orientation profilschienenRichtungAusEinstellung() const;
 
-    /// Das schwebende „+" unten rechts an seinen Platz setzen. Es hat
-    /// keine Anordnung, die es mitzieht, also von Hand bei jeder
-    /// Groessenaenderung.
-    void positionAddWidgetButton();
-
     // ── Fensterteile, die keine Applets sind ─────────────────────────
     //
     // Sie stehen im Auswähler wie die Applets, hängen aber nicht in
@@ -2711,7 +2706,6 @@ private:
     /// der ganze Rest der Datei bekam dann "incomplete type".
     QHBoxLayout* m_profileRailRow{nullptr};
     QWidget*     m_profileRailHome{nullptr};
-    class AddWidgetButton* m_addWidgetBtn{nullptr};
     void richtePlusEin(class AddWidgetButton* plus);
 
     /// Welche Applets als freie Kachel auf der Flaeche liegen:

@@ -3450,20 +3450,6 @@ void MainWindow::applyChromeVisibility(const QString& id, bool visible)
     }
 }
 
-// Das Plus sitzt schwebend in der unteren rechten Ecke der
-// Arbeitsfläche — wie in der Vorlage. Es hat keinen Platz in einer
-// Anordnung, deshalb wird es von Hand gesetzt und muss bei jeder
-// Größenänderung mit.
-void MainWindow::positionAddWidgetButton()
-{
-    if (!m_addWidgetBtn || !centralWidget()) { return; }
-    const QSize s = m_addWidgetBtn->sizeHint();
-    m_addWidgetBtn->resize(s);
-    m_addWidgetBtn->move(centralWidget()->width()  - s.width()  - 18,
-                         centralWidget()->height() - s.height() - 18);
-    m_addWidgetBtn->raise();
-}
-
 Qt::Orientation MainWindow::profilschienenRichtungAusEinstellung() const
 {
     const QString wahl = AppSettings::instance()
@@ -10211,32 +10197,19 @@ void MainWindow::populateDefaultMeter()
         m_appletVis->describeApplet(id, tr(w.category), kw);
     }
 
-    // ── DAS PLUS ─────────────────────────────────────────────────────
+    // ── Das Plus unten rechts gibt es nicht mehr (2026-11-18) ────────
     //
-    // Auf Ansage des Betreibers (2026-08-20): „danach soll ich mit plus
-    // jedes windows adden können und verschieben" — wie in der Vorlage.
+    // Hier entstand seit dem 2026-08-20 ein zweites Plus, schwebend in
+    // der unteren rechten Ecke der Arbeitsflaeche („wie in der
+    // Vorlage"). Seit dem 2026-11-12 ist das Plus oben in der
+    // Befehlsleiste eine orange-gelbe Taste und nicht mehr zu
+    // uebersehen -- damit stand dieselbe Taste zweimal im Bild.
     //
-    // AddWidgetButton und der Auswähler dahinter (WidgetPicker, 433
-    // Zeilen mit Kategorien, Suchfeld und Karten, gebaut am 2026-08-15
-    // nach genau dieser Vorlage) waren FERTIG und wurden nirgends
-    // erzeugt. MainWindow.cpp hatte den include und sonst nichts. Der
-    // sechste Fall von „gebaut, an keiner Fläche" innerhalb von zwei
-    // Tagen — und der Grund, warum der Betreiber dreimal sagen musste,
-    // dass etwas nicht geht, das es längst gab.
+    // Betreiber, 2026-11-18: „Das gelbe Plus rechts unten bitte komplett
+    // löschen, rechts oben alleine reicht!"
     //
-    // Schwebend unten rechts über der Arbeitsfläche, wie in der
-    // Vorlage. Nicht in eine Leiste gesteckt: dort wäre es eines von
-    // zwanzig Zeichen, und genau so war es bisher unsichtbar.
-    m_addWidgetBtn = new AddWidgetButton(m_appletVis, centralWidget());
-    connect(m_addWidgetBtn, &AddWidgetButton::toggled, this,
-            [this](const QString& id, bool visible) {
-        if (visible) { bringAppletToFront(id); }
-    });
-    m_addWidgetBtn->setToolTip(tr("Add or remove windows"));
-    richtePlusEin(m_addWidgetBtn);
-    m_addWidgetBtn->raise();
-    m_addWidgetBtn->show();
-    positionAddWidgetButton();
+    // Es bleibt genau eines: `m_addWidget` in der Befehlsleiste (weiter
+    // unten, addTrailing). Was dieses kann, richtet richtePlusEin() ein.
 
     // Capability gates: applets that depend on an external feature flag
     // get their availability set here. When availability is false, the
@@ -17429,10 +17402,13 @@ void MainWindow::bandstapelMarkenFuer(SpectrumWidget* sw, const QString& panId)
     sw->setBandStackMarks(marken);
 }
 
-// ── Beide Plus-Knoepfe gleich einrichten (2026-11-12) ────────────────
+// ── Das Plus einrichten (2026-11-12, seit 2026-11-18 nur noch eines) ─
 //
-// Es gibt zwei: unten rechts ueber der Arbeitsflaeche (m_addWidgetBtn)
-// und oben in der Befehlsleiste (m_addWidget). Martin oeffnete den
+// Bis zum 2026-11-18 gab es zwei: unten rechts ueber der Arbeitsflaeche
+// und oben in der Befehlsleiste (m_addWidget). Das untere ist auf
+// Ansage des Betreibers entfernt („rechts oben alleine reicht!"); die
+// Funktion bleibt als die EINE Stelle, an der steht, was das Plus kann.
+// Ihre Herkunft: Martin oeffnete den
 // Auswaehler oben, und dort fehlte der FT8-Einschalter, den ich nur
 // unten eingerichtet hatte -- und die Contest-Panels fehlten oben schon
 // seit dem 2026-11-04. Dieselbe Lehre wie [Erreichbar heisst: in ALLEN
@@ -18216,9 +18192,6 @@ void MainWindow::resizeEvent(QResizeEvent* event)
         // Pixel Fenster schiebt.
         schutzrahmenNachziehen();
     }
-
-    // Das schwebende Plus hat keine Anordnung, die es mitzieht.
-    positionAddWidgetButton();
 
     // Update axis-lock positions for overlay-docked containers
     if (m_mainSplitter && m_containerManager) {

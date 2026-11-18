@@ -257,6 +257,21 @@ public:
     // the menu bar's size policy negotiation happens on an empty widget.
     void setMenuBar(QMenuBar* mb);
 
+    /// Die „»"-Taste der Menueleiste in das Orange des Plus setzen.
+    ///
+    /// Betreiber, 2026-11-17: „die beiden kleinen pfeile oben in der
+    /// taskleiste neben containers bitte in farbe machen. die sieht
+    /// keiner." Die zwei Pfeile sind Qts eigene Taste fuer die Menues,
+    /// die in der Leiste keinen Platz mehr haben (bei ihm alles hinter
+    /// „Containers": Tools, Help …) -- ein graues Zeichen auf dunklem
+    /// Grund, das wie ein Trenner aussieht und doch der einzige Weg zu
+    /// diesen Menues ist.
+    ///
+    /// Eigene, oeffentliche Funktion, damit ein Pruefstand sie an einer
+    /// blossen QMenuBar fahren kann. Findet sie keine solche Taste,
+    /// geschieht nichts.
+    static void faerbeMenueErweiterung(QMenuBar* mb);
+
     // Non-owning accessor so MainWindow can wire the device-picker
     // signal into AudioEngine::setSpeakersConfig.
     MasterOutputWidget* masterOutput() const { return m_master; }

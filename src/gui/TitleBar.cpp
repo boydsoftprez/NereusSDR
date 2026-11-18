@@ -66,6 +66,7 @@
 #include "widgets/MasterOutputWidget.h"
 
 #include <QDateTime>
+#include <QEvent>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QLabel>
@@ -79,6 +80,7 @@
 #include <QSize>
 #include <QSizePolicy>
 #include <QTimer>
+#include <QToolButton>
 
 namespace Longpath {
 
@@ -762,9 +764,89 @@ void TitleBar::setMenuBar(QMenuBar* mb)
              QLatin1String(Style::kBlueBg))
         .arg(QLatin1String(Style::kBlueText)));
     mb->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
+    // Longpath: die „»"-Taste sichtbar machen (2026-11-17, siehe Kopf).
+    faerbeMenueErweiterung(mb);
     m_menuBar = mb;
     // Insert at position 0 (before the first stretch).
     m_hbox->insertWidget(0, mb);
+}
+
+// ── Die „»"-Taste der Menueleiste (Longpath, 2026-11-17) ────────────
+//
+// Herleitung: TitleBar.h. Qt baut die Taste selbst (QMenuBarExtension,
+// objectName „qt_menubar_ext_button") und gibt ihr das Symbol des
+// Systemstils; faerben laesst sich ein solches Symbol nicht. Darum ein
+// eigenes: zwei Winkel in der dunklen Schrift der Sendetaste, auf einer
+// Flaeche im Orange des Plus -- dieselbe Taste wie das Plus, nur kleiner.
+namespace {
+
+QIcon doppelpfeil()
+{
+    // Qt gibt der Taste nur etwa zwoelf Punkte Breite (der Stil legt das
+    // fest, ein Stilblatt aendert es nicht). Das Zeichen fuellt sie
+    // darum fast ganz: 10 x 14, zwei Winkel ueber die volle Breite.
+    constexpr int kBreite = 10;
+    constexpr int kHoehe = 14;
+    constexpr qreal kDichte = 3.0;   // scharf auch auf Retina
+    QPixmap bild(QSize(kBreite, kHoehe) * kDichte);
+    bild.setDevicePixelRatio(kDichte);
+    bild.fill(Qt::transparent);
+    QPainter g(&bild);
+    g.setRenderHint(QPainter::Antialiasing, true);
+    QPen stift(QColor(QString::fromLatin1(Style::kTxKeyText)), 1.8);
+    stift.setCapStyle(Qt::RoundCap);
+    stift.setJoinStyle(Qt::RoundJoin);
+    g.setPen(stift);
+    for (const qreal x : {1.5, 5.5}) {
+        g.drawPolyline(QPolygonF{QPointF(x, 3.0), QPointF(x + 3.0, 7.0),
+                                 QPointF(x, 11.0)});
+    }
+    return QIcon(bild);
+}
+
+// Qt setzt der Taste bei einem Stilwechsel wieder das Systemsymbol.
+// Dieser kleine Waechter setzt unseres zurueck.
+class PfeilWaechter : public QObject {
+public:
+    using QObject::QObject;
+protected:
+    bool eventFilter(QObject* ziel, QEvent* ereignis) override
+    {
+        if (ereignis->type() == QEvent::StyleChange) {
+            if (auto* taste = qobject_cast<QToolButton*>(ziel)) {
+                taste->setIcon(doppelpfeil());
+            }
+        }
+        return QObject::eventFilter(ziel, ereignis);
+    }
+};
+
+} // namespace
+
+void TitleBar::faerbeMenueErweiterung(QMenuBar* mb)
+{
+    if (!mb) { return; }
+    auto* taste = mb->findChild<QToolButton*>(QStringLiteral("qt_menubar_ext_button"));
+    if (!taste) { return; }
+    taste->setIcon(doppelpfeil());
+    taste->setIconSize(QSize(10, 14));
+    taste->setToolTip(tr("More menus"));
+    // Schon orange: keine zweite Marke darueber (widgets/KlickMarke.h).
+    taste->setProperty("klickmarke", false);
+    taste->setStyleSheet(QStringLiteral(
+        "QToolButton#qt_menubar_ext_button {"
+        " background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 %1, stop:1 %2);"
+        " border: 1px solid %3; border-radius: 4px; padding: 0px; }"
+        "QToolButton#qt_menubar_ext_button::menu-indicator { image: none; }")
+        .arg(QLatin1String(Style::kPlusTop), QLatin1String(Style::kPlusBottom),
+             QLatin1String(Style::kPlusBorder)));
+    // Genau ein Waechter je Taste, auch wenn diese Funktion zweimal
+    // laeuft (eine Eigenschaft statt findChild: der Waechter traegt kein
+    // Q_OBJECT und braucht keines).
+    if (!taste->property("pfeilWaechter").toBool()) {
+        taste->installEventFilter(new PfeilWaechter(taste));
+        taste->setProperty("pfeilWaechter", true);
+    }
 }
 
 QString TitleBar::utcText() const
