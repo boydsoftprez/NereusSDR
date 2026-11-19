@@ -31,6 +31,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-18: The line holds still while reports come and go: one reading
+//               place per station on the frequency (RoundtableCardRow::
+//               reported, ::id; RoundtableCardPerson::id), a fixed head and
+//               status place, and a preferred side for placeRoundtableStripLine.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: Review fixes: kRoundtableStripMinWaterfall, the line's
 //               RoundtableStripLineSide, an upward anchor for
 //               placeRoundtableDetails and paintRoundtableDetailsBacking.
@@ -238,6 +243,10 @@ struct RoundtableCardRow {
     bool old = false;
     double peakDbm = 0.0;
     bool hasPeak = false;
+    // False for a station on the frequency with no reading of this turn: its
+    // place keeps its callsign, dim, with a dash and no meter.
+    bool reported = true;
+    QString id;              // sourceRoom/ref, matching RoundtableCardPerson::id
 };
 
 /// One station at a frequency, as a view of it lists them (overlay design D22).
@@ -246,6 +255,7 @@ struct RoundtableCardPerson {
     bool keyed = false;
     bool you = false;
     qint64 offsetHz = 0;  // the station's frequency less the viewed one
+    QString id;           // sourceRoom/ref
 };
 
 /// What the card for one frequency says.
@@ -256,17 +266,20 @@ struct RoundtableCardModel {
     QStringList keyed;      // on the air, or every name for a LastDouble
     QString keyedYou;       // which of keyed is this station, in a double
     QStringList people;     // the stations at this exact frequency
-    QVector<RoundtableCardPerson> onFrequency;  // the view's list, from the stream or else the directory
+    QVector<RoundtableCardPerson> onFrequency;  // the view's list, from the stream or else the directory, by callsign, you last
     qint64 clockMs = 0;     // how long a live turn has run; stops where a link dropped
     qint64 liveHz = 0;      // the live turn's exact frequency, a double's participant nearest the dial; 0 with none
     qint64 endedAgoMs = 0;  // how long ago a Last turn ended
+    // One reading place per station in onFrequency, in its order, reported or
+    // not, then any reading from a station not listed there.
     QVector<RoundtableCardRow> rows;
     bool frozen = false;    // Reconnecting or Offline (D7)
     QString note;           // the link's note, else "Double ended 3s ago" for 8 seconds
 };
 
-/// True when two cards differ only in values: readings, ages, the clock and the
-/// words of a note. Such a change moves nothing and redraws in place (D14).
+/// True when two cards differ only in values: readings (whether a place has one
+/// included), ages and the clock. Such a change moves nothing and redraws in
+/// place (D14). The note's words count as structure.
 NEREUS_GUI_EXPORT bool roundtableCardSameStructure(const RoundtableCardModel& a, const RoundtableCardModel& b);
 
 /// The inspector's width on the desktop pan (overlay design D34; strip design 5).
@@ -304,6 +317,8 @@ NEREUS_GUI_EXPORT RoundtableDetailsPlacement placeRoundtableDetails(
 /// over the spectrum, where a flag may be under them.
 NEREUS_GUI_EXPORT void paintRoundtableDetailsBacking(QPainter& p, const QRect& rect);
 
+/// What a place with no reading shows in its value column: a dash.
+NEREUS_GUI_EXPORT QString roundtableNoReadingText();
 /// A reading in the chosen format: "dBm", "S-units" or "Both".
 NEREUS_GUI_EXPORT QString roundtableSignalText(double dbm, const QString& format);
 
@@ -317,6 +332,7 @@ struct RoundtableStripLinePlacement {
     QRect line;
     int readings = 0;
     int moreReadings = 0;
+    bool status = true;  // false on a pan too narrow for the status place beside the head
     bool operator==(const RoundtableStripLinePlacement&) const = default;
 };
 
@@ -326,19 +342,27 @@ struct RoundtableStripLinePlacement {
 /// the dial on the flag's far side when it fits there or that side is the
 /// roomier, else on the near side; readings drop from the end, behind
 /// "+N more", until it fits. It depends only on the card's structure and the
-/// widths of its texts in `device`'s fonts: each reading is its call's width
-/// plus a value column as wide as the format's widest words (-121 dBm or
-/// -33 dBm) and an age column for two digits and the unit, at least 78 px, and
-/// the clock and a last talker's "Last heard" take their widest two digits, so
-/// new readings, ages and clocks move nothing.
+/// widths of its texts in `device`'s fonts: the head is as wide as the widest
+/// of "Unknown", "You · on the air", the double words and every callsign on
+/// the frequency; the status place (the clock, "Last heard", the link note) is
+/// as wide as the widest of those at their widest digits; each reading place is
+/// its call's width plus a value column as wide as the format's widest words
+/// (-121 dBm or -33 dBm) and an age column for two digits and the unit, at
+/// least 78 px. So who is talking, which reports exist, ages, clocks and notes
+/// move nothing; only the set of places (stations joining or leaving) does.
 /// With `side` Left or Right the line goes on that side of the dial only,
 /// readings dropping until it fits, and is null when not even the head fits
-/// there (a flag hanging into the strip on the other side).
+/// there (a flag hanging into the strip on the other side). With `side` Either
+/// and `prefer` Left or Right, that side is kept when the whole line fits there.
 enum class RoundtableStripLineSide { Either, Left, Right };
 NEREUS_GUI_EXPORT RoundtableStripLinePlacement placeRoundtableStripLine(
     const RoundtableCardModel& card, const QRect& strip, int dialX, bool flagFlipped,
     const QString& format, const QPaintDevice* device,
-    RoundtableStripLineSide side = RoundtableStripLineSide::Either);
+    RoundtableStripLineSide side = RoundtableStripLineSide::Either,
+    RoundtableStripLineSide prefer = RoundtableStripLineSide::Either);
+/// Which side of `dialX` a placed line sits on: Either for a null line.
+NEREUS_GUI_EXPORT RoundtableStripLineSide roundtableStripLineSideOf(const RoundtableStripLinePlacement& placed,
+                                                                    int dialX);
 
 /// Draws the line where `placed` says: the rail, the head, the clock, each
 /// reading with its meter, then "+N more". `dimmed` is true while you are
@@ -353,8 +377,9 @@ NEREUS_GUI_EXPORT void paintRoundtableStripLine(
 struct RoundtableStripLineParts {
     QRect head;               // the glyph and who
     QVector<QRect> names;     // a double's names, side by side
-    QRect clock;
-    QRect note;               // the link's note, a last talker's ended note
+    QRect clock;              // the status place while it shows the clock, else null
+    QRect note;               // the status place while it shows a note, else null
+    QRect status;             // the status place, always there: clock or note, fixed width
     QVector<QRect> readings;
     QRect more;               // "+N more"
 };
