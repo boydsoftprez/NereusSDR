@@ -1369,6 +1369,47 @@ void AudioEngine::setFt8Tap(AudioTapRing* ring, int sliceId)
     }
 }
 
+void AudioEngine::setFt8LauschTap(int platz, AudioTapRing* ring)
+{
+    if (platz < 0 || platz >= kFt8LauschPlaetze) { return; }
+    // Reihenfolge wie bei den anderen Abgriffen (siehe setRttyTap).
+    if (ring) {
+        m_ft8LauschId[platz].store(platz, std::memory_order_release);
+        m_ft8LauschTap[platz].store(ring, std::memory_order_release);
+    } else {
+        m_ft8LauschTap[platz].store(nullptr, std::memory_order_seq_cst);
+        m_ft8LauschId[platz].store(-1, std::memory_order_release);
+        waitForTapQuiescence(m_ft8LauschBusy[platz]);
+    }
+}
+
+void AudioEngine::feedFt8LauschAudio(int platz, const float* interleavedStereo,
+                                     int frames, int sourceRateHz)
+{
+    if (platz < 0 || platz >= kFt8LauschPlaetze) { return; }
+    if (!interleavedStereo || frames <= 0 || sourceRateHz <= 0) { return; }
+    // Niemand hoert zu: dann auch nicht wandeln.
+    if (!m_ft8LauschTap[platz].load(std::memory_order_acquire)) { return; }
+
+    // Derselbe Wandler wie in feedFlexAudioData -- aber ein EIGENER je
+    // Platz: ein Wandler traegt Zustand ueber die Bloecke, zwei Quellen
+    // durch einen waeren Uebersprechen.
+    Ft8LauschWandler& w = m_ft8LauschWandler[platz];
+    if (!w.resampler || w.rateHz != sourceRateHz) {
+        w.resampler = std::make_unique<Resampler>(double(sourceRateHz),
+                                                  48000.0, 8192);
+        w.rateHz = sourceRateHz;
+    }
+    const QByteArray out =
+        w.resampler->processStereoToStereo(interleavedStereo, frames);
+    if (out.isEmpty()) { return; }
+    const int outFrames = out.size() / int(sizeof(float) * 2);
+    writeToTapIfCurrent(m_ft8LauschTap[platz], m_ft8LauschId[platz],
+                        m_ft8LauschBusy[platz], platz,
+                        reinterpret_cast<const float*>(out.constData()),
+                        outFrames, m_tapWriteDelayHookForTest);
+}
+
 void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
 {
     if (m_mixAdmissionClosed.load(std::memory_order_acquire)) {

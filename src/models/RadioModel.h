@@ -112,6 +112,7 @@
 #include "core/RadioDiscovery.h"
 #include "core/FlexRadioDiscovery.h"
 #include "core/FlexRadioConnection.h"
+#include "core/FlexLauschscheibe.h"
 #include "core/FlexApdState.h"
 #include "core/FlexVitaStream.h"
 #include "core/RadioConnection.h"
@@ -316,6 +317,23 @@ public:
     std::optional<double> flexPegelDbm() const;
     ReceiverManager*  receiverManager()  { return m_receiverManager; }
     AudioEngine*      audioEngine()      { return m_audioEngine; }
+
+    // ── FT8 auf einem zweiten Band (2026-11-19) ──────────────────────
+    //
+    // Ein Lauschband: eine zweite Empfangsscheibe am Geraet, deren Ton
+    // allein in AudioEngine-Lauschplatz 0 geht (feedFt8LauschAudio).
+    // Heute nur an der Flex (core/FlexLauschscheibe.h); an jedem
+    // anderen Geraet gibt `setLauschfrequenzHz` false zurueck.
+    /// Auf `hz` lauschen (FT8-Wahlfrequenz, DIGU); 0 schaltet ab.
+    bool setLauschfrequenzHz(double hz);
+    /// Kann das verbundene Geraet ein Lauschband?
+    bool kannLauschen() const { return m_flexLausch != nullptr
+                                       && m_flexConnection != nullptr; }
+    /// Laeuft das Lauschband (Scheibe und Ton stehen)?
+    bool lauschtGerade() const;
+    /// Die Frequenz, die das Geraet fuer das Lauschband meldet, sonst
+    /// die gewuenschte; 0 = aus.
+    double lauschfrequenzHz() const;
     WdspEngine*       wdspEngine()       { return m_wdspEngine; }
 
     /// Phase 3F Sub-Epic F Task 5: per-ADC wideband FFT engine accessor.
@@ -3151,6 +3169,12 @@ signals:
     void flexAusschnittGeaendert(double tiefHz, double hochHz,
                                  bool eigenerZug);
 
+    /// Das Lauschband hat sich geaendert (an, aus, neue Frequenz).
+    void lauschbandGeaendert();
+    /// Das Geraet hat das Lauschband verweigert; `grund` fuer Anzeige
+    /// und Protokoll.
+    void lauschbandAbgelehnt(const QString& grund);
+
     void flexAudioSamplesReady(quint32 streamId,
                                const QVector<float>& interleavedStereo);
 
@@ -4155,6 +4179,7 @@ private:
     RadioDiscovery*  m_discovery{nullptr};
     FlexRadioDiscovery* m_flexDiscovery{nullptr};  // Flex-Treiber Stufe 1
     FlexRadioConnection* m_flexConnection{nullptr};  // nur bei Flex belegt
+    FlexLauschscheibe*   m_flexLausch{nullptr};      // Kind; nur bei Flex
     FlexVitaStream*      m_flexStream{nullptr};
     QString              m_flexPanId;        // „40000000"
     QString              m_flexAudioStreamId;

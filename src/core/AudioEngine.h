@@ -508,6 +508,28 @@ public:
     /// geteilter Ring haette einen Leser zu wenig.
     void setFt8Tap(AudioTapRing* ring, int sliceId);
 
+    /// ── FT8 auf einem zweiten Band (2026-11-19) ──────────────────────
+    ///
+    /// Betreiber: „ich will 2 bänder … gleichzeitig empfangen umd ggf.
+    /// eine dxcc station zu hören."
+    ///
+    /// Ein Lauschband hat KEINE Scheibe in Longpath und gehoert NICHT
+    /// in den Lautsprecher. Sein Ton (bei der Flex der DAX-Strom der
+    /// Lauschscheibe, siehe core/FlexLauschscheibe.h) geht darum nicht
+    /// durch rxBlockReady() -- dort laege er im Mix, in jedem anderen
+    /// Abgriff und im FT8-Abgriff der Hauptscheibe --, sondern allein
+    /// in den Ring seines Platzes. Ein Platz je Lauschband; heute wird
+    /// nur Platz 0 benutzt, die FLEX-8400 hat nur zwei Scheiben.
+    static constexpr int kFt8LauschPlaetze = 3;
+    /// Den Ring eines Lauschplatzes setzen; nullptr schaltet ab und
+    /// wartet, bis kein Schreiber mehr am alten Ring haengt.
+    void setFt8LauschTap(int platz, AudioTapRing* ring);
+    /// Ton eines Lauschbandes: verschraenktes Stereo in `sourceRateHz`,
+    /// wird auf 48 kHz gewandelt und NUR in den Ring dieses Platzes
+    /// geschrieben.
+    void feedFt8LauschAudio(int platz, const float* interleavedStereo,
+                            int frames, int sourceRateHz);
+
     /// Den RX-Driftausgleich beim naechsten Tonblock neu anfangen
     /// lassen. Aufzurufen, wenn eine BEKANNTE Luecke im Empfangston
     /// liegt -- eine eigene Sendung etwa -- damit der Regler sie nicht
@@ -1184,6 +1206,18 @@ private:
     std::atomic<unsigned> m_rttyTapBusy{0};
     std::atomic<unsigned> m_cwTapBusy{0};
     std::atomic<unsigned> m_ft8TapBusy{0};
+
+    // Die Lauschplaetze (2026-11-19), siehe setFt8LauschTap. Die
+    // Platznummer steht im Kennungsfeld, damit derselbe Schreiber
+    // (writeToTapIfCurrent) wie bei allen anderen Abgriffen gilt.
+    std::array<std::atomic<AudioTapRing*>, kFt8LauschPlaetze> m_ft8LauschTap{};
+    std::array<std::atomic<int>,           kFt8LauschPlaetze> m_ft8LauschId{};
+    std::array<std::atomic<unsigned>,      kFt8LauschPlaetze> m_ft8LauschBusy{};
+    struct Ft8LauschWandler {
+        std::unique_ptr<Resampler> resampler;
+        int rateHz{0};
+    };
+    std::array<Ft8LauschWandler, kFt8LauschPlaetze> m_ft8LauschWandler;
 
     // Test-only seam for the four counters above (2026-09-06). Fires on
     // the audio thread from inside writeToTapIfCurrent (AudioEngine.cpp),

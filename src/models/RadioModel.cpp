@@ -7216,6 +7216,27 @@ void RadioModel::connectFlexRadio(const RadioInfo& info)
     if (!m_flexConnection) {
         m_flexConnection = new FlexRadioConnection(this);
 
+        // ── Die Lauschscheibe (2026-11-19) ─────────────────────────
+        //
+        // FT8 auf einem zweiten Band. Sie spricht ueber DENSELBEN
+        // Befehlskanal; was sie tut, steht in core/FlexLauschscheibe.h.
+        m_flexLausch = new FlexLauschscheibe(
+            [this](const QString& befehl, FlexLauschscheibe::Antwort antwort) {
+                if (!m_flexConnection) { return; }
+                if (antwort) {
+                    m_flexConnection->sendCommand(befehl, std::move(antwort));
+                } else {
+                    m_flexConnection->sendCommand(befehl);
+                }
+            },
+            this);
+        connect(m_flexLausch, &FlexLauschscheibe::zustandGeaendert,
+                this, &RadioModel::lauschbandGeaendert);
+        connect(m_flexLausch, &FlexLauschscheibe::frequenzGemeldet,
+                this, [this](double) { emit lauschbandGeaendert(); });
+        connect(m_flexLausch, &FlexLauschscheibe::abgelehnt,
+                this, &RadioModel::lauschbandAbgelehnt);
+
         // Die Kennung, unter der die Maschine unsere Scheiben und
         // Panadapter zurueckbehaelt. Sie identifiziert LONGPATH, nicht
         // das Geraet — deshalb global und nicht per MAC wie die
@@ -7247,6 +7268,16 @@ void RadioModel::connectFlexRadio(const RadioInfo& info)
         connect(m_flexConnection, &FlexRadioConnection::statusReceived,
                 this, [this](const QString& object,
                              const QMap<QString, QString>& kv) {
+            // ── Die Lauschscheibe zuerst (2026-11-19) ───────────
+            //
+            // Alles darunter hielt bisher JEDE Scheibenmeldung fuer
+            // die eine Scheibe des Betreibers: Frequenz, Rauschen,
+            // Tonpegel. Die Meldungen der Lauschscheibe sieht darum
+            // kein anderer Weg. Siehe core/FlexLauschscheibe.h.
+            if (m_flexLausch && m_flexLausch->nimmStatus(object, kv)) {
+                return;
+            }
+
             // ── Die Vorverzerrung der Maschine mitlesen ─────────
             //
             // Zuerst, weil es die billigste Pruefung ist und weil der
@@ -7260,6 +7291,7 @@ void RadioModel::connectFlexRadio(const RadioInfo& info)
 
             if (m_flexPanId.isEmpty() && object.startsWith(QLatin1String("display pan "))) {
                 m_flexPanId = object.split(QLatin1Char(' ')).value(2);
+                if (m_flexLausch) { m_flexLausch->setPanadapter(m_flexPanId); }
                 // Nachholen: beim Anmelden gab es die Kennung noch
                 // nicht, der Strom laeuft aber schon.
                 applyFlexPanSetup();
@@ -7508,6 +7540,7 @@ void RadioModel::connectFlexRadio(const RadioInfo& info)
             if (object.startsWith(QLatin1String("slice "))
                 && kv.contains(QStringLiteral("audio_level"))) {
                 m_flexSliceId       = object.split(QLatin1Char(' ')).value(1);
+                if (m_flexLausch) { m_flexLausch->setHauptscheibe(m_flexSliceId); }
                 m_flexAudioLevelWas = kv.value(QStringLiteral("audio_level"));
                 m_flexAudioMuteWas  = kv.value(QStringLiteral("audio_mute"));
                 applyFlexAudioSetup();
@@ -7572,12 +7605,21 @@ void RadioModel::connectFlexRadio(const RadioInfo& info)
             // Bild (Entwurf Abschnitt 5). Eine Flex-Scheibe ist eine
             // Scheibe OHNE RxChannel, und die 34 WDSP-Stellen in dieser
             // Datei fragen alle nach einem.
+            // Die Lauschscheibe hat ihre Frequenz schon in
+            // nimmStatus() abgegeben; hier darf sie den VFO des
+            // Betreibers nicht auf ihr Band ziehen (2026-11-19).
+            if (m_flexLausch && m_flexLausch->istLauschscheibe(sliceId)) {
+                return;
+            }
             m_flexGeraeteFrequenzHz = hz;
+            if (m_flexLausch) { m_flexLausch->setHauptfrequenzHz(hz); }
             emit flexSliceFrequencyChanged(sliceId, hz);
         });
 
         connect(m_flexConnection, &FlexRadioConnection::disconnected,
                 this, [this] {
+            // Der Kanal ist weg: nichts mehr senden, nur vergessen.
+            if (m_flexLausch) { m_flexLausch->vergiss(); }
             // Der gemerkte APD-Zustand gehoert der Maschine, nicht uns.
             m_flexApd.clear();
             emit flexApdGeaendert();
@@ -9098,6 +9140,21 @@ void RadioModel::startFlexStreams()
 
         connect(m_flexStream, &FlexVitaStream::audioSamplesReady,
                 this, [this](quint32 id, const QVector<float>& s) {
+            // Der DAX-Strom der Lauschscheibe geht allein in den
+            // zweiten FT8-Dekoder -- nicht in den Lautsprecher, nicht
+            // in die Abgriffe der Hauptscheibe (2026-11-19).
+            if (m_flexLausch && m_flexLausch->istLauschstrom(id)) {
+                m_flexLausch->tonAngekommen(s.size());
+                if (m_audioEngine && !s.isEmpty()) {
+                    // Dieselbe Rate wie der Mix-Strom: Klasse 0x03E3,
+                    // 24 kHz (MainWindow_Flex.cpp kFlexAudioRateHz,
+                    // gemessen 24 012,3 Hz).
+                    constexpr int kDaxRateHz = 24000;
+                    m_audioEngine->feedFt8LauschAudio(
+                        0, s.constData(), s.size() / 2, kDaxRateHz);
+                }
+                return;
+            }
             emit flexAudioSamplesReady(id, s);
         });
     }
@@ -9418,6 +9475,27 @@ void RadioModel::setFlexSliceNoise(bool nr, bool nb, bool anf)
     m_flexConnection->sendCommand(befehl);
 }
 
+bool RadioModel::setLauschfrequenzHz(double hz)
+{
+    if (!kannLauschen()) { return false; }
+    m_flexLausch->setFrequenzHz(hz);
+    return true;
+}
+
+bool RadioModel::lauschtGerade() const
+{
+    return m_flexLausch
+           && m_flexLausch->zustand() == FlexLauschscheibe::Zustand::Laeuft;
+}
+
+double RadioModel::lauschfrequenzHz() const
+{
+    if (!m_flexLausch) { return 0.0; }
+    if (m_flexLausch->gewuenschteFrequenzHz() <= 0.0) { return 0.0; }
+    const double gemeldet = m_flexLausch->gemeldeteFrequenzHz();
+    return gemeldet > 0.0 ? gemeldet : m_flexLausch->gewuenschteFrequenzHz();
+}
+
 void RadioModel::applyFlexAudioSetup()
 {
     if (!m_flexAudioWanted) { return; }
@@ -9473,6 +9551,9 @@ void RadioModel::teardownFlexConnection()
     // die lokale Stummschaltung zurueck. Ohne das bleibt Martins
     // Station stumm, nachdem Longpath sich getrennt hat.
     if (m_flexConnection->isConnected()) {
+        // Die Lauschscheibe zuerst: sonst legt die Maschine sie beim
+        // naechsten Anmelden unter derselben Kennung wieder hin.
+        if (m_flexLausch) { m_flexLausch->abbauen(); }
         if (!m_flexAudioStreamId.isEmpty()) {
             // Die Kennung aus `stream create` ist HEXADEZIMAL ohne
             // Vorsatz („4000008"). Ohne `0x` liest die Maschine sie
@@ -9505,6 +9586,9 @@ void RadioModel::teardownFlexConnection()
     }
     m_flexAudioStreamId.clear();
     m_flexSliceId.clear();
+    // Der Wunsch bleibt stehen: beim naechsten Verbinden wird wieder
+    // gelauscht.
+    if (m_flexLausch) { m_flexLausch->vergiss(); }
     m_flexAudioLevelWas.clear();
     m_flexAudioMuteWas.clear();
     m_flexMuteLocalWas.clear();

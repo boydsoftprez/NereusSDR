@@ -769,6 +769,9 @@ set(CORE_SOURCES
     # Befehlskanal (TCP 4992, Saetze C/R/S/M). Keine Stroeme.
     src/core/FlexRadioDiscovery.cpp
     src/core/FlexRadioConnection.cpp
+    # FT8 auf einem zweiten Band: die Lauschscheibe mit eigenem
+    # DAX-Strom (2026-11-19)
+    src/core/FlexLauschscheibe.cpp
     src/core/FlexApdState.cpp
     # Stufe 2: der VITA-49-Leser. Nur Bytes und Rahmen, kein Sockel —
     # gegen den Mitschnitt vom 2026-10-18 pruefbar

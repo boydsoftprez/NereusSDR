@@ -6040,6 +6040,10 @@ longpath_add_test(tst_ft8_anruferliste)
 longpath_add_test(tst_ft8_rufzeichenkarte)
 # Die zweite Spalte „Rx Frequency" neben „Band Activity" (2026-10-21).
 longpath_add_test(tst_ft8_sicht_meine_frequenz)
+# 2026-11-19: FT8 auf zwei Baendern -- die Lauschscheibe der Flex am
+# Draht (Befehle, kein Senden, kein Uebersprechen in die Hauptscheibe),
+# getrennte Abgriffe, und im Fenster nur neue Laender vom zweiten Band.
+longpath_add_test(tst_ft8_mehrband)
 longpath_add_test(tst_ft8_wasserfall)
 # 2026-10-15: und wie lange ein ganzes Fenster rechnet — die Zahl
 # entscheidet, ob das im Faden der Oberflaeche laufen darf.
