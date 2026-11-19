@@ -24,6 +24,7 @@
 
 #include "core/CallsignInfo.h"
 #include "core/RotctldProcess.h"
+#include "core/RufzeichenAuskunft.h"
 #include "core/WorkedBefore.h"
 #include "models/LogEntry.h"
 
@@ -184,6 +185,25 @@ public:
     /// verfeinert es, sobald sie antwortet.
     void takeSpot(const QString& call);
 
+    /// Dem laufenden FT8-Partner folgen (2026-11-18, nach dem Vorbild
+    /// der Rufzeichenkarte neben Zeus' FT8-Feld): Name, Ort und Foto
+    /// des Partners stehen hier, waehrend das QSO laeuft.
+    ///
+    /// Drei Unterschiede zu takeSpot(), alle mit Absicht:
+    ///   * KEIN Fokus. FT8 laeuft ohne Klick weiter; nahme die Karte
+    ///     bei jedem Partner den Fokus, waere das Textfeld im FT8-
+    ///     Fenster bei jedem QSO weg.
+    ///   * Das Rufzeichenfeld wird nur ueberschrieben, wenn es leer ist
+    ///     oder noch den VORIGEN FT8-Partner traegt. Was der Betreiber
+    ///     getippt oder per Spot geholt hat, bleibt stehen.
+    ///   * Das Logbuchfenster bekommt nichts: dort wuerde es den
+    ///     Suchfilter umstellen, mitten in einer Durchsicht.
+    /// Der Rotor dreht nicht. QRZ laeuft ueber denselben Weg wie das
+    /// Tippen (scheduleAutoLookup: Schalter, Entprellung, Cache) --
+    /// eine Abfrage je neuem Partner, keine je Zug.
+    /// Leer heiszt „kein Partner mehr" und laesst die Karte stehen.
+    void folgeFt8Partner(const QString& call);
+
     // 2026-08-10: a contact logged by another program (WSJT-X's
     // Logged-ADIF message). Written to the same file through the same
     // duplicate check and upload path as a hand-logged QSO — one log,
@@ -192,6 +212,14 @@ public:
 
 signals:
     void qsoLogged(const LogEntry& entry);
+    /// Was die Karte ueber ein Rufzeichen weiss und wie weit die QRZ-
+    /// Abfrage ist (2026-11-18): Abfrage laeuft, Antwort da (aus Netz
+    /// oder Cache), nicht gefunden, kein Konto, ausgeschaltet. Das FT8-
+    /// Feld zeigt damit Name, Ort und Klasse seines Partners, ohne
+    /// selbst zu fragen -- siehe RufzeichenAuskunft.h. Antworten gehen
+    /// auch dann hinaus, wenn das Feld schon ein anderes Rufzeichen
+    /// traegt: sie gehoeren dem, der fragte, nicht dem Feld.
+    void auskunft(const Longpath::RufzeichenAuskunft& a);
     // Der Betreiber hat das Logbuchfenster selbst zugemacht (roter Knopf).
     // hideLogbook() loest es NICHT aus -- nur QDialog::finished, also ein
     // echtes Schliessen, kein Verstecken durch Profil oder Verbinden-Maske.
@@ -212,6 +240,9 @@ private:
     // firing on every keystroke would send four requests for one
     // callsign and get the answers back out of order.
     void scheduleAutoLookup(const QString& call);
+    // Meldet `auskunft` (2026-11-18). Leere Rufzeichen meldet es nicht.
+    void meldeAuskunft(const QString& call, RufzeichenAuskunft::Stand stand,
+                       const CallsignInfo& info = CallsignInfo{});
     // Take a locator from a QRZ result into the DX field, unless the
     // operator has typed one themselves.
     void adoptGridFromQrz(const CallsignInfo& info);
@@ -264,6 +295,16 @@ public:
     /// Prüfstandsnaht: den Rotordialog öffnen (modal; der Lauf schließt
     /// ihn selbst wieder). 2026-11-11, Netz-Rotor im falschen Modus.
     void openRotorSetupDialogForTest() { openRotorSetupDialog(); }
+    /// Prüfstandsnaht (2026-11-18): eine QRZ-Antwort in den Cache legen,
+    /// als wäre sie früher in dieser Sitzung gekommen. Ohne sie bräuchte
+    /// jede volle Karte im Prüfstand das Netz.
+    void merkeQrzAntwortForTest(const CallsignInfo& info)
+    {
+        m_qrzCache.insert(info.call, info);
+    }
+    /// Die Entprellung der automatischen QRZ-Abfrage. Läuft sie, geht
+    /// gleich eine Anfrage hinaus -- ein Prüfstand hält sie an.
+    QTimer* lookupTimerForTest() const { return m_lookupTimer; }
 #endif
 
     /// Das Ziel-Menue bauen, ohne es aufzuklappen. Fuer Pruefungen:
@@ -405,6 +446,9 @@ private:
     // Set when the operator edits the locator by hand. A later QRZ
     // answer must not overwrite what a person deliberately entered.
     bool m_dxGridIsManual{false};
+    // Das Rufzeichen, das folgeFt8Partner() zuletzt ins Feld geschrieben
+    // hat. Steht etwas anderes im Feld, hat es ein Mensch dorthin getan.
+    QString m_ft8Partner;
 
     // ── Shrinking down to the compass (2026-08-10) ───────────────────
     //

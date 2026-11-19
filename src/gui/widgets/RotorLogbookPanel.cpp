@@ -1446,6 +1446,48 @@ void RotorLogbookPanel::takeSpot(const QString& call)
     }
 }
 
+// 2026-11-18: dem FT8-Partner folgen. Begruendung der drei Unterschiede
+// zu takeSpot() am Kopf der Deklaration.
+void RotorLogbookPanel::folgeFt8Partner(const QString& call)
+{
+    QString c = call.trimmed().toUpper();
+    // Spitze Klammern sagen „kam als Hash" -- im Rufzeichenfeld sind sie
+    // nur im Weg (QRZ kennt sie nicht, die Pruefung lehnt sie ab).
+    c.remove(QLatin1Char('<')).remove(QLatin1Char('>'));
+    if (c.isEmpty()) { return; }
+
+    const QString steht = m_callEdit->text().trimmed().toUpper();
+    const bool frei = steht.isEmpty()
+                      || (!m_ft8Partner.isEmpty() && steht == m_ft8Partner);
+    if (!frei) { return; }          // getippt oder per Spot: bleibt
+    m_ft8Partner = c;
+    if (steht == c) { return; }
+
+    // Was zum VORIGEN Partner gehoerte, geht mit ihm. onCallsignEdited
+    // raeumt nur bei leerem Feld auf; ein Rufzeichen, das ein anderes
+    // ersetzt, liesse sonst Foto und Locator des alten stehen -- und
+    // fehlt der neue bei QRZ, stuende das fremde Gesicht neben ihm.
+    // Ein von Hand getippter Locator bleibt (wie in adoptGridFromQrz).
+    // Die Stationszeile ebenso: onCallsignEdited ueberschreibt sie nur,
+    // wenn cty.dat das Prefix aufloest -- sonst stuende der Name des
+    // vorigen Partners neben dem neuen (im Pruefstand gefunden).
+    m_lastInfo = CallsignInfo{};
+    m_flagEmoji.clear();
+    m_stationLine->clear();
+    m_photo->showPlaceholder(QString{});
+    m_photo->setVisible(false);
+    if (!m_dxGridIsManual) {
+        m_adoptingGrid = true;
+        m_dxGrid->clear();
+        m_adoptingGrid = false;
+    }
+
+    // Derselbe Weg wie das Tippen: Land, Flagge, Peilung aus cty.dat,
+    // dann QRZ mit Schalter, Entprellung und Cache. Kein setFocus(),
+    // kein beginTurn().
+    m_callEdit->setText(c);
+}
+
 void RotorLogbookPanel::openRotorSetupDialog()
 {
     ensureRotor();
@@ -2417,14 +2459,17 @@ void RotorLogbookPanel::onLookupRequested()
         updateFlagFor(cached.call);
         setStationLine(stationText(cached));
         showStationVisuals(cached);
+        meldeAuskunft(call, RufzeichenAuskunft::Stand::Da, cached);
         return;
     }
 
     if (!m_qrz || !m_qrz->hasCredentials()) {
         setStatus(QStringLiteral("Add your QRZ account in Tools first"), true);
+        meldeAuskunft(call, RufzeichenAuskunft::Stand::KeinKonto);
         return;
     }
     setStatus(QStringLiteral("Looking up %1…").arg(call));
+    meldeAuskunft(call, RufzeichenAuskunft::Stand::Laeuft);
     m_qrz->lookup(call);
 }
 
@@ -2434,16 +2479,34 @@ void RotorLogbookPanel::scheduleAutoLookup(const QString& call)
     m_lookupTimer->stop();
 
     if (!AppSettings::instance().value(kAutoLookupKey, true).toBool()) {
+        meldeAuskunft(call, RufzeichenAuskunft::Stand::Aus);
         return;
     }
     if (call.size() < kMinAutoLookupChars) { return; }
     if (!Callsigns::isLikelyCallsign(call)) { return; }
-    if (!m_qrz || !m_qrz->hasCredentials()) { return; }
+    if (!m_qrz || !m_qrz->hasCredentials()) {
+        meldeAuskunft(call, RufzeichenAuskunft::Stand::KeinKonto);
+        return;
+    }
 
     // A cached answer needs no waiting.
     if (m_qrzCache.contains(call)) { onLookupRequested(); return; }
 
     m_lookupTimer->start();
+    meldeAuskunft(call, RufzeichenAuskunft::Stand::Laeuft);
+}
+
+void RotorLogbookPanel::meldeAuskunft(const QString& call,
+                                      RufzeichenAuskunft::Stand stand,
+                                      const CallsignInfo& info)
+{
+    const QString norm = Callsigns::normalized(call);
+    if (norm.isEmpty()) { return; }
+    RufzeichenAuskunft a;
+    a.rufzeichen = norm;
+    a.stand      = stand;
+    a.info       = info;
+    emit auskunft(a);
 }
 
 void RotorLogbookPanel::adoptGridFromQrz(const CallsignInfo& info)
@@ -3034,6 +3097,7 @@ void RotorLogbookPanel::wireQrz()
         // Remember it whatever the operator has typed since — the next
         // time this callsign comes round, the answer is already here.
         m_qrzCache.insert(call, info);
+        meldeAuskunft(call, RufzeichenAuskunft::Stand::Da, info);
 
         if (Callsigns::normalized(m_callEdit->text()) != call) { return; }
         m_lastInfo = info;
@@ -3059,6 +3123,9 @@ void RotorLogbookPanel::wireQrz()
     connect(m_qrz, &QrzClient::lookupFailed, this,
             [this](const QString& call, QrzClient::Error err,
                    const QString& msg) {
+        meldeAuskunft(call, err == QrzClient::Error::NotFound
+                                ? RufzeichenAuskunft::Stand::NichtGefunden
+                                : RufzeichenAuskunft::Stand::Fehler);
         if (Callsigns::normalized(m_callEdit->text()) != call) { return; }
         m_lastInfo = CallsignInfo{};
         switch (err) {

@@ -33,6 +33,10 @@
 #include "core/DxccWorkedStatus.h"
 #include "gui/widgets/Ft8Wasserfall.h"
 #include "gui/widgets/Ft8DannListe.h"
+#include "gui/widgets/Ft8PartnerZeile.h"
+#include "core/CtyDatParser.h"
+#include "core/Grauzone.h"
+#include "core/Maidenhead.h"
 #include "core/MoxController.h"
 #include "core/audio/CompositeTxMicRouter.h"
 #include "core/audio/AudioTapRing.h"
@@ -840,6 +844,15 @@ void Ft8Applet::buildUI()
     kopfReihe->addWidget(m_arbeitUhr);
     arbeit->addLayout(kopfReihe, 0, 0, 1, 2);
 
+    // ── Wer er ist und wie es bei ihm aussieht (2026-11-18) ─────────
+    //
+    // Vorbild: die Rufzeichenkarte neben Zeus' FT8-Feld. Von drei
+    // Entwurfsblaettern (Zeile, kleines Foto, Spalte wie Zeus) die
+    // Zeile -- das grosse Foto steht schon in der Rotor/Log-Karte, die
+    // dem Partner folgt. Siehe Ft8PartnerZeile.h.
+    m_arbeitWer = new Ft8PartnerZeile(m_arbeit);
+    arbeit->addWidget(m_arbeitWer, 1, 0, 1, 2);
+
     // Der naechste Zug im Klartext — dieselbe Schrift wie die Funde,
     // damit man ihn als FT8-Satz liest und nicht als Beschriftung.
     m_arbeitZug = new QLabel(QString(), m_arbeit);
@@ -848,17 +861,17 @@ void Ft8Applet::buildUI()
         "QLabel { background: %1; color: %2; border: 1px solid %3;"
         " padding: 3px 6px; border-radius: 2px; }")
         .arg(Style::kInsetBg, Style::kTxKeyBorder, Style::kInsetBorder));
-    arbeit->addWidget(m_arbeitZug, 1, 0);
+    arbeit->addWidget(m_arbeitZug, 2, 0);
 
     m_arbeitDanach = schild(QString(), Style::kTextSecondary,
                             Style::kFontCaption);
     m_arbeitDanach->setMinimumWidth(118);
     m_arbeitDanach->setWordWrap(true);
-    arbeit->addWidget(m_arbeitDanach, 1, 1, 2, 1, Qt::AlignTop);
+    arbeit->addWidget(m_arbeitDanach, 2, 1, 2, 1, Qt::AlignTop);
 
     m_arbeitBalken = new Ft8Fensterbalken(m_arbeit);
     m_arbeitBalken->setFixedHeight(10);
-    arbeit->addWidget(m_arbeitBalken, 2, 0);
+    arbeit->addWidget(m_arbeitBalken, 3, 0);
     arbeit->setColumnStretch(0, 1);
 
     // ── „THEN": wer nach diesem QSO drankommt (2026-11-15) ─────────
@@ -869,7 +882,7 @@ void Ft8Applet::buildUI()
     // Entscheidungen (umreihen, streichen, vorziehen) trifft
     // `Ft8Warteschlange`; hier wird nur verbunden.
     m_dann = new Ft8DannListe(m_arbeit);
-    arbeit->addWidget(m_dann, 3, 0, 1, 2);
+    arbeit->addWidget(m_dann, 4, 0, 1, 2);
     connect(m_dann, &Ft8DannListe::hoch, this, [this](const QString& wer) {
         if (m_schlange.ruecke(wer, -1, QDateTime::currentMSecsSinceEpoch())) {
             meldeStand();
@@ -3276,6 +3289,7 @@ void Ft8Applet::zeigeArbeit()
     if (m_arbeitLand) {
         m_arbeitLand->setText(wer.isEmpty() ? QString() : landFuer(wer));
     }
+    zeigeWer(wer);
     if (m_arbeitDanach) { m_arbeitDanach->setText(danach); }
     if (m_arbeitZug) {
         // Was wirklich hinausgeht: bei laufender Sendung steht es
@@ -3285,6 +3299,85 @@ void Ft8Applet::zeigeArbeit()
         m_arbeitZug->setText(zug.isEmpty() ? tr("—") : zug);
     }
 
+}
+
+// ── Die Zeile unter „QSO with" (2026-11-18) ──────────────────────────
+//
+// Alles ohne Netz wird hier gerechnet: der Locator, den er in DIESEM
+// QSO gesendet hat (sonst der von QRZ), Entfernung und Richtung vom
+// eigenen Feld, und das Licht bei ihm -- mit Grauzone::fuer, derselben
+// Rechnung wie in der Detailkarte des Logbuchs, damit beide dieselbe
+// Grauzone zeigen. Name, Ort und Klasse kommen aus der Auskunft der
+// Rotor/Log-Karte (setPartnerAuskunft).
+void Ft8Applet::zeigeWer(const QString& wer)
+{
+    if (!m_arbeitWer) { return; }
+    Ft8PartnerZeile::Inhalt in;
+    if (wer.isEmpty()) {
+        m_arbeitWer->setzeInhalt(in);
+        return;
+    }
+    in.rufzeichen = wer;
+
+    const bool seine = !m_auskunft.rufzeichen.isEmpty()
+        && Callsigns::normalized(m_auskunft.rufzeichen)
+               == Callsigns::normalized(wer);
+    const bool da = seine
+        && m_auskunft.stand == RufzeichenAuskunft::Stand::Da;
+    if (seine) { in.qrz = m_auskunft.stand; }
+    if (da) {
+        in.name   = m_auskunft.info.displayName();
+        in.ort    = m_auskunft.info.city.trimmed();
+        in.klasse = m_auskunft.info.licenseClass.trimmed();
+    }
+
+    // Was er JETZT sendet, gilt vor dem, was bei QRZ steht: wer
+    // portabel ist, hat bei QRZ noch den Heimatort. Liegt der QRZ-
+    // Locator aber im gesendeten Grossfeld, ist er nur feiner -- dann
+    // gilt er, sonst stuenden hier 672 km und in der Rotor/Log-Karte
+    // daneben 647 km fuer dieselbe Station (im Bild gesehen).
+    QString gesendet = m_ablauf.partnerLocator6();
+    if (!isValidGridSquare(gesendet)) { gesendet = m_ablauf.partnerLocator(); }
+    const QString ausQrz = da ? m_auskunft.info.grid.trimmed().toUpper() : QString();
+    QString loc = gesendet;
+    if (!isValidGridSquare(loc)) {
+        loc = ausQrz;
+    } else if (isValidGridSquare(ausQrz) && ausQrz.size() > loc.size()
+               && ausQrz.startsWith(loc.left(4), Qt::CaseInsensitive)) {
+        loc = ausQrz;
+    }
+    const QString mein = eigenerLocator();
+    if (isValidGridSquare(loc)) {
+        in.locator = loc.toUpper();
+        if (isValidGridSquare(mein)) {
+            in.km   = static_cast<int>(std::lround(calculateDistanceKm(mein, loc)));
+            in.grad = static_cast<int>(std::lround(
+                          calculateBearingInDegrees(mein, loc))) % 360;
+        }
+    }
+
+    // Das Licht bei ihm: aus dem Locator, sonst aus der Landesmitte.
+    LogEntry e;
+    e.call         = wer;
+    e.gridSquare   = in.locator;
+    e.myGridSquare = mein;
+    e.timeOn       = QDateTime::currentDateTimeUtc();
+    const CtyDatParser* cty = (m_model && m_model->dxccColorProvider())
+        ? &m_model->dxccColorProvider()->ctyDat() : nullptr;
+    in.licht = Grauzone::fuer(e, mein, cty).dort.licht;
+
+    m_arbeitWer->setzeInhalt(in);
+}
+
+void Ft8Applet::setPartnerAuskunft(const RufzeichenAuskunft& a)
+{
+    const QString wer = m_ablauf.partner();
+    if (wer.isEmpty() || a.rufzeichen.isEmpty()
+        || Callsigns::normalized(a.rufzeichen) != Callsigns::normalized(wer)) {
+        return;
+    }
+    m_auskunft = a;
+    zeigeWer(wer);
 }
 
 // ── Der Stand fuer das Plaetze-Panel ─────────────────────────────────
@@ -3391,6 +3484,17 @@ void Ft8Applet::meldeStand()
     // Plaetze-Panel bekommt den Stand, die QSO-Karte zeichnet „THEN".
     zeigeDann();
     emit plaetzeGeaendert(baueStand());
+
+    // Der Partner fuer die Rotor/Log-Karte (2026-11-18). Hier und nicht
+    // an den Stellen, an denen er gesetzt wird: das sind fuenf (Doppel-
+    // klick, Karte, Antwort auf mein CQ, Schlange, Hound), und jede
+    // endet ohnehin in diesem Aufruf. Mit Plaetzen fuehrt `m_ablauf`
+    // nur den CQ-Ruf -- dort bleibt es vorerst still.
+    const QString partner = mehrfachAn() ? QString() : m_ablauf.partner();
+    if (partner != m_gemeldeterPartner) {
+        m_gemeldeterPartner = partner;
+        emit partnerGewechselt(partner);
+    }
 }
 
 // Der Absender einer FT8-Nachricht.

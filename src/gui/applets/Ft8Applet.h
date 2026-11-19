@@ -59,6 +59,7 @@
 #include "core/Ft8Tx.h"
 #include "core/Ft8Uhrversatz.h"
 #include "core/LocatorJagd.h"
+#include "core/RufzeichenAuskunft.h"
 #include "core/WdspTypes.h"
 
 #include <QDateTime>
@@ -78,6 +79,7 @@ class QSpinBox;
 namespace Longpath { class Ft8Wasserfall; }
 namespace Longpath { class Ft8Fensterbalken; }
 namespace Longpath { class Ft8DannListe; }
+namespace Longpath { class Ft8PartnerZeile; }
 class QProgressBar;
 class QLineEdit;
 class QPushButton;
@@ -121,6 +123,12 @@ public:
     void leereFuerNeuenOrt(const QString& grund);
 
     void setProtocol(Ft8Decoder::Protocol p);
+
+    /// Was die Rotor/Log-Karte ueber ein Rufzeichen weiss (2026-11-18).
+    /// Genommen wird nur, was zum laufenden Partner gehoert -- die
+    /// Karte meldet auch, was der Betreiber selbst eintippt. Das FT8-
+    /// Feld fragt QRZ nie selbst: siehe RufzeichenAuskunft.h.
+    void setPartnerAuskunft(const Longpath::RufzeichenAuskunft& a);
     Ft8Decoder::Protocol protocol() const;
 
     // ── Senden (2026-10-15) ─────────────────────────────────────────
@@ -372,6 +380,8 @@ public:
     /// „THEN" in der QSO-Karte und die Kapsel „+ Queue" in der
     /// Fundliste (2026-11-15).
     Longpath::Ft8DannListe* dannForTest() const { return m_dann; }
+    /// Die Zeile unter „QSO with" (2026-11-18).
+    Longpath::Ft8PartnerZeile* partnerZeileForTest() const { return m_arbeitWer; }
     QPushButton* queuePilleForTest() const { return m_queuePille; }
     /// Eine Zeile der Fundliste anstellen, wie ein Klick auf „+ Queue".
     /// Leer heisst angestellt; sonst steht da, warum nicht.
@@ -465,6 +475,17 @@ signals:
     /// Fuer den Pruefstand: beide Ausloeser muessen hier dasselbe
     /// abliefern.
     void fundAngenommen(const QString& zeile, const QString& partner);
+
+    /// Der QSO-Partner des Ablaufs hat gewechselt (2026-11-18) -- auf
+    /// JEDEM Weg, nicht nur per Doppelklick oder Karte wie
+    /// `fundAngenommen`: ein Antworter auf mein CQ, der naechste aus der
+    /// Schlange, ein Doppelklick. Leer heiszt: keiner mehr (ein neues
+    /// CQ). Gemeldet aus `meldeStand()` und nur bei echtem Wechsel.
+    /// Die Rotor/Log-Karte haengt daran (MainWindow), damit Name, Ort
+    /// und Foto des Partners neben dem FT8-Feld stehen, wie bei Zeus.
+    /// Mehrfach-Betrieb meldet hier nichts: dort fuehrt `m_ablauf` nur
+    /// den CQ-Ruf.
+    void partnerGewechselt(const QString& partner);
 
     /// Jede gehoerte Station mit Rufzeichen, je Fund (2026-11-11). Die
     /// QSO-Karte haengt daran (ueber Ft8KartenBruecke).
@@ -561,6 +582,8 @@ private:
     void zeigeUhrversatz();
     /// Die Arbeitsleiste nachziehen: mit wem, welcher Zug, was danach.
     void zeigeArbeit();
+    /// Die Zeile unter „QSO with": Name, Ort, Klasse, Weg, Licht.
+    void zeigeWer(const QString& wer);
 
     QPlainTextEdit* m_list{nullptr};
     // Zweite Spalte wie in WSJT-X: links alles („Band Activity"),
@@ -631,6 +654,12 @@ private:
     QLabel*  m_arbeitDanach{nullptr};
     QLabel*  m_arbeitUhr{nullptr};
     Longpath::Ft8Fensterbalken* m_arbeitBalken{nullptr};
+    /// Wer der Partner ist und wie es bei ihm aussieht -- die Zeile
+    /// unter „QSO with" (2026-11-18, Entwurf A von drei).
+    Longpath::Ft8PartnerZeile* m_arbeitWer{nullptr};
+    /// Die letzte Auskunft der Rotor/Log-Karte. Gilt nur, solange sie
+    /// zum Partner passt (verglichen wird bei jedem Zeichnen).
+    Longpath::RufzeichenAuskunft m_auskunft;
 
     // ── „THEN": die Schlange in der QSO-Karte (2026-11-15) ──────────
     //
@@ -859,6 +888,9 @@ private:
     /// jedem Schritt, und der Zustand bleibt auf Fertig stehen — ohne
     /// diese Wache stuende dasselbe QSO mehrfach im Logbuch.
     bool         m_qsoGemeldet{false};
+    /// Der zuletzt mit `partnerGewechselt` gemeldete Partner. Ohne ihn
+    /// ginge das Signal bei jedem Zug hinaus, nicht nur beim Wechsel.
+    QString      m_gemeldeterPartner;
     /// Laeuft der Ruf vom CQ-Knopf? Dann geht es nach einem fertigen
     /// QSO von selbst weiter. Ein Doppelklick in die Fundliste ist
     /// eine Einzelentscheidung und setzt das zurueck, „Stop“ ebenso.
