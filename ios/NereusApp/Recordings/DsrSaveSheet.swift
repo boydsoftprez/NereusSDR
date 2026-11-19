@@ -5,6 +5,8 @@
 //   Recorder. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-16: Recording plan fix round: both save buttons wait while a save
 //   is with the Core. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-19: Sound only names the pan's active slice, the one it saves
+//   (JJ's phone run of PR 808). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusModels
 import SwiftUI
@@ -14,7 +16,9 @@ import SwiftUI
 /// stays open while the handles move; Cancel takes the bracket away.
 struct DsrSavePanel: View {
     let model: DsrPanModel
-    /// Slice A's frequency, for the sound's line.
+    /// The active slice, whose sound Sound only saves: its letter and
+    /// frequency, for the sound's line.
+    var sliceLetter = "A"
     var sliceFrequencyHz: Double?
 
     var body: some View {
@@ -40,7 +44,7 @@ struct DsrSavePanel: View {
                 choice(title: "Whole pan", detail: model.wholePanSize, look: .glass, id: "dsr.saveWholePan") {
                     Task { await model.save(.wholePan) }
                 }
-                choice(title: model.soundTitle, detail: model.soundSize(sliceFrequencyHz: sliceFrequencyHz),
+                choice(title: model.soundTitle, detail: model.soundSize(sliceLetter: sliceLetter, sliceFrequencyHz: sliceFrequencyHz),
                        look: .raised, id: "dsr.saveSound") {
                     Task { await model.save(.sound) }
                 }

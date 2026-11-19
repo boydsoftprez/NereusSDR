@@ -20,13 +20,20 @@
 //   2026-11-16 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 26.
+//   2026-11-17 - J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code: the disk drop-down under repeated
+//                 Core updates with accessibility on, a stale accessible
+//                 cell and its list open (PR 808 crash).
 // =================================================================
 
+#include <QAbstractItemView>
+#include <QAccessible>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QGroupBox>
 #include <QJsonArray>
 #include <QLabel>
+#include <QLoggingCategory>
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QSlider>
@@ -126,6 +133,77 @@ RecordingEntry saved(const QString& id, RecordingKind kind, qint64 bytes)
     e.name = id;
     return e;
 }
+
+/// The Core's figures a second later: more written, a little less free.
+QJsonObject secondLater(int n)
+{
+    QJsonObject dsr = fullDsr();
+    dsr.insert(QStringLiteral("writePosition"), 4 * kGb + n * 1000 * 1000);
+    QJsonArray disks = ssdDisks();
+    disks[0] = disk(QStringLiteral("/"), QStringLiteral("SSD"), (412 - n) * kGb, true);
+    return document(dsr, disks);
+}
+
+/// Qt accessibility on for one test, as on JJ's Mac with screen-control
+/// tools running.
+/// Qt warns "Cannot create accessible child interface" when it meets the
+/// stale cell leaveAStaleCell() plants, then skips it; that is expected
+/// here, so its category is quiet while on.
+struct AccessibilityOn {
+    AccessibilityOn()
+    {
+        QLoggingCategory::setFilterRules(QStringLiteral("qt.accessibility.core.warning=false"));
+        QAccessible::setActive(true);
+    }
+    ~AccessibilityOn()
+    {
+        QAccessible::setActive(false);
+        QLoggingCategory::setFilterRules(QString());
+    }
+    AccessibilityOn(const AccessibilityOn&) = delete;
+    AccessibilityOn& operator=(const AccessibilityOn&) = delete;
+};
+
+/// Builds the accessible cells of the drop-down's list, as a screen reader
+/// does, then deletes the first cell's interface behind the list's back:
+/// the state JJ's crash found (QAccessibleTable::modelChange calling
+/// role() on a cached cell whose interface is gone). QComboBox::clear()
+/// on this list crashes Qt 6.11.0.
+void leaveAStaleCell(QComboBox* combo)
+{
+    // On Linux offscreen there is no accessibility bridge: QAccessible stays
+    // inactive after setActive(true), the list's cells are not all built, and
+    // model changes never reach QAccessibleTable. There is no stale cell to
+    // plant and no crash path to reach, so only the rebuild checks run there;
+    // the crash path runs where a bridge is active (macOS).
+    if (!QAccessible::isActive()) {
+        return;
+    }
+    QAccessibleInterface* list = QAccessible::queryAccessibleInterface(combo->view());
+    QVERIFY(list != nullptr);
+    QVERIFY(list->tableInterface() != nullptr);
+    QVERIFY(list->childCount() > 0);
+    for (int i = 0; i < list->childCount(); ++i) {
+        QVERIFY(list->child(i) != nullptr);
+    }
+    QAccessible::deleteAccessibleInterface(QAccessible::uniqueId(list->child(0)));
+}
+
+/// What the drop-down's model did.
+struct ModelSpies {
+    QSignalSpy removed;
+    QSignalSpy inserted;
+    QSignalSpy reset;
+    QSignalSpy changed;
+
+    explicit ModelSpies(QAbstractItemModel* model)
+        : removed(model, &QAbstractItemModel::rowsRemoved)
+        , inserted(model, &QAbstractItemModel::rowsInserted)
+        , reset(model, &QAbstractItemModel::modelReset)
+        , changed(model, &QAbstractItemModel::dataChanged)
+    {
+    }
+};
 
 struct Fixture {
     FakeRecordingsAccess access;
@@ -446,6 +524,101 @@ private slots:
         QCOMPARE(page.savedLabel()->text(), QStringLiteral("Not known."));
         QVERIFY(f.access.settingsSent.isEmpty());
         QVERIFY(!f.access.verbs().contains(QStringLiteral("eraseDsr")));
+    }
+
+    // PR 808 crash: the Core sends the recorder's figures about once a
+    // second. The same disks change only the words and figures in place;
+    // other disks reset the list's model, never removing rows one by one,
+    // which crashed Qt's accessibility on JJ's Mac.
+    void coreUpdatesDoNotRebuildTheDisks()
+    {
+        AccessibilityOn accessibility;
+        Fixture f(document(fullDsr(), ssdDisks()));
+        QComboBox* combo = f.page.diskCombo();
+        QCOMPARE(combo->count(), 2);
+        leaveAStaleCell(combo);
+        ModelSpies spies(combo->model());
+
+        for (int n = 1; n <= 5; ++n) {
+            f.access.setDocument(secondLater(n));
+            QCOMPARE(combo->count(), 2);
+            QCOMPARE(combo->currentIndex(), 0);
+            QCOMPARE(combo->itemText(0), QStringLiteral("The Core's own disk (SSD, %1 GB free)").arg(412 - n));
+            QCOMPARE(combo->itemData(0, Qt::UserRole + 2).toLongLong(), (412 - n) * kGb);
+        }
+        // Words and the free figure changed in place; nothing else.
+        QCOMPARE(spies.removed.count(), 0);
+        QCOMPARE(spies.inserted.count(), 0);
+        QCOMPARE(spies.reset.count(), 0);
+        QVERIFY(spies.changed.count() > 0);
+
+        // The same document again: not touched at all.
+        spies.changed.clear();
+        f.access.setDocument(secondLater(5));
+        QCOMPARE(spies.changed.count(), 0);
+
+        // Another disk plugged in: one reset, the stale cell survives it.
+        QJsonArray three = ssdDisks();
+        three.append(disk(QStringLiteral("/Volumes/NVMe"), QStringLiteral("USB disk: NVMe"), 1800 * kGb, false));
+        f.access.setDocument(document(fullDsr(), three));
+        QCOMPARE(spies.reset.count(), 1);
+        QCOMPARE(spies.removed.count(), 0);
+        QCOMPARE(combo->count(), 3);
+        QCOMPARE(combo->currentIndex(), 0);
+        QCOMPARE(combo->itemData(2).toString(), QStringLiteral("/Volumes/NVMe"));
+        QCOMPARE(combo->itemData(2, Qt::UserRole + 1).toBool(), false);
+
+        // Unplugged again, with another stale cell: the same.
+        leaveAStaleCell(combo);
+        f.access.setDocument(document(fullDsr(), ssdDisks()));
+        QCOMPARE(spies.reset.count(), 2);
+        QCOMPARE(spies.removed.count(), 0);
+        QCOMPARE(combo->count(), 2);
+
+        // An SD card only Core: still the disabled lines (A14).
+        leaveAStaleCell(combo);
+        f.access.setDocument(document(fullDsr(), sdOnlyDisks()));
+        QCOMPARE(combo->count(), 2);
+        auto* model = qobject_cast<QStandardItemModel*>(combo->model());
+        QVERIFY(model != nullptr);
+        QVERIFY(!model->item(0)->isEnabled());
+        QCOMPARE(combo->itemText(1), QStringLiteral("No USB disk found"));
+        QVERIFY(!model->item(1)->isEnabled());
+        QVERIFY(f.access.settingsSent.isEmpty());
+    }
+
+    // Other disks while the list is open: it is left alone until it closes,
+    // then filled from the latest document. Figures still change in place.
+    void aDiskChangeWaitsForTheListToClose()
+    {
+        AccessibilityOn accessibility;
+        Fixture f(document(fullDsr(), ssdDisks()));
+        f.page.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&f.page));
+        QComboBox* combo = f.page.diskCombo();
+        combo->showPopup();
+        QTRY_VERIFY(combo->view()->isVisible());
+        leaveAStaleCell(combo);
+        ModelSpies spies(combo->model());
+
+        f.access.setDocument(secondLater(1));
+        QCOMPARE(combo->itemText(0), QStringLiteral("The Core's own disk (SSD, 411 GB free)"));
+
+        QJsonArray three = ssdDisks();
+        three.append(disk(QStringLiteral("/Volumes/NVMe"), QStringLiteral("USB disk: NVMe"), 1800 * kGb, false));
+        f.access.setDocument(document(fullDsr(), three));
+        f.access.setDocument(document(fullDsr(), three));
+        QCOMPARE(combo->count(), 2);
+        QCOMPARE(spies.reset.count(), 0);
+        QCOMPARE(spies.removed.count(), 0);
+        QCOMPARE(spies.inserted.count(), 0);
+
+        combo->hidePopup();
+        QTRY_COMPARE(combo->count(), 3);
+        QCOMPARE(spies.reset.count(), 1);
+        QCOMPARE(spies.removed.count(), 0);
+        QCOMPARE(combo->currentIndex(), 0);
+        QVERIFY(f.access.settingsSent.isEmpty());
     }
 
     void wordsForTimesAndReceivers()

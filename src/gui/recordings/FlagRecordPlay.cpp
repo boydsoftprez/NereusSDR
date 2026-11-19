@@ -23,6 +23,10 @@
 //                 look, the playing label and Play's ring in red while the
 //                 recording goes out. AI-assisted implementation via
 //                 Anthropic Claude Code.
+//   2026-11-19 - J.J. Boyd (KG4VCF): a WAV kept by a Core with no MP3
+//                 encoder says so; "failed" only where an encoder failed
+//                 (JJ's phone run, PR 808). AI-assisted implementation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "gui/recordings/FlagRecordPlay.h"
@@ -503,7 +507,7 @@ QString FlagRecordPlay::playLabelText() const
     return (isOnAir() ? QStringLiteral("ON AIR  ") : QString()) + name + QStringLiteral("  ") + times;
 }
 
-QString FlagRecordPlay::keptReasonText(const QJsonObject& kept, int quietMinutes, bool coreHere)
+QString FlagRecordPlay::keptReasonText(const QJsonObject& kept, int quietMinutes, bool coreHere, bool noMp3)
 {
     const QString reason = kept.value(QStringLiteral("reason")).toString();
     if (reason == QStringLiteral("device")) {
@@ -518,7 +522,8 @@ QString FlagRecordPlay::keptReasonText(const QJsonObject& kept, int quietMinutes
         return QStringLiteral("Stopped: the disk is full");
     }
     if (reason == QStringLiteral("wav")) {
-        return QStringLiteral("Kept as WAV: the MP3 encoder failed");
+        return noMp3 ? QStringLiteral("Kept as WAV: this Core has no MP3 encoder")
+                     : QStringLiteral("Kept as WAV: the MP3 encoder failed");
     }
     return coreHere ? QStringLiteral("Stopped on this computer") : QStringLiteral("Stopped on the Core");
 }
@@ -571,12 +576,14 @@ void FlagRecordPlay::onKept(const QJsonObject& event)
                                           : QJsonObject();
     const int quiet = settings.value(QStringLiteral("quietMinutes")).toInt(2);
     const bool here = m_access && m_access->coreIsOnThisComputer();
+    // An older Core leaves `mp3` out: its WAV reason stays "failed".
+    const bool noMp3 = !settings.value(QStringLiteral("mp3")).toBool(true);
     m_keptId = event.value(QStringLiteral("id")).toString();
     const QString name = event.value(QStringLiteral("name")).toString();
     m_keptText->setText(QStringLiteral("Kept: %1, %2<br><span style=\"color:#8e8e96; font-size:11px;\">%3</span>")
                             .arg(name.toHtmlEscaped(),
                                  lengthText(event.value(QStringLiteral("lengthMs")).toInteger()),
-                                 keptReasonText(event, quiet, here).toHtmlEscaped()));
+                                 keptReasonText(event, quiet, here, noMp3).toHtmlEscaped()));
     m_keptAll->setEnabled(hasListener("allRecordingsRequested(QString)"));
     m_keptPlay->setEnabled(!m_keptId.isEmpty());
     m_kept->adjustSize();

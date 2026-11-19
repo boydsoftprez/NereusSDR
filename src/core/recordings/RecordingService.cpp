@@ -64,6 +64,16 @@
 //             the past: rewoundLiveFrequencyHz holds the live frequency
 //             from the rewind's own retune on, rewoundSlicesChanged says
 //             when it changes. AI tooling: Anthropic Claude Code.
+// 2026-11-17  J.J. Boyd / KG4VCF; a receiver that closes reaches the
+//             recorder as not streaming and one that opens as streaming
+//             again, so the recorder's time starts again from the clock; a
+//             rewind or seek into a stretch kept around but not recorded
+//             says the receiver was off (kRewindReceiverOffReason). AI
+//             tooling: Anthropic Claude Code.
+// 2026-11-19  J.J. Boyd / KG4VCF; saveStretch keeps the sound of the slice
+//             the device asked for, not always slice A (JJ's phone run, PR
+//             808), and words a refusal with that slice's letter
+//             (saveSliceReason). AI tooling: Anthropic Claude Code.
 
 #include "RecordingService.h"
 
@@ -79,6 +89,7 @@
 #include "core/recordings/ContactRecorder.h"
 #include "core/recordings/RecordingNames.h"
 #include "core/recordings/RecordingStore.h"
+#include "core/ReceiverManager.h"
 #include "models/RadioModel.h"
 #include "models/RoundtableModel.h"
 #include "models/SliceModel.h"
@@ -254,13 +265,30 @@ RecordingService::RecordingService(RadioModel* radio, QObject* parent)
         });
         connect(m_radio, &RadioModel::streamCentreChanged, this, [this](int stream, double centreHz, int rateHz) {
             if (m_dsrRunning) {
-                m_dsr->setStream(stream, std::llround(centreHz), rateHz);
+                m_dsr->setStream(stream, std::llround(centreHz), dsrStreamRateHz(stream) > 0 ? rateHz : 0);
             }
             // A rewound slice's past moves with its receiver's centre.
             followLiveCentres();
             // Task 26: Setup's hours follow the receivers and rates.
             noteDsrReceivers();
         });
+        // A receiver closed (no slice on it) sends no I/Q: the recorder
+        // writes what it holds and its time starts again from the clock
+        // when the receiver opens, so nothing kept after is stamped with
+        // the time it closed at.
+        if (ReceiverManager* receivers = m_radio->receiverManager()) {
+            connect(receivers, &ReceiverManager::receiverDeactivated, this, [this](int stream) {
+                if (m_dsrRunning) {
+                    m_dsr->setStream(stream, std::llround(m_radio->streamCentreHz(stream)), 0);
+                }
+            });
+            connect(receivers, &ReceiverManager::receiverActivated, this, [this](int stream) {
+                if (m_dsrRunning) {
+                    m_dsr->setStream(stream, std::llround(m_radio->streamCentreHz(stream)),
+                                     dsrStreamRateHz(stream));
+                }
+            });
+        }
         connect(m_radio, &RadioModel::sliceAdded, this, &RecordingService::onSliceAdded);
         connect(m_radio, &RadioModel::sliceRemoved, this, &RecordingService::onSliceRemoved);
         // The player's speakers: every drain pulls each playback slot here.
@@ -1669,8 +1697,7 @@ void RecordingService::startDsr(const QString& path, qint64 limitBytes)
         for (const SliceModel* slice : m_radio->slices()) {
             const int stream = slice != nullptr ? slice->streamIndex() : -1;
             if (stream >= 0) {
-                m_dsr->setStream(stream, std::llround(m_radio->streamCentreHz(stream)),
-                                 m_radio->streamSampleRateHz(stream));
+                m_dsr->setStream(stream, std::llround(m_radio->streamCentreHz(stream)), dsrStreamRateHz(stream));
             }
         }
     }
@@ -1699,6 +1726,20 @@ void RecordingService::startDsr(const QString& path, qint64 limitBytes)
         }
     }, Qt::QueuedConnection);
     m_dsr->setAccepting(true);
+}
+
+int RecordingService::dsrStreamRateHz(int stream) const
+{
+    if (m_radio == nullptr || stream < 0) {
+        return 0;
+    }
+    // The logical receiver index is the stream index (RadioModel's
+    // iqDataForReceiver fork).
+    ReceiverManager* receivers = m_radio->receiverManager();
+    if (receivers != nullptr && !receivers->isReceiverActive(stream)) {
+        return 0;
+    }
+    return m_radio->streamSampleRateHz(stream);
 }
 
 void RecordingService::stopDsr()
@@ -1826,6 +1867,12 @@ void RecordingService::workerDrainDsr()
 
 namespace {
 constexpr int kMaxRewoundSlices = 32;
+
+// A moment between the oldest and the newest kept (0: nothing kept).
+bool insideKeptSpan(qint64 oldestNs, qint64 newestNs, qint64 utcNs)
+{
+    return oldestNs > 0 && utcNs >= oldestNs && utcNs < newestNs;
+}
 }  // namespace
 
 bool RecordingService::rewind(int slice, qint64 utcNs, qint64 frequencyHz, QString* refusal)
@@ -1875,7 +1922,13 @@ bool RecordingService::rewind(int slice, qint64 utcNs, qint64 frequencyHz, QStri
     if (receiver < 0) {
         // Kept then, but not at this frequency: a different reason, so the
         // flag can be moved into what was kept.
-        return refuse(momentKept ? kRewindNoFrequencyReason : kRewindGoneReason);
+        if (momentKept) {
+            return refuse(kRewindNoFrequencyReason);
+        }
+        // Between the oldest and newest kept, but in no block: every
+        // receiver was closed then. Older than the oldest is gone.
+        return refuse(insideKeptSpan(ring.oldestUtcNs(), ring.newestUtcNs(), utcNs) ? kRewindReceiverOffReason
+                                                                                     : kRewindGoneReason);
     }
     // The slice moves to the moment's frequency. Its demodulator runs at its
     // receiver's rate, which must be the rate that moment was kept at.
@@ -1954,7 +2007,9 @@ bool RecordingService::seekRewind(int slice, qint64 utcNs, QString* refusal)
     const DsrRingFile& ring = it->source ? *it->source : m_dsr->ring();
     DsrBlockHeader h;
     if (!ring.blockAt(current->receiver(), utcNs, &h)) {
-        return refuse(kRewindGoneReason);
+        const int r = current->receiver();
+        return refuse(insideKeptSpan(ring.oldestUtcNs(r), ring.newestUtcNs(r), utcNs) ? kRewindReceiverOffReason
+                                                                                       : kRewindGoneReason);
     }
     if (h.sampleRateHz != current->sampleRateHz()) {
         return refuse(kRewindRateReason);
@@ -2495,8 +2550,16 @@ void RecordingService::closeStretch()
     emit dsrChanged();
 }
 
+QString RecordingService::saveSliceReason(int sliceId)
+{
+    if (sliceId == kStretchSlice || sliceId < 0 || sliceId > 25) {
+        return QString::fromLatin1(kSaveSliceReason);
+    }
+    return QStringLiteral("Slice %1 is not on a frequency kept in that stretch.").arg(QChar(u'A' + sliceId));
+}
+
 bool RecordingService::saveStretch(qint64 fromUtcNs, qint64 toUtcNs, bool wholePan, QString* note,
-                                   QString* refusal)
+                                   QString* refusal, int sliceId)
 {
     const auto refuse = [refusal](const char* why) {
         if (refusal != nullptr) {
@@ -2525,17 +2588,20 @@ bool RecordingService::saveStretch(qint64 fromUtcNs, qint64 toUtcNs, bool wholeP
     }
     const DsrRingFile& ring = source ? *source : m_dsr->ring();
 
-    // Slice A as it is now: its frequency names the recording, and its
-    // sound is what sound only keeps.
+    // The slice asked for (slice A when none is named) as it is now: its
+    // frequency names the recording, and its sound is what sound only keeps.
     DsrSoundSettings sound;
-    const bool sliceOpen = m_rewindHost && m_rewindHost->sliceSound(kStretchSlice, &sound);
-    const int own = m_rewindHost ? m_rewindHost->sliceReceiver(kStretchSlice) : -1;
+    const bool sliceOpen = m_rewindHost && m_rewindHost->sliceSound(sliceId, &sound);
+    const int own = m_rewindHost ? m_rewindHost->sliceReceiver(sliceId) : -1;
     DsrBlockHeader first;
     int soundReceiver = sliceOpen
         ? DsrStretch::receiverFor(ring, extent.fromUtcNs, extent.toUtcNs, sound.frequencyHz, own, &first)
         : -1;
     if (!wholePan && soundReceiver < 0) {
-        return refuse(kSaveSliceReason);
+        if (refusal != nullptr) {
+            *refusal = saveSliceReason(sliceId);
+        }
+        return false;
     }
     if (soundReceiver < 0) {
         // The pan's centre names a whole-pan stretch slice A is not in.
@@ -2550,7 +2616,7 @@ bool RecordingService::saveStretch(qint64 fromUtcNs, qint64 toUtcNs, bool wholeP
 
     RecordingEntry entry;
     entry.kind = wholePan ? RecordingKind::WholePan : RecordingKind::Sound;
-    entry.sliceId = wholePan ? -1 : kStretchSlice;
+    entry.sliceId = wholePan ? -1 : sliceId;
     entry.startUtc = QDateTime::fromMSecsSinceEpoch(extent.fromUtcNs / kNsPerMs, QTimeZone::utc());
     entry.frequencyHz = sound.frequencyHz;
     entry.mode = sliceOpen ? SliceModel::modeName(static_cast<DSPMode>(sound.dspMode)) : QString();

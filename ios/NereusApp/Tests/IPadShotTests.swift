@@ -5,6 +5,11 @@
 //   Record, Play, playing bar and VOICE, the column's Recordings panel, and
 //   the Recordings and Recording settings pages, at the mockup's 13-inch
 //   size. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: Screen walk for PR 808, the Recordings shots without the
+//   column, upright and one text step larger. J.J. Boyd (KG4VCF),
+//   AI-assisted via Claude Code.
+// 2026-11-17: PR 808 design calls, the Recordings panel switch upright and
+//   on its side. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -41,6 +46,8 @@ struct IPadShotTests {
         var height: CGFloat? = nil
         /// Another iPad's screen on its side (the recording mockup's 13-inch).
         var sideways: CGSize? = nil
+        /// The text size (the screen walk draws one step larger too).
+        var type: DynamicTypeSize = .large
 
         /// The 11-inch iPad's screen, either way up.
         var size: CGSize {
@@ -148,6 +155,13 @@ struct IPadShotTests {
             #expect(model.recordingsApplet.rows.count == entries.count)
             try await shoot(Screen(name: "ipad-recordings-idle", onItsSide: true, columnShown: true, sideways: mockup),
                             model: model)
+            // The screen walk (PR 808): without the column, upright, and one text step larger.
+            try await shoot(Screen(name: "ipad-recordings-walk-idle-column-hidden", onItsSide: true,
+                                   columnShown: false, sideways: mockup), model: model)
+            try await shoot(Screen(name: "ipad-recordings-walk-idle-upright", onItsSide: false, columnShown: true),
+                            model: model)
+            try await shoot(Screen(name: "ipad-recordings-walk-idle-larger", onItsSide: true, columnShown: true,
+                                   sideways: mockup, type: .xLarge), model: model)
 
             Self.publishRecordings(model, state: "recording", revision: 2)
             #expect(model.recordingsApplet.rows.first == .recording(slice: 0, elapsedMs: 12_400))
@@ -161,6 +175,12 @@ struct IPadShotTests {
                     == (onAir ? "ON AIR · 0:12 / 3:25" : "0:12 / 3:25 · speaker"))
                 try await shoot(Screen(name: onAir ? "ipad-recordings-onair" : "ipad-recordings-playing",
                                        onItsSide: true, columnShown: true, sideways: mockup), model: model)
+                if !onAir {
+                    try await shoot(Screen(name: "ipad-recordings-walk-playing-upright", onItsSide: false,
+                                           columnShown: true), model: model)
+                    try await shoot(Screen(name: "ipad-recordings-walk-playing-column-hidden", onItsSide: true,
+                                           columnShown: false, sideways: mockup), model: model)
+                }
             }
             Self.playback(model, id: "r-4", positionMs: 0, onAir: false, playing: false)
 
@@ -181,6 +201,36 @@ struct IPadShotTests {
             try await shootPage("ipad-recordings-settings-page", size: mockup, tab: .setup) {
                 NavigationStack {
                     RecordingSettingsPage(model: model.recordingSettings, phone: settings)
+                }
+            }
+            let upright = CGSize(width: mockup.height, height: mockup.width)
+            try await shootPage("ipad-recordings-walk-tools-page-upright", size: upright) {
+                VStack(spacing: 0) {
+                    ConnectChrome.NavBar(title: "Recordings", back: "Tools") {
+                        RecordingsListPage.Trailing(model: model.recordingsList)
+                    }
+                    RecordingsListPage(model: model.recordingsList)
+                }
+            }
+            try await shootPage("ipad-recordings-walk-settings-page-upright", size: upright, tab: .setup) {
+                NavigationStack {
+                    RecordingSettingsPage(model: model.recordingSettings, phone: settings)
+                }
+            }
+            // The Recordings panel's switch: dimmed with why upright (no column), live on its side.
+            for (shape, size) in [("upright", upright), ("sideways", mockup)] {
+                try await shootPage("ipad-recordings-walk-panel-switch-\(shape)", size: size, tab: .setup) {
+                    ScrollView {
+                        RecordingsAppletSwitch(settings: settings).padding(16)
+                    }
+                }
+            }
+            try await shootPage("ipad-recordings-walk-voice-keyer-page", size: mockup) {
+                VStack(spacing: 0) {
+                    ConnectChrome.NavBar(title: "Voice Keyer", back: "Tools") {
+                        SetupTagBadge(tag: .core)
+                    }
+                    VoiceKeyerPage(model: model.voiceKeyer, take: model.main.take, settings: settings)
                 }
             }
             await model.disconnect()
@@ -240,10 +290,12 @@ struct IPadShotTests {
         window.windowLevel = .alert + 1
         let root = VStack(spacing: 0) {
             content()
-            TabBar(selection: .constant(tab), sideways: true, iPad: true)
+            TabBar(selection: .constant(tab), sideways: size.width > size.height, iPad: true)
         }
         .background(ChromeColours.page)
         .environment(\.horizontalSizeClass, .regular)
+        // As the app's root reads it: upright is the front panel, with no column.
+        .environment(\.iPadLayout, IPadLayout.arrangement(horizontal: .regular, size: size))
         .preferredColorScheme(.dark)
         let host = ShotHosting.host(root)
         host.additionalSafeAreaInsets = UIEdgeInsets(top: 24, left: 0, bottom: 20, right: 0)
@@ -745,6 +797,7 @@ struct IPadShotTests {
                                 displayTab: screen.displayTab)
             .environment(\.horizontalSizeClass, .regular)
             .preferredColorScheme(.dark)
+            .dynamicTypeSize(screen.type)
         let host = ShotHosting.host(root)
         if screen.onItsSide {
             host.additionalSafeAreaInsets = UIEdgeInsets(top: 24, left: 0, bottom: 20, right: 0)

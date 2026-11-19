@@ -8,6 +8,9 @@
 // behaviour rules consulted while implementing visibility wiring.
 //
 // Modification history (NereusSDR):
+//   2026-11-17 - Cores > Recordings is Mixed scope: it also carries this
+//                computer's VOICE button switch. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-11-16 - Cores > Digital Spectrum Recorder (DsrSetupPage, Core
 //                scope), before Recordings, recording plan Task 26.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1892,9 +1895,10 @@ void SetupDialog::buildTree()
     });
 
     // Recording plan Task 8: the Core's recording settings (spec 6.5),
-    // through the model's recordings access. Core: every device shares
-    // them and this window stores none of them.
-    registerPage(cores, "Recordings", SetupScope::Core, [this]() -> QWidget* {
+    // through the model's recordings access, which every device shares.
+    // Mixed: it also carries this computer's own switch for VOICE in the
+    // TUNE / MOX row, which stays usable with no Core.
+    registerPage(cores, "Recordings", SetupScope::Mixed, [this]() -> QWidget* {
         auto* page = new RecordingsSetupPage(m_model ? m_model->recordings() : nullptr);
         connect(page, &RecordingsSetupPage::recordingsWindowRequested,
                 this, &SetupDialog::recordingsWindowRequested);

@@ -28,8 +28,9 @@ import UIKit
 /// trip's pace, and the final value must reach the Core soon after the
 /// finger lifts. Simulator numbers, printed for the record.
 ///
-/// A slow runner stretches the same drag with no change in the app, so the
-/// median's limit scales with ``RunnerSpeed``, read before each scene.
+/// A slow runner stretches the same drag with no change in the app, through
+/// the main thread's waits, so the median's limit grows with
+/// ``TuneUnderLoadTests/MainWait``, read during each drag.
 @Suite("Tuning while the band draws", .serialized)
 @MainActor
 struct TuneUnderLoadTests {
@@ -103,107 +104,71 @@ struct TuneUnderLoadTests {
         let dragMs: Double
         let writes: Int
         let linesDrawn: Int
-        /// The runner's speed just before this scene.
-        let runner: RunnerSpeed
+        /// The main queue's wait during this drag, which sets the limit.
+        let mainWait: MainWait
     }
 
-    /// How fast the runner's main thread is just now, from a fixed piece of
-    /// work that touches nothing of the app. It runs before the scene's app
-    /// exists, so a slow app cannot make it read slow by drawing or by
-    /// keeping threads busy. It reads the clock on the wall, not the thread's
-    /// CPU time: a runner short of cores costs a drag in both.
+    /// How long the main thread kept a job waiting during this drag: what a
+    /// slow runner actually stretches. The writer waits for each answer and
+    /// then resumes on the main thread, so a drag's writes space at the
+    /// answer's 60 ms plus several waits for a main-thread turn.
     ///
-    /// On the Mac the work's wall and CPU times agree, and a short sample
-    /// tracks samples 4 and 12 times as long at a steady ratio, so 16 samples
-    /// of about 10 ms say as much as a longer stretch of the main thread
-    /// would. The median keeps one noisy sample from moving the limit; p10
-    /// and p90 are printed to show how noisy the runner was.
+    /// A CPU probe read before the scene (a fixed xorshift walk, 2026-11-05
+    /// to 11-18) did not see it: on GitHub's hosted Mac (PR 808, run
+    /// 44235426974, 2026-11-18) it read 26.17 ms, as on JJ's Mac (26.73 ms),
+    /// while the 2D drag's writes went 213.4 ms apart there and 105.4 ms
+    /// here. That run's own timings put the time in the main thread: an
+    /// answer reached the app's session 0.2-2 ms after the Core sent it, and
+    /// the writer resumed 62-262 ms later, while jobs put on the main queue
+    /// waited 29.3 ms (median). So the probe is that wait, sampled every
+    /// 20 ms by ``MainHops`` from the finger landing until the final value
+    /// reaches the Core, in the same scene as the drag.
     @MainActor
-    struct RunnerSpeed {
-        /// A drag's median spacing on a runner at the reference speed or
-        /// better. The earlier builds' pace on JJ's phone: a median of
-        /// 114-123 ms.
+    struct MainWait {
+        /// A drag's median spacing where the main queue's median wait is at
+        /// most ``referenceMs``: the answer's 60 ms, six waits of 10 ms and
+        /// 30 ms to spare. The earlier builds' pace on JJ's phone: a median
+        /// of 114-123 ms.
         static let baseLimitMs = 150.0
-        /// A settled simulator on a normal machine, taken as GitHub's hosted
-        /// Mac on its best day, the slowest place this test normally runs.
-        /// Measured in the Debug build tests run in, 2026-11-04, on an
-        /// 18-core Mac: a settled simulator reads 9.3-10.5 ms with an encode
-        /// of 0.75 ms per draw, about 13 ms of this work per ms of encode.
-        /// The fastest of 52 2D and 3D scenes in 26 CI runs (2026-10-28 to
-        /// 11-04) has an encode of 1.25 ms, so 16 ms. The slowest has 2.57 ms,
-        /// about 33 ms. One run's reading of this work on GitHub's hosted Mac
-        /// (PR 745, run 41937480842, 2026-11-05, four iPhone scenes): 17.69 to
-        /// 19.17 ms, so a factor of 1.11 to 1.20 and a limit of 165.8 to 179.7 ms,
-        /// with medians of 63 (nothing drawn), 104 (main held 15 ms a frame),
-        /// 102 (2D) and 95 ms (3D), all within.
-        static let referenceMs = 16.0
-        /// The most a slow runner can raise the limit: to 180 ms. In those
-        /// 26 CI runs the slowest median of any scene is 168 ms, so this still
-        /// clears it. A later run (PR 749, run 42148478672, 2026-11-05, before
-        /// this work was printed) read 179.4 ms with an encode of 2.87 ms, so
-        /// the margin on a run that slow is under 1 ms. The cap stays: a higher
-        /// one lets more of a real hold through, and a slow runner that lands
-        /// just over gets a rerun of that job. A hold on the main thread that runs alongside the fake
-        /// Core's 60 ms answer, which sleeps in its own task, does not add to
-        /// it: writes space at about the larger of the two. A hold between the
-        /// answer and the next write does add. Injected here, 2026-11-04, a
-        /// 150 ms hold per write gave medians of 154-168 ms alongside the
-        /// answer and 211-232 ms after it. So this cap always catches the
-        /// second, and the first only on a runner whose limit is under them.
-        static let maxFactor = 1.2
-        static let samples = 16
-        static let iterations = 200_000
+        /// The wait the base limit already covers. Six iOS runs on GitHub's
+        /// hosted Mac (2026-11-17 to 11-18, 24 scenes) read 0.0-0.1 ms with
+        /// nothing drawn, 6.9-9.7 ms with the main thread held 15 ms a frame,
+        /// and 10.5-41.7 ms with the band drawn.
+        static let referenceMs = 10.0
+        /// How many waits a write's spacing carries past the answer: in those
+        /// 24 scenes (spacing - 60 ms) / wait is 1.0-6.0, 4.7-5.2 in the
+        /// slowest, and the answer-to-resume time of run 44235426974's 2D drag
+        /// is 5.0 waits (median 147 ms against 29.3 ms). Six covers every one.
+        static let waitsPerWrite = 6.0
+        /// The most any runner gets: twice the base. The slowest scene in
+        /// those runs (3D, run 44164956610, wait 41.7 ms) went 255 ms apart.
+        /// Past 300 ms the writes are in the range of build 8130's delay on
+        /// JJ's phone (210-420 ms), which no runner's wait excuses; a fast
+        /// machine still holds the drag to the base limit.
+        static let maxLimitMs = 300.0
 
         let samplesMs: [Double]
 
-        var workMs: Double { percentile(samplesMs, 0.5) }
-        /// Never below 1, so a fast runner keeps the base limit exactly.
-        var factor: Double { min(Self.maxFactor, max(1, workMs / Self.referenceMs)) }
-        var medianLimitMs: Double { Self.baseLimitMs * factor }
+        var waitMs: Double { percentile(samplesMs, 0.5) }
+        /// Never below the base, so a fast machine keeps it exactly.
+        var medianLimitMs: Double {
+            min(Self.maxLimitMs, Self.baseLimitMs + Self.waitsPerWrite * max(0, waitMs - Self.referenceMs))
+        }
 
         /// For the result line and for a failing expectation.
         var summary: String {
-            String(format: "runner work %.2f ms (p10 %.2f, p90 %.2f, reference %.1f), factor %.3f",
-                   workMs, percentile(samplesMs, 0.1), percentile(samplesMs, 0.9), Self.referenceMs, factor)
-        }
-
-        static func measure() -> RunnerSpeed {
-            let buffer = UnsafeMutableBufferPointer<UInt64>.allocate(capacity: 1 << 15)
-            defer { buffer.deallocate() }
-            buffer.initialize(repeating: 1)
-            var result: UInt64 = 0
-            let samplesMs = (0 ..< samples).map { _ -> Double in
-                let started = now()
-                result ^= work(buffer)
-                return (now() - started) * 1_000
-            }
-            // Using the result keeps the work from being optimized away.
-            #expect(result != 0)
-            return RunnerSpeed(samplesMs: samplesMs)
-        }
-
-        /// A xorshift walk over 256 KiB: CPU and cache, no allocation, no
-        /// locks, no system calls, the same steps on every run.
-        private static func work(_ buffer: UnsafeMutableBufferPointer<UInt64>) -> UInt64 {
-            var x: UInt64 = 0x9E37_79B9_7F4A_7C15
-            let mask = buffer.count - 1
-            for _ in 0 ..< iterations {
-                x ^= x << 13
-                x ^= x >> 7
-                x ^= x << 17
-                let index = Int(truncatingIfNeeded: x) & mask
-                buffer[index] = buffer[index] &+ x
-            }
-            return x &+ buffer[0]
+            String(format: "main queue wait %.1f ms (p10 %.1f, p90 %.1f, reference %.1f, %.0f a write)",
+                   waitMs, percentile(samplesMs, 0.1), percentile(samplesMs, 0.9), Self.referenceMs,
+                   Self.waitsPerWrite)
         }
     }
 
     static func check(_ run: Run) {
         let median = percentile(run.spacingsMs, 0.5)
         let worst = run.spacingsMs.max() ?? 0
-        let limit = run.runner.medianLimitMs
+        let limit = run.mainWait.medianLimitMs
         #expect(run.writes >= 10, "\(run.label): only \(run.writes) writes in a \(dragSeconds) s drag")
-        #expect(median <= limit, "\(run.label): writes \(String(format: "%.1f", median)) ms apart (median), limit \(String(format: "%.1f", limit)) ms; \(run.runner.summary)")
+        #expect(median <= limit, "\(run.label): writes \(String(format: "%.1f", median)) ms apart (median), limit \(String(format: "%.1f", limit)) ms; \(run.mainWait.summary)")
         #expect(worst < 1_000, "\(run.label): a write waited \(Int(worst)) ms")
         #expect((run.liftToFinalMs ?? .infinity) <= 250,
                 "\(run.label): the final value reached the Core \(run.liftToFinalMs.map { "\(Int($0)) ms" } ?? "never") after the lift")
@@ -411,7 +376,6 @@ struct TuneUnderLoadTests {
     }
 
     static func measure(_ load: Load) async throws -> Run {
-        let runner = RunnerSpeed.measure()
         let suite = "TuneUnderLoadTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -570,14 +534,14 @@ struct TuneUnderLoadTests {
         let label = load.description
         let run = Run(label: label, spacingsMs: spacings, liftToFinalMs: final.map { ($0.at - lifted) * 1_000 },
                       busyMs: busyMs, answerToNextMs: answerToNext, dragMs: (lifted - began) * 1_000,
-                      writes: writes.count, linesDrawn: linesDrawn, runner: runner)
+                      writes: writes.count, linesDrawn: linesDrawn, mainWait: MainWait(samplesMs: hopMs))
         let busyTotal = busyMs.reduce(0, +)
         print("""
             TuneUnderLoad \(label) (simulator): touches \(touches), writes \(run.writes), \
             spacing ms p10 \(Int(percentile(spacings, 0.1))) median \(Int(percentile(spacings, 0.5))) \
             p90 \(Int(percentile(spacings, 0.9))) max \(Int(spacings.max() ?? 0)); \
-            median \(String(format: "%.1f", percentile(spacings, 0.5))) against limit \(String(format: "%.1f", runner.medianLimitMs)) ms, \
-            \(percentile(spacings, 0.5) <= runner.medianLimitMs ? "within" : "over"); \(runner.summary); \
+            median \(String(format: "%.1f", percentile(spacings, 0.5))) against limit \(String(format: "%.1f", run.mainWait.medianLimitMs)) ms, \
+            \(percentile(spacings, 0.5) <= run.mainWait.medianLimitMs ? "within" : "over"); \(run.mainWait.summary); \
             lift to final \(run.liftToFinalMs.map { "\(Int($0)) ms" } ?? "never"); \
             answer to next write ms median \(Int(percentile(answerToNext, 0.5))) \
             p90 \(Int(percentile(answerToNext, 0.9))) max \(Int(answerToNext.max() ?? 0)); \

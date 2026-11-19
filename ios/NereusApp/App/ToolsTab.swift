@@ -12,6 +12,8 @@
 // 2026-11-16: Recording plan Task 18, the voiceKeyer tool opens Voice
 //             Keyer; VOICE's All settings opens it too. J.J. Boyd
 //             (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: Voice Keyer is given this device's settings for its VOICE
+//             switch. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusMirror
 import SwiftUI
@@ -244,7 +246,7 @@ struct ToolsTab: View {
             } else if route.last == .recordings {
                 RecordingsListPage(model: app.recordingsList)
             } else if route.last == .voiceKeyer {
-                VoiceKeyerPage(model: app.voiceKeyer, take: app.main.take)
+                VoiceKeyerPage(model: app.voiceKeyer, take: app.main.take, settings: app.phoneSettings)
             } else if route.last == .freedvReporter {
                 // The list scrolls under its filters, with your status below it.
                 FreeDVReporterPage(freedv: freedv)

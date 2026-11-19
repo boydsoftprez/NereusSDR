@@ -14,6 +14,9 @@
 // Recording settings… open their pages. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-16: Recording plan Task 18, VOICE opens Tools > Voice Keyer.
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: PR 808 design calls, the iPad arrangement told to the pages
+//   (the Recordings panel's switch). J.J. Boyd (KG4VCF), AI-assisted via
+//   Claude Code.
 
 import NereusBand
 import SwiftUI
@@ -190,7 +193,9 @@ struct RootView: View {
         GeometryReader { proxy in
             let keyboardRoom = IPadLayout.keyboardRoom(bottomInset: proxy.safeAreaInsets.bottom)
             let sideways = proxy.size.width > proxy.size.height + keyboardRoom
-            let iPad = IPadLayout.arrangement(horizontal: widthClass, size: proxy.size, keyboardRoom: keyboardRoom).isIPad
+            let arrangement = IPadLayout.arrangement(horizontal: widthClass, size: proxy.size,
+                                                     keyboardRoom: keyboardRoom)
+            let iPad = arrangement.isIPad
             VStack(spacing: 0) {
                 ZStack {
                     ForEach(AppTab.allCases) { tab in
@@ -228,6 +233,7 @@ struct RootView: View {
             }
             .environment(\.uprightBandWidth, proxy.uprightBandWidth)
             .environment(\.keyboardRoom, keyboardRoom)
+            .environment(\.iPadLayout, arrangement)
             .onReceive(model.swipes.$opened) { opened in
                 if let opened, opened.target.opensTools {
                     openTools(opened, size: proxy.size)

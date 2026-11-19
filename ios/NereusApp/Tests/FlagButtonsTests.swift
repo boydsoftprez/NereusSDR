@@ -18,6 +18,28 @@ import Testing
 @Suite("Flag buttons")
 @MainActor
 struct FlagButtonsTests {
+    // MARK: A panel on a short band (PR 808 part 2)
+
+    /// Sideways, where a tab's panel under the flag cannot end above PTT,
+    /// it takes the band's whole height, its rows start right of PTT and
+    /// its title row starts right of PTT only where PTT would sit on it; upright, or with room, it hangs
+    /// from the flag as before.
+    @Test func aPanelTakesTheWholeShortBand() {
+        let clearance = PttButton.sheetClearance
+        #expect(FlagPopoverLayer.takesWholeBand(sideways: true, room: 150, clearance: clearance))
+        #expect(!FlagPopoverLayer.takesWholeBand(sideways: false, room: 150, clearance: clearance))
+        #expect(!FlagPopoverLayer.takesWholeBand(sideways: true, room: 400, clearance: clearance))
+        #expect(!FlagPopoverLayer.takesWholeBand(sideways: true, room: 150, clearance: 0))
+        // The SE sideways band, about 252 points: PTT sits at its foot, clear of the title row at the top.
+        let ptt = PttButton.frame(bandSize: CGSize(width: 667, height: 252), leadingInset: 0)
+        #expect(FlagPopoverLayer.barLeading(ptt: ptt, barTop: 0) == nil)
+        // A band so short that PTT reaches the title row: the row starts right of it.
+        let low = PttButton.frame(bandSize: CGSize(width: 667, height: 120), leadingInset: 0)
+        #expect(FlagPopoverLayer.barLeading(ptt: low, barTop: 0) == low.maxX + 8)
+        // The rows start right of PTT, so none is ever under it.
+        #expect(FlagPopoverLayer.contentLeading(ptt: ptt) == ptt.maxX)
+    }
+
     // MARK: Sizes and places
 
     static func geometry(width: CGFloat) -> BandGeometry {

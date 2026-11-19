@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // 2026-10-31: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
 //   passive scalar display identity evidence for phone MAX diagnostics.
+// 2026-11-17: J.J. Boyd (KG4VCF), AI-assisted via Claude Code: while the
+//   recorder shows the past the view does not follow the slice the rewind
+//   retunes (PR 808 part 2).
 
 import Combine
 import Foundation
@@ -552,6 +555,13 @@ final class BandSubscriber: ObservableObject {
             return keyed
         }
         let limits = band.spanLimits(sampleRateHz: sampleRateHz)
+        if band.viewHeld(), let held = band.requestedView, held.spanHz > 0 {
+            // The recorder shows the past: the rewind retunes the slice to
+            // the moment's frequency and back, and the view stays where it
+            // is (PR 808 part 2, JJ's video: the scale jumped 5 kHz).
+            lastActive = (active.id, active.slice.frequencyHz)
+            return held
+        }
         var view = band.requestedView
             ?? TuneGestures.View(centerHz: active.slice.frequencyHz, spanHz: band.settings.rxViewSpanHz ?? sampleRateHz)
         view.spanHz = min(max(view.spanHz, limits.lowerBound), limits.upperBound)

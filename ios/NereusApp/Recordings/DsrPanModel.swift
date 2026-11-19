@@ -9,6 +9,11 @@
 //   the past spectrum keeps up while the sound plays, the hours are asked
 //   again as the recorder changes, one save at a time.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: PR 808 sheet overlap round: SAVE's bracket opens inside the
+//   strip's height and rides with the picture until a handle is moved, so
+//   both handles stay on screen; the past spectrum goes to the band's own
+//   trace drawing (pastTrace, pastSpectrumChanged).
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-16: Rewind plays on release (JJ's design change): letting go of
 //   the strip, a pick on the hours map or a typed time plays the active
 //   slice from the picture's top at the frequency it is on; a tap in the
@@ -18,9 +23,37 @@
 //   playing yet, a tap at the frequency it tunes to; playing, a frequency
 //   outside what was kept then says so on the waterfall (keptNote).
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: Fixes after JJ's phone run of PR 797: while the sound plays
+//   the picture follows it every display frame (frame(periodSeconds:)) and
+//   the past spectrum is asked once a frame, one ask at a time, again at
+//   once when a late answer lands (the desktop's a7d935e17); who draws the
+//   picture (the band or the Core) no longer flips back and forth near the
+//   band's own edge; the live spectrum is hidden while the past shows.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: The time strip runs every display frame only in the past or
+//   while a rewind plays (stripRunsEveryFrame); live it keeps its old pace.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-19: Fixes after JJ's phone run of PR 808 (round A): the rows are
+//   asked a piece at a time, the picture's top first, so the rows at the
+//   play point never wait behind a whole picture on a slow link; a zoom or
+//   pan in the past asks again at once for the new span (rows and a paused
+//   spectrum), dropping the ask under way; moments newer than the Core has
+//   kept are not remembered as never kept; on a slow link the rows ahead
+//   of the sound reach further (four asks' time, at most 10 s); LIVE stops
+//   the picture following the sound at once and leaves it live when the
+//   answer comes. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-19: Fixes after JJ's phone run of PR 808 (round B): while SAVE is
+//   open the picture holds still (the sound plays on; live, it holds at the
+//   moment SAVE opened) so the handles stay under the finger, and a drag on
+//   the strip then moves only the picture, never the sound; the picture
+//   catches up when SAVE closes. Sound only saves the active slice, and
+//   says so; on a Core with no MP3 encoder it says WAV and why.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
+import CoreGraphics
 import Foundation
+import NereusBand
 import NereusMirror
 import NereusModels
 import Observation
@@ -69,13 +102,30 @@ final class DsrPanModel {
     nonisolated static let drawingShare = 0.25
     /// The most rows one request asks for (the link's 1 to 4096).
     nonisolated static let mostRows = 4096
+    /// The bytes of bins one answer of the Core's carries
+    /// (DsrPastRenderer::kAnswerBinBytes, 2 bytes a point): one ask is at
+    /// most one answer, so the rows at the picture's top never wait behind
+    /// a whole picture's answers on a slow link (JJ's phone run, PR 808).
+    nonisolated static let answerBinBytes = 196_608
+    /// An ask the Core has answered is not sent again, the same, sooner than this.
+    nonisolated static let reaskSeconds = 1.0
+    /// The furthest the rows ahead of the sound reach on a slow link (see ``leadSeconds``).
+    nonisolated static let mostAheadSeconds = 10.0
     /// A drag that ends this close to now is live again.
     nonisolated static let liveSlackSeconds = 0.3
     /// How long a note stays on the waterfall.
     nonisolated static let noteSeconds = 4.0
-    /// The past spectrum is asked for at most this often while the sound
-    /// plays, one ask at a time (the desktop's SpectrumWidget kDsrSpectrumIntervalMs, 100 ms).
-    nonisolated static let spectrumIntervalSeconds = 0.1
+    /// While the sound plays the past spectrum is asked once a display
+    /// frame, one ask at a time; asks closer than the frame less this share
+    /// of it are left out, so a frame a little early never drops one (the
+    /// desktop's SpectrumWidget kDsrSpectrumSlackDivisor, 4).
+    nonisolated static let spectrumSlackDivisor = 4.0
+    /// The display frame before the strip's display link has said (60 a second).
+    nonisolated static let defaultFrameSeconds = 1.0 / 60
+    /// Once the Core draws the picture, the band takes it back only when the
+    /// top is this much inside the band's own reach, so the two never swap
+    /// while the band's reach moves by a line as its lines come and go.
+    nonisolated static let ownEdgeSlackSeconds = 1.0
     /// The hours are asked again at least this often while the recorder runs.
     nonisolated static let hoursIntervalSeconds = 3600.0
     /// The most moments remembered as not kept before the memory starts again.
@@ -109,19 +159,49 @@ final class DsrPanModel {
     /// The picture's top moment; nil while live.
     private(set) var viewTop: Double?
     /// The rows the Core has drawn, oldest first, for ``rowsView``.
-    private(set) var rows: [DsrPastRow] = []
+    private(set) var rows: [DsrPastRow] = [] {
+        didSet {
+            rowsRevision &+= 1
+        }
+    }
     /// The display the rows were drawn with.
     private(set) var rowsView: DsrPanView?
     /// The rows' layout: first point's frequency and the step, in Hz.
     private(set) var rowsLayout: (firstHz: Double, hzPerBin: Double, count: Int)?
     /// The Core is drawing rows for the picture.
     private(set) var awaitingRows = false
+    /// The picture's top lies past what the band holds itself: the Core
+    /// draws it. Decided as the top moves (``decideWhoDraws()``), with
+    /// slack on the way back, so it does not flip at the band's edge.
+    private(set) var coreDraws = false
+    /// Counts each change to ``rows``: the past picture is drawn again only when it or its top's line changes.
+    @ObservationIgnored private(set) var rowsRevision = 0
+    /// The past picture last drawn and what it was drawn from.
+    @ObservationIgnored var pictureCache: (key: String, image: CGImage)?
     /// The spectrum at the picture's top moment, while in the past.
-    private(set) var pastSpectrum: DsrPastFrames?
+    private(set) var pastSpectrum: DsrPastFrames? {
+        didSet {
+            pastSpectrumChanged()
+        }
+    }
+    /// Told when ``pastSpectrum`` changes: the band draws it again.
+    @ObservationIgnored var pastSpectrumChanged: () -> Void = {}
     /// Every kept hour, newest first.
     private(set) var hours: [DsrHour] = []
     /// SAVE's bracket, two moments in either order; nil while SAVE is off.
-    private(set) var bracket: (Double, Double)?
+    /// Until a handle is moved it rides with the picture, the same points
+    /// below its top (``bracketPoints``), so both handles stay on the strip
+    /// while the picture runs live or follows the sound (PR 808).
+    var bracket: (Double, Double)? {
+        if let bracketPoints {
+            return (top - bracketPoints.0 * secondsPerPoint, top - bracketPoints.1 * secondsPerPoint)
+        }
+        return heldBracket
+    }
+    /// The bracket as points below the picture's top, until a handle moves.
+    private(set) var bracketPoints: (Double, Double)?
+    /// The bracket's moments once a handle has moved.
+    private var heldBracket: (Double, Double)?
     /// A note over the waterfall: the Core's words for a save, a refusal or a reason.
     private(set) var note: String?
     /// "Nothing was kept at this frequency then." while the active slice
@@ -140,8 +220,19 @@ final class DsrPanModel {
     var timeSheetOpen = false
 
     @ObservationIgnored private var rowsTask: Task<Void, Never>?
+    /// The ask under way: its window and display, so a later plan knows whether it covers the same.
+    @ObservationIgnored private var rowsAskKey: String?
+    /// The last ask sent and when, so an ask answered without rows (moments
+    /// the Core has not kept yet) is not sent again at once.
+    @ObservationIgnored private var lastRowsAsk: (key: String, at: Double)?
+    /// How long the last rows ask took to be answered, in seconds.
+    @ObservationIgnored private(set) var rowsAskSeconds = 0.0
+    /// The display the past spectrum was last asked with: a zoom or pan asks again.
+    @ObservationIgnored private var spectrumView: DsrPanView?
     @ObservationIgnored private var spectrumTask: Task<Void, Never>?
     @ObservationIgnored private var spectrumAskedAt: Double?
+    /// The display's frame, in seconds, as the strip's display link last said.
+    @ObservationIgnored private(set) var frameSeconds = DsrPanModel.defaultFrameSeconds
     @ObservationIgnored private var noteTask: Task<Void, Never>?
     @ObservationIgnored private var hoursTask: Task<Void, Never>?
     /// A rewind from ``playFromTop(hz:)`` is with the Core: a tune meanwhile asks for no other.
@@ -253,13 +344,20 @@ final class DsrPanModel {
     /// The picture shows the past (paused or playing).
     var inPast: Bool { viewTop != nil || client.dsr?.stretch != nil }
 
+    /// The time strip redraws every display frame only while the picture
+    /// shows the past or this device's rewind plays. Live it redraws as its
+    /// values change, as it did before the per-frame strip, so a phone left
+    /// on the band does not draw it 60 times a second (the phone's heat).
+    var stripRunsEveryFrame: Bool { inPast || followsSound }
+
     /// LIVE is red: the picture or the active slice's sound is in the past,
     /// another slice this device rewound still plays the past, or a key took one live.
     var liveLit: Bool { inPast || rewound != nil || (sameSession && (!mine.isEmpty || !owed.isEmpty)) }
 
     /// The moment the slice plays now, while it plays this device's rewind.
     var playedMoment: Double? {
-        guard followsSound, let slice = activeSlice(), let anchor = anchors[slice] else {
+        guard followsSound, let slice = activeSlice(), !liveAsked.contains(slice),
+              let anchor = anchors[slice] else {
             return nil
         }
         return anchor.utc + (clock() - anchor.at)
@@ -272,12 +370,54 @@ final class DsrPanModel {
     /// The top moment drawn: the picture's, or now.
     var top: Double { viewTop ?? newest }
 
-    /// The picture's top lies past what the band holds itself: the Core draws it.
-    var coreDraws: Bool {
-        guard let viewTop, usable else {
-            return false
+    /// While the past shows on a usable recorder only the past spectrum is
+    /// drawn: the band leaves its live trace out, and until the first past
+    /// answer arrives the spectrum stays empty under the PAST tag.
+    var hidesLiveSpectrum: Bool { inPast && usable }
+
+    /// The past spectrum as the band's renderer draws a trace: its first
+    /// row's dBm and the frequencies its bins span, while the live one is
+    /// hidden (PR 808: drawn by the live trace's path, not a separate line).
+    var pastTrace: (trace: [Float], coverage: BandCoverage)? {
+        guard hidesLiveSpectrum, let frame = pastSpectrum, frame.rowCount > 0, frame.binCount > 1 else {
+            return nil
         }
-        return clock() - viewTop > ownSeconds() + 0.5 * secondsPerPoint || client.dsr?.stretch != nil
+        let trace = (0..<frame.binCount).map { frame.dbm(row: 0, bin: $0) }
+        let span = Double(frame.binCount) * frame.hzPerBin
+        return (trace, BandCoverage(centerHz: frame.firstBinHz - frame.hzPerBin / 2 + span / 2, spanHz: span))
+    }
+
+    /// Who draws the picture at its top now: the Core past the band's own
+    /// reach (or for a saved stretch), else the band. Going back to the
+    /// band needs the top ``ownEdgeSlackSeconds`` inside its reach, so a
+    /// reach that moves by a line as lines come and go never swaps them.
+    private func decideWhoDraws() {
+        guard let viewTop, usable else {
+            coreDraws = false
+            return
+        }
+        if client.dsr?.stretch != nil {
+            coreDraws = true
+            return
+        }
+        let back = clock() - viewTop
+        let reach = ownSeconds()
+        if coreDraws {
+            if back < reach - max(Self.ownEdgeSlackSeconds, secondsPerPoint) {
+                coreDraws = false
+            }
+        } else if back > reach + 0.5 * secondsPerPoint {
+            coreDraws = true
+        }
+    }
+
+    /// The picture goes live: no top, no past spectrum, the band's own waterfall live.
+    private func showLive() {
+        viewTop = nil
+        coreDraws = false
+        pastSpectrum = nil
+        spectrumView = nil
+        lookBack(0)
     }
 
     /// The share of the picture's rows still waiting for the Core.
@@ -344,14 +484,21 @@ final class DsrPanModel {
     /// The strip moves with the finger: up goes back. `startTop` is the top when the drag began.
     func drag(from startTop: Double, by points: Double) {
         dragging = true
+        // Moved by hand: closing SAVE leaves the picture where it is.
+        saveHeldLive = false
         setTop(startTop + points * secondsPerPoint, commit: false)
     }
 
-    /// The finger lifted: the rows are asked for and the active slice plays from the top.
+    /// The finger lifted: the rows are asked for and the active slice plays
+    /// from the top. While SAVE is open the drag only moves the picture: a
+    /// finger that lands on the strip beside a handle never moves the sound
+    /// (JJ's phone run, PR 808: the play time stepped back 4 s).
     func dragEnded() {
         dragging = false
         commit()
-        playFromTop()
+        if !saving {
+            playFromTop()
+        }
     }
 
     /// Rewind plays on release: the active slice plays from the picture's
@@ -497,10 +644,8 @@ final class DsrPanModel {
     /// own, and its words show.
     func goLive() async {
         followSession()
-        viewTop = nil
-        pastSpectrum = nil
+        showLive()
         keptNote = nil
-        lookBack(0)
         var slices = mine.union(owed)
         if let active = activeSlice(), rewound != nil || client.dsr?.stretch != nil {
             slices.insert(active)
@@ -515,6 +660,11 @@ final class DsrPanModel {
                 liveAsked.remove(slice)
                 show(error)
             }
+        }
+        // The answers took a while: the picture is live once the active slice is.
+        if let active = activeSlice(), slices.contains(active), !mine.contains(active),
+           client.dsr?.stretch == nil {
+            showLive()
         }
     }
 
@@ -555,9 +705,7 @@ final class DsrPanModel {
                 owed.insert(slice)
             }
             if slice == active {
-                viewTop = nil
-                pastSpectrum = nil
-                lookBack(0)
+                showLive()
             }
         }
         for slice in liveAsked where now[slice] == nil && lastRewound[slice] != nil {
@@ -569,27 +717,66 @@ final class DsrPanModel {
     }
 
     /// Called a few times a second: while the sound plays the picture
-    /// follows it, rows ahead of it and its spectrum are asked for, and the
-    /// hours are asked again when the recorder has changed.
+    /// follows it and rows ahead of it are asked for, a picture left in the
+    /// past ages past the band's own reach, and the hours are asked again
+    /// when the recorder has changed. The rows the Core draws are asked
+    /// for whenever the picture lacks some and no ask is under way, and at
+    /// once for a new zoom or pan (a new display), with a paused picture's
+    /// spectrum (JJ's phone run, PR 808).
     func tick() {
         followSession()
         followRecorder()
         askForHoursIfDue()
-        if !dragging, let played = playedMoment {
+        guard followPlay() else {
+            return
+        }
+        guard !dragging, coreDraws else {
+            return
+        }
+        askForRows(ahead: picturePlays)
+        if playedMoment == nil, let view = panView(), view != spectrumView {
+            // Playing, the display frames ask for it with the new display.
+            askForSpectrum()
+        }
+    }
+
+    /// Called every display frame while the past shows (the strip's display
+    /// link, `periodSeconds` its frame): while the sound plays the picture
+    /// moves with it and its spectrum is asked for, once a frame, one ask
+    /// at a time (the desktop's paint timer tick, a7d935e17).
+    func frame(periodSeconds: Double) {
+        if periodSeconds > 0 {
+            frameSeconds = periodSeconds
+        }
+        guard followPlay(), !dragging, playedMoment != nil else {
+            return
+        }
+        askForSpectrum(whilePlaying: true)
+    }
+
+    /// The picture's top follows the sound while it plays this device's
+    /// rewind, and who draws it is decided again. False when it went live.
+    @discardableResult
+    private func followPlay() -> Bool {
+        if !dragging, !saving, let played = playedMoment {
             if client.dsr?.stretch == nil, played >= clock() - Self.liveSlackSeconds {
-                viewTop = nil
-                pastSpectrum = nil
-                lookBack(0)
-                return
+                showLive()
+                return false
             }
             viewTop = played
             apply()
-            if coreDraws {
-                askForRows(ahead: true)
-            }
-            askForSpectrum(whilePlaying: true)
+        } else if !dragging, saving, viewTop != nil {
+            // SAVE holds the picture still (JJ's phone run, PR 808): the
+            // band's own lines move on, so its look back follows the held top.
+            apply()
         }
+        decideWhoDraws()
+        return true
     }
+
+    /// The picture moves with the sound: this device's rewind plays and
+    /// SAVE is not holding the picture still.
+    var picturePlays: Bool { playedMoment != nil && !saving }
 
     /// A drop, a reconnect or another Core: nothing is owed across it, and
     /// the past drawn, the hours and what was not kept are asked again.
@@ -639,6 +826,10 @@ final class DsrPanModel {
     private func forgetPast() {
         rowsTask?.cancel()
         rowsTask = nil
+        rowsAskKey = nil
+        lastRowsAsk = nil
+        rowsAskSeconds = 0
+        spectrumView = nil
         awaitingRows = false
         rows = []
         rowsView = nil
@@ -710,23 +901,52 @@ final class DsrPanModel {
     var saving: Bool { bracket != nil }
 
     /// SAVE: puts the bracket up below the picture's top, or takes it down.
-    func toggleSave() {
+    /// `stripPoints`, the strip's height: the lower handle sits above the
+    /// clock inside it, so both handles show the moment SAVE opens (PR 808).
+    func toggleSave(stripPoints: Double? = nil) {
         guard usable else {
             showReasonNote()
             return
         }
         if bracket != nil {
-            bracket = nil
+            cancelSave()
             return
         }
-        let end = top - Self.bracketTopPoints * secondsPerPoint
+        let spp = max(secondsPerPoint, 0.001)
+        var foot = Self.bracketFootPoints
+        if let stripPoints {
+            foot = min(foot, max(Self.bracketTopPoints + 1, stripPoints - Self.bracketClockRoomPoints))
+        }
         // Never shorter than the desktop's shortest stretch, however fast the waterfall runs.
-        let start = min(top - Self.bracketFootPoints * secondsPerPoint, end - Self.minBracketSeconds)
-        bracket = (end, start)
+        foot = max(foot, Self.bracketTopPoints + Self.minBracketSeconds / spp)
+        heldBracket = nil
+        bracketPoints = (Self.bracketTopPoints, foot)
+        // The picture holds still while SAVE is open (PR 808); live, at this
+        // moment, and live again when SAVE closes.
+        if viewTop == nil {
+            saveHeldLive = true
+            viewTop = newest
+            apply()
+            decideWhoDraws()
+        }
     }
 
+    /// SAVE opened on the live picture and held it: closing SAVE goes live again.
+    @ObservationIgnored private var saveHeldLive = false
+
+    /// The room the lower handle keeps above the strip's foot: the clock
+    /// button, its margin and half a handle.
+    nonisolated static let bracketClockRoomPoints = 50.0
+
     func cancelSave() {
-        bracket = nil
+        bracketPoints = nil
+        heldBracket = nil
+        if saveHeldLive {
+            saveHeldLive = false
+            if viewTop != nil, !followsSound {
+                showLive()
+            }
+        }
     }
 
     /// One of the bracket's handles moved to `pointsDown` from the picture's top.
@@ -734,13 +954,15 @@ final class DsrPanModel {
         guard var bracket else {
             return
         }
+        // A handle moved: the bracket stays on its moments from here.
+        bracketPoints = nil
         let moment = min(clock() - 1, top - max(0, min(waterfallPoints, pointsDown)) * secondsPerPoint)
         if which == 0 {
             bracket.0 = moment
         } else {
             bracket.1 = moment
         }
-        self.bracket = bracket
+        heldBracket = bracket
     }
 
     /// The handle's step for VoiceOver's adjust: one tick of the strip, ten points.
@@ -776,7 +998,11 @@ final class DsrPanModel {
         guard let stretch else {
             return ""
         }
-        return Self.duration(stretch.to - stretch.from) + ". Drag the yellow handles on the time strip to change it."
+        let detail = Self.duration(stretch.to - stretch.from) + ". Drag the yellow handles on the time strip to change it."
+        guard let settings = client.settings, settings.noMp3, settings.format == .mp3 else {
+            return detail
+        }
+        return detail + " " + Self.noMp3Note
     }
 
     /// The whole pan's size: the recorder's bytes an hour, or what it keeps over how long.
@@ -791,12 +1017,24 @@ final class DsrPanModel {
         return Self.megabytes(perSecond * (stretch.to - stretch.from)) + ", every signal"
     }
 
-    var soundFormat: RecordingsDocument.Format { client.settings?.format ?? .mp3 }
+    /// The file sound only is saved as: the Files format, or WAV on a Core
+    /// with no MP3 encoder (settings `mp3` false), as the Core saves it.
+    var soundFormat: RecordingsDocument.Format {
+        guard let settings = client.settings else {
+            return .mp3
+        }
+        return settings.noMp3 ? .wav : settings.format
+    }
 
     var soundTitle: String { soundFormat == .wav ? "Sound only (WAV)" : "Sound only (MP3)" }
 
-    /// Slice A's sound, in the Files format: MP3 at 64 kbit/s, WAV 24 kHz 16-bit (V2).
-    func soundSize(sliceFrequencyHz: Double?) -> String {
+    /// Why sound only says WAV when the Files format is MP3; nil otherwise.
+    nonisolated static let noMp3Note = "This Core has no MP3 encoder, so the sound is saved as WAV."
+
+    /// The active slice's sound, in the Files format: MP3 at 64 kbit/s, WAV
+    /// 24 kHz 16-bit (V2). `sliceLetter`: the slice sound only saves, the
+    /// pan's active one (JJ's phone run, PR 808: it read Slice A on Slice B).
+    func soundSize(sliceLetter: String, sliceFrequencyHz: Double?) -> String {
         guard let stretch else {
             return ""
         }
@@ -805,7 +1043,7 @@ final class DsrPanModel {
             ? Double(RecordingSettingsModel.fileRateHz * RecordingSettingsModel.wavBytesPerSample)
             : Double(RecordingSettingsModel.monoKbitPerSec) * 1000 / 8
         let at = sliceFrequencyHz.map { " at " + Self.frequencyText($0) } ?? ""
-        return "Slice A\(at), about " + Self.megabytes(bytesPerSecond * (stretch.to - stretch.from))
+        return "Slice \(sliceLetter)\(at), about " + Self.megabytes(bytesPerSecond * (stretch.to - stretch.from))
     }
 
     /// One save at a time: a second tap while the Core answers the first sends nothing.
@@ -818,9 +1056,11 @@ final class DsrPanModel {
             saveInFlight = false
         }
         do {
+            // Sound only keeps the active slice's sound, the slice its button names.
             let note = try await client.saveStretch(fromUtcNs: Int64((stretch.from * 1e9).rounded()),
-                                                    toUtcNs: Int64((stretch.to * 1e9).rounded()), kind: kind)
-            bracket = nil
+                                                    toUtcNs: Int64((stretch.to * 1e9).rounded()), kind: kind,
+                                                    slice: kind == .sound ? activeSlice() : nil)
+            cancelSave()
             showNote(note.isEmpty ? (kind == .wholePan ? "Whole pan saved to Recordings on the Core."
                                                        : "Sound saved to Recordings on the Core.") : note)
         } catch {
@@ -866,9 +1106,7 @@ final class DsrPanModel {
     private func setTop(_ moment: Double, commit: Bool) {
         let newest = self.newest
         if client.dsr?.stretch == nil, moment >= newest - Self.liveSlackSeconds {
-            viewTop = nil
-            pastSpectrum = nil
-            lookBack(0)
+            showLive()
             return
         }
         let ownOldest = clock() - ownSeconds()
@@ -878,6 +1116,7 @@ final class DsrPanModel {
         }
         viewTop = max(lowest, min(newest, moment))
         apply()
+        decideWhoDraws()
         if commit {
             self.commit()
         }
@@ -897,17 +1136,104 @@ final class DsrPanModel {
             return
         }
         if coreDraws {
-            askForRows(ahead: rewound != nil)
+            askForRows(ahead: rewound != nil, fresh: true)
         }
         askForSpectrum()
     }
 
-    /// Asks for the rows the picture lacks, newest first; a newer ask drops an older one.
-    private func askForRows(ahead: Bool) {
+    /// The most rows one ask carries: one answer of the Core's for the
+    /// display's width; while the sound plays, no more than twice the rows
+    /// asked ahead of it, so the next ask for the top is never far off.
+    func rowsPerAsk(view: DsrPanView, playing: Bool) -> Int {
+        let answer = view.pixels > 0 ? max(1, Self.answerBinBytes / (2 * view.pixels)) : Self.mostRows
+        guard playing else {
+            return min(Self.mostRows, answer)
+        }
+        let aheadRows = Int((leadSeconds / max(secondsPerPoint, 0.001)).rounded(.up))
+        return max(1, min(answer, 2 * aheadRows))
+    }
+
+    /// How far ahead of the sound the rows are asked for. ``aheadSeconds``
+    /// (the desktop's 2 s) on a quick link; on a slow one four times the last
+    /// ask's time, at most ``mostAheadSeconds``: one ask may be under way
+    /// when the lead is checked and the next takes as long again, so the
+    /// lead is asked again while two asks' time is left (``refillSeconds``)
+    /// and an ask brings it back above that with one ask's time to spare.
+    var leadSeconds: Double {
+        min(Self.mostAheadSeconds, max(Self.aheadSeconds, 4 * rowsAskSeconds))
+    }
+
+    /// The lead left below which the rows ahead are asked again: half the
+    /// lead, or two asks' time and a point on a slow link.
+    var refillSeconds: Double {
+        min(leadSeconds, max(leadSeconds / 2, 2 * rowsAskSeconds + secondsPerPoint))
+    }
+
+    /// The next stretch of rows to ask for, newest first: the rows at the
+    /// picture's top when they are missing (with those ahead of the sound
+    /// while it plays, ``leadSeconds``), else, playing, those ahead once
+    /// less than ``refillSeconds`` is left, else the newest run the picture
+    /// lacks below. At most `most` rows, all of them missing.
+    func nextRowsAsk(ahead: Bool, most: Int) -> (from: Double, to: Double, count: Int)? {
+        let spp = max(secondsPerPoint, 0.001)
+        let total = Int(waterfallPoints)
+        let newest = self.newest
+        let top = self.top
+        let aheadRows = ahead ? Int((leadSeconds / spp).rounded(.up)) : 0
+        let refillRows = Int((refillSeconds / spp).rounded(.up))
+        var leadRunsOut = waits(top)
+        if !leadRunsOut, aheadRows > 1 {
+            for k in 1...max(1, min(aheadRows, refillRows)) {
+                let moment = top + Double(k) * spp
+                if moment <= newest, waits(moment) {
+                    leadRunsOut = true
+                    break
+                }
+            }
+        }
+        var to: Double?
+        var from = 0.0
+        var count = 0
+        for k in (leadRunsOut ? -aheadRows : 0)..<total {
+            let moment = top - Double(k) * spp
+            if moment > newest {
+                continue
+            }
+            if waits(moment) {
+                if to == nil {
+                    to = moment
+                }
+                from = moment
+                count += 1
+                if count >= most {
+                    break
+                }
+            } else if to != nil {
+                break
+            }
+        }
+        guard let to else {
+            return nil
+        }
+        return (from, to, count)
+    }
+
+    /// Asks for rows the picture lacks, a piece at a time, the top first
+    /// (``nextRowsAsk(ahead:most:)``); when one is answered the next is
+    /// asked at once. One ask at a time: a new display (a zoom or pan)
+    /// drops the one under way and asks again at once, and so does a
+    /// `fresh` ask (a moved picture) for another stretch.
+    private func askForRows(ahead: Bool, fresh: Bool = false) {
         guard let view = panView(), let slice = activeSlice() ?? Optional(0), waterfallPoints >= 1 else {
             return
         }
         if rowsView != view {
+            // Rows drawn with another display are not this one's: dropped,
+            // with any ask still under way for them.
+            rowsTask?.cancel()
+            rowsTask = nil
+            rowsAskKey = nil
+            awaitingRows = false
             rows = []
             rowsView = view
             rowsLayout = nil
@@ -917,31 +1243,32 @@ final class DsrPanModel {
             unkept = []
             unkeptKey = memory
         }
-        let total = Int(waterfallPoints)
-        var newestMissing: Double?
-        var oldestMissing: Double?
-        for y in 0..<total {
-            let moment = top - Double(y) * secondsPerPoint
-            if waits(moment) {
-                newestMissing = newestMissing ?? moment
-                oldestMissing = moment
+        guard let plan = nextRowsAsk(ahead: ahead, most: rowsPerAsk(view: view, playing: ahead)) else {
+            return
+        }
+        let from = plan.from
+        let to = plan.to
+        let key = "\(memory)|\(Int64((from * 1e9).rounded()))|\(Int64((to * 1e9).rounded()))"
+        if rowsTask != nil {
+            if !fresh || rowsAskKey == key {
+                // While one is with the Core the next waits for it.
+                return
             }
-        }
-        guard var to = newestMissing, let from = oldestMissing else {
+            rowsTask?.cancel()
+        } else if !fresh, let lastRowsAsk, lastRowsAsk.key == key, clock() - lastRowsAsk.at < Self.reaskSeconds {
             return
         }
-        if ahead {
-            to = min(newest, to + Self.aheadSeconds)
-        }
-        if rowsTask != nil, ahead {
-            // While the sound plays one ask at a time is enough.
-            return
-        }
-        let count = min(Self.mostRows, max(1, Int(((to - from) / secondsPerPoint).rounded()) + 1))
-        rowsTask?.cancel()
+        let count = min(Self.mostRows, max(1, plan.count))
+        // What the Core keeps up to now: moments newer than it are not yet
+        // kept, so they are not remembered as never kept.
+        let keptEdge = self.keptEdge
         awaitingRows = true
+        rowsAskKey = key
+        let askedAt = clock()
+        lastRowsAsk = (key, askedAt)
         rowsTask = Task {
             var answered = true
+            var refused = false
             do {
                 try await client.pastRows(slice: slice, view: view, fromUtcNs: Int64((from * 1e9).rounded()),
                                           toUtcNs: Int64((to * 1e9).rounded()), rowCount: count) { frames in
@@ -950,30 +1277,55 @@ final class DsrPanModel {
             } catch is CancellationError {
                 answered = false
             } catch {
+                refused = true
                 if !Task.isCancelled {
                     show(error)
                 }
             }
             if !Task.isCancelled {
-                if answered {
-                    // What the Core left out, or refused, is not kept: not asked again.
-                    rememberUnkept(from: from, to: to, memory: memory)
-                }
                 awaitingRows = false
                 rowsTask = nil
+                rowsAskKey = nil
+                if refused {
+                    // A refusal stands for the whole picture: not asked again
+                    // until the display or the recorder changes.
+                    rememberUnkept(from: top - pictureSeconds, to: max(to, top), memory: memory, keptEdge: nil)
+                } else if answered {
+                    rowsAskSeconds = max(0, clock() - askedAt)
+                    // What the Core left out is not kept: not asked again.
+                    rememberUnkept(from: from, to: to, memory: memory, keptEdge: keptEdge)
+                    // The next piece at once, the top first.
+                    if coreDraws, !dragging {
+                        askForRows(ahead: picturePlays)
+                    }
+                }
             }
         }
     }
 
-    /// The moments from `from` to `to` that still have no row once the Core has answered.
-    private func rememberUnkept(from: Double, to: Double, memory: String) {
+    /// The newest moment the Core has said it keeps: the open stretch's
+    /// end, or the recorder's newest; now when it has said none.
+    private var keptEdge: Double {
+        if let stretch = client.dsr?.stretch {
+            return Double(stretch.toUtcNs) / 1e9
+        }
+        if let newestMs = client.dsr?.newestUtcMs, newestMs > 0 {
+            return Double(newestMs) / 1000
+        }
+        return clock()
+    }
+
+    /// The moments from `from` to `to` that still have no row once the
+    /// Core has answered, but for those newer than `keptEdge`, which the
+    /// recorder has not reached yet and are asked again later.
+    private func rememberUnkept(from: Double, to: Double, memory: String, keptEdge: Double?) {
         guard unkeptKey == memory, to >= from else {
             return
         }
         let spp = max(secondsPerPoint, 0.001)
         var moment = to
         while moment >= from - spp / 2 {
-            if row(at: moment) == nil {
+            if row(at: moment) == nil, keptEdge.map({ moment <= $0 }) ?? true {
                 unkept.insert(slot(moment))
             }
             moment -= spp
@@ -1003,8 +1355,9 @@ final class DsrPanModel {
     }
 
     /// The spectrum at the picture's top or the moment played. While the
-    /// sound plays it is asked again at the desktop's interval, one ask at a
-    /// time; a moved picture replaces any ask under way.
+    /// sound plays it is asked again once a display frame, one ask at a
+    /// time, and again at once when an answer comes a frame or more late;
+    /// a moved picture replaces any ask under way.
     private func askForSpectrum(whilePlaying: Bool = false) {
         guard coreDraws || followsSound, usable, let view = panView(), let slice = activeSlice() else {
             pastSpectrum = nil
@@ -1015,11 +1368,13 @@ final class DsrPanModel {
             if spectrumTask != nil {
                 return
             }
-            if let spectrumAskedAt, now - spectrumAskedAt < Self.spectrumIntervalSeconds {
+            let period = max(frameSeconds, 0.001)
+            if let spectrumAskedAt, now - spectrumAskedAt < period - period / Self.spectrumSlackDivisor {
                 return
             }
         }
         spectrumAskedAt = now
+        spectrumView = view
         let moment = playedMoment ?? top
         spectrumTask?.cancel()
         spectrumTask = Task {
@@ -1030,6 +1385,11 @@ final class DsrPanModel {
                     pastSpectrum = frame
                 }
                 spectrumTask = nil
+                // An answer that took a frame or more: the moment has moved
+                // on, so the next is asked for now rather than on the next frame.
+                if !dragging, playedMoment != nil {
+                    askForSpectrum(whilePlaying: true)
+                }
             }
         }
     }

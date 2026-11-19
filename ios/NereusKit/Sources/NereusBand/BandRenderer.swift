@@ -5,6 +5,11 @@
 // 2026-11-15: J.J. Boyd (KG4VCF), AI-assisted via Claude Code:
 //   keep the grid and trace on the GPU between draws, and give each
 //   label its own picture that moves with the view.
+// 2026-11-17: J.J. Boyd (KG4VCF), AI-assisted via Claude Code:
+//   leave the live trace, peak hold and extras out while
+//   BandOverlays.liveSpectrumHidden (the recorder's past spectrum).
+// 2026-11-17: J.J. Boyd (KG4VCF), AI-assisted via Claude Code:
+//   the past spectrum drawn through the live trace's path (PR 808).
 
 import CoreGraphics
 import Foundation
@@ -629,22 +634,29 @@ public final class BandRenderer {
                              edgeColour, to: &over)
             }
         }
-        if flat, let hold = overlays.peakHold, hold.count > 1 {
+        // The recorder's past spectrum stands in for the live one.
+        let live = !overlays.liveSpectrumHidden
+        if flat, live, let hold = overlays.peakHold, hold.count > 1 {
             addPeakHold(hold, coverage: overlays.frameCoverage, geometry: geometry, settings: settings,
                         scale: overlays.scale, to: &over)
         }
         let beforeTrace = over.count
         var drawsTrace = false
-        if flat, let frame, !frame.traceDbm.isEmpty {
+        // The live trace, or while it is left out the recorder's past one,
+        // drawn the same way: one drawing path for both (PR 808).
+        let shownTrace: (trace: [Float], coverage: BandCoverage?)? = live
+            ? frame.flatMap { $0.traceDbm.isEmpty ? nil : ($0.traceDbm, overlays.frameCoverage) }
+            : overlays.pastTrace.flatMap { $0.count > 1 ? ($0, overlays.pastTraceCoverage) : nil }
+        if flat, let shownTrace {
             // The trace changes with each frame the Core sends, about half
             // the draws: kept between frames until a new frame, view or look.
-            let key = TraceKey(trace: frame.traceDbm, coverage: overlays.frameCoverage, geometry: geometry,
+            let key = TraceKey(trace: shownTrace.trace, coverage: shownTrace.coverage, geometry: geometry,
                                colour: settings.traceColour, lineColour: settings.traceLineColourDrawn,
                                fill: settings.traceFill, gradient: settings.traceGradient,
                                fillAlpha: Self.fillAlpha(settings), width: settings.traceWidthPixels(scale: overlays.scale))
             if traceKey != key {
                 builtVertices.removeAll(keepingCapacity: true)
-                addTrace(frame.traceDbm, coverage: overlays.frameCoverage, geometry: geometry, settings: settings,
+                addTrace(shownTrace.trace, coverage: shownTrace.coverage, geometry: geometry, settings: settings,
                          scale: overlays.scale, to: &builtVertices)
                 traceVertices.store(builtVertices, frame: frameNumber, device: device)
                 traceKey = key
@@ -656,7 +668,7 @@ public final class BandRenderer {
             addZeroLine(geometry: geometry, settings: settings, scale: overlays.scale, to: &over)
         }
         valuesDrawn.removeAll(keepingCapacity: true)
-        if flat, let extras = heldExtras {
+        if flat, live, let extras = heldExtras {
             addExtras(extras, frame: frame, coverage: overlays.frameCoverage, layout: layout, geometry: geometry,
                       settings: settings, scale: overlays.scale, to: &over)
         }

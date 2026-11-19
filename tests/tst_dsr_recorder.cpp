@@ -21,6 +21,10 @@
 //   2026-11-16 - Erasing what is kept, and the receivers in the status.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code. Recording plan Task 26.
+//   2026-11-17 - A receiver closed and reopened at the same rate starts
+//                 again at the clock's time, with a gap; a closed receiver
+//                 reaches the recorder as not streaming. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -34,6 +38,7 @@
 #include <QTimeZone>
 
 #include "core/AppSettings.h"
+#include "core/ReceiverManager.h"
 #include "core/recordings/RecordingService.h"
 #include "core/recordings/RecordingSettings.h"
 #include "core/recordings/dsr/DsrRecorder.h"
@@ -442,6 +447,80 @@ private slots:
         QCOMPARE(svc->dsrStatus().reason, QString());
         svc->pumpForTest();
         QCOMPARE(svc->dsrRecorder()->ring().blockCount(), 1);
+    }
+
+    // A receiver closed for 144 s and reopened at the same rate and centre
+    // (the Core with no client): its I/Q stops, then comes back. What is
+    // kept after is stamped by the clock, with a gap, not carried on from
+    // when it closed. A drain half a second late is not a gap.
+    void aReceiverClosedAndReopenedStartsAgainAtTheClock()
+    {
+        RecordingService svc(nullptr);
+        prepare(svc);
+        svc.setRadioStreaming(true);
+        svc.dsrRecorder()->setStream(0, kCentreHz, kRate);
+        const std::vector<float> chunk = chunkOf(0.25f);
+        constexpr qint64 kNs = DsrRingFile::kNsPerSecond;
+        const qint64 startNs = kStartUtc.toMSecsSinceEpoch() * 1000000;
+        feedSecond(svc, chunk);
+        feedSecond(svc, chunk);
+        // Late by less than the tolerance: the time runs on from the count.
+        m_clockMs += 500;
+        feedSecond(svc, chunk);
+        const DsrRingFile& ring = svc.dsrRecorder()->ring();
+        QCOMPARE(ring.blockCount(), 3);
+        QCOMPARE(ring.newestUtcNs(0), startNs + 3 * kNs);
+        QVERIFY(500 * 1000000LL < DsrRecorder::kClockToleranceNs);
+
+        // Closed: nothing comes for 144 s; the rate stays set.
+        m_clockMs += 144000;
+        svc.pumpForTest();
+        QCOMPARE(ring.blockCount(), 3);
+        feedSecond(svc, chunk);
+        feedSecond(svc, chunk);
+        QCOMPARE(ring.blockCount(), 5);
+        const qint64 reopenedNs = startNs + 3 * kNs + 500 * 1000000LL + 144 * kNs;
+        DsrBlockHeader h;
+        QVERIFY(ring.blockAt(0, reopenedNs, &h));
+        QCOMPARE(h.utcNs, reopenedNs);
+        QCOMPARE(ring.newestUtcNs(0), m_clockMs.load() * 1000000);
+        // The gap: nothing kept while it was closed.
+        QVERIFY(!ring.blockAt(0, startNs + 3 * kNs, &h));
+        QVERIFY(!ring.blockAt(0, reopenedNs - 1, &h));
+    }
+
+    // RadioModel's receivers: one that closes reaches the recorder as not
+    // streaming, and one that opens as streaming at the radio's rate.
+    void aClosedReceiverReachesTheRecorderAsNotStreaming()
+    {
+        RadioModel radio(RadioModel::Role::Local);
+        RecordingService* svc = radio.recordingService();
+        QVERIFY(svc);
+        // One receiver at 192 kHz, so the slice's stream has a rate.
+        radio.configureStreamPoolForTest(1, 1, kRate);
+        SliceModel* a = radio.sliceById(radio.addSlice());
+        QVERIFY(a);
+        prepare(*svc);
+        svc->setRadioStreaming(true);
+        QVERIFY(svc->dsrStatus().recording);
+        ReceiverManager* receivers = radio.receiverManager();
+        QVERIFY(receivers);
+        if (receivers->receiverConfig(0).receiverIndex < 0) {
+            QCOMPARE(receivers->createReceiver(), 0);
+        }
+        receivers->activateReceiver(0);
+        svc->dsrRecorder()->setStream(0, kCentreHz, kRate);
+        QCOMPARE(svc->dsrRecorder()->streamRateHz(0), kRate);
+
+        receivers->deactivateReceiver(0);
+        QCOMPARE(svc->dsrRecorder()->streamRateHz(0), 0);
+        // While closed, a centre move keeps it not streaming.
+        emit radio.streamCentreChanged(0, double(kCentreHz), kRate);
+        QCOMPARE(svc->dsrRecorder()->streamRateHz(0), 0);
+
+        receivers->activateReceiver(0);
+        QCOMPARE(radio.streamSampleRateHz(0), kRate);
+        QCOMPARE(svc->dsrRecorder()->streamRateHz(0), kRate);
     }
 
     // Recording plan Task 26 (spec 3 "Recorder Setup"): erase what is kept

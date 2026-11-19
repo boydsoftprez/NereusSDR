@@ -39,6 +39,24 @@ import Testing
         #expect(placements[1].rect.height == FlagLayout.foldedHeight)
     }
 
+    /// PR 808 final overlaps: a folded tag that would land on the frequency
+    /// scale (or the recorder's play label) drops below it; the full flag
+    /// stays where it was, and a keep-out the tag misses moves nothing.
+    @Test func aFoldedTagDropsBelowWhatItKeepsOff() {
+        let slices = [Self.slice(0, 7_236_000), Self.slice(1, 7_238_000)]
+        let geometry = Self.geometry(width: Self.phoneWidth, centerHz: 7_237_000, spanHz: 10_000)
+        let plain = FlagLayout.layout(slices: slices, activeSliceId: 0, geometry: geometry)
+        let scale = CGRect(x: 0, y: FlagLayout.flagSize.height + 10, width: Self.phoneWidth, height: 18)
+        let label = CGRect(x: 0, y: scale.maxY + 1, width: Self.phoneWidth, height: 17)
+        let kept = FlagLayout.layout(slices: slices, activeSliceId: 0, geometry: geometry, keepOut: [scale, label])
+        #expect(kept[0] == plain[0])
+        #expect(kept[1].isFolded)
+        #expect(kept[1].rect.minY == label.maxY + FlagLayout.stackGap)
+        #expect(!kept[1].rect.intersects(scale) && !kept[1].rect.intersects(label))
+        let below = CGRect(x: 0, y: 260, width: Self.phoneWidth, height: 18)
+        #expect(FlagLayout.layout(slices: slices, activeSliceId: 0, geometry: geometry, keepOut: [below]) == plain)
+    }
+
     @Test func twoSlicesThatFoldOnAPhoneStayFullOnAnIPad() {
         // 2.5 kHz on a 10 kHz span: 97 points on the phone, 298 on the
         // iPad, past the flag and its button column (246).
@@ -292,5 +310,68 @@ import Testing
         #expect(placements.allSatisfy { !$0.isFolded })
         #expect(placements[0].rect.height == FlagLayout.flagSize.height)
         #expect(placements[1].rect.height == 150)
+    }
+
+    // MARK: JJ's phone run of PR 808: a tag grown by PAST keeps its side
+
+    /// A lower-sideband tag hangs right of its line. Where the tag with PAST
+    /// at its end would leave the band on that side, the grown tag would
+    /// jump to the line's left (and back at LIVE): it does not keep its
+    /// side. With room for it, it does; an upper-sideband tag likewise on
+    /// its left.
+    @Test func aGrownTagKeepsItsSideOnlyWhereItFits() {
+        let band = 375.0
+        // 151 points fit right of a line at 191; 241 do not.
+        #expect(!FlagLayout.keepsSide(lineX: 191, width: 151, wider: 241, bandWidth: band, lowerSideband: true))
+        #expect(FlagLayout.keepsSide(lineX: 100, width: 151, wider: 241, bandWidth: band, lowerSideband: true))
+        #expect(FlagLayout.sideX(lineX: 191, width: 151, bandWidth: band, lowerSideband: true) == 191)
+        // Upper sideband: left of the line, the grown tag past the band's left edge.
+        #expect(!FlagLayout.keepsSide(lineX: 200, width: 151, wider: 241, bandWidth: band, lowerSideband: false))
+        #expect(FlagLayout.keepsSide(lineX: 300, width: 151, wider: 241, bandWidth: band, lowerSideband: false))
+        // The same width always keeps its side.
+        #expect(FlagLayout.keepsSide(lineX: 191, width: 151, wider: 151, bandWidth: band, lowerSideband: true))
+    }
+
+    /// JJ's phone run of PR 808: an LSB flag whose right edge ran under the
+    /// dBm scale's arrows at the band's top right hid its slice letter. With
+    /// `fullRight` at the arrows' left edge it keeps its side of its line and
+    /// slides left to end there; with room it stays on its line.
+    @Test func aFullFlagKeepsClearOfTheArrowsAtTheTopRight() {
+        // The big iPhone's band, 440 points wide, the arrows' left edge at 404.
+        let geometry = Self.geometry(width: 440, centerHz: 7_200_000, spanHz: 100_000)
+        let arrowsLeft = 440.0 - 36
+        // The line 220 points in: 200 points of flag end at 420, inside the band but past the arrows.
+        let near = [Self.slice(0, 7_200_000)]
+        let unlimited = FlagLayout.layout(slices: near, activeSliceId: 0, geometry: geometry)
+        #expect(Double(unlimited[0].rect.maxX) > arrowsLeft)
+        let kept = FlagLayout.layout(slices: near, activeSliceId: 0, geometry: geometry, fullRight: arrowsLeft)
+        #expect(abs(Double(kept[0].rect.maxX) - arrowsLeft) < 0.5)
+        // Further left there is room right of the line: it stays there.
+        let roomy = [Self.slice(0, 7_160_000)]
+        let roomyX = Double(geometry.x(forHz: 7_160_000))
+        let stays = FlagLayout.layout(slices: roomy, activeSliceId: 0, geometry: geometry, fullRight: arrowsLeft)
+        #expect(abs(Double(stays[0].rect.minX) - roomyX) < 0.5)
+        // A line under the arrows themselves (JJ's still: Slice B near the
+        // band's right edge): the flag ends at the arrows' left edge.
+        let under = [Self.slice(0, 7_242_000)]
+        #expect(Double(geometry.x(forHz: 7_242_000)) > arrowsLeft)
+        let shifted = FlagLayout.layout(slices: under, activeSliceId: 0, geometry: geometry, fullRight: arrowsLeft)
+        #expect(abs(Double(shifted[0].rect.maxX) - arrowsLeft) < 0.5)
+    }
+
+    /// Sideways, two slices apart (FlagButtonsShotTests' landscape frames):
+    /// B's flag slides left to end at the arrows' edge and both flags stay
+    /// full, with A active and with B active.
+    @Test(arguments: [0, 1])
+    func sidewaysBothFlagsStayFullClearOfTheArrows(_ active: Int) {
+        let geometry = Self.geometry(width: 874, centerHz: 7_244_500, spanHz: 48_000)
+        let arrowsLeft = 874.0 - 36 - Double(FlagLayout.sideGap)
+        let slices = [Self.slice(0, 7_236_400), Self.slice(1, 7_256_000)]
+        let placed = FlagLayout.layout(slices: slices, activeSliceId: active, geometry: geometry,
+                                       sideColumn: CGSize(width: 46, height: 150), fullRight: arrowsLeft)
+        #expect(placed.allSatisfy { !$0.isFolded })
+        let b = placed[1].rect
+        #expect(Double(b.maxX) <= arrowsLeft + 0.5)
+        #expect(Double(b.maxX) > Double(geometry.x(forHz: 7_256_000)))
     }
 }

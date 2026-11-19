@@ -8,6 +8,17 @@
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-16: Recording plan Task 19, on an iPad the switch for the
 //   Recordings panel in its column. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: Screen walk for PR 808, the Disk row of its own: "Disk" at its
+//   width beside a compact menu. J.J. Boyd (KG4VCF), AI-assisted via Claude
+//   Code.
+// 2026-11-17: PR 808 design calls, upright on an iPad the Recordings
+//   panel's switch dims with why. J.J. Boyd (KG4VCF), AI-assisted via
+//   Claude Code.
+// 2026-11-18: PR 808, the title drawn inline, where it wraps, not cut short.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-19: On a Core with no MP3 encoder the Files choice shows WAV and
+//   MP3 greys with why (JJ's phone run of PR 808). J.J. Boyd (KG4VCF),
+//   AI-assisted via Claude Code.
 
 import Foundation
 import NereusMirror
@@ -153,8 +164,18 @@ final class RecordingSettingsModel {
         return Int((bytesPerSecond * 3600 / 1.0e6).rounded())
     }
 
+    /// The words under a greyed MP3 on a Core with no MP3 encoder.
+    nonisolated static let noMp3Detail = "This Core has no MP3 encoder."
+
+    /// The file the Core really writes: WAV on a Core with no MP3 encoder,
+    /// whatever the setting says.
+    var shownFormat: RecordingsDocument.Format { settings.noMp3 ? .wav : settings.format }
+
     func formatDetail(_ format: RecordingsDocument.Format) -> String {
         let shown = settings
+        if format == .mp3, shown.noMp3 {
+            return Self.noMp3Detail
+        }
         let mb = Self.megabytesPerHour(wav: format == .wav, apart: shown.keepMyVoice && shown.sidesApart)
         return format == .wav ? "Full quality, bigger. About \(mb) MB an hour."
             : "Small, plays anywhere. About \(mb) MB an hour."
@@ -162,7 +183,7 @@ final class RecordingSettingsModel {
 
     /// The spec's example name, with the chosen file type.
     var nameExample: String {
-        "2026-11-15 1432Z 7.236.400 LSB K4ABC." + (settings.format == .wav ? "wav" : "mp3")
+        "2026-11-15 1432Z 7.236.400 LSB K4ABC." + (shownFormat == .wav ? "wav" : "mp3")
     }
 
     var myVoiceDetail: String {
@@ -193,6 +214,17 @@ final class RecordingSettingsModel {
             return disk.name.isEmpty ? "The Core's own disk (\(free) free)" : "The Core's own disk (\(disk.name), \(free) free)"
         }
         return "\(disk.name.isEmpty ? disk.root : disk.name) (\(free) free)"
+    }
+
+    /// The chosen disk as the closed menu names it: short, so the row
+    /// stays compact (as Setup > Digital Spectrum Recorder names it); the
+    /// open menu's choices carry the free space.
+    var diskShortText: String {
+        let shown = settings
+        if let disk = chosenDisk {
+            return DsrSetupModel.diskShortText(disk)
+        }
+        return shown.disk.isEmpty ? "Core's own disk" : shown.disk
     }
 
     /// The picker's choices: each disk the Core lists, by the root the
@@ -236,7 +268,7 @@ final class RecordingSettingsModel {
             onAirUseCompressor: change.onAirUseCompressor ?? base.onAirUseCompressor,
             onAirUseLeveler: change.onAirUseLeveler ?? base.onAirUseLeveler,
             onAirUseCfc: change.onAirUseCfc ?? base.onAirUseCfc,
-            onAirUsePhaseRotator: change.onAirUsePhaseRotator ?? base.onAirUsePhaseRotator)
+            onAirUsePhaseRotator: change.onAirUsePhaseRotator ?? base.onAirUsePhaseRotator, mp3: base.mp3)
     }
 
     nonisolated static func merged(_ base: RecordingsSettingsChange,
@@ -316,7 +348,7 @@ struct RecordingSettingsPage: View {
                 RecordingsAppletSwitch(settings: phone)
             }
         }
-        .setupPageTitle(Self.title)
+        .setupPageTitle(Self.title, wraps: true)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 SetupTagBadge(tag: .core)
@@ -373,11 +405,11 @@ struct RecordingSettingsPage: View {
         SetupPanelSection("Files", tag: .core,
                           note: "Also used for \"Save sound only\" from the Digital Spectrum Recorder. "
                               + "Rename any recording in Tools, Recordings.") {
-            SetupChoiceRow(title: "MP3", detail: model.formatDetail(.mp3), chosen: shown.format == .mp3,
-                           id: "recordingSettings.mp3") {
+            SetupChoiceRow(title: "MP3", detail: model.formatDetail(.mp3), chosen: model.shownFormat == .mp3,
+                           enabled: !shown.noMp3, id: "recordingSettings.mp3") {
                 Task { await model.setFormat(.mp3) }
             }
-            SetupChoiceRow(title: "WAV", detail: model.formatDetail(.wav), chosen: shown.format == .wav,
+            SetupChoiceRow(title: "WAV", detail: model.formatDetail(.wav), chosen: model.shownFormat == .wav,
                            id: "recordingSettings.wav") {
                 Task { await model.setFormat(.wav) }
             }
@@ -403,15 +435,7 @@ struct RecordingSettingsPage: View {
     private func whereKept(_ shown: RecordingsDocument.Settings) -> some View {
         SetupPanelSection("Where they are kept", tag: .core,
                           note: "Recordings are never erased by themselves. Only you delete them.") {
-            Picker("Disk", selection: Binding(get: { shown.disk }, set: { root in
-                Task { await model.setDisk(root) }
-            })) {
-                ForEach(model.diskChoices, id: \.root) { choice in
-                    Text(choice.text).tag(choice.root)
-                }
-            }
-            .setupMenuRow("Disk")
-            .accessibilityIdentifier("recordingSettings.disk")
+            diskRow(shown)
             if model.chosenDisk?.sd == true {
                 Text("The SD card is fine for these. Recordings are only written while one is running, so they "
                      + "do not wear the card the way the Digital Spectrum Recorder would.")
@@ -436,6 +460,43 @@ struct RecordingSettingsPage: View {
             .buttonStyle(SetupLinkStyle())
             .accessibilityIdentifier("recordingSettings.recordings")
         }
+    }
+
+    /// "Disk" at its own width beside a compact menu, as Setup > Digital
+    /// Spectrum Recorder has it: closed, it names the disk; open, each choice
+    /// carries its free space. The full choice text in the closed menu took
+    /// the row and left "Disk" one letter per line on a small phone.
+    private func diskRow(_ shown: RecordingsDocument.Settings) -> some View {
+        SetupValueRowLayout(probe: "Disk") {
+            Text("Disk")
+                .fixedSize()
+        } value: {
+            Menu {
+                Picker("Disk", selection: Binding(get: { shown.disk }, set: { root in
+                    Task { await model.setDisk(root) }
+                })) {
+                    ForEach(model.diskChoices, id: \.root) { choice in
+                        Text(choice.text).tag(choice.root)
+                    }
+                }
+                .pickerStyle(.inline)
+            } label: {
+                HStack(spacing: 4) {
+                    Text(model.diskShortText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.footnote.weight(.semibold))
+                }
+                .foregroundStyle(WorkspacePalette.textPrimary)
+                .padding(.horizontal, 10)
+                .frame(minHeight: SetupStepButton.height)
+                .background { WorkspaceFace(.raised) }
+            }
+            .accessibilityLabel("Disk")
+            .accessibilityValue(model.diskShortText)
+        }
+        .accessibilityIdentifier("recordingSettings.disk")
     }
 
     private func playingBack(_ shown: RecordingsDocument.Settings) -> some View {
@@ -473,13 +534,18 @@ struct RecordingSettingsPage: View {
 /// section 3 and 6.8): this iPad's own choice, off by default.
 struct RecordingsAppletSwitch: View {
     @ObservedObject var settings: PhoneSettings
+    @Environment(\.iPadLayout) private var layout
 
     nonisolated static let title = "Recordings panel in the column"
     nonisolated static let detail = "The latest recordings, with play, under the S-meter when the iPad is on its side."
+    /// Upright the iPad has no column, so the switch dims with why (never hidden).
+    nonisolated static let uprightReason = "Upright there is no column. Turn the iPad on its side to see the panel."
 
     var body: some View {
+        let upright = layout == .frontPanel
         SetupPanelSection("On this iPad", tag: .thisPhone) {
-            SetupSwitchRow(title: Self.title, detail: Self.detail, isOn: $settings.recordingsAppletShown,
+            SetupSwitchRow(title: Self.title, detail: upright ? Self.uprightReason : Self.detail,
+                           isOn: $settings.recordingsAppletShown, enabled: !upright,
                            id: "recordingSettings.recordingsPanel")
         }
     }

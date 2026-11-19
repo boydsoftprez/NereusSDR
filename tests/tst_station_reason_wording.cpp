@@ -75,6 +75,9 @@
 // 2026-11-16: Recording plan Task 25 placed: saving a stretch's refusals
 // (RecordingService saveStretch, saveSoundOnly, startSave, openStretch).
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-19: saveSliceReason, the slice's letter in a refused sound
+// only (JJ's phone run, PR 808). J.J. Boyd (KG4VCF), AI-assisted via
+// Anthropic Claude Code.
 // 2026-11-16: A recording's name refused as a Windows reserved name
 // inserts the name typed (stem). J.J. Boyd (KG4VCF), AI-assisted via
 // Anthropic Claude Code.
@@ -1885,17 +1888,20 @@ const QList<ReasonSource>& reasonSources()
         // (scanned above), and startSave words one of its own.
         {"src/core/recordings/RecordingService.cpp",
          {QStringLiteral("saveStretch"), QStringLiteral("saveSoundOnly"), QStringLiteral("startSave"),
-          QStringLiteral("openStretch")},
+          QStringLiteral("openStretch"), QStringLiteral("saveSliceReason")},
          {}, 1,
          {// What is being saved: its UTC times, "whole pan" or the
-          // format's name, and a frequency.
+          // format's name, and a frequency; the slice's letter (PR 808).
           QStringLiteral("utcText(extent.fromUtcNs), utcText(extent.toUtcNs), what"),
-          QStringLiteral("format"), QStringLiteral("recordingFrequencyText(sound.frequencyHz), format")},
+          QStringLiteral("format"), QStringLiteral("recordingFrequencyText(sound.frequencyHz), format"),
+          QStringLiteral("QChar(u'A' + sliceId)")},
          {QStringLiteral("QString::fromLatin1(why)"), QStringLiteral("QString::fromLatin1(kPlayFailedReason)"),
           QStringLiteral("QString::fromLatin1(kPlayGoneReason)"),
           QStringLiteral("QString::fromLatin1(kSaveNoFolderReason)"),
           QStringLiteral("QString::fromLatin1(kSaveNotWholePanReason)"),
-          QStringLiteral("QString::fromLatin1(kSaveSliceReason)"), QStringLiteral("why")}},
+          QStringLiteral("QString::fromLatin1(kSaveSliceReason)"), QStringLiteral("why"),
+          // saveSliceReason's words (scanned in this entry).
+          QStringLiteral("saveSliceReason(sliceId)")}},
         // Recording plan Task 11: what a refused recordings.play or
         // voiceKeyer.listen says (RecordingService::playbackRefused). The
         // recorder's file name is a file name, never a reason. A kept

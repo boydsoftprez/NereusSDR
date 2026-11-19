@@ -10,6 +10,8 @@
 // (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-16: Recording plan Task 19, the iPad's Recordings panel, off by default.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: The switch that takes VOICE off the main screen, on by default.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -452,6 +454,15 @@ final class PhoneSettings: ObservableObject {
     }
 
     static let recordingsAppletShownKey = "applets.recordingsShown"
+
+    /// The round VOICE beside PTT on the main screen. On until turned off
+    /// on Tools > Voice Keyer; off, the voice keyer still works from that page.
+    var voiceButtonShown: Bool {
+        get { bool(Self.voiceButtonShownKey, default: true) }
+        set { setBool(newValue, for: Self.voiceButtonShownKey) }
+    }
+
+    static let voiceButtonShownKey = "voiceKeyer.buttonShown"
 
     // MARK: The iPad's pans
 

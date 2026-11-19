@@ -150,6 +150,23 @@ import Testing
         #expect((3...4).contains(rows[3] ?? 0), "3 pt drew \(rows[3] ?? 0) rows")
     }
 
+    /// While the recorder shows the past spectrum, the band leaves the live trace out.
+    @Test func aHiddenLiveSpectrumDrawsNoTrace() throws {
+        let target = try Offscreen(width: Self.width, height: Self.height)
+        let renderer = try BandRenderer(device: target.device)
+        let settings = Self.plain()
+        let frame = BandFixtures.frame(trace: Self.flat(200, -90))
+        let height = Int(Self.geometry(settings).size.height)
+        var overlays = Self.overlays(settings)
+        let shown = try target.render(renderer, frame: frame, history: WaterfallHistory(capacity: 1), extras: nil,
+                                      overlays: overlays)
+        #expect(Self.traceRows(shown, x: 200, height: height) > 0)
+        overlays.liveSpectrumHidden = true
+        let hidden = try target.render(renderer, frame: frame, history: WaterfallHistory(capacity: 1), extras: nil,
+                                       overlays: overlays)
+        #expect(Self.traceRows(hidden, x: 200, height: height) == 0)
+    }
+
     @Test func theTracesVerticesAreTheLinesWidthApart() {
         // Approved V29 clamps converted pixel geometry to0.1...5; point
         // representation still produces1.5px from the established0.5pt/3x.

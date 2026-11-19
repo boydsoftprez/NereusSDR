@@ -454,6 +454,10 @@ struct LongSessionTests {
                                            timeZone: utc) == "Locked 19:42 to 20:15 \u{00B7} sound only")
         #expect(SessionController.awayText(from: Self.start, to: Self.start.addingTimeInterval(33 * 60), locked: false,
                                            timeZone: utc) == "In another app 19:42 to 20:15 \u{00B7} sound only")
+        // Inside one minute it names the seconds, never "19:42 to 19:42" (PR 808).
+        #expect(SessionController.awayText(from: Self.start.addingTimeInterval(5),
+                                           to: Self.start.addingTimeInterval(40), locked: false,
+                                           timeZone: utc) == "In another app 19:42:05 to 19:42:40 \u{00B7} sound only")
     }
 
     @Test("a 65-second sound-only return anchors its notice to the first resumed capture")

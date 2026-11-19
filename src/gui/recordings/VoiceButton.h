@@ -25,6 +25,10 @@
 //              VOICE dims, its messages are disabled with the reason, and
 //              the box offers Take transmit, as TUNE and MOX are gated.
 //   Older Core VOICE stays, disabled, with the access's reason (V9).
+//   Switched  Setup > Recordings' "Show the VOICE button beside TUNE and
+//   off       MOX" (this computer's VoiceButtonShown, on by default) off:
+//              VOICE leaves the row and TUNE and MOX close up. The voice
+//              keyer panel and the hot keys still send messages.
 //
 // One per TxKeyingSection, owned by it. Reads the `voiceKeyer` part of the
 // recordings document; keys nothing but through sendVoice().
@@ -34,6 +38,9 @@
 //   2026-11-16 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 12.
+//   2026-11-17 - J.J. Boyd (KG4VCF), JJ's request: a switch in Setup takes
+//                 VOICE out of the row (VoiceButtonShown). AI-assisted
+//                 implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QFrame>
@@ -103,6 +110,13 @@ public:
     VoiceButton(TxKeyingSection* section, RecordingsAccess* access);
     ~VoiceButton() override;
 
+    /// This computer's AppSettings key ("True" / "False", on when unset)
+    /// for VOICE in the TUNE / MOX row. Every VOICE follows it as it is
+    /// written, through the row's SectionParts "voice" part.
+    static QString shownSettingKey();
+    static bool shownSetting();
+    static void setShownSetting(bool shown);
+
     void setAccess(RecordingsAccess* access);
     RecordingsAccess* access() const;
 
@@ -154,6 +168,7 @@ private:
     void positionBox();
     QString unavailableReason() const;
     qint64 now() const;
+    void applyShownSetting();
 
     QPointer<TxKeyingSection> m_section;
     QPointer<RecordingsAccess> m_access;
@@ -184,6 +199,8 @@ private:
     QLabel* m_note = nullptr;
 
     std::function<qint64()> m_now;
+    // AppSettings::addWriteObserver's id for VoiceButtonShown, or -1.
+    int m_settingsObserver = -1;
 };
 
 }  // namespace NereusSDR

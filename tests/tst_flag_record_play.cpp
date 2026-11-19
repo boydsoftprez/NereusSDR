@@ -29,6 +29,8 @@
 //                 AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 10: the ON AIR
 //                 look. AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-19 - J.J. Boyd (KG4VCF): the Kept reason on a Core with no MP3
+//                 encoder. AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QAction>
@@ -414,6 +416,10 @@ private slots:
         QCOMPARE(why(QStringLiteral("quiet"), 15), QStringLiteral("Stopped by itself after 15 quiet minutes"));
         QCOMPARE(why(QStringLiteral("diskFull")), QStringLiteral("Stopped: the disk is full"));
         QCOMPARE(why(QStringLiteral("wav")), QStringLiteral("Kept as WAV: the MP3 encoder failed"));
+        // A Core with no MP3 encoder (settings `mp3` false) did not fail (JJ's phone run, PR 808).
+        QCOMPARE(FlagRecordPlay::keptReasonText(QJsonObject{{QStringLiteral("reason"), QStringLiteral("wav")}}, 2,
+                                                true, true),
+                 QStringLiteral("Kept as WAV: this Core has no MP3 encoder"));
         QCOMPARE(why(QStringLiteral("here"), 2, true), QStringLiteral("Stopped on this computer"));
         QCOMPARE(why(QStringLiteral("here"), 2, false), QStringLiteral("Stopped on the Core"));
         QCOMPARE(FlagRecordPlay::lengthText(3723000), QStringLiteral("1:02:03"));

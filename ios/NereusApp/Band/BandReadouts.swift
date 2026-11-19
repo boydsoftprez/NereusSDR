@@ -1,5 +1,8 @@
 // NereusSDR for iOS: the band's readouts: frames a second, bin width, the peak, the finger's frequency, the time and LIVE
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-11-17: lookBackLive, off where the recorder's strip has its own LIVE.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -19,6 +22,9 @@ import UIKit
 struct BandReadouts: View {
     @ObservedObject var band: BandModel
     var trailingInset: CGFloat = 0
+    /// The look-back LIVE button draws here; false where the recorder's
+    /// time strip shows, whose own LIVE does the same and sits under it.
+    var lookBackLive = true
 
     var body: some View {
         GeometryReader { proxy in
@@ -69,7 +75,7 @@ struct BandReadouts: View {
                     }
                 }
             }
-            if band.lookBackLines > 0 {
+            if lookBackLive, band.lookBackLines > 0 {
                 live(layout: layout)
             }
         }
