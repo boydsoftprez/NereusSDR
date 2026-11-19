@@ -1,4 +1,8 @@
 // Modification history (NereusSDR):
+//   2026-11-18: Your line holds its side (m_roundtableStripLineHeldSide) and
+//               is placed outside paint (roundtableStripLineNow), so the open
+//               details move with it in the same pass. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-11-16: dsrPlayFromTop is public: any tune of the slice in the past
 //               plays from the top row (DsrRewindLink::sliceTuned). J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -3083,6 +3087,8 @@ public:
     int roundtableCardPlacementsForTest() const { return m_roundtableCardPlacements; }
     /// Where the last tag pass drew your frequency's line; null when it drew none.
     RoundtableStripLinePlacement roundtableStripLineForTest() const { return m_roundtableStripLineDrawn; }
+    /// Where the next paint draws your line, as the details' spot reads it.
+    RoundtableStripLinePlacement roundtableStripLineNowForTest() const { return roundtableStripLineNow(); }
     /// What the last tag pass drew (it is redrawn with the overlay).
     const QList<RoundtableTagHit>& roundtableTagHitsForTest() const { return m_roundtableTagHits; }
     void drawRoundtableTagsForTest(QPainter& p, const QRect& specRect) { drawRoundtableTags(p, specRect); }
@@ -3966,6 +3972,13 @@ private:
     // the Roundtable strip (frequencies mapped across `specRect`), after the
     // spots in both paint paths, and a click on one (true when it took it).
     void drawRoundtableTags(QPainter& p, const QRect& specRect);
+    // Your frequency's line as it stands now, placed when its inputs changed:
+    // what the next paint draws and what the details line up with. Null when no
+    // line shows. Placed in this widget's fonts.
+    RoundtableStripLinePlacement roundtableStripLineNow() const;
+    // Says roundtableInspectorSpotChanged when the line now differs from the
+    // one last said, so open details move in the same pass as the line.
+    void announceRoundtableStripLine();
     bool roundtableTagClick(const QPoint& pos, const QPoint& globalPos);
 
     // ---- TNF / notch overlay (design section 8.2) ----
@@ -5056,15 +5069,21 @@ private:
     // Your frequency's line as last placed, and what it was placed for: the
     // strip, the dial, the flag's side and the line's font (with the format and
     // structure, which setRoundtableCard checks).
-    RoundtableStripLinePlacement m_roundtableStripLinePlaced;
-    QRect m_roundtableStripLinePlacedStrip;
-    QFont m_roundtableStripLinePlacedFont;
-    int m_roundtableStripLinePlacedDialX = 0;
-    bool m_roundtableStripLinePlacedFlipped = false;
-    RoundtableStripLineSide m_roundtableStripLinePlacedSide = RoundtableStripLineSide::Either;
-    bool m_roundtableStripLinePlacedValid = false;
+    // Mutable: roundtableStripLineNow places on demand for the details' spot.
+    mutable RoundtableStripLinePlacement m_roundtableStripLinePlaced;
+    mutable QRect m_roundtableStripLinePlacedStrip;
+    mutable QFont m_roundtableStripLinePlacedFont;
+    mutable int m_roundtableStripLinePlacedDialX = 0;
+    mutable bool m_roundtableStripLinePlacedFlipped = false;
+    mutable RoundtableStripLineSide m_roundtableStripLinePlacedSide = RoundtableStripLineSide::Either;
+    mutable qsizetype m_roundtableStripLinePlacedPlaces = -1;
+    mutable bool m_roundtableStripLinePlacedValid = false;
+    // The side the line sits on. Kept while only data changes; on a tune, zoom,
+    // resize, flag or station change it is kept when the whole line still fits.
+    mutable RoundtableStripLineSide m_roundtableStripLineHeldSide = RoundtableStripLineSide::Either;
     RoundtableStripLinePlacement m_roundtableStripLineDrawn;
-    int m_roundtableCardPlacements = 0;
+    QRect m_roundtableStripLineAnnounced;
+    mutable int m_roundtableCardPlacements = 0;
     QString m_roundtableViewedRoom;
     bool m_roundtableViewedIsFold{false};
     QString m_roundtableSliceName{QStringLiteral("A")};
