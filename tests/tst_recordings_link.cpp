@@ -66,6 +66,8 @@
 //                 taken from main's Core); one that did gets the same list
 //                 and recordingsVersion before txSsbModMonitorVersion.
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-11-19 - J.J. Boyd (KG4VCF): the settings' `mp3`. AI-assisted
+//                 implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "CapabilityOrder.h"
@@ -954,6 +956,9 @@ private slots:
                                 "disk", "disks"}) {
             QVERIFY2(settings.contains(QLatin1String(key)), key);
         }
+        // Whether this Core can write MP3 (PR 808: a Core built without LAME says so).
+        QVERIFY(settings.value(QStringLiteral("mp3")).isBool());
+        QCOMPARE(settings.value(QStringLiteral("mp3")).toBool(), core.model->recordingService()->mp3Available());
         // Version 2: the on-air switches, each off by default.
         for (const char* key : {"onAirUseTxEq", "onAirUseCompressor", "onAirUseLeveler", "onAirUseCfc",
                                 "onAirUsePhaseRotator"}) {

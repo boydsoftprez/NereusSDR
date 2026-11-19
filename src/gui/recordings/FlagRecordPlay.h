@@ -45,6 +45,8 @@
 //                 for its own slice's last eight contact recordings, with a
 //                 list reader of its own. AI-assisted implementation via
 //                 Anthropic Claude Code.
+//   2026-11-19 - J.J. Boyd (KG4VCF): keptReasonText's noMp3. AI-assisted
+//                 implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QDateTime>
@@ -112,8 +114,9 @@ public:
 
     /// The Kept notice's reason line for the document's `kept` object.
     /// `quietMinutes` is the stop-by-itself setting; `coreHere` is true when
-    /// the Core runs on this computer.
-    static QString keptReasonText(const QJsonObject& kept, int quietMinutes, bool coreHere);
+    /// the Core runs on this computer; `noMp3` when the Core says it has no
+    /// MP3 encoder (settings `mp3` false), so a WAV was not a failure.
+    static QString keptReasonText(const QJsonObject& kept, int quietMinutes, bool coreHere, bool noMp3 = false);
     /// "1:23", or "1:02:03" past an hour.
     static QString lengthText(qint64 ms);
 

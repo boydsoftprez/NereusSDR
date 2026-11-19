@@ -362,6 +362,21 @@ struct RecordingsPagesTests {
         #expect(model.formatDetail(.mp3) == "Small, plays anywhere. About 29 MB an hour.")
         #expect(model.formatDetail(.wav) == "Full quality, bigger. About 173 MB an hour.")
         #expect(model.nameExample == "2026-11-15 1432Z 7.236.400 LSB K4ABC.mp3")
+        #expect(model.shownFormat == .mp3)
+        // A Core with no MP3 encoder (settings `mp3` false, PR 808): WAV is
+        // what it writes, MP3 says why, nothing is sent.
+        var noMp3 = Flag.document()
+        if var settings = noMp3["settings"] as? [String: Any] {
+            settings["mp3"] = false
+            noMp3["settings"] = settings
+        }
+        Flag.publish(rig, noMp3, revision: 2)
+        #expect(await Eventually.holds { model.shownFormat == .wav })
+        #expect(model.formatDetail(.mp3) == "This Core has no MP3 encoder.")
+        #expect(model.formatDetail(.wav) == "Full quality, bigger. About 173 MB an hour.")
+        #expect(model.nameExample == "2026-11-15 1432Z 7.236.400 LSB K4ABC.wav")
+        Flag.publish(rig, Flag.document(), revision: 3)
+        #expect(await Eventually.holds { model.shownFormat == .mp3 })
         #expect(model.usageText.hasPrefix("2 recordings, 0.0 MB. 0.0 MB free on this disk"))
         #expect(RecordingSettingsModel.diskText(RecordingsDocument.Disk(root: "/Volumes/T7", name: "Samsung T7",
                                                                         free: 812_000_000_000, total: 1_000_000_000_000,

@@ -331,4 +331,33 @@ import Testing
         // The same width always keeps its side.
         #expect(FlagLayout.keepsSide(lineX: 191, width: 151, wider: 151, bandWidth: band, lowerSideband: true))
     }
+
+    /// JJ's phone run of PR 808: an LSB flag whose right edge ran under the
+    /// dBm scale's arrows at the band's top right hid its slice letter. With
+    /// `fullRight` at the arrows' left edge it hangs left of its line, as at
+    /// the band's own edge; with room it keeps its side.
+    @Test func aFullFlagKeepsClearOfTheArrowsAtTheTopRight() {
+        // The big iPhone's band, 440 points wide, the arrows' left edge at 404.
+        let geometry = Self.geometry(width: 440, centerHz: 7_200_000, spanHz: 100_000)
+        let arrowsLeft = 440.0 - 36
+        // The line 220 points in: 200 points of flag end at 420, inside the band but past the arrows.
+        let near = [Self.slice(0, 7_200_000)]
+        let lineX = Double(geometry.x(forHz: 7_200_000))
+        let unlimited = FlagLayout.layout(slices: near, activeSliceId: 0, geometry: geometry)
+        #expect(Double(unlimited[0].rect.maxX) > arrowsLeft)
+        let kept = FlagLayout.layout(slices: near, activeSliceId: 0, geometry: geometry, fullRight: arrowsLeft)
+        #expect(Double(kept[0].rect.maxX) <= arrowsLeft)
+        #expect(abs(Double(kept[0].rect.maxX) - lineX) < 0.5)
+        // Further left there is room right of the line: it stays there.
+        let roomy = [Self.slice(0, 7_160_000)]
+        let roomyX = Double(geometry.x(forHz: 7_160_000))
+        let stays = FlagLayout.layout(slices: roomy, activeSliceId: 0, geometry: geometry, fullRight: arrowsLeft)
+        #expect(abs(Double(stays[0].rect.minX) - roomyX) < 0.5)
+        // A line under the arrows themselves (JJ's still: Slice B near the
+        // band's right edge): the flag ends at the arrows' left edge.
+        let under = [Self.slice(0, 7_242_000)]
+        #expect(Double(geometry.x(forHz: 7_242_000)) > arrowsLeft)
+        let shifted = FlagLayout.layout(slices: under, activeSliceId: 0, geometry: geometry, fullRight: arrowsLeft)
+        #expect(abs(Double(shifted[0].rect.maxX) - arrowsLeft) < 0.5)
+    }
 }

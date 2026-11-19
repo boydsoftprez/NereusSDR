@@ -38,6 +38,10 @@
 //   (playLabelRoom), which the folded tags keep off; a full flag over it
 //   moves the label below the flag. J.J. Boyd (KG4VCF), AI-assisted via
 //   Claude Code.
+// 2026-11-19: Fixes after JJ's phone run of PR 808 (round B): "Drawing"
+//   dims the whole waterfall's width, so the past picture below the strip's
+//   foot (beside zoom) no longer shows brighter than the rest.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import CoreGraphics
 import NereusBand
@@ -614,9 +618,14 @@ struct DsrPictureLayer: View {
                 playLine
             }
             if let text = model.drawingText {
+                // The whole waterfall's width: the strip and map cover their
+                // own column, but below the strip's foot (beside zoom) the
+                // picture showed undimmed, a brighter strip (PR 808, round B).
                 Color.black.opacity(0.55)
+                    .frame(width: layout.waterfall.width, height: layout.waterfall.height)
+                    .offset(x: layout.waterfall.minX, y: layout.waterfall.minY)
+                DsrNote(text: text)
                     .frame(width: place.picture.width, height: place.picture.height)
-                    .overlay(DsrNote(text: text))
                     .offset(x: place.picture.minX, y: place.picture.minY)
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier("dsr.drawing")

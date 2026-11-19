@@ -42,6 +42,13 @@
 //   of the sound reach further (four asks' time, at most 10 s); LIVE stops
 //   the picture following the sound at once and leaves it live when the
 //   answer comes. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-19: Fixes after JJ's phone run of PR 808 (round B): while SAVE is
+//   open the picture holds still (the sound plays on; live, it holds at the
+//   moment SAVE opened) so the handles stay under the finger, and a drag on
+//   the strip then moves only the picture, never the sound; the picture
+//   catches up when SAVE closes. Sound only saves the active slice, and
+//   says so; on a Core with no MP3 encoder it says WAV and why.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import CoreGraphics
@@ -477,14 +484,21 @@ final class DsrPanModel {
     /// The strip moves with the finger: up goes back. `startTop` is the top when the drag began.
     func drag(from startTop: Double, by points: Double) {
         dragging = true
+        // Moved by hand: closing SAVE leaves the picture where it is.
+        saveHeldLive = false
         setTop(startTop + points * secondsPerPoint, commit: false)
     }
 
-    /// The finger lifted: the rows are asked for and the active slice plays from the top.
+    /// The finger lifted: the rows are asked for and the active slice plays
+    /// from the top. While SAVE is open the drag only moves the picture: a
+    /// finger that lands on the strip beside a handle never moves the sound
+    /// (JJ's phone run, PR 808: the play time stepped back 4 s).
     func dragEnded() {
         dragging = false
         commit()
-        playFromTop()
+        if !saving {
+            playFromTop()
+        }
     }
 
     /// Rewind plays on release: the active slice plays from the picture's
@@ -719,7 +733,7 @@ final class DsrPanModel {
         guard !dragging, coreDraws else {
             return
         }
-        askForRows(ahead: playedMoment != nil)
+        askForRows(ahead: picturePlays)
         if playedMoment == nil, let view = panView(), view != spectrumView {
             // Playing, the display frames ask for it with the new display.
             askForSpectrum()
@@ -744,17 +758,25 @@ final class DsrPanModel {
     /// rewind, and who draws it is decided again. False when it went live.
     @discardableResult
     private func followPlay() -> Bool {
-        if !dragging, let played = playedMoment {
+        if !dragging, !saving, let played = playedMoment {
             if client.dsr?.stretch == nil, played >= clock() - Self.liveSlackSeconds {
                 showLive()
                 return false
             }
             viewTop = played
             apply()
+        } else if !dragging, saving, viewTop != nil {
+            // SAVE holds the picture still (JJ's phone run, PR 808): the
+            // band's own lines move on, so its look back follows the held top.
+            apply()
         }
         decideWhoDraws()
         return true
     }
+
+    /// The picture moves with the sound: this device's rewind plays and
+    /// SAVE is not holding the picture still.
+    var picturePlays: Bool { playedMoment != nil && !saving }
 
     /// A drop, a reconnect or another Core: nothing is owed across it, and
     /// the past drawn, the hours and what was not kept are asked again.
@@ -899,7 +921,18 @@ final class DsrPanModel {
         foot = max(foot, Self.bracketTopPoints + Self.minBracketSeconds / spp)
         heldBracket = nil
         bracketPoints = (Self.bracketTopPoints, foot)
+        // The picture holds still while SAVE is open (PR 808); live, at this
+        // moment, and live again when SAVE closes.
+        if viewTop == nil {
+            saveHeldLive = true
+            viewTop = newest
+            apply()
+            decideWhoDraws()
+        }
     }
+
+    /// SAVE opened on the live picture and held it: closing SAVE goes live again.
+    @ObservationIgnored private var saveHeldLive = false
 
     /// The room the lower handle keeps above the strip's foot: the clock
     /// button, its margin and half a handle.
@@ -908,6 +941,12 @@ final class DsrPanModel {
     func cancelSave() {
         bracketPoints = nil
         heldBracket = nil
+        if saveHeldLive {
+            saveHeldLive = false
+            if viewTop != nil, !followsSound {
+                showLive()
+            }
+        }
     }
 
     /// One of the bracket's handles moved to `pointsDown` from the picture's top.
@@ -959,7 +998,11 @@ final class DsrPanModel {
         guard let stretch else {
             return ""
         }
-        return Self.duration(stretch.to - stretch.from) + ". Drag the yellow handles on the time strip to change it."
+        let detail = Self.duration(stretch.to - stretch.from) + ". Drag the yellow handles on the time strip to change it."
+        guard let settings = client.settings, settings.noMp3, settings.format == .mp3 else {
+            return detail
+        }
+        return detail + " " + Self.noMp3Note
     }
 
     /// The whole pan's size: the recorder's bytes an hour, or what it keeps over how long.
@@ -974,12 +1017,24 @@ final class DsrPanModel {
         return Self.megabytes(perSecond * (stretch.to - stretch.from)) + ", every signal"
     }
 
-    var soundFormat: RecordingsDocument.Format { client.settings?.format ?? .mp3 }
+    /// The file sound only is saved as: the Files format, or WAV on a Core
+    /// with no MP3 encoder (settings `mp3` false), as the Core saves it.
+    var soundFormat: RecordingsDocument.Format {
+        guard let settings = client.settings else {
+            return .mp3
+        }
+        return settings.noMp3 ? .wav : settings.format
+    }
 
     var soundTitle: String { soundFormat == .wav ? "Sound only (WAV)" : "Sound only (MP3)" }
 
-    /// Slice A's sound, in the Files format: MP3 at 64 kbit/s, WAV 24 kHz 16-bit (V2).
-    func soundSize(sliceFrequencyHz: Double?) -> String {
+    /// Why sound only says WAV when the Files format is MP3; nil otherwise.
+    nonisolated static let noMp3Note = "This Core has no MP3 encoder, so the sound is saved as WAV."
+
+    /// The active slice's sound, in the Files format: MP3 at 64 kbit/s, WAV
+    /// 24 kHz 16-bit (V2). `sliceLetter`: the slice sound only saves, the
+    /// pan's active one (JJ's phone run, PR 808: it read Slice A on Slice B).
+    func soundSize(sliceLetter: String, sliceFrequencyHz: Double?) -> String {
         guard let stretch else {
             return ""
         }
@@ -988,7 +1043,7 @@ final class DsrPanModel {
             ? Double(RecordingSettingsModel.fileRateHz * RecordingSettingsModel.wavBytesPerSample)
             : Double(RecordingSettingsModel.monoKbitPerSec) * 1000 / 8
         let at = sliceFrequencyHz.map { " at " + Self.frequencyText($0) } ?? ""
-        return "Slice A\(at), about " + Self.megabytes(bytesPerSecond * (stretch.to - stretch.from))
+        return "Slice \(sliceLetter)\(at), about " + Self.megabytes(bytesPerSecond * (stretch.to - stretch.from))
     }
 
     /// One save at a time: a second tap while the Core answers the first sends nothing.
@@ -1001,8 +1056,10 @@ final class DsrPanModel {
             saveInFlight = false
         }
         do {
+            // Sound only keeps the active slice's sound, the slice its button names.
             let note = try await client.saveStretch(fromUtcNs: Int64((stretch.from * 1e9).rounded()),
-                                                    toUtcNs: Int64((stretch.to * 1e9).rounded()), kind: kind)
+                                                    toUtcNs: Int64((stretch.to * 1e9).rounded()), kind: kind,
+                                                    slice: kind == .sound ? activeSlice() : nil)
             cancelSave()
             showNote(note.isEmpty ? (kind == .wholePan ? "Whole pan saved to Recordings on the Core."
                                                        : "Sound saved to Recordings on the Core.") : note)
@@ -1239,7 +1296,7 @@ final class DsrPanModel {
                     rememberUnkept(from: from, to: to, memory: memory, keptEdge: keptEdge)
                     // The next piece at once, the top first.
                     if coreDraws, !dragging {
-                        askForRows(ahead: playedMoment != nil)
+                        askForRows(ahead: picturePlays)
                     }
                 }
             }

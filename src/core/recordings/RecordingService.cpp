@@ -70,6 +70,10 @@
 //             rewind or seek into a stretch kept around but not recorded
 //             says the receiver was off (kRewindReceiverOffReason). AI
 //             tooling: Anthropic Claude Code.
+// 2026-11-19  J.J. Boyd / KG4VCF; saveStretch keeps the sound of the slice
+//             the device asked for, not always slice A (JJ's phone run, PR
+//             808), and words a refusal with that slice's letter
+//             (saveSliceReason). AI tooling: Anthropic Claude Code.
 
 #include "RecordingService.h"
 
@@ -2546,8 +2550,16 @@ void RecordingService::closeStretch()
     emit dsrChanged();
 }
 
+QString RecordingService::saveSliceReason(int sliceId)
+{
+    if (sliceId == kStretchSlice || sliceId < 0 || sliceId > 25) {
+        return QString::fromLatin1(kSaveSliceReason);
+    }
+    return QStringLiteral("Slice %1 is not on a frequency kept in that stretch.").arg(QChar(u'A' + sliceId));
+}
+
 bool RecordingService::saveStretch(qint64 fromUtcNs, qint64 toUtcNs, bool wholePan, QString* note,
-                                   QString* refusal)
+                                   QString* refusal, int sliceId)
 {
     const auto refuse = [refusal](const char* why) {
         if (refusal != nullptr) {
@@ -2576,17 +2588,20 @@ bool RecordingService::saveStretch(qint64 fromUtcNs, qint64 toUtcNs, bool wholeP
     }
     const DsrRingFile& ring = source ? *source : m_dsr->ring();
 
-    // Slice A as it is now: its frequency names the recording, and its
-    // sound is what sound only keeps.
+    // The slice asked for (slice A when none is named) as it is now: its
+    // frequency names the recording, and its sound is what sound only keeps.
     DsrSoundSettings sound;
-    const bool sliceOpen = m_rewindHost && m_rewindHost->sliceSound(kStretchSlice, &sound);
-    const int own = m_rewindHost ? m_rewindHost->sliceReceiver(kStretchSlice) : -1;
+    const bool sliceOpen = m_rewindHost && m_rewindHost->sliceSound(sliceId, &sound);
+    const int own = m_rewindHost ? m_rewindHost->sliceReceiver(sliceId) : -1;
     DsrBlockHeader first;
     int soundReceiver = sliceOpen
         ? DsrStretch::receiverFor(ring, extent.fromUtcNs, extent.toUtcNs, sound.frequencyHz, own, &first)
         : -1;
     if (!wholePan && soundReceiver < 0) {
-        return refuse(kSaveSliceReason);
+        if (refusal != nullptr) {
+            *refusal = saveSliceReason(sliceId);
+        }
+        return false;
     }
     if (soundReceiver < 0) {
         // The pan's centre names a whole-pan stretch slice A is not in.
@@ -2601,7 +2616,7 @@ bool RecordingService::saveStretch(qint64 fromUtcNs, qint64 toUtcNs, bool wholeP
 
     RecordingEntry entry;
     entry.kind = wholePan ? RecordingKind::WholePan : RecordingKind::Sound;
-    entry.sliceId = wholePan ? -1 : kStretchSlice;
+    entry.sliceId = wholePan ? -1 : sliceId;
     entry.startUtc = QDateTime::fromMSecsSinceEpoch(extent.fromUtcNs / kNsPerMs, QTimeZone::utc());
     entry.frequencyHz = sound.frequencyHz;
     entry.mode = sliceOpen ? SliceModel::modeName(static_cast<DSPMode>(sound.dspMode)) : QString();

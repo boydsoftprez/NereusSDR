@@ -27,6 +27,10 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF): `keptCentreHz` and `keptSpanHz` on
 //                 each rewound slice, what was kept at the moment it plays
 //                 from. AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-19 - J.J. Boyd (KG4VCF): `mp3` in the settings, whether this
+//                 Core can write MP3, so a device shows WAV before a save
+//                 and words the Kept notice right (JJ's phone run, PR 808).
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/RecordingsFacade.h"
@@ -155,6 +159,8 @@ void RecordingsFacade::rebuild()
                       {QStringLiteral("folder"), store ? QDir::toNativeSeparators(store->folder())
                                                        : QString()}};
     QJsonObject settings = settingsJson(m_service->settings());
+    // False on a Core built without LAME: every MP3 is kept as WAV.
+    settings.insert(QStringLiteral("mp3"), m_service->mp3Available());
     QJsonArray disks;
     for (const RecordingVolume& volume : m_volumes) {
         disks.append(volumeJson(volume));

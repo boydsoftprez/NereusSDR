@@ -418,7 +418,7 @@ struct DsrTests {
         #expect(model.saveDetail == "1 min 30 s. Drag the yellow handles on the time strip to change it.")
         #expect(model.wholePanSize == "69 MB, every signal")
         #expect(model.soundTitle == "Sound only (MP3)")
-        #expect(model.soundSize(sliceFrequencyHz: 7_236_400) == "Slice A at 7.236.400, about 1 MB")
+        #expect(model.soundSize(sliceLetter: "A", sliceFrequencyHz: 7_236_400) == "Slice A at 7.236.400, about 1 MB")
         model.moveHandle(0, toPointsDown: 10)
         #expect(model.stretch?.to == Self.now - 5)
         // A fast waterfall still brackets the shortest stretch, 30 s.
@@ -435,15 +435,18 @@ struct DsrTests {
         let (index, sent) = try #require(await Self.invoke(rig, "dsr.saveStretch"))
         #expect(Self.argument(sent, "fromUtcNs") == .i64(Int64(((Self.now - 125) * 1e9).rounded())))
         #expect(Self.argument(sent, "kind") == .utf8("Sound"))
+        // Slice A is not named, so a Core from before `slice` still takes it.
+        #expect(Self.argument(sent, "slice") == nil)
         await RecordingFlagTests.answer(rig, index, values: [.init(name: "note", value: .utf8("Saving to Recordings."))])
         await save.value
         #expect(!model.saving && model.note == "Saving to Recordings.")
     }
 
     /// PR 808: SAVE opens with both handles inside the strip (the lower one
-    /// above the clock), and the bracket rides with the picture's top, so the
-    /// handles stay on the strip as time runs, until a handle is moved.
-    @Test func saveFitsTheStripAndRidesWithThePicture() async throws {
+    /// above the clock). Round B (JJ's phone run): live, the picture holds
+    /// still at the moment SAVE opened, so the bracket and its handles stay
+    /// put as time runs, moved or not; closing SAVE goes live again.
+    @Test func saveFitsTheStripAndHoldsTheLivePicture() async throws {
         let (_, model, _) = await Self.pan()
         var now = Self.now
         model.clock = { now }
@@ -451,15 +454,107 @@ struct DsrTests {
         // The lower handle 150 points down, 50 above the strip's foot.
         let opened = try #require(model.stretch)
         #expect(opened.from == now - 150 * Self.spp && opened.to == now - 70 * Self.spp)
+        #expect(model.inPast && model.top == Self.now)
         now += 20
-        let rode = try #require(model.stretch)
-        #expect(rode.from == opened.from + 20 && rode.to == opened.to + 20)
+        model.frame(periodSeconds: 1.0 / 60)
+        model.tick()
+        #expect(model.top == Self.now)
+        #expect(model.stretch?.from == opened.from && model.stretch?.to == opened.to)
         model.moveHandle(0, toPointsDown: 60)
         let held = try #require(model.stretch)
         now += 20
+        model.frame(periodSeconds: 1.0 / 60)
+        #expect(model.top == Self.now)
         #expect(model.stretch?.from == held.from && model.stretch?.to == held.to)
         model.cancelSave()
-        #expect(!model.saving)
+        #expect(!model.saving && model.viewTop == nil && !model.inPast)
+    }
+
+    /// JJ's phone run of PR 808 (recording efc0f521): SAVE open while a
+    /// rewind plays. The picture holds still while the sound plays on, so
+    /// the handles stay under the finger; a drag on the strip beside them
+    /// moves only the picture, never the sound (the play time stepped back
+    /// 4 s); closing SAVE brings the picture back to the sound.
+    @Test func saveHoldsThePictureWhileTheSoundPlays() async throws {
+        let (rig, model, _) = await Self.pan()
+        var now = Self.now
+        model.clock = { now }
+        model.drag(from: model.top, by: -1_000)
+        model.dragEnded()
+        let start = model.top
+        let (index, _) = try #require(await Self.invoke(rig, "dsr.rewind"))
+        await RecordingFlagTests.answer(rig, index)
+        #expect(await Eventually.holds { model.mine.contains(0) })
+        RecordingFlagTests.publish(rig, Self.document(dsr: Self.dsrPart(rewound: Self.rewound(Int64(start * 1e9)))),
+                                   revision: 2)
+        model.documentChanged()
+        now += 2
+        model.frame(periodSeconds: 1.0 / 60)
+        #expect(model.top == start + 2 && model.picturePlays)
+
+        model.toggleSave(stripPoints: 200)
+        let held = model.top
+        let opened = try #require(model.stretch)
+        // The handles' places on the strip: points below the picture's top.
+        let handles = ((held - opened.to) / Self.spp, (held - opened.from) / Self.spp)
+        now += 3
+        model.frame(periodSeconds: 1.0 / 60)
+        model.tick()
+        #expect(model.top == held && !model.picturePlays)
+        #expect(model.playedMoment == start + 5)
+        let still = try #require(model.stretch)
+        #expect((model.top - still.to) / Self.spp == handles.0 && (model.top - still.from) / Self.spp == handles.1)
+
+        // A finger on the strip beside a handle: the picture moves, the sound does not.
+        let before = rig.sent.invokes.count
+        model.drag(from: model.top, by: -60)
+        model.dragEnded()
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(!rig.sent.invokes.dropFirst(before).contains { $0.verb == "dsr.seek" || $0.verb == "dsr.rewind" })
+        #expect(model.playedMoment == start + 5)
+
+        model.cancelSave()
+        model.frame(periodSeconds: 1.0 / 60)
+        #expect(model.top == start + 5 && model.picturePlays)
+    }
+
+    /// JJ's phone run of PR 808: on Slice B the sound button read "Slice A"
+    /// and the Core saved Slice A. It names the active slice and sends it.
+    @Test func soundOnlySavesTheActiveSlice() async throws {
+        let (rig, model, _) = await Self.pan()
+        model.activeSlice = { 1 }
+        model.toggleSave()
+        #expect(model.soundSize(sliceLetter: "B", sliceFrequencyHz: 7_195_000) == "Slice B at 7.195.000, about 1 MB")
+        let save = Task { await model.save(.sound) }
+        let (index, sent) = try #require(await Self.invoke(rig, "dsr.saveStretch"))
+        #expect(Self.argument(sent, "slice") == .i64(1))
+        await RecordingFlagTests.answer(rig, index, values: [.init(name: "note", value: .utf8("Saving."))])
+        await save.value
+        // The whole pan names no slice.
+        model.toggleSave()
+        let whole = Task { await model.save(.wholePan) }
+        let (wholeIndex, wholeSent) = try #require(await Self.invoke(rig, "dsr.saveStretch", after: index + 1))
+        #expect(Self.argument(wholeSent, "slice") == nil)
+        await RecordingFlagTests.answer(rig, wholeIndex, values: [.init(name: "note", value: .utf8("Saving."))])
+        await whole.value
+    }
+
+    /// JJ's phone run of PR 808: on a Core with no MP3 encoder the panel
+    /// offered "Sound only (MP3)". It says WAV, at WAV's size, and why.
+    @Test func aCoreWithNoMp3EncoderSavesSoundAsWav() async throws {
+        let (rig, model, _) = await Self.pan()
+        var document = Self.document(dsr: Self.dsrPart())
+        if var settings = document["settings"] as? [String: Any] {
+            settings["mp3"] = false
+            document["settings"] = settings
+        }
+        RecordingFlagTests.publish(rig, document, revision: 2)
+        #expect(await Eventually.holds { model.client.settings?.mp3 == false })
+        model.toggleSave()
+        #expect(model.soundFormat == .wav && model.soundTitle == "Sound only (WAV)")
+        #expect(model.saveDetail.hasSuffix(" " + DsrPanModel.noMp3Note))
+        // 90 s of 24 kHz 16-bit WAV.
+        #expect(model.soundSize(sliceLetter: "A", sliceFrequencyHz: nil) == "Slice A, about 4 MB")
     }
 
     /// The clock's sheet takes a typed time, says when one is too old, and

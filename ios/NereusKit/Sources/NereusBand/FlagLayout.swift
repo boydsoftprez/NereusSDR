@@ -4,6 +4,9 @@
 // 2026-11-19: keepsSide, whether a wider tag stays on the same side of its
 //   line, so the recorder's PAST chip never moves a tag across its dial line
 //   (JJ's phone run of PR 808). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-19: fullRight, where a full flag must end: the dBm scale's arrows
+//   at the band's top right hid the flag's slice letter (JJ's phone run of
+//   PR 808). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import CoreGraphics
 
@@ -109,14 +112,20 @@ public enum FlagLayout {
     /// shows another slice's display. `keepOut` is what a folded tag never
     /// sits on (the frequency scale, the recorder's play label): a tag that
     /// would land on one drops below it, as below a flag (PR 808).
+    /// `fullRight` is where a full flag must end when it is less than the
+    /// band's width (the dBm scale's arrows at the top right): a flag that
+    /// would run past it hangs on the other side of its line, as at the
+    /// band's edge, and one whose line is under them ends at their left
+    /// edge, so its slice letter is never under them (PR 808).
     public static func layout(slices: [BandSlice], activeSliceId: Int?, geometry: BandGeometry,
                               flagSize: CGSize = FlagLayout.flagSize,
                               foldedSize: (BandSlice) -> CGSize = { FlagLayout.foldedSize(frequencyText: $0.frequencyText) },
                               flagHeight: (BandSlice) -> CGFloat = { _ in FlagLayout.flagSize.height },
                               sideColumn: CGSize = FlagLayout.sideColumnSize(), top: CGFloat = 0,
-                              keepOut: [CGRect] = [])
+                              keepOut: [CGRect] = [], fullRight: Double? = nil)
         -> [FlagPlacement] {
         let width = Double(geometry.size.width)
+        let fullWidth = min(width, fullRight ?? width)
         // The active slice first, then the others in slice order.
         let order = slices.indices.sorted { a, b in
             let aActive = slices[a].id == activeSliceId
@@ -132,9 +141,13 @@ public enum FlagLayout {
             let slice = slices[index]
             let lineX = geometry.x(forHz: slice.frequencyHz)
             let isActive = slice.id == activeSliceId
-            let full = CGRect(x: sideX(lineX: lineX, width: Double(flagSize.width), bandWidth: width,
-                                       lowerSideband: slice.lowerSideband),
-                              y: top, width: flagSize.width, height: flagHeight(slice))
+            var fullX = sideX(lineX: lineX, width: Double(flagSize.width), bandWidth: fullWidth,
+                              lowerSideband: slice.lowerSideband)
+            if fullRight != nil {
+                // A line under the arrows themselves: the flag ends at their left edge, a little off its line.
+                fullX = min(fullX, max(0, fullWidth - Double(flagSize.width)))
+            }
+            let full = CGRect(x: fullX, y: top, width: flagSize.width, height: flagHeight(slice))
             let footprint = full.union(sideColumnRect(flag: full, lineX: lineX, bandWidth: width, column: sideColumn))
             if isActive || !placed.contains(where: { overlaps($0, footprint) }) {
                 // A full flag always sits at the top; one that would land on another folds instead.

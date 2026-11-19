@@ -48,6 +48,8 @@
 // 2026-11-17: PR 808 part 2: sideways, the dBm scale's arrows give way to
 //   a flag's panel, which takes the whole band there. J.J. Boyd (KG4VCF),
 //   AI-assisted via Claude Code.
+// 2026-11-19: SAVE's panel names the active slice, whose sound it saves
+//   (JJ's phone run of PR 808). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -1626,7 +1628,9 @@ private struct DsrSaveLayer: View {
 
     var body: some View {
         if model.saving {
-            DsrSavePanel(model: model, sliceFrequencyHz: slices.entries.first { $0.id == 0 }?.slice.frequencyHz)
+            // Sound only saves the active slice (JJ's phone run, PR 808).
+            DsrSavePanel(model: model, sliceLetter: slices.active?.slice.letter ?? "A",
+                         sliceFrequencyHz: slices.active?.slice.frequencyHz)
                 .padding(.trailing, trailingInset + DsrStripPlace.stripWidth + DsrStripPlace.mapWidth)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         }

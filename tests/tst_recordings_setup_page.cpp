@@ -25,6 +25,8 @@
 //                 Anthropic Claude Code: the disk drop-down under repeated
 //                 Core updates with accessibility on and a stale accessible
 //                 cell (PR 808 crash).
+//   2026-11-19 - J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code: a Core with no MP3 encoder shows WAV.
 // =================================================================
 
 #include <QAbstractItemView>
@@ -37,6 +39,7 @@
 #include <QLoggingCategory>
 #include <QPushButton>
 #include <QScopeGuard>
+#include <QStandardItemModel>
 #include <QSignalSpy>
 #include <QSpinBox>
 #include <QTest>
@@ -250,6 +253,22 @@ void TestRecordingsSetupPage::sizesAndNameFollowTheFormat()
     access.setDocument(withSetting(defaultDocument(), QStringLiteral("format"), QStringLiteral("wav")));
     QCOMPARE(page.formatSizeLabel()->text(), QStringLiteral("Full quality, bigger. About 173 MB an hour."));
     QCOMPARE(page.nameExample()->text(), QStringLiteral("2026-11-15 1432Z 7.236.400 LSB K4ABC.wav"));
+
+    // A Core with no MP3 encoder (`mp3` false) keeps MP3 as WAV: WAV shows,
+    // MP3 is greyed, the line says why, and nothing is sent (PR 808).
+    access.setDocument(withSetting(defaultDocument(), QStringLiteral("mp3"), false));
+    QCOMPARE(page.formatCombo()->currentText(), QStringLiteral("WAV"));
+    const auto* model = qobject_cast<QStandardItemModel*>(page.formatCombo()->model());
+    QVERIFY(model != nullptr);
+    QVERIFY(!model->item(0)->isEnabled());
+    QCOMPARE(page.formatSizeLabel()->text(),
+             QStringLiteral("Full quality, bigger. About 173 MB an hour. This Core has no MP3 encoder."));
+    QCOMPARE(page.nameExample()->text(), QStringLiteral("2026-11-15 1432Z 7.236.400 LSB K4ABC.wav"));
+    QVERIFY(access.settingsSent.isEmpty());
+    // With one again, MP3 is back.
+    access.setDocument(defaultDocument());
+    QCOMPARE(page.formatCombo()->currentText(), QStringLiteral("MP3"));
+    QVERIFY(model->item(0)->isEnabled());
 }
 
 void TestRecordingsSetupPage::disksAndSdCardNote()

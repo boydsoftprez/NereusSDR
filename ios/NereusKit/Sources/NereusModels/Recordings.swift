@@ -8,6 +8,9 @@
 // 2026-11-16: A rewound slice's `keptCentreHz` and `keptSpanHz`, what was kept
 //   at the moment it plays from (nil from an older Core). J.J. Boyd (KG4VCF),
 //   AI-assisted via Claude Code.
+// 2026-11-19: The settings' `mp3`, whether the Core can write MP3 (nil from
+//   an older Core), after JJ's phone run of PR 808. J.J. Boyd (KG4VCF),
+//   AI-assisted via Claude Code.
 
 import Foundation
 
@@ -150,11 +153,17 @@ public struct RecordingsDocument: Equatable, Sendable {
         public let onAirUseLeveler: Bool
         public let onAirUseCfc: Bool
         public let onAirUsePhaseRotator: Bool
+        /// The Core can write MP3: false on one built without an MP3
+        /// encoder, which keeps every MP3 as WAV; nil from an older Core.
+        public let mp3: Bool?
+
+        /// The Core says it has no MP3 encoder: MP3 is kept as WAV.
+        public var noMp3: Bool { mp3 == false }
 
         public init(keepMyVoice: Bool, sidesApart: Bool, autoStart: Bool, autoStop: Bool, quietMinutes: Int,
                     format: Format, disk: String, disks: [Disk], onAirUseTxEq: Bool = false,
                     onAirUseCompressor: Bool = false, onAirUseLeveler: Bool = false, onAirUseCfc: Bool = false,
-                    onAirUsePhaseRotator: Bool = false) {
+                    onAirUsePhaseRotator: Bool = false, mp3: Bool? = nil) {
             self.keepMyVoice = keepMyVoice
             self.sidesApart = sidesApart
             self.autoStart = autoStart
@@ -168,6 +177,7 @@ public struct RecordingsDocument: Equatable, Sendable {
             self.onAirUseLeveler = onAirUseLeveler
             self.onAirUseCfc = onAirUseCfc
             self.onAirUsePhaseRotator = onAirUsePhaseRotator
+            self.mp3 = mp3
         }
     }
 
@@ -361,7 +371,7 @@ public struct RecordingsDocument: Equatable, Sendable {
                             disk: wire.disk, disks: wire.disks, onAirUseTxEq: wire.onAirUseTxEq ?? false,
                             onAirUseCompressor: wire.onAirUseCompressor ?? false,
                             onAirUseLeveler: wire.onAirUseLeveler ?? false, onAirUseCfc: wire.onAirUseCfc ?? false,
-                            onAirUsePhaseRotator: wire.onAirUsePhaseRotator ?? false)
+                            onAirUsePhaseRotator: wire.onAirUsePhaseRotator ?? false, mp3: wire.mp3)
         voiceKeyer = document.voiceKeyer?.state
         dsr = document.dsr
     }
@@ -392,6 +402,7 @@ public struct RecordingsDocument: Equatable, Sendable {
         let onAirUseLeveler: Bool?
         let onAirUseCfc: Bool?
         let onAirUsePhaseRotator: Bool?
+        let mp3: Bool?
     }
 
     /// A Core without a voice keyer sends an empty `voiceKeyer` object.

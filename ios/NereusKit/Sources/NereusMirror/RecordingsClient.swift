@@ -10,6 +10,8 @@
 // 2026-11-16: JJ's ruling on PR 797: importVoice says whether the file was imported
 //   (`imported`, the fixed level on the air) or recorded on the mic. J.J. Boyd (KG4VCF),
 //   AI-assisted via Claude Code.
+// 2026-11-19: saveStretch names the slice whose sound it keeps (JJ's phone run
+//   of PR 808). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusLink
@@ -556,11 +558,18 @@ public final class RecordingsClient {
 
     /// Saves a stretch the recorder keeps as a recording; returns the
     /// Core's words for what it is saving. The list shows it when done.
-    public func saveStretch(fromUtcNs: Int64, toUtcNs: Int64, kind: DsrStretchKind) async throws -> String {
-        let result = try await invoke("dsr.saveStretch", [.init(name: "fromUtcNs", value: .int(fromUtcNs)),
-                                                          .init(name: "toUtcNs", value: .int(toUtcNs)),
-                                                          .init(name: "kind", value: .text(kind.rawValue))],
-                                      needs: Self.dsrVersion)
+    /// `slice`: whose sound `.sound` keeps (0 is Slice A, the Core's own
+    /// choice when none is named). Slice A is not named, so a Core from
+    /// before `slice` still takes it.
+    public func saveStretch(fromUtcNs: Int64, toUtcNs: Int64, kind: DsrStretchKind,
+                            slice: Int? = nil) async throws -> String {
+        var arguments: [CommandArgument] = [.init(name: "fromUtcNs", value: .int(fromUtcNs)),
+                                            .init(name: "toUtcNs", value: .int(toUtcNs)),
+                                            .init(name: "kind", value: .text(kind.rawValue))]
+        if let slice, slice != 0 {
+            arguments.append(.init(name: "slice", value: .int(Int64(slice))))
+        }
+        let result = try await invoke("dsr.saveStretch", arguments, needs: Self.dsrVersion)
         return Self.note(result)
     }
 

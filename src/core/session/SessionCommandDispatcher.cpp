@@ -417,6 +417,10 @@
 //                                    AI-assisted via Anthropic Claude Code.
 //   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
 //                 AI-assisted via xAI Grok.
+//   2026-11-19  J.J. Boyd / KG4VCF  dsr.saveStretch takes an optional
+//                                    `slice` whose sound it keeps (JJ's
+//                                    phone run, PR 808). AI-assisted via
+//                                    Anthropic Claude Code.
 // =================================================================
 
 #include "core/roundtable/RoundtableWire.h"
@@ -1073,7 +1077,10 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
         // names kinds), sound only from a saved whole-pan stretch, and a
         // saved whole-pan stretch opened on slice A like rewind. None keys
         // the radio.
-        {"dsr.saveStretch", {arg("fromUtcNs", kInt), arg("toUtcNs", kInt), arg("kind", kUtf8)},
+        // `slice` (2026-11-19, optional): whose sound `Sound` keeps; slice A
+        // when left out, as before.
+        {"dsr.saveStretch", {arg("fromUtcNs", kInt), arg("toUtcNs", kInt), arg("kind", kUtf8),
+                             optionalArg("slice", kInt)},
          "recordingsVersion", 4, kRadioIdentitySessionProtocolMinor},
         {"recordings.saveSoundOnly", {arg("id", kUtf8)}, "recordingsVersion", 4,
          kRadioIdentitySessionProtocolMinor},
@@ -5478,9 +5485,12 @@ void SessionCommandDispatcher::handleDsr(const SessionMessage& invoke)
                 refuse(notUnderstood);
                 return;
             }
+            // The device's slice (JJ's phone run, PR 808); slice A when none is named.
+            const int soundSlice = arguments.contains(QStringLiteral("slice")) ? slice
+                                                                               : RecordingService::kStretchSlice;
             ok = service->saveStretch(arguments.value(QStringLiteral("fromUtcNs")).toInteger(0),
                                       arguments.value(QStringLiteral("toUtcNs")).toInteger(0),
-                                      kind == RecordingKind::WholePan, &note, &refusal);
+                                      kind == RecordingKind::WholePan, &note, &refusal, soundSlice);
         } else {
             ok = service->saveSoundOnly(arguments.value(QStringLiteral("id")).toString(), &note, &refusal);
         }

@@ -226,6 +226,184 @@ struct DialShotTests {
                                    client: model.recordings, revision: 1)
     }
 
+    /// JJ's phone run of PR 808, round B, on the whole screen of the small
+    /// and the big iPhone upright, written as `jj-b-<shape>-<state>.png`:
+    /// the past drawing (the dim covers the waterfall beside the strip),
+    /// SAVE open while the sound plays (two frames three seconds apart, the
+    /// picture and the handles held), the Save panel on Slice B, the Save
+    /// panel and the Kept notice on a Core with MP3 and on one without it,
+    /// the Kept notice beside Roundtable's tags, and Slice B's full flag
+    /// near the band's right edge, clear of the dBm arrows. Runs only with
+    /// `NEREUS_JJ_REWIND_B` set (`TEST_RUNNER_NEREUS_JJ_REWIND_B`).
+    @Test(arguments: [SheetWalkShape.smallUpright, .bigUpright])
+    func jjRoundB(_ shape: SheetWalkShape) async throws {
+        guard let wanted = ProcessInfo.processInfo.environment["NEREUS_JJ_REWIND_B"], !wanted.isEmpty else {
+            return
+        }
+        let suite = "DialShotTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = PhoneSettings(defaults: defaults)
+        let model = AppModel(phoneSettings: settings, mediaPeerFactory: { QuietDialPeer() },
+                             displaySettings: BandDisplaySettingsStore(defaults: defaults))
+        let station = try FakeStation(additions: FakeStation.Additions.all.union(.roundtable))
+        await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
+                            transportFactory: station.transportFactory, clock: HeartbeatSoonLinkClock())
+        #expect(await station.waitUntilLive())
+        try await MainScreenShotTests.fill(station)
+        let main = model.main
+        #expect(await settle(seconds: 30) {
+            main.slices.entries.count == 2 && main.coreName != nil && main.band.catalog != nil
+        })
+        // Slice B where its full flag reaches the band's right edge (7.2205 to 7.2685 MHz).
+        await station.deliver(.delta(LinkMessage.Delta(key: "slice:1", properties: [
+            .init(ordinal: 1, name: "frequency", value: .f64(7_265_000)),
+        ])))
+        // A Roundtable room on slice A's frequency: its tag at the spectrum's foot.
+        let room = "lsb-7236000"
+        try await station.deliverRoundtable(FakeStation.RoundtableScene(
+            rooms: [FakeStation.roundtableSummary(id: room, members: 2, talkers: ["W1AW"])],
+            roomRecords: [room: [FakeStation.roundtableMember(ref: "a/1", callsign: "W1AW", seq: 0),
+                                 FakeStation.roundtableReading(ref: "a/1", dbm: -73.5, t: 1_000),
+                                 FakeStation.roundtableTurn(id: 11, start: 900, end: nil, talkers: ["W1AW"])]],
+            sliceRooms: [0: room]))
+        let band = main.band
+        band.endpointId = 1
+        band.receive(.context(try #require(BandFlagShotTests.context())))
+        #expect(await settle(seconds: 10) { main.slices.entries.first { $0.id == 1 }?.slice.frequencyHz == 7_265_000 })
+        let flow = ConnectionFlow(app: model, dependencies: ConnectionFlow.Dependencies(
+            keyStore: KeychainKeyStore(item: InMemorySecretItem()),
+            stations: PairedStationStore(item: InMemorySecretItem()), kind: .phone,
+            transportFactory: station.transportFactory, clock: TestLinkClock(),
+            microphone: ConnectionFlowTests.FakeMicrophone(), network: ConnectionFlowTests.FakeNetwork(),
+            appMajors: [1], now: Date.init, browser: nil))
+        Self.offerRecordings(model)
+        let dsr = model.dsr
+        var now = DsrTests.now
+        dsr.clock = { now }
+        #expect(dsr.usable)
+
+        // The past: ten minutes back and let go; the Core takes the rewind.
+        dsr.drag(from: dsr.top, by: -600 / dsr.secondsPerPoint)
+        let asked = station.messages.count
+        dsr.dragEnded()
+        #expect(await Self.answer(station, "dsr.rewind", after: asked))
+        let moment = try #require(dsr.viewTop)
+        #expect(await settle(seconds: 10) { dsr.mine.contains(0) })
+        var revision: Int64 = 2
+        func publish(_ dsr: [String: Any] = DsrTests.dsrPart(rewound: DsrTests.rewound(Int64((moment * 1e9).rounded()))),
+                     kept: [String: Any]? = nil, mp3: Bool? = nil) {
+            var document = DsrTests.document(dsr: dsr)
+            if let kept {
+                document["kept"] = kept
+            }
+            if let mp3, var settings = document["settings"] as? [String: Any] {
+                settings["mp3"] = mp3
+                document["settings"] = settings
+            }
+            RecordingFlagTests.publish(document, mirror: model.mirror, client: model.recordings, revision: revision)
+            revision += 1
+            model.dsr.documentChanged()
+        }
+        publish()
+        #expect(await settle(seconds: 10) { dsr.followsSound && dsr.playedMoment != nil })
+        try await shootScreen("jj-b-\(shape.rawValue)-past-drawing", model: model, flow: flow, shape: shape)
+
+        // SAVE open while the sound plays: three seconds on, the picture and the bracket hold.
+        dsr.toggleSave(stripPoints: dsr.waterfallPoints)
+        #expect(dsr.saving)
+        let heldTop = dsr.viewTop
+        let heldStretch = dsr.stretch
+        try await shootScreen("jj-b-\(shape.rawValue)-save-playing-1", model: model, flow: flow, shape: shape)
+        now += 3
+        dsr.tick()
+        #expect(dsr.viewTop == heldTop)
+        #expect(dsr.stretch?.from == heldStretch?.from && dsr.stretch?.to == heldStretch?.to)
+        try await shootScreen("jj-b-\(shape.rawValue)-save-playing-2", model: model, flow: flow, shape: shape)
+        dsr.cancelSave()
+
+        // A Core with no MP3 encoder: the Save panel says WAV and why.
+        publish(mp3: false)
+        dsr.toggleSave(stripPoints: dsr.waterfallPoints)
+        #expect(dsr.soundTitle == "Sound only (WAV)")
+        try await shootScreen("jj-b-\(shape.rawValue)-save-no-mp3", model: model, flow: flow, shape: shape)
+        dsr.cancelSave()
+        // Its Kept notice, beside Roundtable's tag.
+        publish(kept: RecordingFlagTests.kept(seq: 7, reason: "wav"), mp3: false)
+        try await shootScreen("jj-b-\(shape.rawValue)-kept-no-mp3", model: model, flow: flow, shape: shape)
+
+        // A Core with MP3 (the fake): the Save panel says MP3; the Kept notice as the Core words it.
+        publish(kept: RecordingFlagTests.kept(seq: 8, reason: "here"), mp3: true)
+        dsr.toggleSave(stripPoints: dsr.waterfallPoints)
+        #expect(dsr.soundTitle == "Sound only (MP3)")
+        try await shootScreen("jj-b-\(shape.rawValue)-save-mp3", model: model, flow: flow, shape: shape)
+        dsr.cancelSave()
+        try await shootScreen("jj-b-\(shape.rawValue)-kept-mp3", model: model, flow: flow, shape: shape)
+
+        // On Slice B: its full flag in the past, then the Save panel names it.
+        await station.deliver(FlagButtonsShotTests.active(0, false))
+        await station.deliver(FlagButtonsShotTests.active(1, true))
+        #expect(await settle(seconds: 10) { main.slices.active?.slice.letter == "B" })
+        try await shootScreen("jj-b-\(shape.rawValue)-flag-b", model: model, flow: flow, shape: shape)
+        dsr.toggleSave(stripPoints: dsr.waterfallPoints)
+        try await shootScreen("jj-b-\(shape.rawValue)-save-slice-b", model: model, flow: flow, shape: shape)
+        dsr.cancelSave()
+        await model.disconnect()
+    }
+
+    /// Answers the first `verb` the app sent after `after` messages, accepted.
+    private static func answer(_ station: FakeStation, _ verb: String, after: Int) async -> Bool {
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline {
+            for message in station.messages.dropFirst(after) {
+                if case .commandInvoke(let invoke) = message, invoke.verb == verb {
+                    await station.deliver(.commandResult(LinkMessage.CommandResult(
+                        verb: verb, id: invoke.id, accepted: true, reason: "", affected: [], values: nil)))
+                    return true
+                }
+            }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        return false
+    }
+
+    /// Draws the whole main screen at `shape`, nothing opened or closed.
+    private func shootScreen(_ name: String, model: AppModel, flow: ConnectionFlow, shape: SheetWalkShape) async throws {
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(origin: .zero, size: shape.size)
+        window.windowLevel = .alert + 1
+        let root = SheetWalkRoot(model: model, flow: flow, state: SheetWalkState(name: name), iPad: false)
+            .environment(\.horizontalSizeClass, .compact)
+            .preferredColorScheme(.dark)
+        let host = ShotHosting.host(root)
+        host.additionalSafeAreaInsets = shape.safeArea
+        host.view.frame = CGRect(origin: .zero, size: shape.size)
+        window.rootViewController = host
+        window.isHidden = false
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        // The band's own waterfall full of rows, so the past picture shows whether it covers it.
+        // In the past the band holds its own picture back, so its draw is waited for, not required.
+        let bandDraw = try await ShotWait.requireBandLaidOut(model.main.band, in: window)
+        model.main.band.reset()
+        BandFlagShotTests.feed(model.main.band, width: bandDraw.requestedPixels, lines: Int(shape.size.height * 3))
+        _ = await ShotWait.bandShown(model.main.band, in: window, after: bandDraw, seconds: 3)
+        try await Task.sleep(for: .milliseconds(700))
+        await ShotWait.laidOut(window)
+        let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        if let directory = ProcessInfo.processInfo.environment["NEREUS_MAIN_SHOTS"], !directory.isEmpty,
+           let data = image.pngData() {
+            let url = URL(fileURLWithPath: directory).appendingPathComponent("\(name).png")
+            try data.write(to: url)
+            print("Wrote \(url.path)")
+        }
+    }
+
     /// Opens `state` over the band, draws the screen and closes it again.
     private func shootWalk(_ name: String, model: AppModel, flow: ConnectionFlow, shape: SheetWalkShape,
                            state: SheetWalkState) async throws {

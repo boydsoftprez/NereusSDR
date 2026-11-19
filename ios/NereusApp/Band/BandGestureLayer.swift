@@ -50,6 +50,11 @@
 //   the tag no longer jumps sides when the past starts or ends (the PAST tag
 //   on the spectrum shows where no flag or tag carries it).
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-19: Round B of those fixes: a full flag ends left of the dBm
+//   scale's arrows, so its slice letter is never under them; the Kept notice
+//   sits at the waterfall's top, clear of the talker cards and the tags at
+//   the spectrum's foot; SAVE's panel names the active slice it saves.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import NereusBand
@@ -245,7 +250,9 @@ struct BandGestureLayer: View {
                 // SAVE's panel, left of the strip and the hours map, so the
                 // handles on the strip stay free beside it: on a short pan
                 // (a small phone, or sideways) the panel stood over them.
-                DsrSavePanel(model: dsr, sliceFrequencyHz: slices.entries.first { $0.id == 0 }?.slice.frequencyHz)
+                // Sound only saves the active slice (JJ's phone run, PR 808).
+                DsrSavePanel(model: dsr, sliceLetter: slices.active?.slice.letter ?? "A",
+                             sliceFrequencyHz: slices.active?.slice.frequencyHz)
                     .padding(.trailing, trailingInset + DsrStripPlace.stripWidth + DsrStripPlace.mapWidth)
             }
         }
@@ -294,6 +301,10 @@ struct BandGestureLayer: View {
                               height: layout.frequencyScale.height)
         let tagKeepOut = [scaleRow]
             + (pastShows && dsr?.followsSound == true ? [DsrPictureLayer.playLabelRoom(waterfall: layout.waterfall)] : [])
+        // The dBm scale's arrows at the band's top right sit over the flags:
+        // a full flag beside them ends at their left (JJ's phone run, PR 808,
+        // the slice letter was half under them).
+        let arrowsRect = layout.dbmArrows.offsetBy(dx: -trailingInset, dy: 0)
         func place(top: CGFloat) -> [FlagPlacement] {
             FlagLayout.layout(slices: entries.map(\.slice), activeSliceId: slices.activeSliceId,
                               geometry: geometry,
@@ -322,7 +333,9 @@ struct BandGestureLayer: View {
                                   }
                                   return measured[slice.id] ?? fixed
                               },
-                              sideColumn: column, top: top, keepOut: tagKeepOut)
+                              sideColumn: column, top: top, keepOut: tagKeepOut,
+                              fullRight: arrowsRect.width > 0 && top < arrowsRect.maxY
+                                  ? Double(arrowsRect.minX) - Double(FlagLayout.sideGap) : nil)
         }
         // While another slice's band shows, the flags start under Back to
         // your band; sideways, where the band is short, they stay at the top
@@ -492,8 +505,9 @@ struct BandGestureLayer: View {
                                            : RecordingFlagLayer.Item(slice: entry.id, letter: entry.slice.letter,
                                                                      flag: placement.rect)
                                    },
-                                   bandWidth: geometry.size.width, openAll: openAllRecordings,
-                                   openSettings: openRecordingSettings)
+                                   bandWidth: geometry.size.width, waterfallTop: layout.waterfall.minY,
+                                   waterfallRight: dsr == nil ? nil : dsrPlace.map.minX,
+                                   openAll: openAllRecordings, openSettings: openRecordingSettings)
             }
             EdgeMarkers(slices: slices, edges: shown.edges, spectrumFoot: layout.spectrum.maxY,
                         bandWidth: geometry.size.width, avoid: rects, sideways: sideways, large: large,

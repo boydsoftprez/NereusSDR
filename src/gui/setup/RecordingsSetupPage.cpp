@@ -21,12 +21,17 @@
 //                 Anthropic Claude Code: the disk drop-down is filled in
 //                 place through DiskComboFiller instead of cleared on every
 //                 Core update, which crashed under Qt accessibility (PR 808).
+//   2026-11-19 - J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code: on a Core with no MP3 encoder the
+//                 format shows WAV, MP3 is greyed and the size line says why
+//                 (JJ's phone run, PR 808).
 // =================================================================
 
 #include "gui/setup/RecordingsSetupPage.h"
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QStandardItemModel>
 #include <QDateTime>
 #include <QDir>
 #include <QGroupBox>
@@ -408,7 +413,16 @@ void RecordingsSetupPage::showDocument()
         m_autoStart->setChecked(settings.value(QStringLiteral("autoStart")).toBool(false));
         m_autoStop->setChecked(settings.value(QStringLiteral("autoStop")).toBool(true));
         m_quiet->setValue(settings.value(QStringLiteral("quietMinutes")).toInt(2));
-        m_format->setCurrentIndex(settings.value(QStringLiteral("format")).toString() == QLatin1String("wav") ? 1 : 0);
+        // A Core with no MP3 encoder (`mp3` false) keeps every MP3 as WAV:
+        // WAV shows, and MP3 stays in the list, greyed.
+        m_noMp3 = !settings.value(QStringLiteral("mp3")).toBool(true);
+        if (auto* model = qobject_cast<QStandardItemModel*>(m_format->model())) {
+            if (QStandardItem* mp3 = model->item(0)) {
+                mp3->setEnabled(!m_noMp3);
+            }
+        }
+        m_format->setCurrentIndex(
+            settings.value(QStringLiteral("format")).toString() == QLatin1String("wav") || m_noMp3 ? 1 : 0);
 
         // The disks, filled in place: this runs on every update from the
         // Core (about once a second while the recorder runs), so the list
@@ -501,8 +515,10 @@ void RecordingsSetupPage::showDependentText()
         : QStringLiteral("A recording runs until you press Record again.");
     m_startStopSummary->setText(starts + QLatin1Char(' ') + stops);
 
-    m_formatSize->setText(wav ? QStringLiteral("Full quality, bigger. About %1 MB an hour.").arg(mbPerHour)
-                              : QStringLiteral("Small, plays anywhere. About %1 MB an hour.").arg(mbPerHour));
+    m_formatSize->setText(
+        (wav ? QStringLiteral("Full quality, bigger. About %1 MB an hour.").arg(mbPerHour)
+             : QStringLiteral("Small, plays anywhere. About %1 MB an hour.").arg(mbPerHour))
+        + (m_noMp3 ? QStringLiteral(" This Core has no MP3 encoder.") : QString()));
     m_nameExample->setText(recordingBaseName(kExampleStartUtc, kExampleFrequencyHz, QStringLiteral("LSB"),
                                              QStringLiteral("K4ABC"))
                            + (wav ? QStringLiteral(".wav") : QStringLiteral(".mp3")));

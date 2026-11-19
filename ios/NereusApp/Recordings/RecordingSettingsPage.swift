@@ -16,6 +16,9 @@
 //   Claude Code.
 // 2026-11-18: PR 808, the title drawn inline, where it wraps, not cut short.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-19: On a Core with no MP3 encoder the Files choice shows WAV and
+//   MP3 greys with why (JJ's phone run of PR 808). J.J. Boyd (KG4VCF),
+//   AI-assisted via Claude Code.
 
 import Foundation
 import NereusMirror
@@ -161,8 +164,18 @@ final class RecordingSettingsModel {
         return Int((bytesPerSecond * 3600 / 1.0e6).rounded())
     }
 
+    /// The words under a greyed MP3 on a Core with no MP3 encoder.
+    nonisolated static let noMp3Detail = "This Core has no MP3 encoder."
+
+    /// The file the Core really writes: WAV on a Core with no MP3 encoder,
+    /// whatever the setting says.
+    var shownFormat: RecordingsDocument.Format { settings.noMp3 ? .wav : settings.format }
+
     func formatDetail(_ format: RecordingsDocument.Format) -> String {
         let shown = settings
+        if format == .mp3, shown.noMp3 {
+            return Self.noMp3Detail
+        }
         let mb = Self.megabytesPerHour(wav: format == .wav, apart: shown.keepMyVoice && shown.sidesApart)
         return format == .wav ? "Full quality, bigger. About \(mb) MB an hour."
             : "Small, plays anywhere. About \(mb) MB an hour."
@@ -170,7 +183,7 @@ final class RecordingSettingsModel {
 
     /// The spec's example name, with the chosen file type.
     var nameExample: String {
-        "2026-11-15 1432Z 7.236.400 LSB K4ABC." + (settings.format == .wav ? "wav" : "mp3")
+        "2026-11-15 1432Z 7.236.400 LSB K4ABC." + (shownFormat == .wav ? "wav" : "mp3")
     }
 
     var myVoiceDetail: String {
@@ -255,7 +268,7 @@ final class RecordingSettingsModel {
             onAirUseCompressor: change.onAirUseCompressor ?? base.onAirUseCompressor,
             onAirUseLeveler: change.onAirUseLeveler ?? base.onAirUseLeveler,
             onAirUseCfc: change.onAirUseCfc ?? base.onAirUseCfc,
-            onAirUsePhaseRotator: change.onAirUsePhaseRotator ?? base.onAirUsePhaseRotator)
+            onAirUsePhaseRotator: change.onAirUsePhaseRotator ?? base.onAirUsePhaseRotator, mp3: base.mp3)
     }
 
     nonisolated static func merged(_ base: RecordingsSettingsChange,
@@ -392,11 +405,11 @@ struct RecordingSettingsPage: View {
         SetupPanelSection("Files", tag: .core,
                           note: "Also used for \"Save sound only\" from the Digital Spectrum Recorder. "
                               + "Rename any recording in Tools, Recordings.") {
-            SetupChoiceRow(title: "MP3", detail: model.formatDetail(.mp3), chosen: shown.format == .mp3,
-                           id: "recordingSettings.mp3") {
+            SetupChoiceRow(title: "MP3", detail: model.formatDetail(.mp3), chosen: model.shownFormat == .mp3,
+                           enabled: !shown.noMp3, id: "recordingSettings.mp3") {
                 Task { await model.setFormat(.mp3) }
             }
-            SetupChoiceRow(title: "WAV", detail: model.formatDetail(.wav), chosen: shown.format == .wav,
+            SetupChoiceRow(title: "WAV", detail: model.formatDetail(.wav), chosen: model.shownFormat == .wav,
                            id: "recordingSettings.wav") {
                 Task { await model.setFormat(.wav) }
             }

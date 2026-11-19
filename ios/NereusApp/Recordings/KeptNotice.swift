@@ -3,6 +3,8 @@
 // Modification history (NereusSDR):
 // 2026-11-16: Recording plan Task 16, the phone's Kept notice.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-19: belowWaterfallTop, its place at the waterfall's top (JJ's
+//   phone run of PR 808). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import SwiftUI
 
@@ -22,6 +24,10 @@ struct KeptNotice: View {
     static let inset: CGFloat = 12
     /// Under the flag, past where the playing bar would be.
     static let below: CGFloat = PlayingBar.gap + PlayingBar.size.height + 7
+    /// Below the waterfall's top, clear of the recorder's play label there
+    /// (DsrPictureLayer.playLabelRoom), where it sits since PR 808 round B.
+    static let belowWaterfallTop: CGFloat = 1 + DsrPictureLayer.playLabelInset.height
+        + DsrPictureLayer.playLabelSize.height + 4
 
     private static let ground = WorkspacePalette.rgb(0x242428).opacity(0.97)
     private static let edge = WorkspacePalette.rgb(0x48484E)

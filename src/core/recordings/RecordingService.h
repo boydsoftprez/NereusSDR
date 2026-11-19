@@ -69,6 +69,10 @@
 //             again (dsrStreamRateHz); a rewind or seek into a stretch kept
 //             around but not recorded says the receiver was off
 //             (kRewindReceiverOffReason). AI tooling: Anthropic Claude Code.
+// 2026-11-19  J.J. Boyd / KG4VCF; saveStretch keeps the sound of the slice
+//             asked for (JJ's phone run, PR 808: the phone on Slice B saved
+//             Slice A); mp3Available is public, for the document. AI
+//             tooling: Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -376,10 +380,14 @@ public:
     // Less than this missing at either end still counts as the whole stretch.
     static constexpr qint64 kStretchSlackNs = 1000000000;
     // Saves `fromUtcNs` to `toUtcNs`: the whole pan (every receiver's I/Q,
-    // a WholePan recording) or slice A's sound in the Files format (a
-    // Sound recording). What the recorder no longer keeps is left out and
-    // `note` says so; nothing kept is refused.
-    bool saveStretch(qint64 fromUtcNs, qint64 toUtcNs, bool wholePan, QString* note, QString* refusal);
+    // a WholePan recording) or `sliceId`'s sound in the Files format (a
+    // Sound recording; slice A when not named). What the recorder no
+    // longer keeps is left out and `note` says so; nothing kept is refused.
+    bool saveStretch(qint64 fromUtcNs, qint64 toUtcNs, bool wholePan, QString* note, QString* refusal,
+                     int sliceId = kStretchSlice);
+    // The refusal when `sliceId` is not on a frequency kept in the stretch
+    // (kSaveSliceReason for slice A).
+    static QString saveSliceReason(int sliceId);
     // A Sound recording of a saved whole-pan stretch: slice A's sound as it
     // was set when the stretch was saved.
     bool saveSoundOnly(const QString& recordingId, QString* note, QString* refusal);
@@ -409,6 +417,9 @@ public:
     // Called on the worker thread; set before the first recording.
     void setWriterFactoryForTest(WriterFactory factory);
     void setMp3AvailableForTest(std::optional<bool> available);
+    // This Core can write MP3 (built with LAME, or the test's say). The
+    // recordings document carries it, so a device shows WAV before a save.
+    bool mp3Available() const;
     ContactRecorder* recorderForTest(int sliceId) const;
     // Runs the worker's drain and everything it hands back, now.
     void pumpForTest();
@@ -473,7 +484,6 @@ private:
     void ensureStoreOpen() const;
     void ensureWorker();
     qint64 now() const;
-    bool mp3Available() const;
     ContactRecorder* recorderFor(int sliceId);
     void stopSlice(int sliceId, KeptReason reason, const QString& deviceName);
     void finishKept(quint64 token, const WorkerResult& result);

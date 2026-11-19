@@ -49,6 +49,8 @@
 //                 implementation via Anthropic Claude Code.
 //   2026-11-17 - J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //                 Anthropic Claude Code: m_diskFiller (PR 808 crash fix).
+//   2026-11-19 - J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code: m_noMp3 (a Core with no MP3 encoder).
 // =================================================================
 
 #include <QJsonObject>
@@ -139,6 +141,8 @@ private:
     QLabel* m_startStopSummary = nullptr;
     QComboBox* m_format = nullptr;
     QLabel* m_formatSize = nullptr;
+    // The Core has no MP3 encoder (the document's settings `mp3` false).
+    bool m_noMp3 = false;
     QLabel* m_nameExample = nullptr;
     QComboBox* m_disk = nullptr;
     DiskComboFiller* m_diskFiller = nullptr;
