@@ -30,6 +30,10 @@ These reach phones and iPads with the app's next build, not with this download.
   LIVE, SAVE or the dBm arrows that the panel's top edge would cut in half are
   hidden until the edge moves off them. While hidden they take no touch: a
   drag that starts where a hidden flag stood moves the band there.
+- **The Roundtable talker card on the band stays put on a busy frequency.** It
+  no longer jumps between under the receiver flag and beside it as reports come
+  and go, and it keeps its height when the first report arrives and when a new
+  one turns the last row into **+N more**.
 
 ## [2026.11.1] - 2026-11-08
 

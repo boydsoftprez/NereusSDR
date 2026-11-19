@@ -125,6 +125,46 @@ struct RoundtableCardLayoutTests {
         }
     }
 
+    /// The iPhone Air's pan in the live-net recording: the flag right of the dial,
+    /// room under it for two reading rows and beside it for five.
+    private let airFlag = CGRect(x: 140, y: 0, width: 220, height: 170)
+    private let airFoot: CGFloat = 260
+
+    @Test("the card keeps its side, place and width as readings arrive and go, the talker changes and a double comes")
+    func placeHoldsWhileDataChanges() throws {
+        let first = try #require(RoundtableTagLayout.placedCard(flags: [airFlag], dialX: 150, foot: airFoot,
+                                                                panWidth: phoneWidth, compact: true, card: talking(0)))
+        var cards = (0...7).map { talking($0) }
+        cards += [double(0), double(3), double(7, names: ["VE3XYZ", "W1AW"])]
+        cards.append(RoundtableCardData(kind: .you, hz: 7_236_400, rows: rows(2)))
+        cards.append(RoundtableCardData(kind: .unknown, hz: 7_236_400, rows: rows(1)))
+        cards.append(RoundtableCardData(kind: .lastTalker, hz: 7_236_400, keyed: ["K4ABC"], endedAgo: 2_000, rows: rows(4)))
+        for card in cards {
+            let placed = try #require(RoundtableTagLayout.placedCard(flags: [airFlag], dialX: 150, foot: airFoot,
+                                                                     panWidth: phoneWidth, compact: true, card: card))
+            #expect(placed.placement == first.placement, "\(card.kind) with \(card.rows.count) rows changed sides")
+            #expect(placed.rect.minX == first.rect.minX && placed.rect.width == first.rect.width,
+                    "\(card.kind) with \(card.rows.count) rows moved to \(placed.rect) from \(first.rect)")
+            #expect(placed.rect.maxY == airFoot)
+        }
+    }
+
+    @Test("a reading arriving leaves the card's height: the first one, and the one that brings +N more")
+    func readingKeepsHeight() throws {
+        let roomy: CGFloat = 400
+        let none = try #require(RoundtableTagLayout.cardPlan(talking(0), width: 176, room: roomy))
+        let one = try #require(RoundtableTagLayout.cardPlan(talking(1), width: 176, room: roomy))
+        #expect(none.hasEmptyLine && one.rows == 1 && none.height == one.height)
+        // A pan with room for two rows: the third reading brings "+2 more" in the second row's place.
+        let room = try #require(RoundtableTagLayout.cardPlan(talking(2), width: 176, room: roomy)).height
+        let two = try #require(RoundtableTagLayout.cardPlan(talking(2), width: 176, room: room))
+        for count in 3...7 {
+            let more = try #require(RoundtableTagLayout.cardPlan(talking(count), width: 176, room: room))
+            #expect(more.rows == 1 && more.moreRows == count - 1 && more.showsMoreRows)
+            #expect(more.height == two.height, "\(count) readings: \(more.height), two: \(two.height)")
+        }
+    }
+
     @Test("under 122 wide no age and no frequency in the head; under 150 S units for Both")
     func narrowRules() throws {
         let tight = try #require(RoundtableTagLayout.cardPlan(talking(), width: 121, room: 300))
@@ -246,8 +286,10 @@ struct RoundtableCardLayoutTests {
         let card = double(5)
         let roomy = try #require(RoundtableTagLayout.cardPlan(card, width: 176, room: 400))
         #expect(roomy.rows == 5 && roomy.moreRows == 0 && roomy.names == 2 && roomy.hasCaption)
+        // "+N more" takes a row's height: a pan just short of five rows shows three and "+2 more".
         let fewer = try #require(RoundtableTagLayout.cardPlan(card, width: 176, room: roomy.height - 4))
-        #expect(fewer.rows == 4 && fewer.moreRows == 1 && fewer.showsMoreRows && fewer.names == 2)
+        #expect(fewer.rows == 3 && fewer.moreRows == 2 && fewer.showsMoreRows && fewer.names == 2)
+        #expect(fewer.height == roomy.height - RoundtableCardPlan.rowHeight - RoundtableCardPlan.gap)
         // Only the head and the names.
         let least = try #require(RoundtableTagLayout.cardPlan(card, width: 120, room: 66))
         #expect(least.rows == 0 && !least.hasCaption && least.names == 2)
