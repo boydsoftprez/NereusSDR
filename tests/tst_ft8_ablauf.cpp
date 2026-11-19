@@ -511,6 +511,59 @@ private slots:
         QCOMPARE(a.zustand(), Z::Ruht);
         QVERIFY(!a.laeuft());
     }
+
+    // ── Der Anruf an EINE Station bekommt die Zahl des Betreibers ────
+    //
+    // Am Geraet (2026-11-17): TL8GD fuenfmal gerufen, „gave up" —
+    // Betreiber: „der call hängt glaube ich wieder". Die Fuenf galt
+    // auch fuer den Anruf, auf den noch niemand geantwortet hat.
+    void derAnrufLaeuftSoOftWieEingestellt()
+    {
+        Ft8Ablauf a;
+        a.setzeAnrufWiederholungen(12);
+        a.starteAlsAntworter(QStringLiteral("TL8GD"), QStringLiteral("OE5SOS"),
+                             QStringLiteral("JN67"), -12);
+        QCOMPARE(a.zustand(), Ft8Ablauf::Zustand::RufeAn);
+        for (int i = 0; i < 11; ++i) {
+            a.fensterVerstrichen();
+            QVERIFY2(a.laeuft(), qPrintable(QStringLiteral(
+                "gab nach %1 Anrufen auf, eingestellt sind 12").arg(i + 1)));
+        }
+        a.fensterVerstrichen();
+        QCOMPARE(a.zustand(), Ft8Ablauf::Zustand::Abgebrochen);
+    }
+
+    // Ohne Einstellung bleibt es bei den fuenf von bisher.
+    void ohneEinstellungBleibtDerAnrufBeiFuenf()
+    {
+        Ft8Ablauf a;
+        a.starteAlsAntworter(QStringLiteral("TL8GD"), QStringLiteral("OE5SOS"),
+                             QStringLiteral("JN67"), -12);
+        for (int i = 0; i < Ft8Ablauf::kMaxWiederholungen - 1; ++i) {
+            a.fensterVerstrichen();
+            QVERIFY(a.laeuft());
+        }
+        a.fensterVerstrichen();
+        QCOMPARE(a.zustand(), Ft8Ablauf::Zustand::Abgebrochen);
+    }
+
+    // Und MITTEN im QSO bleibt die Fuenf, auch wenn der Anruf dreissig
+    // darf: ein Rapport wird nicht dreissigmal wiederholt.
+    void mittenImQsoBleibtEsBeiFuenf()
+    {
+        Ft8Ablauf a;
+        a.setzeAnrufWiederholungen(30);
+        a.starteAlsAntworter(QStringLiteral("DL1ABC"), QStringLiteral("OE5SOS"),
+                             QStringLiteral("JN67"), -12);
+        QVERIFY(a.verarbeite(QStringLiteral("OE5SOS DL1ABC -07"), -7));
+        QVERIFY(a.zustand() != Ft8Ablauf::Zustand::RufeAn);
+        for (int i = 0; i < Ft8Ablauf::kMaxWiederholungen - 1; ++i) {
+            a.fensterVerstrichen();
+            QVERIFY(a.laeuft());
+        }
+        a.fensterVerstrichen();
+        QCOMPARE(a.zustand(), Ft8Ablauf::Zustand::Abgebrochen);
+    }
 };
 
 QTEST_APPLESS_MAIN(TstFt8Ablauf)

@@ -558,8 +558,11 @@ void Ft8Ablauf::fensterVerstrichen()
 
     // Der CQ-Ruf laeuft so oft, wie der Betreiber es im Fenster
     // eingestellt hat; alles andere bleibt bei den fuenf Zuegen.
-    const int grenze = m_zustand == Zustand::RufeCq ? m_cqWiederholungen
-                                                    : kMaxWiederholungen;
+    // Dasselbe fuer den Anruf an eine Station, die noch nicht
+    // geantwortet hat (2026-11-17, siehe `setzeAnrufWiederholungen`).
+    const int grenze = m_zustand == Zustand::RufeCq   ? m_cqWiederholungen
+                     : m_zustand == Zustand::RufeAn   ? m_anrufWiederholungen
+                                                      : kMaxWiederholungen;
     if (m_wiederholungen >= grenze) {
         m_zustand = Zustand::Abgebrochen;
     }
@@ -570,6 +573,11 @@ void Ft8Ablauf::setzeCqWiederholungen(int n)
     // Eine Null oder etwas Negatives wuerde den Ruf im ersten Fenster
     // abwuergen; die Obergrenze ist dieselbe wie im Drehfeld.
     m_cqWiederholungen = qBound(1, n, 30);
+}
+
+void Ft8Ablauf::setzeAnrufWiederholungen(int n)
+{
+    m_anrufWiederholungen = qBound(1, n, 30);
 }
 
 void Ft8Ablauf::abbrechen()

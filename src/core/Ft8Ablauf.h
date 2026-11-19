@@ -101,6 +101,23 @@ public:
     void setzeCqWiederholungen(int n);
     int  cqWiederholungen() const { return m_cqWiederholungen; }
 
+    /// Wie oft EINE STATION gerufen wird, die nicht antwortet
+    /// (`Zustand::RufeAn`), bevor der Ablauf aufgibt.
+    ///
+    /// ── Dieselbe Geschichte, eine Stufe weiter (2026-11-17) ─────────
+    ///
+    /// Am Geraet, 15 m: TL8GD (Zentralafrika) fuenfmal gerufen, er war
+    /// mit G6SBR beschaeftigt — „gave up TL8GD". Betreiber: „der call
+    /// hängt glaube ich wieder". Er hing nicht, er hatte aufgegeben:
+    /// die Fuenf von `kMaxWiederholungen` galt auch hier, und fuer
+    /// seltenes DX sind fuenf Anrufe (zweieinhalb Minuten) nichts.
+    ///
+    /// Ein Anruf, auf den noch niemand geantwortet hat, ist kein Zug
+    /// MITTEN im QSO. Er bekommt darum wie der CQ-Ruf die Zahl des
+    /// Betreibers; die Fuenf bleibt fuer Rapport und Bestaetigung.
+    void setzeAnrufWiederholungen(int n);
+    int  anrufWiederholungen() const { return m_anrufWiederholungen; }
+
     /// Ich antworte auf ein gehoertes CQ.
     /// `snr` ist das, was ICH von ihm gemessen habe — es wird spaeter
     /// sein Rapport.
@@ -304,6 +321,7 @@ private:
     int     m_reportEmpfangen{kKeinReport};
     int     m_wiederholungen{0};
     int     m_cqWiederholungen{kMaxWiederholungen};
+    int     m_anrufWiederholungen{kMaxWiederholungen};
     Contest m_contest;
     int     m_nummerEmpfangen{0};
     QString m_partnerLocator6;

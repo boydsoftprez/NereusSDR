@@ -112,6 +112,7 @@ bool Ft8Mehrfach::nimm(const QString& partner, int snr,
     const Wartend w{p, snr, seinLocator.trimmed().toUpper(), vonHand};
     if (aktive() < m_plaetze) {
         m_laufend.push_back(beginne(w, m_meinRuf, m_meinLocator));
+        m_laufend.back().setzeAnrufWiederholungen(m_anrufWiederholungen);
         return true;
     }
 
@@ -205,6 +206,7 @@ void Ft8Mehrfach::rueckeNach()
     while (!m_warteschlange.isEmpty() && aktive() < m_plaetze) {
         const Wartend w = m_warteschlange.takeFirst();
         m_laufend.push_back(beginne(w, m_meinRuf, m_meinLocator));
+        m_laufend.back().setzeAnrufWiederholungen(m_anrufWiederholungen);
     }
 }
 

@@ -88,6 +88,11 @@ public:
     /// Regler, der stillschweigend nichts tut, ist schlimmer als einer,
     /// der an seiner Grenze stehen bleibt.
     void setPlaetze(int n);
+
+    /// Wie oft ein Platz eine Station ruft, die nicht antwortet. Gilt
+    /// fuer Plaetze, die danach belegt werden (siehe
+    /// `Ft8Ablauf::setzeAnrufWiederholungen`).
+    void setzeAnrufWiederholungen(int n) { m_anrufWiederholungen = n; }
     int  plaetze() const { return m_plaetze; }
 
     /// Die Grundfrequenz des ersten Platzes. Die uebrigen liegen je
@@ -199,6 +204,7 @@ private:
     QString            m_meinRuf;
     QString            m_meinLocator;
     int                m_plaetze{kVorgabePlaetze};
+    int                m_anrufWiederholungen{Ft8Ablauf::kMaxWiederholungen};
     float              m_grundtonHz{1500.0f};
     QVector<Ft8Ablauf> m_laufend;
     QVector<Ft8Ablauf> m_fertig;

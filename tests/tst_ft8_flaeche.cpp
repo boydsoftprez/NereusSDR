@@ -418,6 +418,75 @@ private slots:
     // verschwindet aus der Liste, steht aber weiter im Modell. Faellt
     // die zweite Haelfte weg, waere der Filter kein Filter mehr,
     // sondern ein Taubstellen des Dekoders.
+    // ── Man sieht, welche Sicht gewaehlt ist (2026-11-19) ───────────
+    //
+    // Betreiber: „weiters sieht man immer noch nicht, ob man auf die
+    // pille geklickt hat oder nicht". Entwurf A: unter der gewaehlten
+    // Pille ein Strich in Messing -- unter genau EINER, und er wandert
+    // mit. Er darf den Klick nicht schlucken.
+    void unterDerGewaehltenPilleStehtDerMessingstrich()
+    {
+        RadioModel radio;
+        Ft8Applet applet(&radio);
+        applet.resize(900, 600);
+        applet.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&applet));
+
+        const QList<QPushButton*> pillen = {
+            applet.sichtAllesButtonForTest(),
+            applet.sichtAnMichButtonForTest(),
+            applet.nurCqButtonForTest(),
+            applet.nurNeueLaenderButtonForTest(),
+            applet.sichtNeuesGridButtonForTest(),
+            applet.sichtFreqButtonForTest()};
+        const auto strichVon = [](QPushButton* p) {
+            return p->findChild<QWidget*>(
+                QStringLiteral("ft8SichtMessingStrich"),
+                Qt::FindDirectChildrenOnly);
+        };
+        for (QPushButton* p : pillen) {
+            QVERIFY2(strichVon(p), qPrintable(p->text() + " hat keinen Strich"));
+        }
+
+        // Ab Werk: „All", und nur dort.
+        int zahl = 0;
+        for (QPushButton* p : pillen) {
+            if (strichVon(p)->isVisible()) {
+                ++zahl;
+                QCOMPARE(p, applet.sichtAllesButtonForTest());
+            }
+        }
+        QCOMPARE(zahl, 1);
+
+        // Der Strich liegt IN der Pille, unten, und geht nicht ueber
+        // ihre Breite hinaus.
+        QWidget* s = strichVon(applet.sichtAllesButtonForTest());
+        const QRect pr = applet.sichtAllesButtonForTest()->rect();
+        QVERIFY(pr.contains(s->geometry()));
+        QVERIFY(s->geometry().bottom() >= pr.bottom() - 4);
+        QVERIFY(s->width() > 0);
+
+        // Ein echter Mausklick mitten auf „CQ" -- landet er trotz des
+        // Kindes auf der Pille, und wandert der Strich?
+        QPushButton* cq = applet.nurCqButtonForTest();
+        QTest::mouseClick(cq, Qt::LeftButton, {}, cq->rect().center());
+        QVERIFY(cq->isChecked());
+        QVERIFY(strichVon(cq)->isVisible());
+        QVERIFY(!strichVon(applet.sichtAllesButtonForTest())->isVisible());
+
+        // Und ein Klick genau AUF den Strich trifft die Pille auch.
+        QPushButton* grid = applet.sichtNeuesGridButtonForTest();
+        QTest::mouseClick(grid, Qt::LeftButton, {},
+                          strichVon(grid)->geometry().center());
+        QVERIFY(grid->isChecked());
+        zahl = 0;
+        for (QPushButton* p : pillen) {
+            if (strichVon(p)->isVisible()) { ++zahl; }
+        }
+        QCOMPARE(zahl, 1);
+        QVERIFY(strichVon(grid)->isVisible());
+    }
+
     void nurCqFiltertDieAnsichtAberNichtDasModell()
     {
         RadioModel radio;

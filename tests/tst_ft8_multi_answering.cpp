@@ -1118,6 +1118,42 @@ private slots:
         QCOMPARE(farbeVon(QStringLiteral("JA1XYZ")), blau);
         applet.stopButtonForTest()->click();
     }
+
+    // ── Die Zahl am Drehfeld gilt auch fuer den Anruf (2026-11-17) ────
+    //
+    // Am Geraet: TL8GD fuenfmal gerufen, dann „gave up" — bei „x30" im
+    // Fenster. Die Dreissig galt nur fuer den CQ-Ruf.
+    void dasDrehfeldGiltAuchFuerDenAnruf()
+    {
+        stelleEin(1);
+        RadioModel radio;
+        radio.installFt8TxForTest();
+        Ft8Applet applet(&radio);
+        applet.cqVersucheSpinForTest()->setValue(12);
+        QCOMPARE(applet.ablaufForTest().anrufWiederholungen(), 12);
+        applet.cqVersucheSpinForTest()->setValue(7);
+        QCOMPARE(applet.ablaufForTest().anrufWiederholungen(), 7);
+    }
+
+    // Und auf den Plaetzen: wer von Hand angerufen wird und nicht
+    // antwortet, haelt seinen Platz so lange, wie eingestellt.
+    void einPlatzRuftSoOftWieEingestellt()
+    {
+        Ft8Mehrfach m;
+        m.setEigeneDaten(QStringLiteral("OE5SOS"), QStringLiteral("JN67"));
+        m.setPlaetze(2);
+        m.setzeAnrufWiederholungen(8);
+        QVERIFY(m.nimmVonHand(QStringLiteral("TL8GD"), -12));
+        for (int i = 0; i < 7; ++i) {
+            m.fensterVerstrichen();
+            m.raeumeAuf();
+            QVERIFY2(m.aktive() == 1, qPrintable(QStringLiteral(
+                "Platz nach %1 Anrufen verloren, eingestellt sind 8").arg(i + 1)));
+        }
+        m.fensterVerstrichen();
+        m.raeumeAuf();
+        QCOMPARE(m.aktive(), 0);
+    }
 };
 
 QTEST_MAIN(TstFt8MultiAnswering)

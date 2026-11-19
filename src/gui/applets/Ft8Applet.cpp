@@ -64,11 +64,13 @@
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <vector>
@@ -142,6 +144,66 @@ constexpr qint64 kZielVersatzMs = 500;
 /// Nachlauf, damit der letzte Ton wirklich draussen ist, bevor der
 /// Sender abschaltet.
 constexpr qint64 kSenderNachlaufMs = 300;
+
+// ── Welche Sicht gewaehlt ist (2026-11-19) ──────────────────────────
+//
+// Betreiber, 2026-11-17: „weiters sieht man immer noch nicht, ob man
+// auf die pille geklickt hat oder nicht". Die gewaehlte Pille war nur
+// eine Mulde -- eine Spur dunkler als die anderen, auf dem Schirm kaum
+// zu unterscheiden. Vier Entwurfsblaetter (A Messingstrich, B heller
+// Rahmen, C helle Pille, D Messingpunkt); gewaehlt am 2026-11-19: A.
+//
+// Die Mulde bleibt, dazu ein schmaler Strich in Messing unter dem Wort.
+// Ein eigenes Kind statt einer Stilblattregel: das Blatt der Pille
+// kommt aus blueToggle() und wird an anderen Stellen weiterverwendet;
+// ein `border-bottom` haette dort den Rahmen veraendert, nicht einen
+// Strich hineingesetzt. Fuer die Maus durchlaessig, damit der Klick
+// weiter die Pille trifft.
+class MessingStrich : public QWidget {
+public:
+    explicit MessingStrich(QAbstractButton* pille)
+        : QWidget(pille), m_pille(pille)
+    {
+        setObjectName(QStringLiteral("ft8SichtMessingStrich"));
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+        setAttribute(Qt::WA_NoSystemBackground);
+        pille->installEventFilter(this);
+        QObject::connect(pille, &QAbstractButton::toggled, this,
+                         [this](bool an) { setVisible(an); });
+        folge();
+        setVisible(pille->isChecked());
+    }
+
+protected:
+    bool eventFilter(QObject* o, QEvent* e) override
+    {
+        if (o == m_pille && e->type() == QEvent::Resize) { folge(); }
+        return false;
+    }
+
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(QString::fromLatin1(Style::kTxKeyBorder)));
+        p.drawRoundedRect(QRectF(rect()), 1.0, 1.0);
+    }
+
+private:
+    // Wie im Blatt: 6 Punkte vom Rand, 2 hoch, 2 ueber der Unterkante.
+    void folge()
+    {
+        constexpr int kEinzug = 6;
+        constexpr int kHoehe = 2;
+        constexpr int kAbstand = 2;
+        const int b = std::max(0, m_pille->width() - 2 * kEinzug);
+        setGeometry(kEinzug, m_pille->height() - kAbstand - kHoehe,
+                    b, kHoehe);
+    }
+
+    QAbstractButton* m_pille;
+};
 
 } // namespace
 
@@ -741,6 +803,7 @@ void Ft8Applet::buildUI()
                                                Sicht welche, int breite) {
         QPushButton* b = blueToggle(text, breite);
         b->setCheckable(true);
+        new MessingStrich(b);   // gehoert der Pille
         connect(b, &QPushButton::clicked, this, [this, welche]() {
             m_sicht = welche;
             zeichneListe();
@@ -1108,8 +1171,13 @@ void Ft8Applet::buildUI()
     m_cqVersucheSpin->setPrefix(tr("x"));
     m_cqVersucheSpin->setMinimumWidth(m_cqVersucheSpin->sizeHint().width());
     m_cqVersucheSpin->setToolTip(tr(
-        "How many periods a CQ call repeats by itself.\nIt stops "
-        "earlier when somebody answers, or on Stop."));
+        "How many periods a CQ call — or a call to one station — "
+        "repeats by itself.\nIt stops earlier when somebody answers, "
+        "or on Stop."));
+    // Die Zahl gilt seit dem 2026-11-17 auch fuer den Anruf an EINE
+    // Station (siehe `Ft8Ablauf::setzeAnrufWiederholungen`).
+    m_ablauf.setzeAnrufWiederholungen(m_cqVersucheSpin->value());
+    m_mehrfach.setzeAnrufWiederholungen(m_cqVersucheSpin->value());
 
     // ── Multi Answering: wie viele gleichzeitig (2026-10-30) ─────
     //
@@ -1160,9 +1228,11 @@ void Ft8Applet::buildUI()
         }
     });
     connect(m_cqVersucheSpin, QOverload<int>::of(&QSpinBox::valueChanged),
-            this, [](int v) {
+            this, [this](int v) {
         AppSettings::instance().setValue(QStringLiteral("Ft8/CqVersuche"),
                                          QString::number(v));
+        m_ablauf.setzeAnrufWiederholungen(v);
+        m_mehrfach.setzeAnrufWiederholungen(v);
     });
     sendRow->addWidget(m_cqVersucheSpin);
     sendRow->addWidget(m_plaetzeSpin);
