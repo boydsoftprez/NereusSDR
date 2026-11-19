@@ -38,8 +38,10 @@
 //   play point never wait behind a whole picture on a slow link; a zoom or
 //   pan in the past asks again at once for the new span (rows and a paused
 //   spectrum), dropping the ask under way; moments newer than the Core has
-//   kept are not remembered as never kept. J.J. Boyd (KG4VCF), AI-assisted
-//   via Claude Code.
+//   kept are not remembered as never kept; on a slow link the rows ahead
+//   of the sound reach further (four asks' time, at most 10 s); LIVE stops
+//   the picture following the sound at once and leaves it live when the
+//   answer comes. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import CoreGraphics
@@ -100,6 +102,8 @@ final class DsrPanModel {
     nonisolated static let answerBinBytes = 196_608
     /// An ask the Core has answered is not sent again, the same, sooner than this.
     nonisolated static let reaskSeconds = 1.0
+    /// The furthest the rows ahead of the sound reach on a slow link (see ``leadSeconds``).
+    nonisolated static let mostAheadSeconds = 10.0
     /// A drag that ends this close to now is live again.
     nonisolated static let liveSlackSeconds = 0.3
     /// How long a note stays on the waterfall.
@@ -214,6 +218,8 @@ final class DsrPanModel {
     /// The last ask sent and when, so an ask answered without rows (moments
     /// the Core has not kept yet) is not sent again at once.
     @ObservationIgnored private var lastRowsAsk: (key: String, at: Double)?
+    /// How long the last rows ask took to be answered, in seconds.
+    @ObservationIgnored private(set) var rowsAskSeconds = 0.0
     /// The display the past spectrum was last asked with: a zoom or pan asks again.
     @ObservationIgnored private var spectrumView: DsrPanView?
     @ObservationIgnored private var spectrumTask: Task<Void, Never>?
@@ -343,7 +349,8 @@ final class DsrPanModel {
 
     /// The moment the slice plays now, while it plays this device's rewind.
     var playedMoment: Double? {
-        guard followsSound, let slice = activeSlice(), let anchor = anchors[slice] else {
+        guard followsSound, let slice = activeSlice(), !liveAsked.contains(slice),
+              let anchor = anchors[slice] else {
             return nil
         }
         return anchor.utc + (clock() - anchor.at)
@@ -640,6 +647,11 @@ final class DsrPanModel {
                 show(error)
             }
         }
+        // The answers took a while: the picture is live once the active slice is.
+        if let active = activeSlice(), slices.contains(active), !mine.contains(active),
+           client.dsr?.stretch == nil {
+            showLive()
+        }
     }
 
     private func seek(slice: Int, to moment: Double) async {
@@ -794,6 +806,7 @@ final class DsrPanModel {
         rowsTask = nil
         rowsAskKey = nil
         lastRowsAsk = nil
+        rowsAskSeconds = 0
         spectrumView = nil
         awaitingRows = false
         rows = []
@@ -1079,24 +1092,41 @@ final class DsrPanModel {
         guard playing else {
             return min(Self.mostRows, answer)
         }
-        let aheadRows = Int((Self.aheadSeconds / max(secondsPerPoint, 0.001)).rounded(.up))
+        let aheadRows = Int((leadSeconds / max(secondsPerPoint, 0.001)).rounded(.up))
         return max(1, min(answer, 2 * aheadRows))
+    }
+
+    /// How far ahead of the sound the rows are asked for. ``aheadSeconds``
+    /// (the desktop's 2 s) on a quick link; on a slow one four times the last
+    /// ask's time, at most ``mostAheadSeconds``: one ask may be under way
+    /// when the lead is checked and the next takes as long again, so the
+    /// lead is asked again while two asks' time is left (``refillSeconds``)
+    /// and an ask brings it back above that with one ask's time to spare.
+    var leadSeconds: Double {
+        min(Self.mostAheadSeconds, max(Self.aheadSeconds, 4 * rowsAskSeconds))
+    }
+
+    /// The lead left below which the rows ahead are asked again: half the
+    /// lead, or two asks' time and a point on a slow link.
+    var refillSeconds: Double {
+        min(leadSeconds, max(leadSeconds / 2, 2 * rowsAskSeconds + secondsPerPoint))
     }
 
     /// The next stretch of rows to ask for, newest first: the rows at the
     /// picture's top when they are missing (with those ahead of the sound
-    /// while it plays), else, playing, those ahead once less than half the
-    /// lead is left, else the newest run the picture lacks below. At most
-    /// `most` rows, all of them missing.
+    /// while it plays, ``leadSeconds``), else, playing, those ahead once
+    /// less than ``refillSeconds`` is left, else the newest run the picture
+    /// lacks below. At most `most` rows, all of them missing.
     func nextRowsAsk(ahead: Bool, most: Int) -> (from: Double, to: Double, count: Int)? {
         let spp = max(secondsPerPoint, 0.001)
         let total = Int(waterfallPoints)
         let newest = self.newest
         let top = self.top
-        let aheadRows = ahead ? Int((Self.aheadSeconds / spp).rounded(.up)) : 0
+        let aheadRows = ahead ? Int((leadSeconds / spp).rounded(.up)) : 0
+        let refillRows = Int((refillSeconds / spp).rounded(.up))
         var leadRunsOut = waits(top)
         if !leadRunsOut, aheadRows > 1 {
-            for k in 1...max(1, aheadRows / 2) {
+            for k in 1...max(1, min(aheadRows, refillRows)) {
                 let moment = top + Double(k) * spp
                 if moment <= newest, waits(moment) {
                     leadRunsOut = true
@@ -1177,7 +1207,8 @@ final class DsrPanModel {
         let keptEdge = self.keptEdge
         awaitingRows = true
         rowsAskKey = key
-        lastRowsAsk = (key, clock())
+        let askedAt = clock()
+        lastRowsAsk = (key, askedAt)
         rowsTask = Task {
             var answered = true
             var refused = false
@@ -1203,6 +1234,7 @@ final class DsrPanModel {
                     // until the display or the recorder changes.
                     rememberUnkept(from: top - pictureSeconds, to: max(to, top), memory: memory, keptEdge: nil)
                 } else if answered {
+                    rowsAskSeconds = max(0, clock() - askedAt)
                     // What the Core left out is not kept: not asked again.
                     rememberUnkept(from: from, to: to, memory: memory, keptEdge: keptEdge)
                     // The next piece at once, the top first.

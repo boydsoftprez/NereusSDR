@@ -671,17 +671,68 @@ struct DsrTests {
         #expect(abs(top - (Self.now - 595)) < 1e-6 && model.row(at: top) == nil)
         await Self.answerAsked(rig, first)
         let (second, ask) = try #require(await Self.invoke(rig, "dsr.rows", after: first + 1))
-        // The play point and the two seconds ahead of it, a small piece.
+        // The play point and the lead ahead of it, a small piece. That ask
+        // took 5 s, so the lead is four asks' time, at most 10 s, not the 2 s
+        // a quick link gets.
+        #expect(abs(model.rowsAskSeconds - 5) < 1e-6)
+        #expect(model.leadSeconds == DsrPanModel.mostAheadSeconds)
         let to = Double(Self.number(ask, "toUtcNs") ?? 0) / 1e9
         let from = Double(Self.number(ask, "fromUtcNs") ?? 0) / 1e9
-        #expect(abs(to - (top + DsrPanModel.aheadSeconds)) < Self.spp / 2)
-        #expect(from <= top && (Self.number(ask, "rowCount") ?? 0) <= 8)
+        #expect(abs(to - (top + model.leadSeconds)) < Self.spp / 2)
+        #expect(from <= top && (Self.number(ask, "rowCount") ?? 0) <= Int(2 * model.leadSeconds / Self.spp))
         await Self.answerAsked(rig, second)
         #expect(await Eventually.holds { model.row(at: top) != nil })
         // The rows below the play point come next, newest first.
         let (third, below) = try #require(await Self.invoke(rig, "dsr.rows", after: second + 1))
         #expect(Double(Self.number(below, "toUtcNs") ?? 0) / 1e9 < from)
         await Self.answerAsked(rig, third)
+    }
+
+    /// On a slow link the rows ahead are asked again while two asks' time
+    /// is left, so the one under way and the next both land before the
+    /// sound reaches the end of the lead; on a quick link at half the lead.
+    @Test func aSlowLinkAsksTheLeadAgainInTime() async throws {
+        let (rig, model, _) = await Self.pan()
+        var now = Self.now
+        model.clock = { now }
+        #expect(model.leadSeconds == DsrPanModel.aheadSeconds)
+        #expect(model.refillSeconds == DsrPanModel.aheadSeconds / 2)
+        try await Self.rewindHere(rig, model, moment: Self.now - 600, revision: 2)
+        let (first, _) = try #require(await Self.invoke(rig, "dsr.rows"))
+        now += 0.8
+        await Self.answerAsked(rig, first)
+        #expect(await Eventually.holds { model.rowsAskSeconds > 0 })
+        #expect(abs(model.rowsAskSeconds - 0.8) < 1e-6)
+        #expect(abs(model.leadSeconds - 3.2) < 1e-6)
+        #expect(abs(model.refillSeconds - (1.6 + Self.spp)) < 1e-6)
+    }
+
+    /// LIVE while the sound plays: the picture stops following the sound at
+    /// once and is live when the Core's answer comes, even when the display
+    /// ticks while the answer is on its way and the Core lists the slice
+    /// rewound until after it answers (JJ's phone run, PR 808: PAST stayed
+    /// after LIVE).
+    @Test func liveAnsweredLeavesThePast() async throws {
+        let (rig, model, _) = await Self.pan()
+        var now = Self.now
+        model.clock = { now }
+        try await Self.rewindHere(rig, model, moment: Self.now - 600, revision: 2)
+        #expect(model.inPast && model.playedMoment != nil)
+        let live = Task { await model.goLive() }
+        let (index, _) = try #require(await Self.invoke(rig, "dsr.live"))
+        for _ in 0..<4 {
+            now += 0.25
+            model.tick()
+            model.frame(periodSeconds: 1.0 / 60)
+            #expect(!model.inPast)
+        }
+        await RecordingFlagTests.answer(rig, index)
+        await live.value
+        #expect(!model.inPast)
+        RecordingFlagTests.publish(rig, Self.document(dsr: Self.dsrPart()), revision: 3)
+        model.documentChanged()
+        model.tick()
+        #expect(!model.inPast && model.playedMoment == nil)
     }
 
     /// A zoom or a pan in the past asks the Core again at once for the new

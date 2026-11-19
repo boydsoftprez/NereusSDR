@@ -359,13 +359,18 @@ struct DsrShotTests {
             case .flagLive:
                 let live = Task { await model.goLive() }
                 let (index, _) = try #require(await DsrTests.invoke(rig, "dsr.live"))
+                print("flag live, LIVE asked: inPast \(model.inPast), played \(String(describing: model.playedMoment)), "
+                      + "mine \(model.mine.sorted()), rewound \(model.client.dsr?.rewound.map(\.slice) ?? [])")
                 await Flag.answer(rig, index)
                 await live.value
+                print("flag live, LIVE answered: inPast \(model.inPast), played \(String(describing: model.playedMoment)), "
+                      + "mine \(model.mine.sorted()), rewound \(model.client.dsr?.rewound.map(\.slice) ?? [])")
                 // As the Core does: the slice is no longer listed rewound.
                 RecordingFlagTests.publish(rig, DsrTests.document(dsr: DsrTests.dsrPart()), revision: 3)
                 model.documentChanged()
                 #expect(await ShotWait.until { model.client.dsr?.rewound.isEmpty == true })
                 model.tick()
+                print("flag live, listed live: inPast \(model.inPast), mine \(model.mine.sorted())")
                 #expect(!model.inPast)
             }
         }
