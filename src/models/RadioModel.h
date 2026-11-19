@@ -1076,6 +1076,9 @@ public:
     // Spanne. Oeffentlich und benannt, damit ein Pruefstand genau diesen
     // Weg fahren kann — es war der Weg, auf dem am 2026-11-02 nichts ankam.
     void meldeFlexSpektrum(quint32 streamId, const QVector<float>& dbm);
+    /// Nur fuer Pruefstaende: die Kennung des eigenen Panadapters setzen,
+    /// wie sie sonst aus dem `display pan`-Zustand kommt.
+    void setzeFlexPanIdForTest(const QString& id) { m_flexPanId = id; }
 
     // Pruefstand: den Panadapter-Ausschnitt der Maschine setzen, ohne eine
     // Flex-Statuszeile zu zerlegen.
@@ -4180,6 +4183,7 @@ private:
     FlexRadioDiscovery* m_flexDiscovery{nullptr};  // Flex-Treiber Stufe 1
     FlexRadioConnection* m_flexConnection{nullptr};  // nur bei Flex belegt
     FlexLauschscheibe*   m_flexLausch{nullptr};      // Kind; nur bei Flex
+    bool                 m_flexFremdesBildGemeldet{false};
     FlexVitaStream*      m_flexStream{nullptr};
     QString              m_flexPanId;        // „40000000"
     QString              m_flexAudioStreamId;

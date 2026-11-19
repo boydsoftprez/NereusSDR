@@ -49,6 +49,20 @@
 // den Zustand einer neuen Scheibe gern VOR der Antwort (gemessen am
 // 2026-10-18 fuer die erste Scheibe).
 //
+// ── Die Maschine merkt sich die Lauschscheibe (2026-11-19, gemessen) ──
+//
+// Die Flex legt einem GUI-Client beim Anmelden seine Scheiben unter
+// derselben Kennung wieder hin -- auch nach einem Neustart der
+// Maschine, und auch, wenn beim Beenden `slice remove` geschickt wurde.
+// Am Geraet: nach dem Neustart stand wieder `slice 1 RF=21.074
+// audio_mute=1 tx=0`, und weil Longpath an diesem Tag noch JEDE
+// Scheibenmeldung fuer die eigene hielt, zog sie den VFO und den
+// Panadapter auf 21,074 MHz, waehrend die Sendescheibe 0 auf 14,074
+// stand. Darum: eine Scheibe UNSERES Clients, die nicht die
+// Hauptscheibe ist und nicht sendet, ist eine uebriggebliebene
+// Lauschscheibe. Sie geht nie an den VFO; wird gelauscht, wird sie
+// uebernommen, sonst entfernt.
+//
 // ── Warum sie auf der Frequenz der Hauptscheibe entsteht ─────────────
 //
 // `slice create` traegt eine Frequenz, und eine, die ausserhalb des
@@ -61,6 +75,7 @@
 
 #include <QMap>
 #include <QObject>
+#include <QSet>
 #include <QString>
 
 #include <functional>
@@ -86,6 +101,10 @@ public:
     void setHauptscheibe(const QString& id);
     void setPanadapter(const QString& panId);
     void setHauptfrequenzHz(double hz);
+    /// Die Kennung, die die Maschine UNS als Client gegeben hat
+    /// (`H<hex>` beim Verbinden). Daran erkennt sie eine Lauschscheibe,
+    /// die von einer frueheren Sitzung uebrig ist.
+    void setEigenerHandle(quint32 handle);
 
     /// Lauschen auf `hz` (Wahlfrequenz, DIGU); 0 heisst: abbauen.
     /// Steht die Verbindung noch nicht (Haupt­scheibe oder Panadapter
@@ -100,6 +119,15 @@ public:
 
     /// Gehoert diese Scheibenmeldung der Lauschscheibe?
     bool istLauschscheibe(int sliceId) const;
+    /// Lauschscheibe ODER eine uebriggebliebene aus einer frueheren
+    /// Sitzung: in beiden Faellen gehoert ihre Frequenz nie an den VFO.
+    bool istFremd(int sliceId) const;
+    /// Darf die Frequenz dieser Scheibe an den VFO? Ist die Hauptscheibe
+    /// bekannt, nur sie; vorher keine, neben der eine andere sendet.
+    bool darfAnDenVfo(int sliceId) const;
+    /// Kann diese Scheibe NICHT die Hauptscheibe sein, weil eine andere
+    /// nachweislich sendet (oder weil sie eine Lausch-/Restscheibe ist)?
+    bool istNichtHaupt(int sliceId) const;
     /// Ist das die Stromkennung des DAX-Tons der Lauschscheibe?
     bool istLauschstrom(quint32 streamId) const;
     /// Ton des DAX-Stroms ist angekommen. Schreibt EINMAL je Strom eine
@@ -146,6 +174,15 @@ private:
     double  m_gemeldetHz{0.0};
     bool    m_abbauNachAnlegen{false};
     quint32 m_tonGemeldetFuer{0};
+
+    // ── Uebrig aus einer frueheren Sitzung (2026-11-19, am Geraet) ──
+    quint32    m_eigenerHandle{0};
+    QSet<int>  m_uebrige;        ///< erkannt, nie an den VFO
+    QSet<int>  m_entferntGeschickt;
+    QMap<int, bool> m_sendetJe;  ///< zuletzt gemeldetes `tx` je Scheibe
+    QSet<int>  m_eigene;         ///< Scheiben unseres Clients, in Gebrauch
+    bool istUebrigeKandidat(int id, const QMap<QString, QString>& kv);
+    void behandleUebrige(int id);
 };
 
 } // namespace Longpath

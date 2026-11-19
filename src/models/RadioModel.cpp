@@ -7236,6 +7236,11 @@ void RadioModel::connectFlexRadio(const RadioInfo& info)
                 this, [this](double) { emit lauschbandGeaendert(); });
         connect(m_flexLausch, &FlexLauschscheibe::abgelehnt,
                 this, &RadioModel::lauschbandAbgelehnt);
+        // Unsere Client-Kennung: daran erkennt die Lauschscheibe eine,
+        // die die Maschine aus einer frueheren Sitzung wiederhergestellt
+        // hat (core/FlexLauschscheibe.h).
+        connect(m_flexConnection, &FlexRadioConnection::handleAssigned,
+                m_flexLausch, &FlexLauschscheibe::setEigenerHandle);
 
         // Die Kennung, unter der die Maschine unsere Scheiben und
         // Panadapter zurueckbehaelt. Sie identifiziert LONGPATH, nicht
@@ -7538,9 +7543,27 @@ void RadioModel::connectFlexRadio(const RadioInfo& info)
             }
 
             if (object.startsWith(QLatin1String("slice "))
-                && kv.contains(QStringLiteral("audio_level"))) {
+                && kv.contains(QStringLiteral("audio_level"))
+                // Eine Scheibe, neben der eine ANDERE nachweislich sendet,
+                // ist nicht die des Betreibers (2026-11-19).
+                && !(m_flexLausch && m_flexLausch->istNichtHaupt(
+                         FlexCommandWire::sliceIdFromObject(object)))) {
                 m_flexSliceId       = object.split(QLatin1Char(' ')).value(1);
                 if (m_flexLausch) { m_flexLausch->setHauptscheibe(m_flexSliceId); }
+                // Die Frequenz der Hauptscheibe nachreichen: vor der
+                // Anmeldung durfte nur die Sendescheibe an den VFO.
+                {
+                    bool nummerOk = false;
+                    const int haupt = m_flexSliceId.toInt(&nummerOk);
+                    const double hz = nummerOk
+                        ? m_flexConnection->sliceFrequenciesHz().value(haupt, 0.0)
+                        : 0.0;
+                    if (hz > 0.0 && !qFuzzyCompare(hz, m_flexGeraeteFrequenzHz)) {
+                        m_flexGeraeteFrequenzHz = hz;
+                        if (m_flexLausch) { m_flexLausch->setHauptfrequenzHz(hz); }
+                        emit flexSliceFrequencyChanged(haupt, hz);
+                    }
+                }
                 m_flexAudioLevelWas = kv.value(QStringLiteral("audio_level"));
                 m_flexAudioMuteWas  = kv.value(QStringLiteral("audio_mute"));
                 applyFlexAudioSetup();
@@ -7608,7 +7631,10 @@ void RadioModel::connectFlexRadio(const RadioInfo& info)
             // Die Lauschscheibe hat ihre Frequenz schon in
             // nimmStatus() abgegeben; hier darf sie den VFO des
             // Betreibers nicht auf ihr Band ziehen (2026-11-19).
-            if (m_flexLausch && m_flexLausch->istLauschscheibe(sliceId)) {
+            // Und vor der Anmeldung nur die Sendescheibe: die
+            // wiederhergestellte Lauschscheibe einer frueheren Sitzung
+            // stellte am 2026-11-19 sonst den VFO auf ihr Band.
+            if (m_flexLausch && !m_flexLausch->darfAnDenVfo(sliceId)) {
                 return;
             }
             m_flexGeraeteFrequenzHz = hz;
@@ -8868,6 +8894,26 @@ void RadioModel::applyFlexPanSetup()
 
 void RadioModel::meldeFlexSpektrum(quint32 id, const QVector<float>& dbm)
 {
+    // Nur der EIGENE Panadapter (2026-11-19). Nach einem Neustart der
+    // Flex lag ein zweiter auf der Maschine (100 Bins, 2000 Hz/bin), und
+    // weil hier jede Stromkennung durchging, mischten sich seine Rahmen
+    // ins Bild: „sehr strichliert".
+    if (!m_flexPanId.isEmpty()) {
+        QString roh = m_flexPanId;
+        if (roh.startsWith(QLatin1String("0x"), Qt::CaseInsensitive)) { roh = roh.mid(2); }
+        bool ok = false;
+        const quint32 eigener = roh.toUInt(&ok, 16);
+        if (ok && id != eigener) {
+            if (!m_flexFremdesBildGemeldet) {
+                m_flexFremdesBildGemeldet = true;
+                qCInfo(lcConnection).nospace().noquote()
+                    << "Flex: FFT-Strom 0x" << QString::number(id, 16)
+                    << " gehoert nicht zum eigenen Panadapter "
+                    << m_flexPanId << " — nicht gezeichnet";
+            }
+            return;
+        }
+    }
     emit flexSpectrumReady(id, dbm);
     // Auch auf den geraeteunabhaengigen Weg (2026-11-03): der
     // TCI-Spektrumstrom hing an der FFTEngine, und die rechnet bei der
@@ -8900,6 +8946,14 @@ void RadioModel::startFlexStreams()
             // eigene Bin-Zahl und ihren eigenen Rand (gemessen 230,6
             // kHz gegen 200 kHz Panadapterbreite). Er wird aus dem
             // `display pan`-Zustand gelesen, siehe dort.
+            // Und nur der eigene Wasserfall (2026-11-19), wie beim Bild.
+            if (!m_flexWasserfallId.isEmpty()) {
+                QString roh = m_flexWasserfallId;
+                if (roh.startsWith(QLatin1String("0x"), Qt::CaseInsensitive)) { roh = roh.mid(2); }
+                bool ok = false;
+                const quint32 eigener = roh.toUInt(&ok, 16);
+                if (ok && id != eigener) { return; }
+            }
             emit flexWaterfallRowReady(id, v, lo, hi, ab);
         });
         connect(m_flexStream, &FlexVitaStream::meterSamplesReady, this,
@@ -9600,6 +9654,7 @@ void RadioModel::teardownFlexConnection()
     m_flexMasseNachgereicht = 0;
     m_flexZuletztGestellteHz = 0.0;
     m_flexPanId.clear();
+    m_flexFremdesBildGemeldet = false;
 
     if (m_flexStream) {
         m_flexStream->stop();

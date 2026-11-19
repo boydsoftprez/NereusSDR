@@ -170,6 +170,8 @@ private slots:
             QStringLiteral("slice set 1 dax=1"),
             // weg auf das Lauschband, OHNE den Panadapter mitzuziehen
             QStringLiteral("slice tune 1 28.074000 autopan=0"),
+            // die Scheibe des Betreibers bleibt die aktive
+            QStringLiteral("slice set 0 active=1"),
             QStringLiteral("stream create type=dax_rx dax_channel=1"),
         };
         QCOMPARE(d.befehle, erwartet);
@@ -311,6 +313,120 @@ private slots:
         QVERIFY(d.befehle.isEmpty());
     }
 
+    // ── 1b. Die Maschine merkt sich die Lauschscheibe (am Geraet) ────
+    //
+    // 2026-11-19, nach einem Neustart der Flex: beim Anmelden kam
+    //   slice 0 … RF_frequency=14.074 tx=1 client_handle=0x08587180
+    //   slice 1 … RF_frequency=21.074 tx=0 audio_mute=1 client_handle=0x08587180
+    // und Longpath zog VFO und Panadapter auf 21,074 MHz, waehrend die
+    // Sendescheibe auf 14,074 stand.
+
+    static QMap<QString, QString> scheibe(const char* rf, const char* tx,
+                                          const char* handle = "0x08587180")
+    {
+        return kv({{QStringLiteral("in_use"), QStringLiteral("1")},
+                   {QStringLiteral("RF_frequency"), QString::fromLatin1(rf)},
+                   {QStringLiteral("tx"), QString::fromLatin1(tx)},
+                   {QStringLiteral("audio_level"), QStringLiteral("50")},
+                   {QStringLiteral("client_handle"), QString::fromLatin1(handle)}});
+    }
+
+    void dieUebrigeKommtNieAnDenVfo()
+    {
+        Draht d;
+        FlexLauschscheibe l(d.sende());
+        l.setEigenerHandle(0x08587180);
+        // Vor der Anmeldung: Hauptscheibe sendet, die uebrige nicht.
+        QVERIFY(!l.nimmStatus(QStringLiteral("slice 0"), scheibe("14.074000", "1")));
+        QVERIFY(l.nimmStatus(QStringLiteral("slice 1"), scheibe("21.074000", "0")));
+        QVERIFY(l.darfAnDenVfo(0));
+        QVERIFY(!l.darfAnDenVfo(1));
+        QVERIFY(l.istNichtHaupt(1));
+        QVERIFY(!l.istNichtHaupt(0));
+        // Entfernt wird erst, wenn die Hauptscheibe feststeht.
+        QVERIFY(d.befehle.isEmpty());
+        l.setHauptscheibe(QStringLiteral("0"));
+        QCOMPARE(d.befehle, QStringList({QStringLiteral("slice remove 1")}));
+        QVERIFY(!l.darfAnDenVfo(1));
+        QVERIFY(l.istFremd(1));
+        // Weitere Meldungen: kein zweites Entfernen, weiter geschluckt.
+        QVERIFY(l.nimmStatus(QStringLiteral("slice 1"), scheibe("21.074000", "0")));
+        QCOMPARE(d.befehle.size(), 1);
+        // Und wenn sie weg ist, ist sie weg.
+        QVERIFY(l.nimmStatus(QStringLiteral("slice 1"),
+                             kv({{QStringLiteral("in_use"), QStringLiteral("0")}})));
+        QVERIFY(!l.istFremd(1));
+    }
+
+    void dieUebrigeWirdUebernommenWennGelauschtWird()
+    {
+        Draht d;
+        FlexLauschscheibe l(d.sende());
+        l.setEigenerHandle(0x08587180);
+        l.setPanadapter(QStringLiteral("0x40000000"));
+        l.setHauptfrequenzHz(14074000.0);
+        l.setFrequenzHz(21074000.0);           // gewuenscht, noch nicht bereit
+        l.nimmStatus(QStringLiteral("slice 0"), scheibe("14.074000", "1"));
+        l.nimmStatus(QStringLiteral("slice 1"), scheibe("21.074000", "0"));
+        QVERIFY(d.befehle.isEmpty());
+        l.setHauptscheibe(QStringLiteral("0"));
+        // Uebernommen statt neu angelegt -- keine dritte Scheibe.
+        QVERIFY2(!d.befehle.join('\n').contains(QStringLiteral("slice create")),
+                 qPrintable(d.befehle.join('\n')));
+        QVERIFY(!d.befehle.contains(QStringLiteral("slice remove 1")));
+        QVERIFY(d.befehle.contains(QStringLiteral("slice set 1 dax=1")));
+        QVERIFY(d.befehle.contains(QStringLiteral("slice tune 1 21.074000 autopan=0")));
+        QCOMPARE(l.scheibe(), 1);
+    }
+
+    void eineHauptscheibeOhneTxWirdNieEntfernt()
+    {
+        // Eine einzige Scheibe, die (noch) nicht sendet: das ist die des
+        // Betreibers, nicht eine uebrige.
+        Draht d;
+        FlexLauschscheibe l(d.sende());
+        l.setEigenerHandle(0x08587180);
+        QVERIFY(!l.nimmStatus(QStringLiteral("slice 0"), scheibe("14.074000", "0")));
+        QVERIFY(!l.istNichtHaupt(0));
+        QVERIFY(l.darfAnDenVfo(0));           // die einzige -- sie darf
+        l.setHauptscheibe(QStringLiteral("0"));
+        QVERIFY(l.darfAnDenVfo(0));
+        QVERIFY(d.befehle.isEmpty());
+    }
+
+    void fremdeClientsBleibenUnberuehrt()
+    {
+        // Die Scheibe eines anderen Clients (Maestro, SmartSDR) ist nicht
+        // unsere Sache -- nie entfernen.
+        Draht d;
+        FlexLauschscheibe l(d.sende());
+        l.setEigenerHandle(0x08587180);
+        l.nimmStatus(QStringLiteral("slice 0"), scheibe("14.074000", "1"));
+        QVERIFY(!l.nimmStatus(QStringLiteral("slice 1"),
+                              scheibe("7.074000", "0", "0x11111111")));
+        l.setHauptscheibe(QStringLiteral("0"));
+        QVERIFY(d.befehle.isEmpty());
+        QVERIFY(!l.istFremd(1));
+        QVERIFY(!l.darfAnDenVfo(1));          // an den VFO aber trotzdem nicht
+    }
+
+    void nurDerEigenePanadapterWirdGezeichnet()
+    {
+        // Am Geraet nach dem Neustart: ein zweiter Panadapter
+        // (0x40000001, 100 Bins) mischte sich ins Bild.
+        RadioModel radio;
+        QSignalSpy bild(&radio, &RadioModel::flexSpectrumReady);
+        const QVector<float> rahmen(100, -120.0f);
+        radio.meldeFlexSpektrum(0x40000001u, rahmen);   // Pan noch unbekannt:
+        QCOMPARE(bild.size(), 1);                       // wie bisher durch
+        radio.setzeFlexPanIdForTest(QStringLiteral("0x40000000"));
+        radio.meldeFlexSpektrum(0x40000001u, rahmen);
+        QCOMPARE(bild.size(), 1);                       // fremd: nicht gezeichnet
+        radio.meldeFlexSpektrum(0x40000000u, QVector<float>(4096, -120.0f));
+        QCOMPARE(bild.size(), 2);
+        QCOMPARE(bild.last().at(0).toUInt(), 0x40000000u);
+    }
+
     // ── 2. Die Abgriffe ──────────────────────────────────────────────
 
     void dieAbgriffeSprechenNichtUeber()
@@ -408,6 +524,10 @@ private slots:
                  QStringLiteral("CQ 3B8XX LG89"));
         QCOMPARE(Ft8Applet::nachrichtAusZeile(mitMarke),
                  QStringLiteral("CQ 3B8XX LG89"));
+        QCOMPARE(Ft8Applet::bandmarkeAusZeile(mitMarke), QStringLiteral("10m"));
+        QCOMPARE(Ft8Applet::bandmarkeAusZeile(haupt), QString());
+        QCOMPARE(Ft8Applet::ohneBandmarke(mitMarke).simplified(),
+                 haupt.simplified());
         // Eine Zeile ohne Marke, deren Nachricht mit einer Zahl
         // anfaengt, bleibt wie sie ist.
         QString leer = haupt;
@@ -455,11 +575,15 @@ private slots:
         QVERIFY2(applet.lastLabelForTest()->text().contains(QStringLiteral("10m: 3 heard")),
                  qPrintable(applet.lastLabelForTest()->text()));
 
-        // Die Zeilen des Hauptbandes bekommen dieselbe Spalte, leer.
+        // Die Zeilen des Hauptbandes tragen ihr Band ebenso („man sollte
+        // aber sehen, auf welchen bänder man was sieht").
         applet.periodeForTest({fund(QStringLiteral("CQ DL3AAA JN48"), 1500.0f)});
         const QString danach = applet.listForTest()->toPlainText();
         const QString hz = danach.split('\n').filter(QStringLiteral("DL3AAA")).value(0);
-        QVERIFY2(hz.mid(6, 5).trimmed().isEmpty(), qPrintable(hz));
+        QVERIFY2(hz.mid(6).trimmed().startsWith(QStringLiteral("15m")), qPrintable(hz));
+        // Und ein Doppelklick darauf ist der gewohnte Weg (kein Tausch):
+        // der Rapport wird trotz Bandspalte richtig gelesen.
+        QCOMPARE(Ft8Applet::ohneBandmarke(hz).simplified().section(' ', 1, 1).toInt(), -12);
     }
 
     void doppelklickTauschtUndSendetNicht()

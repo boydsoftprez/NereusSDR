@@ -185,6 +185,10 @@ public:
     /// Leerzeichen hintereinander, also trennt das erste Doppelte
     /// sauber. Ohne Landspalte bleibt die Zeile unveraendert.
     static QString nachrichtAusZeile(const QString& zeile);
+    /// Die Zeile ohne die Bandspalte nach der Uhrzeit (2026-11-19).
+    static QString ohneBandmarke(const QString& zeile);
+    /// Die Bandspalte einer angezeigten Zeile („15m"), leer ohne.
+    static QString bandmarkeAusZeile(const QString& zeile);
 
     /// Der Locator der Gegenstation, oder leer. Geprueft wird die Form
     /// eines Maidenhead-Feldes (zwei Buchstaben, zwei Ziffern) —

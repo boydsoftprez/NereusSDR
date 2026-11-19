@@ -1253,6 +1253,88 @@ private slots:
         QTRY_COMPARE(model.connectionState(), ConnectionState::Disconnected);
     }
 
+    // ─── Die Maschine stellt eine Lauschscheibe wieder her ────────
+    //
+    // Am Geraet, 2026-11-19 14:06, nach einem Neustart der Flex: beim
+    // Anmelden kamen unter unserer Kennung ZWEI Scheiben,
+    //   slice 0 RF=14.074 tx=1   und   slice 1 RF=21.074 tx=0 audio_mute=1
+    // (die Lauschscheibe einer frueheren Sitzung). Longpath hielt die
+    // zweite fuer die eigene: „Flex-Spur: Scheibe 0 14.225 -> 21.074,
+    // von der Maschine", Panadapter auf 21,074 -- die Sendescheibe stand
+    // auf 14,074. Hier dieselben Zeilen, vor UND nach der Anmeldung.
+    void uebrigeLauschscheibeZiehtDenVfoNicht_data()
+    {
+        QTest::addColumn<bool>("uebrigeZuerst");
+        QTest::newRow("Hauptscheibe zuerst (wie am Geraet)") << false;
+        QTest::newRow("uebrige zuerst") << true;
+    }
+
+    void uebrigeLauschscheibeZiehtDenVfoNicht()
+    {
+        QFETCH(bool, uebrigeZuerst);
+        const QString haupt = QStringLiteral(
+            "S5081495E|slice 0 in_use=1 RF_frequency=14.074000 mode=DIGU tx=1 "
+            "audio_level=50 audio_mute=0 client_handle=0x5081495E");
+        const QString uebrig = QStringLiteral(
+            "S5081495E|slice 1 in_use=1 RF_frequency=21.074000 mode=DIGU tx=0 "
+            "audio_level=50 audio_mute=1 client_handle=0x5081495E");
+        const QStringList zustand = uebrigeZuerst ? QStringList{uebrig, haupt}
+                                                  : QStringList{haupt, uebrig};
+
+        FalscheMaschine radio;
+        QVERIFY(radio.hoeren());
+        radio.antworten.insert(QStringLiteral("client program"),
+                               QStringLiteral("10000002|unknown client program Longpath"));
+        radio.antworten.insert(QStringLiteral("client gui"),
+                               QStringLiteral("0|11112222-3333-4444-5555-666677778888"));
+        radio.vorschub.insert(QStringLiteral("client gui"), zustand);
+        // Wie am Geraet nach dem Neustart: die Liste antwortet LEER,
+        // obwohl beide Scheiben schon gemeldet sind.
+        radio.antworten.insert(QStringLiteral("slice list"), QStringLiteral("0|"));
+        radio.antworten.insert(QStringLiteral("stream create"), QStringLiteral("0|4000008"));
+        radio.nachschub.insert(QStringLiteral("stream create"), zustand);
+
+        RadioModel model;
+        QSignalSpy frequenz(&model, &RadioModel::flexSliceFrequencyChanged);
+
+        RadioInfo info;
+        info.protocol   = ProtocolVersion::Flex;
+        info.boardType  = HPSDRHW::Flex8400;
+        info.name       = QStringLiteral("FLEX-8400 (Pruefstand)");
+        info.macAddress = QStringLiteral("00:1C:2D:05:34:28");
+        info.address    = QHostAddress(QHostAddress::LocalHost);
+        info.port       = radio.port();
+        model.connectToRadio(info);
+
+        // Die uebrige wird entfernt, sobald die Hauptscheibe feststeht.
+        QTRY_VERIFY_WITH_TIMEOUT(
+            radio.empfangeneBefehle.contains(QStringLiteral("slice remove 1")), 8000);
+        QVERIFY(!frequenz.isEmpty());
+        // Am Ende steht der VFO auf der Sendescheibe ...
+        QCOMPARE(frequenz.last().at(1).toDouble(), 14'074'000.0);
+        if (!uebrigeZuerst) {
+            // ... und in der Reihenfolge vom Geraet nie, auch nicht kurz,
+            // auf dem Band der uebrigen.
+            for (const auto& a : frequenz) {
+                QVERIFY2(a.at(1).toDouble() != 21'074'000.0,
+                         "die uebrige Lauschscheibe hat den VFO gezogen");
+            }
+        }
+        // Kein Rueckfall-Panadapter: die Scheiben sind ja gemeldet.
+        QVERIFY2(!radio.empfangeneBefehle.join('\n')
+                     .contains(QStringLiteral("display panafall create")),
+                 qPrintable(radio.empfangeneBefehle.join('\n')));
+        // Und an Scheibe 1 geht ausser dem Entfernen nichts.
+        for (const QString& b : radio.empfangeneBefehle) {
+            QVERIFY2(!b.startsWith(QStringLiteral("slice set 1"))
+                         && !b.startsWith(QStringLiteral("slice tune 1"))
+                         && !b.startsWith(QStringLiteral("filt 1")),
+                     qPrintable(b));
+        }
+        model.disconnectFromRadio();
+        QTRY_COMPARE(model.connectionState(), ConnectionState::Disconnected);
+    }
+
     void gespeicherteKennungWirdWiederverwendet()
     {
         AppSettings::instance().setValue(

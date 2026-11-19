@@ -1066,6 +1066,18 @@ void FlexRadioConnection::queryAndRecoverSlices()
                                  "— es gibt nichts zu lesen";
             return;
         }
+        // Die Liste kann leer sein, obwohl die Maschine schon Scheiben
+        // GEMELDET hat: am 2026-11-19 nach ihrem Neustart kamen slice 0
+        // und slice 1 im Zustandsschub, und `slice list` antwortete
+        // leer. Der Rueckfall legte daraufhin einen zweiten Panadapter
+        // an (x=100) -- der blieb auf der Maschine, belegte den zweiten
+        // Platz und mischte seine 100 Bins ins Bild. Wer gemeldet ist,
+        // ist da.
+        if (!m_sliceFreqHz.isEmpty()) {
+            qCInfo(lcFlexCmd) << "Liste leer, aber" << m_sliceFreqHz.size()
+                              << "Scheibe(n) schon gemeldet — nichts angelegt";
+            return;
+        }
         createDefaultSlice();
     });
 }

@@ -1971,6 +1971,11 @@ QString Ft8Applet::warumNichtAnstellen(const QString& zeile) const
 {
     const QString meiner = eigenesRufzeichen();
     if (meiner.isEmpty()) { return tr("set your callsign first"); }
+    // Wer auf dem zweiten Band ruft, ist von hier aus nicht zu arbeiten.
+    const QString marke = bandmarkeAusZeile(zeile);
+    if (!marke.isEmpty() && !m_lauschBand.isEmpty() && marke == m_lauschBand) {
+        return tr("on %1 — double-click to go there").arg(marke);
+    }
     if (antwortAuf(zeile, meiner, eigenerLocator()).isEmpty()) {
         return tr("no callsign to answer in this line");
     }
@@ -2003,7 +2008,7 @@ QString Ft8Applet::stelleZeileAn(const QString& zeile)
     if (!grund.isEmpty()) { return grund; }
 
     const QString nachricht = nachrichtAusZeile(zeile);
-    const QString sauber    = zeile.simplified();
+    const QString sauber    = ohneBandmarke(zeile).simplified();
     const int snr   = sauber.section(QLatin1Char(' '), 1, 1).toInt();
     bool hzOk = false;
     const int tonHz = sauber.section(QLatin1Char(' '), 3, 3).toInt(&hzOk);
@@ -2484,16 +2489,32 @@ QString Ft8Applet::locatorAusNachricht(const QString& nachricht)
 // Innerhalb einer FT8-Nachricht stehen nie zwei Leerzeichen
 // hintereinander, also trennt das erste Doppelte sauber; ohne
 // Landspalte gibt es keines und die Zeile bleibt, wie sie ist.
-QString Ft8Applet::nachrichtAusZeile(const QString& zeile)
+// Mit einem zweiten Band traegt jede Zeile nach der Uhrzeit ihr Band
+// („20m", „15m", 2026-11-19). Wer Spalten zaehlt (Rapport, Tonlage,
+// Nachricht), zaehlt ohne sie.
+QString Ft8Applet::ohneBandmarke(const QString& zeile)
 {
+    static const QRegularExpression kBandMarke(
+        QStringLiteral("^(\\s*\\S+)\\s+\\d{1,3}c?m(?=\\s)"));
+    QString s = zeile;
+    return s.replace(kBandMarke, QStringLiteral("\\1"));
+}
+
+QString Ft8Applet::bandmarkeAusZeile(const QString& zeile)
+{
+    static const QRegularExpression kBandMarke(
+        QStringLiteral("^\\s*\\S+\\s+(\\d{1,3}c?m)\\s"));
+    const auto m = kBandMarke.match(zeile);
+    return m.hasMatch() ? m.captured(1) : QString();
+}
+
+QString Ft8Applet::nachrichtAusZeile(const QString& zeileMitMarke)
+{
+    const QString zeile = ohneBandmarke(zeileMitMarke);
     int feld = 0;
     int i = 0;
     const int n = zeile.size();
-    // Eine Lauschband-Zeile traegt nach der Uhrzeit ihr Band („10m",
-    // 2026-11-19): dann ist es ein Feld mehr vor der Nachricht.
-    static const QRegularExpression kBandMarke(
-        QStringLiteral("^\\S+\\s+\\d{1,3}c?m\\s"));
-    const int felder = kBandMarke.match(zeile.trimmed()).hasMatch() ? 5 : 4;
+    const int felder = 4;
     while (i < n && feld < felder) {
         while (i < n && zeile.at(i).isSpace())  { ++i; }
         while (i < n && !zeile.at(i).isSpace()) { ++i; }
@@ -2794,7 +2815,7 @@ QString Ft8Applet::nimmFundAn(const QString& zeile)
         // hinaus.
         {
             const QString nachricht = nachrichtAusZeile(zeile);
-            const QString sauber = zeile.simplified();
+            const QString sauber = ohneBandmarke(zeile).simplified();
             const int snr = sauber.section(QLatin1Char(' '), 1, 1).toInt();
 
             // ── Mit Plaetzen: auf einen Platz (2026-11-17) ───────────
@@ -4759,10 +4780,14 @@ QString Ft8Applet::anzeigeText(const Fundzeile& z) const
     if (z.band.isEmpty() && m_lauschHz <= 0.0) { return z.text; }
     const int uhrEnde = z.text.indexOf(QLatin1Char(' '));
     if (uhrEnde < 0 || z.eigeneSendung) { return z.text; }
-    // „ 10m " bzw. gleich breite Luecke: vier Zeichen fuer das Band
-    // (bis „160m"), davor ein Trenner.
+    // Jede Zeile traegt ihr Band: das Lauschband seines, das Hauptband
+    // das aktuelle (die Liste wird bei jedem Bandwechsel geleert, alles
+    // darin ist also von hier). Betreiber 2026-11-19: „man sollte aber
+    // sehen, auf welchen bänder man was sieht". Vier Zeichen fuer das
+    // Band (bis „160m"), davor ein Trenner.
+    const QString band = z.band.isEmpty() ? m_listenBand : z.band;
     const QString marke = QStringLiteral(" ")
-                          + z.band.leftJustified(4, QLatin1Char(' '));
+                          + band.leftJustified(4, QLatin1Char(' '));
     QString s = z.text;
     s.insert(uhrEnde, marke);
     return s;
