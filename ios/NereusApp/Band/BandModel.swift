@@ -12,6 +12,9 @@
 // 2026-11-17: J.J. Boyd (KG4VCF), AI-assisted via Claude Code:
 //   viewHeld, the band's view holds where it was while the recorder shows
 //   the past, so a rewind's retune never moves the scale (PR 808 part 2).
+// 2026-11-19: J.J. Boyd (KG4VCF), AI-assisted via Claude Code:
+//   heldLiveTrace, the last live trace held while the past's first spectrum
+//   is on its way, so the spectrum is never empty on entering the past.
 
 import Combine
 import Foundation
@@ -459,6 +462,11 @@ final class BandModel: ObservableObject {
     var viewHeld: () -> Bool = { false }
     /// The view held while ``viewHeld``; nil live.
     private var heldView: TuneGestures.View?
+    /// The last live trace when the live spectrum was left out, and the
+    /// frequencies it spans: drawn until the recorder's first past spectrum
+    /// comes, so entering the past never shows an empty spectrum (JJ's phone
+    /// run, PR 808). Nil while the live one shows.
+    private var heldLiveTrace: (trace: [Float], coverage: BandCoverage?)?
     /// Where the finger is on the band while it drags it, for the cursor
     /// frequency readout; nil when no finger is down.
     @Published var cursorHz: Double?
@@ -1147,9 +1155,19 @@ final class BandModel: ObservableObject {
         overlays.peakHold = state.peakHold
         overlays.lookBackLines = lookBackLines
         overlays.liveSpectrumHidden = liveSpectrumHidden()
-        if overlays.liveSpectrumHidden, let past = pastTrace() {
-            overlays.pastTrace = past.trace
-            overlays.pastTraceCoverage = past.coverage
+        if overlays.liveSpectrumHidden {
+            if heldLiveTrace == nil, let frame = state.frame, frame.traceDbm.count > 1 {
+                heldLiveTrace = (frame.traceDbm, state.frameCoverage)
+            }
+            if let past = pastTrace() {
+                overlays.pastTrace = past.trace
+                overlays.pastTraceCoverage = past.coverage
+            } else if let held = heldLiveTrace {
+                overlays.pastTrace = held.trace
+                overlays.pastTraceCoverage = held.coverage
+            }
+        } else {
+            heldLiveTrace = nil
         }
         overlays.waterfallTimeAxis = waterfallTimeAxis
         if drawsStack {

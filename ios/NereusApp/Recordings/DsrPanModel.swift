@@ -33,6 +33,13 @@
 // 2026-11-17: The time strip runs every display frame only in the past or
 //   while a rewind plays (stripRunsEveryFrame); live it keeps its old pace.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-19: Fixes after JJ's phone run of PR 808 (round A): the rows are
+//   asked a piece at a time, the picture's top first, so the rows at the
+//   play point never wait behind a whole picture on a slow link; a zoom or
+//   pan in the past asks again at once for the new span (rows and a paused
+//   spectrum), dropping the ask under way; moments newer than the Core has
+//   kept are not remembered as never kept. J.J. Boyd (KG4VCF), AI-assisted
+//   via Claude Code.
 
 import Combine
 import CoreGraphics
@@ -86,6 +93,13 @@ final class DsrPanModel {
     nonisolated static let drawingShare = 0.25
     /// The most rows one request asks for (the link's 1 to 4096).
     nonisolated static let mostRows = 4096
+    /// The bytes of bins one answer of the Core's carries
+    /// (DsrPastRenderer::kAnswerBinBytes, 2 bytes a point): one ask is at
+    /// most one answer, so the rows at the picture's top never wait behind
+    /// a whole picture's answers on a slow link (JJ's phone run, PR 808).
+    nonisolated static let answerBinBytes = 196_608
+    /// An ask the Core has answered is not sent again, the same, sooner than this.
+    nonisolated static let reaskSeconds = 1.0
     /// A drag that ends this close to now is live again.
     nonisolated static let liveSlackSeconds = 0.3
     /// How long a note stays on the waterfall.
@@ -195,6 +209,13 @@ final class DsrPanModel {
     var timeSheetOpen = false
 
     @ObservationIgnored private var rowsTask: Task<Void, Never>?
+    /// The ask under way: its window and display, so a later plan knows whether it covers the same.
+    @ObservationIgnored private var rowsAskKey: String?
+    /// The last ask sent and when, so an ask answered without rows (moments
+    /// the Core has not kept yet) is not sent again at once.
+    @ObservationIgnored private var lastRowsAsk: (key: String, at: Double)?
+    /// The display the past spectrum was last asked with: a zoom or pan asks again.
+    @ObservationIgnored private var spectrumView: DsrPanView?
     @ObservationIgnored private var spectrumTask: Task<Void, Never>?
     @ObservationIgnored private var spectrumAskedAt: Double?
     /// The display's frame, in seconds, as the strip's display link last said.
@@ -381,6 +402,7 @@ final class DsrPanModel {
         viewTop = nil
         coreDraws = false
         pastSpectrum = nil
+        spectrumView = nil
         lookBack(0)
     }
 
@@ -671,7 +693,10 @@ final class DsrPanModel {
     /// Called a few times a second: while the sound plays the picture
     /// follows it and rows ahead of it are asked for, a picture left in the
     /// past ages past the band's own reach, and the hours are asked again
-    /// when the recorder has changed.
+    /// when the recorder has changed. The rows the Core draws are asked
+    /// for whenever the picture lacks some and no ask is under way, and at
+    /// once for a new zoom or pan (a new display), with a paused picture's
+    /// spectrum (JJ's phone run, PR 808).
     func tick() {
         followSession()
         followRecorder()
@@ -679,8 +704,13 @@ final class DsrPanModel {
         guard followPlay() else {
             return
         }
-        if !dragging, playedMoment != nil, coreDraws {
-            askForRows(ahead: true)
+        guard !dragging, coreDraws else {
+            return
+        }
+        askForRows(ahead: playedMoment != nil)
+        if playedMoment == nil, let view = panView(), view != spectrumView {
+            // Playing, the display frames ask for it with the new display.
+            askForSpectrum()
         }
     }
 
@@ -762,6 +792,9 @@ final class DsrPanModel {
     private func forgetPast() {
         rowsTask?.cancel()
         rowsTask = nil
+        rowsAskKey = nil
+        lastRowsAsk = nil
+        spectrumView = nil
         awaitingRows = false
         rows = []
         rowsView = nil
@@ -1033,17 +1066,87 @@ final class DsrPanModel {
             return
         }
         if coreDraws {
-            askForRows(ahead: rewound != nil)
+            askForRows(ahead: rewound != nil, fresh: true)
         }
         askForSpectrum()
     }
 
-    /// Asks for the rows the picture lacks, newest first; a newer ask drops an older one.
-    private func askForRows(ahead: Bool) {
+    /// The most rows one ask carries: one answer of the Core's for the
+    /// display's width; while the sound plays, no more than twice the rows
+    /// asked ahead of it, so the next ask for the top is never far off.
+    func rowsPerAsk(view: DsrPanView, playing: Bool) -> Int {
+        let answer = view.pixels > 0 ? max(1, Self.answerBinBytes / (2 * view.pixels)) : Self.mostRows
+        guard playing else {
+            return min(Self.mostRows, answer)
+        }
+        let aheadRows = Int((Self.aheadSeconds / max(secondsPerPoint, 0.001)).rounded(.up))
+        return max(1, min(answer, 2 * aheadRows))
+    }
+
+    /// The next stretch of rows to ask for, newest first: the rows at the
+    /// picture's top when they are missing (with those ahead of the sound
+    /// while it plays), else, playing, those ahead once less than half the
+    /// lead is left, else the newest run the picture lacks below. At most
+    /// `most` rows, all of them missing.
+    func nextRowsAsk(ahead: Bool, most: Int) -> (from: Double, to: Double, count: Int)? {
+        let spp = max(secondsPerPoint, 0.001)
+        let total = Int(waterfallPoints)
+        let newest = self.newest
+        let top = self.top
+        let aheadRows = ahead ? Int((Self.aheadSeconds / spp).rounded(.up)) : 0
+        var leadRunsOut = waits(top)
+        if !leadRunsOut, aheadRows > 1 {
+            for k in 1...max(1, aheadRows / 2) {
+                let moment = top + Double(k) * spp
+                if moment <= newest, waits(moment) {
+                    leadRunsOut = true
+                    break
+                }
+            }
+        }
+        var to: Double?
+        var from = 0.0
+        var count = 0
+        for k in (leadRunsOut ? -aheadRows : 0)..<total {
+            let moment = top - Double(k) * spp
+            if moment > newest {
+                continue
+            }
+            if waits(moment) {
+                if to == nil {
+                    to = moment
+                }
+                from = moment
+                count += 1
+                if count >= most {
+                    break
+                }
+            } else if to != nil {
+                break
+            }
+        }
+        guard let to else {
+            return nil
+        }
+        return (from, to, count)
+    }
+
+    /// Asks for rows the picture lacks, a piece at a time, the top first
+    /// (``nextRowsAsk(ahead:most:)``); when one is answered the next is
+    /// asked at once. One ask at a time: a new display (a zoom or pan)
+    /// drops the one under way and asks again at once, and so does a
+    /// `fresh` ask (a moved picture) for another stretch.
+    private func askForRows(ahead: Bool, fresh: Bool = false) {
         guard let view = panView(), let slice = activeSlice() ?? Optional(0), waterfallPoints >= 1 else {
             return
         }
         if rowsView != view {
+            // Rows drawn with another display are not this one's: dropped,
+            // with any ask still under way for them.
+            rowsTask?.cancel()
+            rowsTask = nil
+            rowsAskKey = nil
+            awaitingRows = false
             rows = []
             rowsView = view
             rowsLayout = nil
@@ -1053,31 +1156,31 @@ final class DsrPanModel {
             unkept = []
             unkeptKey = memory
         }
-        let total = Int(waterfallPoints)
-        var newestMissing: Double?
-        var oldestMissing: Double?
-        for y in 0..<total {
-            let moment = top - Double(y) * secondsPerPoint
-            if waits(moment) {
-                newestMissing = newestMissing ?? moment
-                oldestMissing = moment
+        guard let plan = nextRowsAsk(ahead: ahead, most: rowsPerAsk(view: view, playing: ahead)) else {
+            return
+        }
+        let from = plan.from
+        let to = plan.to
+        let key = "\(memory)|\(Int64((from * 1e9).rounded()))|\(Int64((to * 1e9).rounded()))"
+        if rowsTask != nil {
+            if !fresh || rowsAskKey == key {
+                // While one is with the Core the next waits for it.
+                return
             }
-        }
-        guard var to = newestMissing, let from = oldestMissing else {
+            rowsTask?.cancel()
+        } else if !fresh, let lastRowsAsk, lastRowsAsk.key == key, clock() - lastRowsAsk.at < Self.reaskSeconds {
             return
         }
-        if ahead {
-            to = min(newest, to + Self.aheadSeconds)
-        }
-        if rowsTask != nil, ahead {
-            // While the sound plays one ask at a time is enough.
-            return
-        }
-        let count = min(Self.mostRows, max(1, Int(((to - from) / secondsPerPoint).rounded()) + 1))
-        rowsTask?.cancel()
+        let count = min(Self.mostRows, max(1, plan.count))
+        // What the Core keeps up to now: moments newer than it are not yet
+        // kept, so they are not remembered as never kept.
+        let keptEdge = self.keptEdge
         awaitingRows = true
+        rowsAskKey = key
+        lastRowsAsk = (key, clock())
         rowsTask = Task {
             var answered = true
+            var refused = false
             do {
                 try await client.pastRows(slice: slice, view: view, fromUtcNs: Int64((from * 1e9).rounded()),
                                           toUtcNs: Int64((to * 1e9).rounded()), rowCount: count) { frames in
@@ -1086,30 +1189,54 @@ final class DsrPanModel {
             } catch is CancellationError {
                 answered = false
             } catch {
+                refused = true
                 if !Task.isCancelled {
                     show(error)
                 }
             }
             if !Task.isCancelled {
-                if answered {
-                    // What the Core left out, or refused, is not kept: not asked again.
-                    rememberUnkept(from: from, to: to, memory: memory)
-                }
                 awaitingRows = false
                 rowsTask = nil
+                rowsAskKey = nil
+                if refused {
+                    // A refusal stands for the whole picture: not asked again
+                    // until the display or the recorder changes.
+                    rememberUnkept(from: top - pictureSeconds, to: max(to, top), memory: memory, keptEdge: nil)
+                } else if answered {
+                    // What the Core left out is not kept: not asked again.
+                    rememberUnkept(from: from, to: to, memory: memory, keptEdge: keptEdge)
+                    // The next piece at once, the top first.
+                    if coreDraws, !dragging {
+                        askForRows(ahead: playedMoment != nil)
+                    }
+                }
             }
         }
     }
 
-    /// The moments from `from` to `to` that still have no row once the Core has answered.
-    private func rememberUnkept(from: Double, to: Double, memory: String) {
+    /// The newest moment the Core has said it keeps: the open stretch's
+    /// end, or the recorder's newest; now when it has said none.
+    private var keptEdge: Double {
+        if let stretch = client.dsr?.stretch {
+            return Double(stretch.toUtcNs) / 1e9
+        }
+        if let newestMs = client.dsr?.newestUtcMs, newestMs > 0 {
+            return Double(newestMs) / 1000
+        }
+        return clock()
+    }
+
+    /// The moments from `from` to `to` that still have no row once the
+    /// Core has answered, but for those newer than `keptEdge`, which the
+    /// recorder has not reached yet and are asked again later.
+    private func rememberUnkept(from: Double, to: Double, memory: String, keptEdge: Double?) {
         guard unkeptKey == memory, to >= from else {
             return
         }
         let spp = max(secondsPerPoint, 0.001)
         var moment = to
         while moment >= from - spp / 2 {
-            if row(at: moment) == nil {
+            if row(at: moment) == nil, keptEdge.map({ moment <= $0 }) ?? true {
                 unkept.insert(slot(moment))
             }
             moment -= spp
@@ -1158,6 +1285,7 @@ final class DsrPanModel {
             }
         }
         spectrumAskedAt = now
+        spectrumView = view
         let moment = playedMoment ?? top
         spectrumTask?.cancel()
         spectrumTask = Task {

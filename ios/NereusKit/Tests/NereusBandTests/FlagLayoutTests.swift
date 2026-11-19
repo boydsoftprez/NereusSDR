@@ -311,4 +311,24 @@ import Testing
         #expect(placements[0].rect.height == FlagLayout.flagSize.height)
         #expect(placements[1].rect.height == 150)
     }
+
+    // MARK: JJ's phone run of PR 808: a tag grown by PAST keeps its side
+
+    /// A lower-sideband tag hangs right of its line. Where the tag with PAST
+    /// at its end would leave the band on that side, the grown tag would
+    /// jump to the line's left (and back at LIVE): it does not keep its
+    /// side. With room for it, it does; an upper-sideband tag likewise on
+    /// its left.
+    @Test func aGrownTagKeepsItsSideOnlyWhereItFits() {
+        let band = 375.0
+        // 151 points fit right of a line at 191; 241 do not.
+        #expect(!FlagLayout.keepsSide(lineX: 191, width: 151, wider: 241, bandWidth: band, lowerSideband: true))
+        #expect(FlagLayout.keepsSide(lineX: 100, width: 151, wider: 241, bandWidth: band, lowerSideband: true))
+        #expect(FlagLayout.sideX(lineX: 191, width: 151, bandWidth: band, lowerSideband: true) == 191)
+        // Upper sideband: left of the line, the grown tag past the band's left edge.
+        #expect(!FlagLayout.keepsSide(lineX: 200, width: 151, wider: 241, bandWidth: band, lowerSideband: false))
+        #expect(FlagLayout.keepsSide(lineX: 300, width: 151, wider: 241, bandWidth: band, lowerSideband: false))
+        // The same width always keeps its side.
+        #expect(FlagLayout.keepsSide(lineX: 191, width: 151, wider: 151, bandWidth: band, lowerSideband: true))
+    }
 }

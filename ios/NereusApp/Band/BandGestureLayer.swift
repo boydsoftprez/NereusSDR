@@ -45,6 +45,11 @@
 // 2026-11-17: PR 808 final overlaps: a folded tag keeps off the frequency
 //   scale and, in the past, the play label; the play label drops below a
 //   flag over it. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-19: Fixes after JJ's phone run of PR 808: a folded tag carries
+//   PAST only where the chip keeps it on its own side of its dial line, so
+//   the tag no longer jumps sides when the past starts or ends (the PAST tag
+//   on the spectrum shows where no flag or tag carries it).
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import NereusBand
@@ -293,8 +298,19 @@ struct BandGestureLayer: View {
             FlagLayout.layout(slices: entries.map(\.slice), activeSliceId: slices.activeSliceId,
                               geometry: geometry,
                               foldedSize: { slice in
-                                  entries.first(where: { $0.id == slice.id }).map { FoldedTagView.size(for: $0, past: pastShows) }
-                                    ?? FlagLayout.foldedSize(frequencyText: slice.frequencyText)
+                                  guard let entry = entries.first(where: { $0.id == slice.id }) else {
+                                      return FlagLayout.foldedSize(frequencyText: slice.frequencyText)
+                                  }
+                                  // PAST grows the tag only where it stays on its own side of its line.
+                                  let usual = FoldedTagView.size(for: entry)
+                                  guard pastShows else {
+                                      return usual
+                                  }
+                                  let grown = FoldedTagView.size(for: entry, past: true)
+                                  return FlagLayout.keepsSide(lineX: geometry.x(forHz: slice.frequencyHz),
+                                                              width: Double(usual.width), wider: Double(grown.width),
+                                                              bandWidth: Double(geometry.size.width),
+                                                              lowerSideband: slice.lowerSideband) ? grown : usual
                               },
                               flagHeight: { slice in
                                   let fixed = expected[slice.id] ?? FlagLayout.flagSize.height
@@ -400,7 +416,10 @@ struct BandGestureLayer: View {
                                 sliceLetter: slices.active?.slice.letter ?? "A",
                                 // Every flag and folded tag shows PAST; the tag only where none does.
                                 // (A slice placed off the band's edge shows no flag.)
-                                pastOnFlag: placements.contains { $0.rect.intersects(CGRect(origin: .zero, size: layout.size)) },
+                                pastOnFlag: flags.contains { entry, placement in
+                                    placement.rect.intersects(CGRect(origin: .zero, size: layout.size))
+                                        && (!placement.isFolded || Self.tagCarriesPast(entry, rect: placement.rect))
+                                },
                                 flags: flagAndTagRects,
                                 avoid: flagAndTagRects + markerRects + edgeRects
                                     + (buttonColumnFolded.map { [BandColumnLayout.frame(bandHeight: layout.size.height,
@@ -699,9 +718,16 @@ struct BandGestureLayer: View {
             FoldedTagView(entry: entry, activate: {
                 controls?.close()
                 slices.activate(id)
-            }, openDiversity: { controls?.openDiversity(entry) }, past: dsr)
+            }, openDiversity: { controls?.openDiversity(entry) },
+               past: Self.tagCarriesPast(entry, rect: rect) ? dsr : nil)
                 .offset(x: rect.minX, y: rect.minY)
         }
+    }
+
+    /// The folded tag was laid out with room for PAST at its end: the chip
+    /// kept it on its own side of its line (``FlagLayout/keepsSide``).
+    static func tagCarriesPast(_ entry: BandSlicesModel.Entry, rect: CGRect) -> Bool {
+        rect.width >= FoldedTagView.size(for: entry, past: true).width - 0.5
     }
 
     /// The TX filter while keyed (the board's `.pan__tx`): a wash in the

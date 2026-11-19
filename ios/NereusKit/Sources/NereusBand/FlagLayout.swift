@@ -1,5 +1,9 @@
 // NereusSDR for iOS: the fold rule: where each slice's flag sits, and which flags fold to a one-line tag
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-11-19: keepsSide, whether a wider tag stays on the same side of its
+//   line, so the recorder's PAST chip never moves a tag across its dial line
+//   (JJ's phone run of PR 808). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import CoreGraphics
 
@@ -177,6 +181,32 @@ public enum FlagLayout {
             return x
         }
         return min(max(x, 0), max(0, bandWidth - width))
+    }
+
+    /// A tag `wider` than its usual `width` hangs on the same side of its
+    /// line at `lineX` as the usual one, without being pushed back over the
+    /// line by the band's edge: what grows the tag (the recorder's PAST
+    /// chip) then never moves it across its line, so the tag does not jump
+    /// sides when the past starts or ends.
+    public static func keepsSide(lineX: Double, width: Double, wider: Double, bandWidth: Double,
+                                 lowerSideband: Bool) -> Bool {
+        let usual = sideX(lineX: lineX, width: width, bandWidth: bandWidth, lowerSideband: lowerSideband)
+        let grown = sideX(lineX: lineX, width: wider, bandWidth: bandWidth, lowerSideband: lowerSideband)
+        // Right of the line: starts at it; left: ends at it. Either way within half a point.
+        func side(_ x: Double, _ w: Double) -> Int? {
+            if abs(x - lineX) < 0.5 {
+                return 1
+            }
+            if abs(x + w - lineX) < 0.5 {
+                return -1
+            }
+            return nil
+        }
+        guard let before = side(usual, width) else {
+            // The usual tag already sits pushed in by an edge: the grown one keeps its left edge.
+            return abs(grown - usual) < 0.5
+        }
+        return side(grown, wider) == before
     }
 
     /// True when the two rectangles share some area (touching edges do not).
