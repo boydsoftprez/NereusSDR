@@ -6,7 +6,9 @@
 //   (JJ's phone run of PR 808). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-19: fullRight, where a full flag must end: the dBm scale's arrows
 //   at the band's top right hid the flag's slice letter (JJ's phone run of
-//   PR 808). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   PR 808): it slides left to end at their edge, keeping its side of its
+//   line, so sideways both flags stay full.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import CoreGraphics
 
@@ -114,9 +116,8 @@ public enum FlagLayout {
     /// would land on one drops below it, as below a flag (PR 808).
     /// `fullRight` is where a full flag must end when it is less than the
     /// band's width (the dBm scale's arrows at the top right): a flag that
-    /// would run past it hangs on the other side of its line, as at the
-    /// band's edge, and one whose line is under them ends at their left
-    /// edge, so its slice letter is never under them (PR 808).
+    /// would run past it keeps its side of its line and slides left to end
+    /// there, so its slice letter is never under them (PR 808).
     public static func layout(slices: [BandSlice], activeSliceId: Int?, geometry: BandGeometry,
                               flagSize: CGSize = FlagLayout.flagSize,
                               foldedSize: (BandSlice) -> CGSize = { FlagLayout.foldedSize(frequencyText: $0.frequencyText) },
@@ -141,17 +142,22 @@ public enum FlagLayout {
             let slice = slices[index]
             let lineX = geometry.x(forHz: slice.frequencyHz)
             let isActive = slice.id == activeSliceId
-            var fullX = sideX(lineX: lineX, width: Double(flagSize.width), bandWidth: fullWidth,
+            func footprint(_ flag: CGRect) -> CGRect {
+                flag.union(sideColumnRect(flag: flag, lineX: lineX, bandWidth: width, column: sideColumn))
+            }
+            var fullX = sideX(lineX: lineX, width: Double(flagSize.width), bandWidth: width,
                               lowerSideband: slice.lowerSideband)
             if fullRight != nil {
-                // A line under the arrows themselves: the flag ends at their left edge, a little off its line.
+                // Under the arrows the flag keeps its side and slides left to end at their edge, at
+                // most their width off its line: turned to the other side it would land on the
+                // other flag sideways and fold it (CI, FlagButtonsShotTests' landscape frames).
                 fullX = min(fullX, max(0, fullWidth - Double(flagSize.width)))
             }
             let full = CGRect(x: fullX, y: top, width: flagSize.width, height: flagHeight(slice))
-            let footprint = full.union(sideColumnRect(flag: full, lineX: lineX, bandWidth: width, column: sideColumn))
-            if isActive || !placed.contains(where: { overlaps($0, footprint) }) {
+            let fullFootprint = footprint(full)
+            if isActive || !placed.contains(where: { overlaps($0, fullFootprint) }) {
                 // A full flag always sits at the top; one that would land on another folds instead.
-                placed.append(footprint)
+                placed.append(fullFootprint)
                 result[index] = .full(full)
                 continue
             }

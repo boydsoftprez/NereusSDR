@@ -334,20 +334,18 @@ import Testing
 
     /// JJ's phone run of PR 808: an LSB flag whose right edge ran under the
     /// dBm scale's arrows at the band's top right hid its slice letter. With
-    /// `fullRight` at the arrows' left edge it hangs left of its line, as at
-    /// the band's own edge; with room it keeps its side.
+    /// `fullRight` at the arrows' left edge it keeps its side of its line and
+    /// slides left to end there; with room it stays on its line.
     @Test func aFullFlagKeepsClearOfTheArrowsAtTheTopRight() {
         // The big iPhone's band, 440 points wide, the arrows' left edge at 404.
         let geometry = Self.geometry(width: 440, centerHz: 7_200_000, spanHz: 100_000)
         let arrowsLeft = 440.0 - 36
         // The line 220 points in: 200 points of flag end at 420, inside the band but past the arrows.
         let near = [Self.slice(0, 7_200_000)]
-        let lineX = Double(geometry.x(forHz: 7_200_000))
         let unlimited = FlagLayout.layout(slices: near, activeSliceId: 0, geometry: geometry)
         #expect(Double(unlimited[0].rect.maxX) > arrowsLeft)
         let kept = FlagLayout.layout(slices: near, activeSliceId: 0, geometry: geometry, fullRight: arrowsLeft)
-        #expect(Double(kept[0].rect.maxX) <= arrowsLeft)
-        #expect(abs(Double(kept[0].rect.maxX) - lineX) < 0.5)
+        #expect(abs(Double(kept[0].rect.maxX) - arrowsLeft) < 0.5)
         // Further left there is room right of the line: it stays there.
         let roomy = [Self.slice(0, 7_160_000)]
         let roomyX = Double(geometry.x(forHz: 7_160_000))
@@ -359,5 +357,21 @@ import Testing
         #expect(Double(geometry.x(forHz: 7_242_000)) > arrowsLeft)
         let shifted = FlagLayout.layout(slices: under, activeSliceId: 0, geometry: geometry, fullRight: arrowsLeft)
         #expect(abs(Double(shifted[0].rect.maxX) - arrowsLeft) < 0.5)
+    }
+
+    /// Sideways, two slices apart (FlagButtonsShotTests' landscape frames):
+    /// B's flag slides left to end at the arrows' edge and both flags stay
+    /// full, with A active and with B active.
+    @Test(arguments: [0, 1])
+    func sidewaysBothFlagsStayFullClearOfTheArrows(_ active: Int) {
+        let geometry = Self.geometry(width: 874, centerHz: 7_244_500, spanHz: 48_000)
+        let arrowsLeft = 874.0 - 36 - Double(FlagLayout.sideGap)
+        let slices = [Self.slice(0, 7_236_400), Self.slice(1, 7_256_000)]
+        let placed = FlagLayout.layout(slices: slices, activeSliceId: active, geometry: geometry,
+                                       sideColumn: CGSize(width: 46, height: 150), fullRight: arrowsLeft)
+        #expect(placed.allSatisfy { !$0.isFolded })
+        let b = placed[1].rect
+        #expect(Double(b.maxX) <= arrowsLeft + 0.5)
+        #expect(Double(b.maxX) > Double(geometry.x(forHz: 7_256_000)))
     }
 }
