@@ -29,12 +29,59 @@
 // phone's on its side. It read the sheet's own height, so half height on an
 // iPad's band snapped back to full and the handle did nothing. J.J. Boyd
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-18: Your own frequency has no Tune bar, sideways too: the room takes its
+// height. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-18: The sheet stays where the handle is let go, from its smallest height
+// (one station row showing) to full; a tap goes between full and that height, which
+// the app keeps until it quits. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-18: RoundtablePanelEdge: a thing on the band the sheet's top edge would cut
+// in two is hidden whole until the edge leaves it. J.J. Boyd (KG4VCF), AI-assisted via
+// Anthropic Claude Code.
 
 import SwiftUI
 
+/// The open Roundtable sheet's top edge on the band, in the band's points
+/// (the band's top-left is 0, 0), across the sheet's width. A thing on the
+/// band that the edge would cut in two (a tag, the talker card, LIVE or
+/// SAVE) is hidden whole while it does, as at full height nothing shows
+/// half; it comes back once the edge leaves it. A thing wholly under the
+/// sheet is covered, as before. The trace, grid, waterfall and scales are
+/// not things: the sheet covers them as it always has.
+struct RoundtablePanelEdge: Equatable {
+    /// The sheet's top, in points down the band.
+    var top: CGFloat
+    /// The sheet's left and right edges: the band's width upright, the
+    /// sheet's narrower column on a phone on its side.
+    var minX: CGFloat = -.infinity
+    var maxX: CGFloat = .infinity
+
+    /// How far the edge may reach into a thing's top or bottom before it
+    /// counts as cut: a thing whose foot the edge only grazes stays.
+    static let tolerance: CGFloat = 1
+
+    /// The edge runs through `frame`, more than ``tolerance`` inside its
+    /// top and its bottom, within the sheet's width.
+    func cuts(_ frame: CGRect) -> Bool {
+        guard frame.maxX > minX, frame.minX < maxX else {
+            return false
+        }
+        return frame.minY + Self.tolerance < top && top < frame.maxY - Self.tolerance
+    }
+
+    /// `frame` is hidden under `edge`; no sheet hides nothing.
+    static func hides(_ frame: CGRect, under edge: RoundtablePanelEdge?) -> Bool {
+        edge?.cuts(frame) ?? false
+    }
+}
+
 /// The Roundtable sheet (spec 11.3, D17, U2, U3, U14): a flag's Roundtable
-/// line opens it at half height over the band, and a tap on the handle
-/// makes it full height. Half shows the talker and the readings with the
+/// line opens it at half height over the band, or at the height its handle
+/// was last dragged to while the app runs. A drag on the handle moves the
+/// sheet's top with the finger and it stays where it is let go, from its
+/// smallest height (the handle, the title, the talker, one station and the
+/// box) to full; a drag let go well below the smallest closes it. A tap on
+/// the handle goes between full and the dragged height (half if none).
+/// Below full the sheet shows the talker and the readings with the
 /// Offset column; full adds the earlier turns with Name and the messages,
 /// in one scroll. The message box is pinned at its foot with PTT beside
 /// it, smaller and 24 points clear, press and hold with a dashed ring.
@@ -48,15 +95,37 @@ import SwiftUI
 /// Before the station's first answer the sheet asks it
 /// (``RoundtableFirstRunSheet``) at full height and sends nothing until then.
 struct RoundtableSheet: View {
-    enum Detent: Equatable {
-        case half
-        case full
+    /// The sheet's height on the band, as one value: its top as a share of
+    /// the band's height, down from the band's top. 0 is full height.
+    struct Detent: Equatable {
+        var top: CGFloat
+
+        static let full = Detent(top: 0)
+        static let half = Detent(top: MainScreen.roundtableHalfTop)
+
+        /// At full height, or within ``RoundtableSheet/nearFull`` points of it.
+        func atFull(bandHeight: CGFloat) -> Bool {
+            top * bandHeight <= RoundtableSheet.nearFull
+        }
+
+        /// The height whose top is `top` points down a band `bandHeight` tall.
+        static func at(top: CGFloat, bandHeight: CGFloat) -> Detent {
+            Detent(top: bandHeight > 0 ? max(0, top) / bandHeight : 0)
+        }
+    }
+
+    /// How a drag on the handle ends: the sheet stays at a height, or closes.
+    enum DragEnd: Equatable {
+        case stay(Detent)
+        case close
     }
 
     @ObservedObject var roundtable: RoundtableModel
     @ObservedObject var transmit: TransmitModel
     @ObservedObject var slices: BandSlicesModel
     @Binding var detent: Detent
+    /// The band's height: the sheet's top is a share of it.
+    let bandHeight: CGFloat
     /// A tuning dial is on: PTT is in the strip below, not beside the box.
     let dialOn: Bool
     /// The session is up: PTT can be used.
@@ -81,12 +150,107 @@ struct RoundtableSheet: View {
     /// Told each time the sheet has decided whether it is compact, after any
     /// change of height that follows: tests wait on this, as on holdObserver.
     var compactDecided: (() -> Void)?
+    /// The height the handle was last dragged to while the app runs (nil: never).
+    var lastDragged: Binding<Detent?> = .constant(nil)
+    /// Told the sheet's smallest height each time it is measured again.
+    var smallestChanged: ((CGFloat) -> Void)?
 
     /// The question was answered here: no note follows it.
     @State private var answeredHere = false
     @State private var compactLandscape = false
+    /// The parts of the smallest height, as laid out: everything above the
+    /// room (handle, note, title row), the bottom of the room's first station
+    /// row in its scroll, the Tune bar, and the box with PTT.
+    @State private var roomTop: CGFloat = 0
+    @State private var firstStationBottom: CGFloat = RoundtableSheet.lastFirstStationBottom
+    @State private var tuneBarHeight: CGFloat = 0
+    @State private var composerHeight: CGFloat = 0
+    /// The sheet's top, in points down the band, when the handle's drag began.
+    @State private var dragStartTop: CGFloat?
+    /// When the handle's last drag ended: the handle's tap that ends it is no tap.
+    @State private var dragEndedAt: Date = .distantPast
 
     static let handleHeight: CGFloat = 22
+    /// "Within a few points" of full height counts as full.
+    nonisolated static let nearFull: CGFloat = 8
+    /// A drag let go this far below the smallest height closes the sheet.
+    static let closeBeyondSmallest: CGFloat = 60
+    /// VoiceOver's adjust moves the sheet's top this share of the band.
+    static let adjustStep: CGFloat = 0.1
+    /// The first station row's bottom as a sheet last measured it, while the app
+    /// runs: a sheet opened at its smallest height has no room to lay that row
+    /// out and measure it, so it starts from this.
+    @MainActor static var lastFirstStationBottom: CGFloat = 0
+    /// The coordinate space of the sheet, for the room's place in it.
+    nonisolated static let space = "roundtableSheetSpace"
+
+    /// The sheet's top edge on a band `bandWidth` wide, its top `top` points down:
+    /// the band's whole width upright; on its side, the sheet's column at
+    /// most ``MainScreen/roundtableSidewaysWidth`` wide against the right inset,
+    /// as MainScreen places it.
+    static func edge(top: CGFloat, bandWidth: CGFloat, sideways: Bool, leadingInset: CGFloat,
+                     trailingInset: CGFloat, sidewaysWidth: CGFloat) -> RoundtablePanelEdge {
+        guard sideways else {
+            return RoundtablePanelEdge(top: top, minX: 0, maxX: bandWidth)
+        }
+        let right = bandWidth - trailingInset
+        return RoundtablePanelEdge(top: top, minX: max(leadingInset, right - sidewaysWidth), maxX: right)
+    }
+
+    /// The sheet's smallest height: the handle and title row above the room,
+    /// the room down to its first station row, then the Tune bar (a viewed
+    /// frequency's, which must stay in reach) and the box with PTT.
+    static func smallest(roomTop: CGFloat, firstStationBottom: CGFloat, tuneBar: CGFloat, composer: CGFloat) -> CGFloat {
+        (roomTop + firstStationBottom + tuneBar + composer).rounded(.up)
+    }
+
+    /// The sheet's top, in points down a band `bandHeight` tall whose full
+    /// height is `fullHeight` (the band less any dial strip): `detent`'s,
+    /// never so low that the sheet is under its smallest height.
+    static func top(_ detent: Detent, bandHeight: CGFloat, fullHeight: CGFloat, smallest: CGFloat) -> CGFloat {
+        min((bandHeight * detent.top).rounded(), max(0, fullHeight - smallest))
+    }
+
+    /// The top under a finger that started a drag at `startTop` and has moved
+    /// `translation` points down, held between full and the smallest height.
+    static func dragTop(startTop: CGFloat, translation: CGFloat, fullHeight: CGFloat, smallest: CGFloat) -> CGFloat {
+        min(max(0, startTop + translation), max(0, fullHeight - smallest))
+    }
+
+    /// A drag let go: the sheet stays where it is, held between full and the
+    /// smallest height, unless the finger went more than
+    /// ``closeBeyondSmallest`` points below the smallest height's top.
+    static func dragEnded(startTop: CGFloat, translation: CGFloat, bandHeight: CGFloat, fullHeight: CGFloat,
+                          smallest: CGFloat) -> DragEnd {
+        if startTop + translation > max(0, fullHeight - smallest) + closeBeyondSmallest {
+            return .close
+        }
+        return .stay(.at(top: dragTop(startTop: startTop, translation: translation, fullHeight: fullHeight,
+                                      smallest: smallest), bandHeight: bandHeight))
+    }
+
+    /// A tap on the handle: below full it goes to full; at full it goes back
+    /// to the height last dragged to, or to half if there is none or that
+    /// height is full itself.
+    static func toggled(_ detent: Detent, lastDragged: Detent?, bandHeight: CGFloat) -> Detent {
+        guard detent.atFull(bandHeight: bandHeight) else {
+            return .full
+        }
+        guard let lastDragged, !lastDragged.atFull(bandHeight: bandHeight) else {
+            return .half
+        }
+        return lastDragged
+    }
+
+    /// The height the sheet opens at: the one last dragged to while the app runs, else half.
+    static func opening(lastDragged: Detent?) -> Detent {
+        lastDragged ?? .half
+    }
+
+    /// The earlier turns show at full height only, on your own frequency.
+    static func showsEarlier(_ detent: Detent, bandHeight: CGFloat, viewing: Bool) -> Bool {
+        !viewing && detent.atFull(bandHeight: bandHeight)
+    }
     /// The compact sheet needs this much width, which only a sideways band has...
     static let compactMinimumWidth: CGFloat = 500
     /// ...and a band that gives it less than this at full height, so half
@@ -121,9 +285,6 @@ struct RoundtableSheet: View {
     }
     /// A frequency is being viewed, not your own (overlay design D21).
     private var viewing: Bool { roundtable.isViewing }
-    /// A short landscape sheet needs its height for the reports: your own frequency's
-    /// greyed Tune, which has nothing to do there, sits with them, not pinned.
-    private var ownTuneScrolls: Bool { compactLandscape && !viewing }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -157,6 +318,7 @@ struct RoundtableSheet: View {
                     }
                 }
                 content
+                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(Self.space)).minY } action: { roomTop = $0 }
                 if !(dialOn && keyed) {
                     RoundtableComposer(roundtable: roundtable, leadingWidth: dialOn ? 0
                                        : (compactLandscape ? 44 + 8 : PttButton.holdDiameter + PttButton.holdClearance),
@@ -167,9 +329,18 @@ struct RoundtableSheet: View {
                             Spacer().frame(width: compactLandscape ? 8 : PttButton.holdClearance)
                         }
                     }
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { composerHeight = $0 }
                 }
             }
         }
+        .coordinateSpace(.named(Self.space))
+        .onPreferenceChange(RoundtableFirstStationKey.self) { bottom in
+            if let bottom {
+                firstStationBottom = bottom
+                Self.lastFirstStationBottom = bottom
+            }
+        }
+        .onChange(of: smallest, initial: true) { _, height in smallestChanged?(height) }
         .onGeometryChange(for: Bool.self) { geometry in
             Self.isCompact(width: geometry.size.width, fullHeight: fullHeight)
         } action: { compact in
@@ -190,6 +361,60 @@ struct RoundtableSheet: View {
         .onChange(of: slices.activeSliceId) { _, id in roundtable.activeSliceId = id.map(Int64.init) }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("roundtableSheet")
+    }
+
+    /// The smallest height as this sheet lays out now. A frequency's room whose
+    /// first station row was never measured holds half height until it is.
+    private var smallest: CGFloat {
+        let stationsShow = roundtable.coreReason == nil && roundtable.frequencyAvailable && room != nil && !asking
+        if stationsShow && firstStationBottom <= 0 {
+            return max(0, fullHeight - (bandHeight * Detent.half.top).rounded())
+        }
+        return Self.smallest(roomTop: roomTop, firstStationBottom: firstStationBottom,
+                             tuneBar: viewing ? tuneBarHeight : 0, composer: composerHeight)
+    }
+
+    private var currentTop: CGFloat {
+        Self.top(detent, bandHeight: bandHeight, fullHeight: fullHeight, smallest: smallest)
+    }
+
+    /// The handle's drag moves the top with the finger, with no animation behind it.
+    private func follow(_ translation: CGFloat) {
+        let start = dragStartTop ?? currentTop
+        dragStartTop = start
+        let top = Self.dragTop(startTop: start, translation: translation, fullHeight: fullHeight, smallest: smallest)
+        var still = Transaction()
+        still.disablesAnimations = true
+        withTransaction(still) {
+            detent = .at(top: top, bandHeight: bandHeight)
+        }
+    }
+
+    private func letGo(_ translation: CGFloat) {
+        let start = dragStartTop ?? currentTop
+        dragStartTop = nil
+        dragEndedAt = Date()
+        switch Self.dragEnded(startTop: start, translation: translation, bandHeight: bandHeight,
+                              fullHeight: fullHeight, smallest: smallest) {
+        case .close:
+            close()
+        case .stay(let height):
+            var still = Transaction()
+            still.disablesAnimations = true
+            withTransaction(still) {
+                detent = height
+            }
+            lastDragged.wrappedValue = height
+        }
+    }
+
+    /// VoiceOver's adjust: taller or shorter by a step, kept as a drag's height is.
+    private func adjust(taller: Bool) {
+        let step = Self.adjustStep * bandHeight
+        let top = Self.dragTop(startTop: currentTop, translation: taller ? -step : step,
+                               fullHeight: fullHeight, smallest: smallest)
+        detent = .at(top: top, bandHeight: bandHeight)
+        lastDragged.wrappedValue = detent
     }
 
     private func fullForFirstRun() {
@@ -223,25 +448,25 @@ struct RoundtableSheet: View {
 
     private var handle: some View {
         Button {
-            detent = detent == .half ? .full : .half
+            // The lift that ends a drag is not a tap.
+            guard dragStartTop == nil, Date().timeIntervalSince(dragEndedAt) > 0.3 else {
+                return
+            }
+            detent = Self.toggled(detent, lastDragged: lastDragged.wrappedValue, bandHeight: bandHeight)
         } label: {
             Capsule().fill(RoundtableColours.dim2).frame(width: 36, height: 4)
                 .frame(maxWidth: .infinity, minHeight: Self.handleHeight)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .simultaneousGesture(DragGesture(minimumDistance: 12).onEnded { drag in
-            if drag.translation.height < -20 {
-                detent = .full
-            } else if drag.translation.height > 20 {
-                if detent == .full {
-                    detent = .half
-                } else {
-                    close()
-                }
-            }
-        })
-        .accessibilityLabel(detent == .half ? "Full height" : "Half height")
+        // Global: the handle moves with the finger, so its own space would move too.
+        .simultaneousGesture(DragGesture(minimumDistance: 12, coordinateSpace: .global)
+            .onChanged { drag in follow(drag.translation.height) }
+            .onEnded { drag in letGo(drag.translation.height) })
+        .accessibilityLabel(detent.atFull(bandHeight: bandHeight) ? "Half height" : "Full height")
+        .accessibilityAdjustableAction { direction in
+            adjust(taller: direction == .increment)
+        }
         .accessibilityIdentifier("roundtableHandle")
     }
 
@@ -296,22 +521,26 @@ struct RoundtableSheet: View {
                                frequencyHead: AnyView(
                                 RoundtableFrequencyHost(roundtable: roundtable, slices: slices, contextId: room.id,
                                                         viewing: viewing, keyed: transmit.ptt.transmitting, linkUp: linkUp,
-                                                        panLevel: panLevel, showsBack: false, showsTune: ownTuneScrolls,
+                                                        panLevel: panLevel, showsBack: false, showsTune: false,
                                                         onTune: { _, _ in }, onBack: back)),
-                               frequencyFoot: ownTuneScrolls ? nil : AnyView(
+                               // Your own frequency has no Tune: the room takes its height.
+                               frequencyFoot: viewing ? AnyView(
                                 RoundtableFrequencyTuneBar(roundtable: roundtable, slices: slices, contextId: room.id,
-                                                           viewing: viewing, keyed: transmit.ptt.transmitting, linkUp: linkUp,
+                                                           keyed: transmit.ptt.transmitting, linkUp: linkUp,
                                                            onTune: { hz, family in
                                                                slices.tune(toHz: hz, family: family)
                                                                close()
-                                                           })),
-                               showsEarlier: !viewing && detent == .full, viewing: viewing)
+                                                           })
+                                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { tuneBarHeight = $0 }) : nil,
+                               showsEarlier: Self.showsEarlier(detent, bandHeight: bandHeight, viewing: viewing),
+                               viewing: viewing)
                 // Your own frequency's id changes with every tune step, and its received
                 // messages do not: the view keeps its scroll, seen state and typed name.
                 .id(viewing ? room.id : RoundtableFrequencyView.ownViewId)
         } else if let room {
             SliceReadingsReader(readings: slices.readings) { readings in
-                RoundtableRoomView(roundtable: roundtable, room: room, full: detent == .full, keyed: keyed,
+                RoundtableRoomView(roundtable: roundtable, room: room, full: detent.atFull(bandHeight: bandHeight),
+                                   keyed: keyed,
                                    keyedSince: PttButton.keyedSince(transmit.ptt),
                                    keyedForSeconds: Int(transmit.keyedForSeconds), tunedHere: tunedHere, stationCallsign: stationCallsign,
                                    ownDbm: slices.entries.first { $0.id == slices.activeSliceId }

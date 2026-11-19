@@ -19,6 +19,8 @@
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-11-03: Overlay redesign truth rules and wording (design D2, D3, D5, D6, D8).
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-18: The room's scroll content is a named space, for the sheet's smallest
+// height. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import SwiftUI
 import UIKit
@@ -537,6 +539,9 @@ struct RoundtableRoomView: View {
     private var away: Bool { you?.away ?? false }
     private var live: Bool { roundtable.linkState == .live }
 
+    /// The room's scroll content, where the sheet finds its first station row.
+    nonisolated static let contentSpace = "roundtableRoomContent"
+
     #if DEBUG
     /// Each pass of a room's body (the tests: a scroll of the iPad's column
     /// must not redraw the room per frame).
@@ -567,6 +572,7 @@ struct RoundtableRoomView: View {
                                 LazyVStack(alignment: .leading, spacing: 0) {
                                     sections(now: now)
                                 }
+                                .coordinateSpace(.named(Self.contentSpace))
                             }
                             .scrollIndicators(.hidden)
                             .accessibilityIdentifier("roundtableRoomScroll")

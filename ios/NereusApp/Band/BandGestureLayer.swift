@@ -24,6 +24,13 @@
 // 2026-11-16: A drag in from the right edge over the recorder's time strip
 // is the edge's swipe again (or moves the band with the edge Off).
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-18: The Roundtable sheet's top edge goes to the tag layer and the
+// recorder's strip, which hide whole what it would cut. J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code.
+// 2026-11-18: A full flag and its round buttons hide whole while the sheet's edge
+// runs through either. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-18: A hidden flag takes no touch: a drag or hold where it stands is the
+// band's there. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import Combine
 import NereusBand
@@ -153,6 +160,9 @@ struct BandGestureLayer: View {
     /// The Digital Spectrum Recorder's strip, map and past picture (Pan 1
     /// only; the recording design's sections 6.7 and 6.8); nil shows none.
     var dsr: DsrPanModel?
+    /// The open Roundtable sheet's top edge, in this band's points: the tags,
+    /// the talker card, a flag, LIVE and SAVE it would cut are hidden whole. Nil: no sheet.
+    var roundtableEdge: RoundtablePanelEdge?
     @Environment(\.uprightBandWidth) private var uprightWidth
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -328,7 +338,12 @@ struct BandGestureLayer: View {
         // Where a hold opens the band menu: clear of every flag and folded
         // tag, the spots, other devices' labels and the dBm scale, as they
         // stand when the hold fires.
-        let flagAndTagRects = rects + placements.filter(\.isFolded).map(\.rect)
+        // A flag hidden under the Roundtable sheet's edge takes no touch: a
+        // hold or drag where it stands acts on the band there, as with no flag.
+        let hiddenFlags = Self.hiddenFlags(flags.map { ($0.0.id, $0.1) }, columns: columns, under: roundtableEdge)
+        let touchPlacements = Self.touchPlacements(flags.map { ($0.0.id, $0.1) }, hidden: hiddenFlags)
+        let flagAndTagRects = Self.flagRects(flags.filter { !hiddenFlags.contains($0.0.id) }, columns: columns)
+            + placements.filter(\.isFolded).map(\.rect)
         let spotsModel = spots
         let emptyBand: (CGPoint) -> Bool = { point in
             let spotRects = (spotsModel.map { model in
@@ -379,6 +394,7 @@ struct BandGestureLayer: View {
                                     + (buttonColumnFolded.map { [BandColumnLayout.frame(bandHeight: layout.size.height,
                                                                                          leadingInset: leadingInset, folded: $0)] } ?? []),
                                    usableWidth: arrows.minX,
+                                   panelEdge: roundtableEdge,
                                    otherFlagHz: Set(flags.filter { !$0.1.isFolded && $0.0.id != slices.activeSliceId }
                                     .map { Int64($0.0.slice.frequencyHz.rounded()) }),
                                    readReports: { context in
@@ -436,7 +452,7 @@ struct BandGestureLayer: View {
                               part: .catcher)
             }
         }
-        .simultaneousGesture(drag(layout: layout, geometry: geometry, entries: entries, placements: placements))
+        .simultaneousGesture(drag(layout: layout, geometry: geometry, entries: entries, placements: touchPlacements))
         .onChange(of: dragging) { _, now in
             // A drag cancelled before it ended: its swipe springs back.
             if !now {
@@ -464,7 +480,8 @@ struct BandGestureLayer: View {
                     DsrStripLayer(model: dsr, place: dsrPlace,
                                   secondsPerPoint: Double(band.settings.waterfallPeriodMs) / 1000,
                                   edge: stripEdge(layout: layout, geometry: geometry, entries: entries,
-                                                  placements: placements))
+                                                  placements: touchPlacements),
+                                  panelEdge: roundtableEdge)
                 }
             }
         }
@@ -530,6 +547,31 @@ struct BandGestureLayer: View {
         return columns
     }
 
+    /// A full flag and its round buttons are hidden whole while the open
+    /// Roundtable sheet's top edge runs through either (``RoundtablePanelEdge``);
+    /// each flag is judged on its own. Wholly under the sheet, it is covered.
+    static func flagHidden(flag: CGRect, column: CGRect?, under edge: RoundtablePanelEdge?) -> Bool {
+        RoundtablePanelEdge.hides(flag, under: edge)
+            || (column.map { RoundtablePanelEdge.hides($0, under: edge) } ?? false)
+    }
+
+    /// The slices whose full flag ``flagHidden(flag:column:under:)`` hides under the sheet's edge.
+    static func hiddenFlags(_ flags: [(id: Int, placement: FlagPlacement)], columns: [Int: CGRect],
+                            under edge: RoundtablePanelEdge?) -> Set<Int> {
+        Set(flags.compactMap { id, placement in
+            !placement.isFolded && flagHidden(flag: placement.rect, column: columns[id], under: edge) ? id : nil
+        })
+    }
+
+    /// The flags as a drag finds them: a hidden flag has no rect, so a drag
+    /// that starts where it stands is the band's there (or the passband's,
+    /// which stays in sight), never that flag's. In the order given.
+    static func touchPlacements(_ flags: [(id: Int, placement: FlagPlacement)], hidden: Set<Int>) -> [FlagPlacement] {
+        flags.map { id, placement in
+            hidden.contains(id) ? .full(.null) : placement
+        }
+    }
+
     /// Every full flag with its round buttons: what the band's notices keep clear of.
     static func flagRects(_ flags: [(BandSlicesModel.Entry, FlagPlacement)], columns: [Int: CGRect]) -> [CGRect] {
         flags.compactMap { entry, placement in
@@ -551,7 +593,13 @@ struct BandGestureLayer: View {
         let rect = placement.rect
         let controls = flagControls
         let id = entry.id
+        // The Roundtable sheet's top edge across this flag or its round buttons:
+        // both hidden whole, out of reach of a tap and VoiceOver. Out of the tree,
+        // as the tags and LIVE/SAVE are: a kept view stayed in VoiceOver's list.
+        let underEdge = Self.flagHidden(flag: rect, column: column, under: roundtableEdge)
         switch placement {
+        case .full where underEdge:
+            EmptyView()
         case .full:
             VfoFlagView(entry: entry, readings: slices.readings, meter: band.catalog?.meters.sMeter, readout: readout,
                         level: flagLevel, meterSource: FlagMeterChoice(meterRxMode),

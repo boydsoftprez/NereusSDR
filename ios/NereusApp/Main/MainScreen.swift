@@ -31,6 +31,10 @@
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-17: VOICE goes above PTT while the thumbwheel's step box is beside it.
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-18: The Roundtable sheet sits where its handle was let go, never under its
+// smallest height, and opens again there. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-18: The sheet's top edge goes to the band, which hides whole what the edge
+// would cut. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -146,6 +150,8 @@ struct MainScreen: View {
     @State private var pttHold = PttLatchHold()
     /// The Roundtable sheet, open at this height, or closed.
     @State private var roundtableSheet: RoundtableSheet.Detent?
+    /// The sheet's smallest height as it last laid out (one station row showing).
+    @State private var roundtableSmallest: CGFloat = 0
     /// The sheet is up on a viewed frequency: a lost read closes it (D27).
     @State private var viewingInSheet = false
     /// An iPad with the column hidden shows your own frequency in the panel (D24).
@@ -400,7 +406,9 @@ struct MainScreen: View {
             } else {
                 bandLayers(main.controls(for: .first), sideways: sideways, leadingInset: sideways ? leadingInset : 0,
                            trailingInset: sideways ? trailingInset : 0, swipesHere: swipesOn,
-                           buttonColumnFolded: column ? columnFolded : nil)
+                           buttonColumnFolded: column ? columnFolded : nil,
+                           roundtableEdge: roundtableEdge(sideways: sideways, leadingInset: sideways ? leadingInset : 0,
+                                                          trailingInset: sideways ? trailingInset : 0))
             }
             GeometryReader { proxy in
                 if let audio = app.audio {
@@ -503,10 +511,11 @@ struct MainScreen: View {
                 GeometryReader { proxy in
                     let place = Self.roundtablePlace(bandHeight: proxy.size.height, detent: detent,
                                                      gaugesFoot: transmit.ptt.transmitting ? gaugesFoot : nil,
-                                                     dialStrip: dialStrip)
+                                                     dialStrip: dialStrip, smallest: roundtableSmallest)
                     RoundtableSheet(roundtable: roundtable, transmit: transmit, slices: main.slices,
                                     detent: Binding(get: { roundtableSheet ?? .half },
                                                     set: { roundtableSheet = $0 }),
+                                    bandHeight: proxy.size.height,
                                     dialOn: dialStrip, linkUp: pttLinkUp,
                                     fullHeight: Self.roundtablePlace(bandHeight: proxy.size.height, detent: .full,
                                                                      gaugesFoot: nil, dialStrip: dialStrip).height,
@@ -515,7 +524,10 @@ struct MainScreen: View {
                                     close: closeRoundtable, back: { toggleRoundtable(target: .own) },
                                     holdObserver: holdObserver,
                                     askFirstRun: layoutNow.isIPad ? { firstRunForm = true } : nil,
-                                    panLevel: panLevel)
+                                    panLevel: panLevel,
+                                    lastDragged: Binding(get: { app.roundtableSheetDragged },
+                                                         set: { app.roundtableSheetDragged = $0 }),
+                                    smallestChanged: { roundtableSmallest = $0 })
                         .frame(maxWidth: sideways ? Self.roundtableSidewaysWidth : .infinity)
                         .frame(height: place.height)
                         .padding(.leading, sideways ? leadingInset : 0)
@@ -833,21 +845,38 @@ struct MainScreen: View {
     /// The sheet's widest sideways, as the drop sheets'.
     static let roundtableSidewaysWidth: CGFloat = 546
     /// Half height: the sheet's top this far down the band (the board's).
-    static let roundtableHalfTop: CGFloat = 0.48
+    nonisolated static let roundtableHalfTop: CGFloat = 0.48
     /// Its gap below the keyed gauges.
     static let roundtableBelowGauges: CGFloat = 8
 
-    /// Where the sheet sits on a band `bandHeight` tall: half or full,
+    /// Where the sheet sits on a band `bandHeight` tall: at its height
+    /// (half, full or where its handle was let go), never under `smallest`,
     /// below the keyed gauges while keyed, and above the dial's strip.
     static func roundtablePlace(bandHeight: CGFloat, detent: RoundtableSheet.Detent, gaugesFoot: CGFloat?,
-                                dialStrip: Bool) -> (top: CGFloat, height: CGFloat) {
-        var top: CGFloat = detent == .full ? 0 : (bandHeight * roundtableHalfTop).rounded()
+                                dialStrip: Bool, smallest: CGFloat = 0) -> (top: CGFloat, height: CGFloat) {
+        let bottom = bandHeight - (dialStrip ? DialLayer.stripHeight : 0)
+        var top = RoundtableSheet.top(detent, bandHeight: bandHeight, fullHeight: bottom, smallest: smallest)
         if let gaugesFoot {
             // Keyed: the gauges stay, and the sheet drops below them.
             top = max(top, gaugesFoot + roundtableBelowGauges)
         }
-        let bottom = bandHeight - (dialStrip ? DialLayer.stripHeight : 0)
         return (top, max(0, bottom - top))
+    }
+
+    /// The open sheet's top edge on the band, where ``roundtablePlace`` puts it
+    /// (live while its handle is dragged), for what on the band it would cut;
+    /// nil while the sheet is closed. Pan 1 alone, unstacked: a stacked pan's
+    /// points start lower down the band.
+    private func roundtableEdge(sideways: Bool, leadingInset: CGFloat, trailingInset: CGFloat) -> RoundtablePanelEdge? {
+        guard let detent = roundtableSheet, bandSize.height > 0 else {
+            return nil
+        }
+        let place = Self.roundtablePlace(bandHeight: bandSize.height, detent: detent,
+                                         gaugesFoot: transmit.ptt.transmitting ? gaugesFoot : nil,
+                                         dialStrip: dialStrip, smallest: roundtableSmallest)
+        return RoundtableSheet.edge(top: place.top, bandWidth: bandSize.width, sideways: sideways,
+                                    leadingInset: leadingInset, trailingInset: trailingInset,
+                                    sidewaysWidth: Self.roundtableSidewaysWidth)
     }
 
     /// A dial is on that keeps the strip under the open sheet: the
@@ -971,7 +1000,7 @@ struct MainScreen: View {
             return
         }
         if roundtableSheet == nil {
-            roundtableSheet = .half
+            roundtableSheet = RoundtableSheet.opening(lastDragged: app.roundtableSheetDragged)
         }
     }
 
@@ -999,7 +1028,7 @@ struct MainScreen: View {
                 viewingInSheet = true
                 // A swap keeps the height the sheet has (D38).
                 if roundtableSheet == nil {
-                    roundtableSheet = .half
+                    roundtableSheet = RoundtableSheet.opening(lastDragged: app.roundtableSheetDragged)
                 }
             }
         }
@@ -1138,7 +1167,8 @@ struct MainScreen: View {
     @ViewBuilder
     private func bandLayers(_ controls: PanControls, sideways: Bool, leadingInset: CGFloat, trailingInset: CGFloat,
                             swipesHere: Bool, foot: Bool = true, buttonColumnFolded: Bool? = nil,
-                            menuBinding: Binding<BandMenuAnchor?>? = nil) -> some View {
+                            menuBinding: Binding<BandMenuAnchor?>? = nil,
+                            roundtableEdge: RoundtablePanelEdge? = nil) -> some View {
         let band = controls.band.band
         let slices = controls.band.slices
         let first = controls.pan == .first
@@ -1178,8 +1208,9 @@ struct MainScreen: View {
                              swipes: swipesHere ? swipes : nil,
                              bandStack: controls.bandStack, radioOnAir: transmit.coreOnAir,
                              recordings: app.recordingFlag, openAllRecordings: openAllRecordings,
-                             openRecordingSettings: openRecordingSettings, dsr: first ? app.dsr : nil)
-            DbmScaleArrows(display: controls.display, band: band, trailingInset: trailingInset)
+                             openRecordingSettings: openRecordingSettings, dsr: first ? app.dsr : nil,
+                             roundtableEdge: roundtableEdge)
+            DbmScaleArrows(display: controls.display, band: band, trailingInset: trailingInset, panelEdge: roundtableEdge)
             BandReadouts(band: band, trailingInset: trailingInset)
             TransmitDisplayBanner(band: band)
             StackNotice(band: band, sideways: sideways)

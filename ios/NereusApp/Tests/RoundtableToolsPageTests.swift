@@ -17,6 +17,10 @@
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-11-04: One sheet on iPhone and iPad: toggle, swap, Back in place, and a tap never tunes
 // (design D22, D24 to D27, D36, D38). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-18: Your own frequency has no Tune and no note. J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code.
+// 2026-11-18: A tag the Roundtable sheet's top edge cuts is hidden whole.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import Foundation
 import NereusBand
@@ -573,6 +577,66 @@ struct RoundtableToolsPageTests {
         await model.disconnect()
     }
 
+    @Test("the sheet's top edge through a tag hides it whole; below the tag row, at the smallest height, it is back")
+    func tagsHideWholeUnderTheSheetEdge() async throws {
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        let (model, station) = try await shotStation()
+        try await station.deliverRoundtable(Self.bandScene())
+        #expect(await settle { model.roundtable.rooms.count == Self.bandRooms.count })
+        // The tag row's top is 300, so its one-line tags stand from 300 to 322.
+        let layer = { (edge: RoundtablePanelEdge?) in
+            RoundtableTagLayer(roundtable: model.roundtable, sliceIds: [0], geometryWidth: 402,
+                               lowHz: BandFlagShotTests.centre - BandFlagShotTests.span / 2,
+                               hzPerPoint: BandFlagShotTests.span / 402, top: 300, tickFoot: 330, flagRects: [],
+                               keyed: false, sliceLetter: "A", panelEdge: edge) { _ in }
+                .frame(width: 402, height: 874)
+                .background(Color.black)
+        }
+        // No sheet: the tag and the +N show. Only the tag's own width is taken
+        // from the window (a top safe area moves nothing sideways).
+        var span: ClosedRange<CGFloat> = 0...0
+        do {
+            let (window, _) = try host(layer(nil))
+            defer {
+                window.isHidden = true
+                window.rootViewController = nil
+            }
+            await ShotWait.laidOut(window)
+            let tag = try #require(SetupTypedEntryTests.element("roundtableTag.usb-7250000", in: window))
+            #expect(SetupTypedEntryTests.element("roundtableFold", in: window) != nil)
+            let frame = window.convert(tag.accessibilityFrame, from: window.screen.coordinateSpace)
+            span = (frame.minX + 1)...(frame.maxX - 1)
+        }
+        // A middle stop: the edge runs through that tag, at 311 in the layer's own points.
+        do {
+            let edge = RoundtablePanelEdge(top: 311, minX: span.lowerBound, maxX: span.upperBound)
+            let (window, _) = try host(layer(edge))
+            defer {
+                window.isHidden = true
+                window.rootViewController = nil
+            }
+            await ShotWait.laidOut(window)
+            // The +N beside it is drawn, so the tag's absence is not a layer still to draw.
+            #expect(await settle { SetupTypedEntryTests.element("roundtableFold", in: window) != nil })
+            #expect(SetupTypedEntryTests.element("roundtableTag.usb-7250000", in: window) == nil,
+                    "a tag the sheet's edge cuts is still on the band")
+        }
+        // The smallest height: the edge below the tag row, and the tag is back.
+        do {
+            let edge = RoundtablePanelEdge(top: 600, minX: span.lowerBound, maxX: span.upperBound)
+            let (window, _) = try host(layer(edge))
+            defer {
+                window.isHidden = true
+                window.rootViewController = nil
+            }
+            await ShotWait.laidOut(window)
+            #expect(await settle { SetupTypedEntryTests.element("roundtableTag.usb-7250000", in: window) != nil })
+        }
+        await model.disconnect()
+    }
+
     // MARK: Shots
 
     @Test("shots: the Tools list, the Roundtable page, a room read, and the crowded band")
@@ -1018,7 +1082,9 @@ struct RoundtableToolsPageTests {
         // Back to your own, in place: the sheet stays up, on your frequency.
         #expect(await activate("roundtableBackToSlice"))
         #expect(await settle { model.roundtable.readingRoomId == nil })
-        #expect(await settle { SetupTypedEntryTests.element("roundtableViewTuneReason", in: window) != nil })
+        // Your own frequency has no Tune and no note: the room takes their height.
+        #expect(await settle { SetupTypedEntryTests.element("roundtableViewTune", in: window) == nil })
+        #expect(SetupTypedEntryTests.element("roundtableViewTuneReason", in: window) == nil)
         #expect(SetupTypedEntryTests.element("roundtableSheet", in: window) != nil)
         #expect(SetupTypedEntryTests.element("roundtableViewHead", in: window) != nil)
         #expect(model.main.slices.active?.slice.frequencyHz == before)
@@ -1041,7 +1107,7 @@ struct RoundtableToolsPageTests {
 
     /// Spec D38 and the rule that a tap never tunes: the slice's frequency and mode hold
     /// across a toggle, a swap and Back, and a swap keeps the height the sheet has.
-    @Test("one sheet on a phone: your card opens it with Tune greyed and the box kept; a swap keeps its height")
+    @Test("one sheet on a phone: your card opens it with no Tune and the box kept; a swap keeps its height")
     func phoneOneSheet() async throws {
         guard UIDevice.current.userInterfaceIdiom == .phone else { return }
         let accessibility = SetupTypedEntryTests.applicationAccessibility()
@@ -1069,16 +1135,14 @@ struct RoundtableToolsPageTests {
         }
         let writes = station.messages.count
         let own = "roundtableTag.\(Self.sliceRoom)", tag = "roundtableTag.\(Self.viewedRoom)"
-        // Your own card opens your own frequency: the same view, Tune greyed with the reason, and the box.
+        // Your own card opens your own frequency: the same view and the box, with no Tune and no note.
         #expect(await activate(own))
         #expect(await exists("roundtableViewHead"))
-        #expect(await exists("roundtableViewTuneReason"))
         #expect(await exists("roundtableBox"))
         #expect(await exists("roundtableMore"))
         #expect(model.roundtable.readingRoomId == nil)
-        let tune = try #require(SetupTypedEntryTests.element("roundtableViewTune", in: window))
-        #expect(tune.accessibilityTraits.contains(.notEnabled))
-        #expect(tune.accessibilityActivate() == false || unmoved())
+        #expect(SetupTypedEntryTests.element("roundtableViewTune", in: window) == nil)
+        #expect(SetupTypedEntryTests.element("roundtableViewTuneReason", in: window) == nil)
         #expect(unmoved())
         // The same card closes it.
         #expect(await activate(own))
@@ -1137,9 +1201,11 @@ struct RoundtableToolsPageTests {
             #expect(await activate(own))
             #expect(await settle { panel() != nil })
             #expect(SetupTypedEntryTests.element("roundtableSheet", in: window) == nil)
-            #expect(await settle { SetupTypedEntryTests.element("roundtableViewTuneReason", in: window) != nil })
             #expect(await settle { SetupTypedEntryTests.element("roundtableBox", in: window) != nil })
             #expect(await settle { SetupTypedEntryTests.element("roundtableMore", in: window) != nil })
+            // Your own frequency in the panel: no Tune and no note.
+            #expect(SetupTypedEntryTests.element("roundtableViewTune", in: window) == nil)
+            #expect(SetupTypedEntryTests.element("roundtableViewTuneReason", in: window) == nil)
             // Your card again closes; a tag swaps in; Back stays up; the close button closes.
             #expect(await activate(own))
             #expect(await settle { panel() == nil })
@@ -1179,7 +1245,9 @@ struct RoundtableToolsPageTests {
             #expect(await settle { model.roundtable.readingRoomId == nil })
             #expect(SetupTypedEntryTests.element("roundtableSheet", in: window) == nil)
             #expect(SetupTypedEntryTests.element("roundtableFrequencyPopover", in: window) == nil)
-            #expect(await settle { SetupTypedEntryTests.element("roundtableViewTuneReason", in: window) != nil })
+            // Your own frequency in the applet: no Tune and no note.
+            #expect(await settle { SetupTypedEntryTests.element("roundtableViewTune", in: window) == nil })
+            #expect(SetupTypedEntryTests.element("roundtableViewTuneReason", in: window) == nil)
             #expect(await activate(tag))
             #expect(await settle { model.roundtable.readingRoomId == Self.viewedRoom })
             // Your own card returns as well.
@@ -1272,7 +1340,7 @@ struct RoundtableToolsPageTests {
             .init(ordinal: 1, name: "frequency", value: .f64(Double(Self.viewedHz))),
         ])))
         #expect(await settle { !model.roundtable.isViewing })
-        #expect(await settle { SetupTypedEntryTests.element("roundtableViewTuneReason", in: window) != nil })
+        #expect(await settle { SetupTypedEntryTests.element("roundtableViewTune", in: window) == nil })
         #expect(SetupTypedEntryTests.element("roundtableSheet", in: window) != nil)
         await station.deliver(.delta(LinkMessage.Delta(key: "slice:0", properties: [
             .init(ordinal: 1, name: "frequency", value: .f64(7_236_400)),
@@ -1345,7 +1413,6 @@ struct RoundtableToolsPageTests {
                 == "Viewing, not tuned \u{00B7} \u{2212}11.4 kHz from slice A \u{00B7} LSB")
         #expect(Words.sub(hz: 7_225_000, family: "lsb", sliceHz: 7_225_000, sliceLetter: "A")
                 == "Viewing, not tuned \u{00B7} LSB")
-        #expect(Words.alreadyHere(sliceLetter: "A") == "Slice A is already here")
         #expect(Words.offset(0) == "on freq" && Words.offset(20) == "+20 Hz" && Words.offset(-40) == "\u{2212}40 Hz")
         #expect(Words.path(km: 340, bearing: 39, units: "mi", showBearing: true) == "211 mi 039\u{00B0}")
         #expect(Words.path(km: 340, bearing: 39, units: "km", showBearing: false) == "340 km")
@@ -1502,6 +1569,37 @@ struct RoundtableToolsPageTests {
         #expect(try await !clockShown(card))
     }
 
+    @Test("your own frequency's view has no Tune and no note; another's has Tune, enabled as before")
+    func tuneOnlyWhenViewing() async throws {
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        var card = RoundtableCardData(hz: 7_225_000)
+        card.family = "lsb"
+        card.onFrequency = [.init(name: "K4ABC", keyed: false, you: false, offsetHz: 0)]
+        func tune(viewing: Bool, canTune: Bool) async throws -> (shown: Bool, enabled: Bool, note: Bool, head: Bool) {
+            let view = RoundtableFrequencyView(data: card, viewing: viewing, canTune: canTune, sliceHz: 7_236_400,
+                                               onTune: {}, onBack: {})
+            let (window, _) = try host(view.frame(width: 300).background(Color.black))
+            defer { window.isHidden = true; window.rootViewController = nil }
+            await ShotWait.laidOut(window)
+            let button = SetupTypedEntryTests.element("roundtableViewTune", in: window)
+            return (button != nil, button.map { !$0.accessibilityTraits.contains(.notEnabled) } ?? false,
+                    SetupTypedEntryTests.element("roundtableViewTuneReason", in: window) != nil,
+                    SetupTypedEntryTests.element("roundtableViewHead", in: window) != nil)
+        }
+        // Your own frequency: the slice is already there, so neither the button nor a note.
+        for canTune in [false, true] {
+            let own = try await tune(viewing: false, canTune: canTune)
+            #expect(own.head && !own.shown && !own.note)
+        }
+        // Another frequency: Tune is there and works, or is greyed when it cannot act.
+        let other = try await tune(viewing: true, canTune: true)
+        #expect(other.head && other.shown && other.enabled && !other.note)
+        let greyed = try await tune(viewing: true, canTune: false)
+        #expect(greyed.shown && !greyed.enabled && !greyed.note)
+    }
+
     @Test("a pending view and pan card show no clock until a turn start is known")
     func pendingViewHasNoClock() async throws {
         let accessibility = SetupTypedEntryTests.applicationAccessibility()
@@ -1605,7 +1703,7 @@ struct RoundtableToolsPageTests {
             // D24: your own frequency in the panel, with the column hidden.
             try await shoot("ipad-panel-own", size: landscape, columnShown: false, tag: false, own: true) { window in
                 #expect(SetupTypedEntryTests.element("roundtableFrequencyPopover", in: window) != nil)
-                #expect(SetupTypedEntryTests.element("roundtableViewTuneReason", in: window) != nil)
+                #expect(SetupTypedEntryTests.element("roundtableViewTune", in: window) == nil)
             }
         } else {
             // The sheet opens at half height, with Tune pinned above the composer.
@@ -1613,9 +1711,9 @@ struct RoundtableToolsPageTests {
                 #expect(SetupTypedEntryTests.element("roundtableSheet", in: window) != nil)
                 #expect(SetupTypedEntryTests.element("roundtableViewTune", in: window) != nil)
             }
-            // One sheet: your own frequency, Tune greyed with its reason, and the box.
+            // One sheet: your own frequency and the box, with no Tune.
             try await shoot("iphone-sheet-own", size: portrait, tag: false, own: true) { window in
-                #expect(SetupTypedEntryTests.element("roundtableViewTuneReason", in: window) != nil)
+                #expect(SetupTypedEntryTests.element("roundtableViewTune", in: window) == nil)
             }
             try await shoot("iphone-sideways-own", size: CGSize(width: 874, height: 402), tag: false, own: true)
             try await shoot("iphone-sideways-closed", size: CGSize(width: 874, height: 402), tag: false)
