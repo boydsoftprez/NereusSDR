@@ -324,16 +324,21 @@ public:
     // allein in AudioEngine-Lauschplatz 0 geht (feedFt8LauschAudio).
     // Heute nur an der Flex (core/FlexLauschscheibe.h); an jedem
     // anderen Geraet gibt `setLauschfrequenzHz` false zurueck.
-    /// Auf `hz` lauschen (FT8-Wahlfrequenz, DIGU); 0 schaltet ab.
-    bool setLauschfrequenzHz(double hz);
+    /// Auf Platz `platz` auf `hz` lauschen (FT8-Wahlfrequenz, DIGU); 0
+    /// schaltet ab. Plaetze: 0 .. lauschPlaetze()-1.
+    bool setLauschfrequenzHz(int platz, double hz);
+    bool setLauschfrequenzHz(double hz) { return setLauschfrequenzHz(0, hz); }
+    /// Wie viele Baender das Geraet NEBEN dem Hauptband hoeren kann
+    /// (FLEX-8400: 1, FLEX-8600: 3; ohne Lauschscheibe 0).
+    int lauschPlaetze() const;
     /// Kann das verbundene Geraet ein Lauschband?
     bool kannLauschen() const { return m_flexLausch != nullptr
                                        && m_flexConnection != nullptr; }
     /// Laeuft das Lauschband (Scheibe und Ton stehen)?
-    bool lauschtGerade() const;
+    bool lauschtGerade(int platz = 0) const;
     /// Die Frequenz, die das Geraet fuer das Lauschband meldet, sonst
     /// die gewuenschte; 0 = aus.
-    double lauschfrequenzHz() const;
+    double lauschfrequenzHz(int platz = 0) const;
     WdspEngine*       wdspEngine()       { return m_wdspEngine; }
 
     /// Phase 3F Sub-Epic F Task 5: per-ADC wideband FFT engine accessor.
@@ -3176,7 +3181,7 @@ signals:
     void lauschbandGeaendert();
     /// Das Geraet hat das Lauschband verweigert; `grund` fuer Anzeige
     /// und Protokoll.
-    void lauschbandAbgelehnt(const QString& grund);
+    void lauschbandAbgelehnt(int platz, const QString& grund);
 
     void flexAudioSamplesReady(quint32 streamId,
                                const QVector<float>& interleavedStereo);

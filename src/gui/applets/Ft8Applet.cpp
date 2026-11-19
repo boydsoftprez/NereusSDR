@@ -52,6 +52,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QComboBox>
+#include <QCheckBox>
 #include <QSignalBlocker>
 #include <QMenu>
 #include <QLineEdit>
@@ -149,6 +150,9 @@ constexpr qint64 kZielVersatzMs = 500;
 /// Sender abschaltet.
 constexpr qint64 kSenderNachlaufMs = 300;
 
+/// Was vom zweiten Band in die Liste kommt: NeuesLand | NeuesBand | Alles.
+constexpr char kLauschbandZeigtSchluessel[] = "Ft8/LauschbandZeigt";
+
 // ── Welche Sicht gewaehlt ist (2026-11-19) ──────────────────────────
 //
 // Betreiber, 2026-11-17: „weiters sieht man immer noch nicht, ob man
@@ -225,10 +229,14 @@ Ft8Applet::Ft8Applet(RadioModel* model, QWidget* parent)
     // Bandes (DigiFrequenzen), auch wenn auf dem Hauptband FT4 laeuft.
     // Kein Vorwissen (AP): mit dem eigenen Rufzeichen rechnet dort
     // niemand, und mit einem Partner schon gar nicht.
-    m_lauschStream = new Ft8Stream(this);
-    m_lauschStream->setProtocol(Ft8Decoder::Protocol::Ft8);
-    connect(m_lauschStream, &Ft8Stream::decoded,
-            this, &Ft8Applet::onLauschDecoded);
+    for (int k = 0; k < kLauschPlaetze; ++k) {
+        m_lausch[k].stream = new Ft8Stream(this);
+        m_lausch[k].stream->setProtocol(Ft8Decoder::Protocol::Ft8);
+        connect(m_lausch[k].stream, &Ft8Stream::decoded, this,
+                [this, k](const QVector<Ft8Decode>& funde, const QDateTime& start) {
+            onLauschDecoded(k, funde, start);
+        });
+    }
 
     // ── Was vor dem Hinhoeren schon feststeht (2026-11-13) ─────────
     //
@@ -280,14 +288,17 @@ Ft8Applet::Ft8Applet(RadioModel* model, QWidget* parent)
     }
 
     m_tapRing = std::make_unique<AudioTapRing>(kTapRingFloats);
-    m_lauschRing = std::make_unique<AudioTapRing>(kTapRingFloats);
+    for (int k = 0; k < kLauschPlaetze; ++k) {
+        m_lausch[k].ring = std::make_unique<AudioTapRing>(kTapRingFloats);
+    }
 
     if (m_model) {
         connect(m_model, &RadioModel::lauschbandAbgelehnt, this,
-                [this](const QString& grund) {
+                [this](int platz, const QString& grund) {
+            if (platz < 0 || platz >= kLauschPlaetze) { return; }
             qCInfo(lcFt8Senden).noquote() << "Lauschband verweigert:" << grund;
-            const QString band = m_lauschBand;
-            setLauschfrequenzHz(0.0);
+            const QString band = m_lausch[platz].band;
+            setLauschfrequenzHz(platz, 0.0);
             if (m_status) {
                 m_status->setText(tr("second band %1 refused by the radio")
                                       .arg(band));
@@ -318,12 +329,13 @@ Ft8Applet::Ft8Applet(RadioModel* model, QWidget* parent)
         }
         // Das Lauschband aus seinem eigenen Ring -- nie aus dem der
         // Hauptscheibe, sonst hoerte jeder Dekoder beide Baender.
-        if (m_lauschRing && m_lauschStream && m_lauschHz > 0.0) {
-            const int gotL = m_lauschRing->read(scratch.data(), want);
+        for (LauschPlatz& l : m_lausch) {
+            if (!l.ring || !l.stream || l.hz <= 0.0) { continue; }
+            const int gotL = l.ring->read(scratch.data(), want);
             if (gotL >= 2) {
-                m_lauschStream->feedAudio(scratch.data(), gotL / 2);
+                l.stream->feedAudio(scratch.data(), gotL / 2);
             } else {
-                m_lauschStream->poll();
+                l.stream->poll();
             }
         }
         updateStatus();
@@ -340,12 +352,16 @@ Ft8Applet::~Ft8Applet()
     if (m_pumpTimer) { m_pumpTimer->stop(); }
     if (m_model && m_model->audioEngine()) {
         m_model->audioEngine()->setFt8Tap(nullptr, -1);
-        m_model->audioEngine()->setFt8LauschTap(0, nullptr);
+        for (int k = 0; k < kLauschPlaetze; ++k) {
+            m_model->audioEngine()->setFt8LauschTap(k, nullptr);
+        }
     }
-    // Ohne FT8-Fenster hoert niemand mehr zu: die zweite Scheibe am
-    // Geraet wieder freigeben.
-    if (m_model && m_lauschHz > 0.0) {
-        m_model->setLauschfrequenzHz(0.0);
+    // Ohne FT8-Fenster hoert niemand mehr zu: die Scheiben am Geraet
+    // wieder freigeben.
+    if (m_model) {
+        for (int k = 0; k < kLauschPlaetze; ++k) {
+            if (m_lausch[k].hz > 0.0) { m_model->setLauschfrequenzHz(k, 0.0); }
+        }
     }
 }
 
@@ -423,7 +439,7 @@ void Ft8Applet::buildUI()
         // schlicht nicht gezeichnet.
         zahnrad->setFixedSize(26, 15);
         zahnrad->setCursor(Qt::PointingHandCursor);
-        zahnrad->setToolTip(tr("Callsign and grid square"));
+        zahnrad->setToolTip(tr("Options: callsign, grid square, second band"));
         zahnrad->setStyleSheet(QStringLiteral(
             // Ruhend in der Schrift der Kopfzeile, nicht in der des
             // Griffs: mit kTextScale (#7e7e85) auf diesem Grund war der
@@ -649,20 +665,25 @@ void Ft8Applet::buildUI()
     lauschBez->setStyleSheet(QStringLiteral("color: %1;")
                                  .arg(Style::kTextSecondary));
     head->addWidget(lauschBez);
-    m_lauschFeld = new QComboBox(this);
-    applyComboStyle(m_lauschFeld);
-    m_lauschFeld->setFont(Style::monoFont(font(), Style::kFontSmall));
-    m_lauschFeld->setToolTip(tr(
-        "Decode FT8 on a second band at the same time. Only new DXCC "
-        "from there appear in the list; double-click one to go there. "
-        "You transmit on this band only."));
-    connect(m_lauschFeld, &QComboBox::activated, this, [this](int i) {
-        if (!m_lauschFeld) { return; }
-        setLauschfrequenzHz(m_lauschFeld->itemData(i).toDouble());
-        fuelleLauschFeld();   // zeigt, was wirklich gilt
-    });
-    head->addWidget(m_lauschFeld);
-    fuelleLauschFeld();
+    // Ein Feld je Platz, den das Geraet hergibt (FLEX-8400: eines,
+    // FLEX-8600: drei). Wie viele sichtbar sind, entscheidet
+    // fuelleLauschFelder().
+    for (int k = 0; k < kLauschPlaetze; ++k) {
+        auto* feld = new QComboBox(this);
+        applyComboStyle(feld);
+        feld->setFont(Style::monoFont(font(), Style::kFontSmall));
+        feld->setToolTip(tr(
+            "Decode FT8 on another band at the same time. What appears "
+            "from there is set in the options (...). Double-click a "
+            "station to go there. You transmit on this band only."));
+        connect(feld, &QComboBox::activated, this, [this, k, feld](int i) {
+            setLauschfrequenzHz(k, feld->itemData(i).toDouble());
+            fuelleLauschFelder();   // zeigt, was wirklich gilt
+        });
+        head->addWidget(feld);
+        m_lausch[k].feld = feld;
+    }
+    fuelleLauschFelder();
 
     head->addSpacing(8);
 
@@ -993,9 +1014,85 @@ void Ft8Applet::buildUI()
     // Fenster; sie darf rechts enden wie die Liste unter ihr
     // (2026-11-18).
     m_spaltenkopf->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-    root->addWidget(m_spaltenkopf);
-
-    root->addWidget(m_list, 1);
+    // ── Eine Spalte je Band (2026-11-19) ─────────────────────────────
+    //
+    // Betreiber: „man könnte ja auch das derzeitige fenster 2teilen" --
+    // gewaehlt D, „vielleicht sollte man sie im fenster auch verschieben
+    // können, so das eines kleiner und das andere größer ist. wichtig
+    // ist, dass bei 8600 flex es 4 fenster werden können". Links das
+    // Hauptband wie immer, rechts je mitgehoertem Band eine Spalte; die
+    // Trennlinien lassen sich ziehen und werden gemerkt. Ohne
+    // mitgehoertes Band ist die Hauptspalte allein da -- wie vorher.
+    m_listenTeiler = new QSplitter(Qt::Horizontal, this);
+    m_listenTeiler->setChildrenCollapsible(false);
+    m_listenTeiler->setHandleWidth(7);
+    {
+        auto* haupt = new QWidget(m_listenTeiler);
+        auto* hv = new QVBoxLayout(haupt);
+        hv->setContentsMargins(0, 0, 0, 0);
+        hv->setSpacing(0);
+        m_hauptTitel = new QLabel(haupt);
+        m_hauptTitel->setFont(spaltenTitelSchrift());
+        m_hauptTitel->setStyleSheet(QStringLiteral("QLabel { color: %1; padding: 0 0 2px 4px; }")
+                                        .arg(QString::fromLatin1(Style::kTextScale)));
+        m_hauptTitel->hide();
+        hv->addWidget(m_hauptTitel);
+        hv->addWidget(m_spaltenkopf);
+        hv->addWidget(m_list, 1);
+        m_listenTeiler->addWidget(haupt);
+    }
+    for (int k = 0; k < kLauschPlaetze; ++k) {
+        LauschPlatz& l = m_lausch[k];
+        l.spalte = new QWidget(m_listenTeiler);
+        auto* v = new QVBoxLayout(l.spalte);
+        v->setContentsMargins(0, 0, 0, 0);
+        v->setSpacing(0);
+        l.titel = new QLabel(l.spalte);
+        l.titel->setFont(spaltenTitelSchrift());
+        l.titel->setStyleSheet(QStringLiteral("QLabel { color: %1; padding: 0 0 2px 4px; }")
+                                   .arg(QString::fromLatin1(Style::kTextScale)));
+        auto* kopf = new QLabel(spaltenkopf(), l.spalte);
+        kopf->setFont(Style::monoFont(font(), Style::kFontSmall));
+        kopf->setStyleSheet(QStringLiteral("QLabel { color: %1; padding: 0 0 2px 6px; }")
+                                .arg(QString::fromLatin1(Style::kTextInactive)));
+        kopf->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        l.liste = new QPlainTextEdit(l.spalte);
+        l.liste->setReadOnly(true);
+        l.liste->setFont(Style::monoFont(font(), Style::kFontSmall));
+        l.liste->setLineWrapMode(QPlainTextEdit::NoWrap);
+        l.liste->setMinimumWidth(120);
+        // Schmale Spalten schneiden rechts ab, statt einen hellen
+        // Rollbalken zu zeigen und die Uhrzeit aus dem Bild zu schieben
+        // (gesehen im Blatt mit vier Baendern). Wer mehr sehen will,
+        // zieht die Trennlinie.
+        l.liste->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        l.liste->setToolTip(tr("Double-click a station to go to this band. "
+                               "Nothing is sent."));
+        l.liste->setStyleSheet(QStringLiteral(
+            "QPlainTextEdit { background: %1; color: %2; border: 1px solid %3; }")
+            .arg(Style::kInsetBg, Style::kTextPrimary, Style::kInsetBorder));
+        l.liste->viewport()->installEventFilter(this);
+        v->addWidget(l.titel);
+        v->addWidget(kopf);
+        v->addWidget(l.liste, 1);
+        m_listenTeiler->addWidget(l.spalte);
+        l.spalte->hide();
+    }
+    for (int k = 0; k <= kLauschPlaetze; ++k) {
+        m_listenTeiler->setStretchFactor(k, k == 0 ? 3 : 2);
+    }
+    {
+        const QByteArray stand = QByteArray::fromBase64(
+            AppSettings::instance().value(QStringLiteral("Ft8/ListenTeiler"))
+                .toString().toLatin1());
+        if (!stand.isEmpty()) { m_listenTeiler->restoreState(stand); }
+    }
+    connect(m_listenTeiler, &QSplitter::splitterMoved, this, [this]() {
+        AppSettings::instance().setValue(
+            QStringLiteral("Ft8/ListenTeiler"),
+            QString::fromLatin1(m_listenTeiler->saveState().toBase64()));
+    });
+    root->addWidget(m_listenTeiler, 1);
 
     // ── Fusszeile ───────────────────────────────────────────────────
     // ── Senden ──────────────────────────────────────────────────────
@@ -1427,11 +1524,13 @@ void Ft8Applet::skalaBewegt(double skalaHz)
         // Lauschband, auf seiner FT8-Anrufstelle. Zwei Scheiben auf
         // demselben Band hoerten dasselbe zweimal (Betreiber-Wahl 3A;
         // gilt fuer den Doppelklick wie fuer den Dreh am VFO).
-        if (!erstesBand && m_lauschHz > 0.0 && band == m_lauschBand) {
-            const qint64 alt = DigiFrequenzen::anruffrequenz(
-                bandFromFrequency(m_letzteSkalaHz),
-                DigiFrequenzen::Digimodus::Ft8);
-            setLauschfrequenzHz(alt > 0 ? double(alt) : 0.0);
+        for (int k = 0; !erstesBand && k < kLauschPlaetze; ++k) {
+            if (m_lausch[k].hz > 0.0 && band == m_lausch[k].band) {
+                const qint64 alt = DigiFrequenzen::anruffrequenz(
+                    bandFromFrequency(m_letzteSkalaHz),
+                    DigiFrequenzen::Digimodus::Ft8);
+                setLauschfrequenzHz(k, alt > 0 ? double(alt) : 0.0);
+            }
         }
         m_listenBand = band;
         if (!erstesBand) {
@@ -1459,7 +1558,8 @@ void Ft8Applet::skalaBewegt(double skalaHz)
         }
     }
     m_letzteSkalaHz = skalaHz;
-    fuelleLauschFeld();
+    fuelleLauschFelder();
+    zeigeSpaltenTitel();
     folgeDerSkala(skalaHz);
 }
 
@@ -1973,8 +2073,10 @@ QString Ft8Applet::warumNichtAnstellen(const QString& zeile) const
     if (meiner.isEmpty()) { return tr("set your callsign first"); }
     // Wer auf dem zweiten Band ruft, ist von hier aus nicht zu arbeiten.
     const QString marke = bandmarkeAusZeile(zeile);
-    if (!marke.isEmpty() && !m_lauschBand.isEmpty() && marke == m_lauschBand) {
-        return tr("on %1 — double-click to go there").arg(marke);
+    for (const LauschPlatz& l : m_lausch) {
+        if (!marke.isEmpty() && !l.band.isEmpty() && marke == l.band) {
+            return tr("on %1 — double-click to go there").arg(marke);
+        }
     }
     if (antwortAuf(zeile, meiner, eigenerLocator()).isEmpty()) {
         return tr("no callsign to answer in this line");
@@ -2659,6 +2761,44 @@ void Ft8Applet::zeigeOptionen()
                        "first four in CQ calls."));
     form->addRow(tr("Grid square"), loc);
 
+    // ── Was vom zweiten Band in die Liste kommt (2026-11-19) ──────
+    //
+    // Betreiber: „das sollte man bei den optionen auch einstellen
+    // können" -- „sprich was man noch vom anderen band sehen will! zum
+    // bespiel nur CQ oder nur grids, die man noch nie gearbeitet hat".
+    // Die ersten drei sind Gruende (eine Zeile kommt, wenn einer
+    // zutrifft; keiner angekreuzt = alles), „CQ only" schraenkt ein.
+    // Vorgabe bleibt die gewaehlte Gestaltung 2B: nur neue Laender.
+    const QStringList gewaehlt = lauschbandZeigt();
+    auto* lauschSpalte = new QVBoxLayout;
+    lauschSpalte->setSpacing(2);
+    const auto haken = [&](const QString& text, const char* schluessel,
+                           const QString& tipp) {
+        auto* h = new QCheckBox(text, &blatt);
+        h->setProperty("schluessel", QString::fromLatin1(schluessel));
+        h->setChecked(gewaehlt.contains(QString::fromLatin1(schluessel)));
+        h->setToolTip(tipp);
+        lauschSpalte->addWidget(h);
+        return h;
+    };
+    const QList<QCheckBox*> lauschHaken = {
+        haken(tr("New DXCC"), "NeuesLand",
+              tr("A country that is not in your log at all.")),
+        haken(tr("New on this band"), "NeuesBand",
+              tr("The country is in your log, but not on that band.")),
+        haken(tr("New grid"), "NeuesGrid",
+              tr("A grid square you have never worked.")),
+        haken(tr("CQ only"), "NurCq",
+              tr("Of those, only stations calling CQ. With none of the "
+                 "above ticked: every CQ from the second band.")),
+    };
+    auto* lauschKasten = new QWidget(&blatt);
+    lauschKasten->setLayout(lauschSpalte);
+    lauschKasten->setToolTip(tr("Which stations from the second band "
+                                "(Also) appear in the list. None of the "
+                                "first three ticked: all stations."));
+    form->addRow(tr("Second band shows"), lauschKasten);
+
     auto* knoepfe = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &blatt);
     form->addRow(knoepfe);
@@ -2666,6 +2806,16 @@ void Ft8Applet::zeigeOptionen()
     connect(knoepfe, &QDialogButtonBox::rejected, &blatt, &QDialog::reject);
 
     if (blatt.exec() != QDialog::Accepted) { return; }
+
+    QStringList neueWahl;
+    for (QCheckBox* h : lauschHaken) {
+        if (h->isChecked()) { neueWahl << h->property("schluessel").toString(); }
+    }
+    // Leer heisst „alles": ein eigenes Wort, damit es nicht mit „nie
+    // gesetzt" (= Vorgabe, nur neue Laender) verwechselt wird.
+    s.setValue(QLatin1String(kLauschbandZeigtSchluessel),
+               neueWahl.isEmpty() ? QStringLiteral("Alles")
+                                  : neueWahl.join(QLatin1Char(',')));
 
     const QString neuerRuf = ruf->text().trimmed().toUpper();
     const QString neuerLoc = loc->text().trimmed().toUpper();
@@ -2755,6 +2905,17 @@ bool Ft8Applet::eventFilter(QObject* obj, QEvent* ev)
         // nimmFundAn() -- dort, wo auch der Klick auf der Karte ankommt.
         nimmZeileAn(c.selectedText());
         return true;
+    }
+    for (int k = 0; k < kLauschPlaetze; ++k) {
+        QPlainTextEdit* liste = m_lausch[k].liste;
+        if (liste && obj == liste->viewport()
+            && ev->type() == QEvent::MouseButtonDblClick) {
+            auto* me = static_cast<QMouseEvent*>(ev);
+            QTextCursor c = liste->cursorForPosition(me->pos());
+            c.select(QTextCursor::LineUnderCursor);
+            lauschZeileAngeklickt(k, c.selectedText());
+            return true;
+        }
     }
     return AppletWidget::eventFilter(obj, ev);
 }
@@ -4160,6 +4321,50 @@ bool Ft8Applet::istNeuesLand(const QString& senderRuf) const
 // Dieselbe Frage fuer eine andere Frequenz -- das Lauschband
 // (2026-11-19). „Neu" heisst neu ueberhaupt; die Frequenz braucht der
 // Aufloeser trotzdem, ohne Band antwortet er „unbekannt".
+QStringList Ft8Applet::lauschbandZeigt()
+{
+    const QString v = AppSettings::instance()
+                          .value(QLatin1String(kLauschbandZeigtSchluessel),
+                                 QStringLiteral("NeuesLand")).toString().trimmed();
+    if (v == QLatin1String("Alles")) { return {}; }
+    QStringList teile;
+    for (const QString& t : v.split(QLatin1Char(','), Qt::SkipEmptyParts)) {
+        const QString w = t.trimmed();
+        if (w == QLatin1String("NeuesLand") || w == QLatin1String("NeuesBand")
+            || w == QLatin1String("NeuesGrid") || w == QLatin1String("NurCq")) {
+            teile << w;
+        }
+    }
+    return teile.isEmpty() && !v.isEmpty() ? QStringList{QStringLiteral("NeuesLand")}
+                                           : teile;
+}
+
+bool Ft8Applet::lauschZeileGewuenscht(const QStringList& zeigt, bool neuesLand,
+                                      bool neuesBand, bool neuesGrid, bool cq)
+{
+    if (zeigt.contains(QLatin1String("NurCq")) && !cq) { return false; }
+    const bool landWahl = zeigt.contains(QLatin1String("NeuesLand"));
+    const bool bandWahl = zeigt.contains(QLatin1String("NeuesBand"));
+    const bool gridWahl = zeigt.contains(QLatin1String("NeuesGrid"));
+    if (!landWahl && !bandWahl && !gridWahl) { return true; }   // alles
+    return (landWahl && neuesLand)
+           || (bandWahl && (neuesLand || neuesBand))
+           || (gridWahl && neuesGrid);
+}
+
+// Das Land steht im Logbuch, aber nicht auf DIESEM Band (2026-11-19,
+// fuer die Option „New DXCC and new band").
+bool Ft8Applet::istNeuesBandAuf(const QString& senderRuf, double hz) const
+{
+    if (senderRuf.isEmpty() || !m_model || !m_model->dxccColorProvider()) {
+        return false;
+    }
+    auto* dxcc = m_model->dxccColorProvider();
+    if (!dxcc->isEnabled()) { return false; }
+    return dxcc->statusForSpot(senderRuf, hz / 1.0e6, QStringLiteral("FT8"))
+           == DxccStatus::NewBand;
+}
+
 bool Ft8Applet::istNeuesLandAuf(const QString& senderRuf, double hz) const
 {
     if (senderRuf.isEmpty() || !m_model || !m_model->dxccColorProvider()) {
@@ -4296,7 +4501,12 @@ bool Ft8Applet::inSicht(const Fundzeile& z) const
 
 void Ft8Applet::haengeAn(const Fundzeile& z)
 {
-    if (!m_list) { return; }
+    haengeAn(m_list, z);
+}
+
+void Ft8Applet::haengeAn(QPlainTextEdit* liste, const Fundzeile& z)
+{
+    if (!liste) { return; }
     QTextCharFormat f;
     if (z.eigeneSendung) {
         // Die Farbe ist das Messing der Sendetaste, nicht Rot: „kein
@@ -4360,24 +4570,10 @@ void Ft8Applet::haengeAn(const Fundzeile& z)
             f.setForeground(QColor(QString::fromLatin1(Style::kTextPrimary)));
         }
     }
-    QTextCursor c(m_list->document());
+    QTextCursor c(liste->document());
     c.movePosition(QTextCursor::End);
-    if (!m_list->document()->isEmpty()) { c.insertBlock(); }
-    // Mit Lauschband steht nach der Uhrzeit eine Bandspalte: grau die
-    // Marke des Lauschbandes, leer bei den Zeilen des Hauptbandes
-    // (Betreiber-Wahl 2B, 2026-11-19).
-    const QString angezeigt = anzeigeText(z);
-    const int uhrEnde = z.text.indexOf(QLatin1Char(' '));
-    if (angezeigt == z.text || uhrEnde < 0) {
-        c.insertText(angezeigt, f);
-    } else {
-        const int markeLaenge = angezeigt.size() - z.text.size();
-        c.insertText(angezeigt.left(uhrEnde), f);
-        QTextCharFormat grau;
-        grau.setForeground(QColor(QString::fromLatin1(Style::kTextSecondary)));
-        c.insertText(angezeigt.mid(uhrEnde, markeLaenge), grau);
-        c.insertText(angezeigt.mid(uhrEnde + markeLaenge), f);
-    }
+    if (!liste->document()->isEmpty()) { c.insertBlock(); }
+    c.insertText(z.text, f);
     // Ans Ende der Zeile zu schreiben schiebt die Ansicht mit -- dann
     // steht die Uhrzeit links ausserhalb des Fensters, und man sieht
     // die Spalte, die man am wenigsten braucht. Gesehen im
@@ -4512,11 +4708,6 @@ void Ft8Applet::zeigeFundZahl()
     if (warten > 0) {
         text += QStringLiteral(" \u00b7 ") + tr("%1 waiting").arg(warten);
     }
-    // Das Lauschband lebt -- auch wenn es gerade kein neues Land hat.
-    if (m_lauschHz > 0.0 && !m_lauschBand.isEmpty()) {
-        text += QStringLiteral(" \u00b7 ")
-                + tr("%1: %2 heard").arg(m_lauschBand).arg(m_lauschZuletzt);
-    }
     m_fundZahl->setText(text);
 }
 
@@ -4609,14 +4800,16 @@ void Ft8Applet::zeigeZeile(const QString& zeile, const QString& nachricht,
 }
 
 
-// ── FT8 auf einem zweiten Band (2026-11-19) ──────────────────────────
+// ── FT8 auf weiteren Baendern (2026-11-19) ───────────────────────────
 //
 // Betreiber: „ich will 2 bänder, mehr macht derzeit mein trx nicht,
-// gleichzeitig empfangen umd ggf. eine dxcc station zu hören."
-// Gestaltung vom Betreiber gewaehlt: 2B (vom Lauschband nur neue
-// Laender, mit grauer Bandmarke) und 3A (Doppelklick tauscht die
-// Baender, gesendet wird nichts: „aber nicht automatisch senden …
-// erst dann nach tunen").
+// gleichzeitig empfangen umd ggf. eine dxcc station zu hören" -- und
+// „wichtig ist, dass bei 8600 flex es 4 fenster werden können".
+// Je mitgehoertem Band ein Platz: eigener Dekoder, eigener Abgriff,
+// eigene Spalte rechts neben der Hauptliste (Gestaltung D, Trennlinien
+// verschiebbar). Gesendet wird nur auf dem Hauptband; ein Doppelklick
+// in einer Spalte tauscht die Baender und sendet nichts („aber nicht
+// automatisch senden … erst dann nach tunen").
 
 std::optional<Band> Ft8Applet::naheliegendesLauschband(Band hauptband)
 {
@@ -4627,128 +4820,146 @@ std::optional<Band> Ft8Applet::naheliegendesLauschband(Band hauptband)
     }
 }
 
+int Ft8Applet::lauschPlaetze() const
+{
+    if (m_lauschPlaetzeForTest >= 0) {
+        return std::min(m_lauschPlaetzeForTest, int(kLauschPlaetze));
+    }
+    if (!m_model || !m_model->kannLauschen()) { return 1; }   // ein Feld, das sagt, warum nicht
+    return std::clamp(m_model->lauschPlaetze(), 0, int(kLauschPlaetze));
+}
+
+QFont Ft8Applet::spaltenTitelSchrift() const
+{
+    QFont f = font();
+    f.setPixelSize(Style::kFontCaption);
+    f.setBold(true);
+    f.setLetterSpacing(QFont::PercentageSpacing, 118);
+    return f;
+}
+
 void Ft8Applet::setLauschfrequenzHz(double hz)
 {
+    setLauschfrequenzHz(0, hz);
+}
+
+void Ft8Applet::setLauschfrequenzHz(int platz, double hz)
+{
+    if (platz < 0 || platz >= kLauschPlaetze) { return; }
+    LauschPlatz& l = m_lausch[platz];
     const bool an = hz > 0.0;
     const QString band = an ? bandLabel(bandFromFrequency(hz)) : QString();
-    // Auf dem Hauptband selbst zu lauschen hoerte dasselbe zweimal.
+    // Auf dem Hauptband selbst zu lauschen hoerte dasselbe zweimal --
+    // und zwei Plaetze auf demselben Band ebenso.
     if (an && m_slice
         && bandFromFrequency(m_slice->frequency()) == bandFromFrequency(hz)) {
         qCInfo(lcFt8Senden) << "Lauschband" << band
                             << "nicht gesetzt — das ist das Hauptband";
         return;
     }
-    if (an == (m_lauschHz > 0.0) && qFuzzyCompare(hz + 1.0, m_lauschHz + 1.0)) {
+    for (int k = 0; an && k < kLauschPlaetze; ++k) {
+        if (k != platz && m_lausch[k].hz > 0.0 && m_lausch[k].band == band) {
+            qCInfo(lcFt8Senden) << "Lauschband" << band
+                                << "nicht gesetzt — laeuft schon auf Platz" << k;
+            return;
+        }
+    }
+    if (an == (l.hz > 0.0) && qFuzzyCompare(hz + 1.0, l.hz + 1.0)) {
         return;
     }
-    // Nur ein Geraet mit zweiter Scheibe kann es (heute die Flex).
-    // Sonst stuende „10m: 0 heard" da, und niemand hoerte zu.
+    // Nur ein Geraet mit weiterer Scheibe kann es (heute die Flex).
+    // Sonst stuende eine Spalte da, und niemand hoerte zu.
     if (an && !m_lauschOhneGeraet
-        && (!m_model || !m_model->kannLauschen())) {
+        && (!m_model || !m_model->kannLauschen() || platz >= lauschPlaetze())) {
         qCInfo(lcFt8Senden) << "Lauschband" << band
-                            << "— das Geraet kann keine zweite Scheibe";
+                            << "— das Geraet hat dafuer keine Scheibe";
         if (m_status) {
-            m_status->setText(tr("second band: this radio has no second "
-                                 "receiver for it"));
+            m_status->setText(tr("second band: this radio has no receiver "
+                                 "left for it"));
         }
         return;
     }
 
     AudioEngine* engine = m_model ? m_model->audioEngine() : nullptr;
     if (an) {
-        if (engine && m_lauschHz <= 0.0) {
-            engine->setFt8LauschTap(0, m_lauschRing.get());
-        }
+        if (engine && l.hz <= 0.0) { engine->setFt8LauschTap(platz, l.ring.get()); }
     } else if (engine) {
-        engine->setFt8LauschTap(0, nullptr);
+        engine->setFt8LauschTap(platz, nullptr);
     }
-    const bool bandNeu = band != m_lauschBand;
-    m_lauschHz = an ? hz : 0.0;
-    m_lauschBand = band;
-    m_lauschZuletzt = 0;
-    if (bandNeu && m_lauschStream) {
+    const bool bandNeu = band != l.band;
+    l.hz = an ? hz : 0.0;
+    l.band = band;
+    l.zuletzt = 0;
+    if (bandNeu) {
+        // Was in der Spalte stand, gehoert zum alten Band.
+        l.zeilen.clear();
+        if (l.liste) { l.liste->clear(); }
         // Ein angefangenes Fenster gehoert zum alten Band.
-        m_lauschStream->setProtocol(Ft8Decoder::Protocol::Ft8);
+        if (l.stream) { l.stream->setProtocol(Ft8Decoder::Protocol::Ft8); }
     }
-    if (m_model) { m_model->setLauschfrequenzHz(m_lauschHz); }
+    if (m_model) { m_model->setLauschfrequenzHz(platz, l.hz); }
     qCInfo(lcFt8Senden).noquote()
-        << (an ? QStringLiteral("Lauschband %1 auf %2 MHz")
-                     .arg(band).arg(hz / 1.0e6, 0, 'f', 3)
-               : QStringLiteral("Lauschband aus"));
-
-    if (m_spaltenkopf) {
-        QString kopf = spaltenkopf();
-        // Hinter das sechs Zeichen breite UTC-Feld, wie die Marke in
-        // anzeigeText() hinter die Uhrzeit.
-        constexpr int kUhrBreite = 6;
-        if (an && kopf.size() > kUhrBreite) {
-            kopf.insert(kUhrBreite, QStringLiteral(" Band"));
-        }
-        m_spaltenkopf->setText(kopf);
-    }
-    fuelleLauschFeld();
-    zeichneListe();
+        << (an ? QStringLiteral("Lauschband %1 auf %2 MHz (Platz %3)")
+                     .arg(band).arg(hz / 1.0e6, 0, 'f', 3).arg(platz)
+               : QStringLiteral("Lauschband aus (Platz %1)").arg(platz));
+    if (l.spalte) { l.spalte->setVisible(an); }
+    fuelleLauschFelder();
+    zeigeSpaltenTitel();
 }
 
-void Ft8Applet::fuelleLauschFeld()
+void Ft8Applet::zeigeSpaltenTitel()
 {
-    if (!m_lauschFeld) { return; }
-    const QSignalBlocker sperre(m_lauschFeld);
-    m_lauschFeld->clear();
-    m_lauschFeld->addItem(tr("Off"), 0.0);
-
-    const Band haupt = m_slice ? bandFromFrequency(m_slice->frequency())
-                               : Band::GEN;
-    QVector<Band> reihe = {Band::Band160m, Band::Band80m, Band::Band60m,
-                           Band::Band40m,  Band::Band30m, Band::Band20m,
-                           Band::Band17m,  Band::Band15m, Band::Band12m,
-                           Band::Band10m,  Band::Band6m};
-    if (const auto nahe = naheliegendesLauschband(haupt)) {
-        reihe.removeAll(*nahe);
-        reihe.prepend(*nahe);
-    }
-    for (Band b : reihe) {
-        if (b == haupt) { continue; }   // dasselbe Band zweimal hoeren?
-        const qint64 hz = DigiFrequenzen::anruffrequenz(
-            b, DigiFrequenzen::Digimodus::Ft8);
-        if (hz <= 0) { continue; }
-        m_lauschFeld->addItem(QStringLiteral("%1 \u00b7 %2")
-                                  .arg(bandLabel(b))
-                                  .arg(double(hz) / 1.0e6, 0, 'f', 3),
-                              double(hz));
-    }
-    int gewaehlt = 0;
-    if (m_lauschHz > 0.0) {
-        const Band lausch = bandFromFrequency(m_lauschHz);
-        for (int i = 1; i < m_lauschFeld->count(); ++i) {
-            if (bandFromFrequency(m_lauschFeld->itemData(i).toDouble()) == lausch) {
-                gewaehlt = i;
-                break;
-            }
+    bool irgendeins = false;
+    for (LauschPlatz& l : m_lausch) {
+        if (!l.titel) { continue; }
+        if (l.hz > 0.0) {
+            irgendeins = true;
+            l.titel->setText(tr("%1 · %2 HEARD").arg(l.band.toUpper()).arg(l.zuletzt));
         }
     }
-    m_lauschFeld->setCurrentIndex(gewaehlt);
+    // Die Hauptspalte bekommt ihren Titel nur, wenn es Nachbarn gibt.
+    if (m_hauptTitel) {
+        m_hauptTitel->setVisible(irgendeins);
+        m_hauptTitel->setText(tr("%1 · MAIN · TX").arg(m_listenBand.toUpper()));
+    }
 }
 
 void Ft8Applet::lauschPeriodeForTest(const QVector<Ft8Decode>& funde)
 {
-    onLauschDecoded(funde, QDateTime::currentDateTimeUtc());
+    onLauschDecoded(0, funde, QDateTime::currentDateTimeUtc());
 }
 
-void Ft8Applet::onLauschDecoded(const QVector<Ft8Decode>& funde,
+void Ft8Applet::lauschPeriodeForTest(int platz, const QVector<Ft8Decode>& funde)
+{
+    onLauschDecoded(platz, funde, QDateTime::currentDateTimeUtc());
+}
+
+void Ft8Applet::onLauschDecoded(int platz, const QVector<Ft8Decode>& funde,
                                 const QDateTime& periodStart)
 {
-    if (m_lauschHz <= 0.0) { return; }   // abgeschaltet, Fenster lief noch
-    m_lauschZuletzt = funde.size();
+    if (platz < 0 || platz >= kLauschPlaetze) { return; }
+    LauschPlatz& l = m_lausch[platz];
+    if (l.hz <= 0.0) { return; }   // abgeschaltet, Fenster lief noch
+    l.zuletzt = funde.size();
+    const QStringList zeigt = lauschbandZeigt();
     const QString uhrzeit =
         periodStart.toUTC().toString(QStringLiteral("HHmmss"));
 
     for (const Ft8Decode& d : funde) {
         const QString ruf = senderCallsign(d.text);
-        // Nur, was fehlt: ein Land, das noch nie im Logbuch stand.
-        // Alles andere vom zweiten Band wuerde die Liste fluten, in der
-        // das QSO auf dem Hauptband laeuft.
-        if (ruf.isEmpty() || !istNeuesLandAuf(ruf, m_lauschHz)) { continue; }
+        // Was hinein darf, steht in den Optionen (Vorgabe: nur, was als
+        // Land ganz fehlt).
+        if (ruf.isEmpty()) { continue; }
+        const bool neuesLand = istNeuesLandAuf(ruf, l.hz);
+        const QString loc = locatorAusNachricht(d.text);
+        const bool neuesGrid = !m_grids.leer() && !loc.isEmpty()
+                               && m_grids.istNeu(loc);
+        const bool cq = d.text.trimmed().toUpper().startsWith(QStringLiteral("CQ"));
+        if (!lauschZeileGewuenscht(zeigt, neuesLand,
+                                   !neuesLand && istNeuesBandAuf(ruf, l.hz),
+                                   neuesGrid, cq)) {
+            continue;
+        }
 
         Fundzeile z;
         z.text = zeilentext(uhrzeit,
@@ -4758,66 +4969,81 @@ void Ft8Applet::onLauschDecoded(const QVector<Ft8Decode>& funde,
                             d.text, landFuer(ruf));
         z.nachricht = d.text;
         z.tonHz     = static_cast<int>(std::lround(d.freqHz));
-        z.istCq     = d.text.trimmed().toUpper().startsWith(QStringLiteral("CQ"));
-        z.neuesLand = true;
-        z.band      = m_lauschBand;
-        z.wahlHz    = m_lauschHz;
-        if (m_model && m_model->dxccColorProvider()) {
+        z.istCq     = cq;
+        z.neuesLand = neuesLand;
+        z.neuesGrid = neuesGrid;
+        z.band      = l.band;
+        z.wahlHz    = l.hz;
+        if (neuesLand && m_model && m_model->dxccColorProvider()) {
             z.landFarbe = m_model->dxccColorProvider()->colorForSpot(
-                ruf, m_lauschHz / 1.0e6, QStringLiteral("FT8"));
+                ruf, l.hz / 1.0e6, QStringLiteral("FT8"));
         }
-        qCInfo(lcFt8Senden).noquote()
-            << "Lauschband" << m_lauschBand << "neues Land:" << ruf
-            << landFuer(ruf);
-        merkeZeile(z);
+        if (neuesLand) {
+            qCInfo(lcFt8Senden).noquote()
+                << "Lauschband" << l.band << "neues Land:" << ruf << landFuer(ruf);
+        }
+        l.zeilen.append(z);
+        if (l.zeilen.size() > kMaxZeilen) {
+            l.zeilen.remove(0, l.zeilen.size() - kMaxZeilen);
+            zeichneLauschListe(platz);
+        } else {
+            haengeAn(l.liste, z);
+            if (l.liste) {
+                l.liste->moveCursor(QTextCursor::End);
+                l.liste->ensureCursorVisible();
+                l.liste->horizontalScrollBar()->setValue(0);
+            }
+        }
     }
-    zeigeFundZahl();
+    zeigeSpaltenTitel();
+}
+
+void Ft8Applet::zeichneLauschListe(int platz)
+{
+    LauschPlatz& l = m_lausch[platz];
+    if (!l.liste) { return; }
+    l.liste->clear();
+    for (const Fundzeile& z : l.zeilen) { haengeAn(l.liste, z); }
+    l.liste->moveCursor(QTextCursor::End);
+    l.liste->ensureCursorVisible();
+    l.liste->horizontalScrollBar()->setValue(0);
 }
 
 QString Ft8Applet::anzeigeText(const Fundzeile& z) const
 {
-    // Ohne Lauschband sieht die Liste aus wie immer.
-    if (z.band.isEmpty() && m_lauschHz <= 0.0) { return z.text; }
-    const int uhrEnde = z.text.indexOf(QLatin1Char(' '));
-    if (uhrEnde < 0 || z.eigeneSendung) { return z.text; }
-    // Jede Zeile traegt ihr Band: das Lauschband seines, das Hauptband
-    // das aktuelle (die Liste wird bei jedem Bandwechsel geleert, alles
-    // darin ist also von hier). Betreiber 2026-11-19: „man sollte aber
-    // sehen, auf welchen bänder man was sieht". Vier Zeichen fuer das
-    // Band (bis „160m"), davor ein Trenner.
-    const QString band = z.band.isEmpty() ? m_listenBand : z.band;
-    const QString marke = QStringLiteral(" ")
-                          + band.leftJustified(4, QLatin1Char(' '));
-    QString s = z.text;
-    s.insert(uhrEnde, marke);
-    return s;
+    // Seit den Spalten (2026-11-19) steht jedes Band in seiner eigenen
+    // Liste; eine Bandmarke in der Zeile braucht es nicht mehr.
+    return z.text;
 }
 
 QString Ft8Applet::nimmZeileAn(const QString& angezeigteZeile)
 {
+    return nimmFundAn(angezeigteZeile);
+}
+
+QString Ft8Applet::lauschZeileAngeklickt(int platz, const QString& angezeigteZeile)
+{
+    if (platz < 0 || platz >= kLauschPlaetze) { return {}; }
     const QString gesucht = angezeigteZeile.trimmed();
-    for (int i = m_zeilen.size() - 1; i >= 0; --i) {
-        const Fundzeile& z = m_zeilen.at(i);
-        if (z.band.isEmpty()) { continue; }
-        if (anzeigeText(z).trimmed() == gesucht) {
-            return wechsleAufLauschband(z);
+    const QVector<Fundzeile>& zeilen = m_lausch[platz].zeilen;
+    for (int i = zeilen.size() - 1; i >= 0; --i) {
+        if (zeilen.at(i).text.trimmed() == gesucht) {
+            return wechsleAufLauschband(zeilen.at(i));
         }
     }
-    return nimmFundAn(angezeigteZeile);
+    return {};
 }
 
 QString Ft8Applet::wechsleAufLauschband(const Fundzeile& z)
 {
     if (!m_slice) { return tr("no receiver"); }
-    // Eine Kopie: das Leeren beim Bandwechsel nimmt die Zeile mit.
+    // Eine Kopie: der Bandwechsel leert die Spalte, aus der die Zeile kam.
     const Fundzeile zeile = z;
     const QString wer = senderCallsign(zeile.nachricht);
     const QString antwort = antwortAuf(zeile.text, eigenesRufzeichen(),
                                        eigenerLocator());
 
-    // Erst anhalten -- was immer gerade laeuft, gehoert zum alten
-    // Band. `skalaBewegt` taete es auch, aber nur, wenn die Scheibe
-    // den Wechsel sofort meldet.
+    // Erst anhalten -- was immer gerade laeuft, gehoert zum alten Band.
     if (m_sendet || m_ablauf.laeuft() || m_mehrfach.aktive() > 0
         || m_cqAutomatik) {
         haltAllesAn(tr("stopped — moving to %1").arg(zeile.band));
@@ -4827,7 +5053,7 @@ QString Ft8Applet::wechsleAufLauschband(const Fundzeile& z)
         << "— Hauptband geht dorthin, nichts gesendet";
 
     // Die Hauptscheibe aufs Lauschband. Der Bandwechsel (skalaBewegt)
-    // leert die Liste und setzt das Lauschband auf das alte Hauptband.
+    // leert die Hauptliste und setzt den Platz auf das alte Hauptband.
     m_slice->setFrequency(zeile.wahlHz);
 
     // Vorgemerkt, nicht gesendet: die Antwort steht im Feld, der
@@ -4838,5 +5064,59 @@ QString Ft8Applet::wechsleAufLauschband(const Fundzeile& z)
     if (m_status) { m_status->setText(m_festerHinweis); }
     return m_festerHinweis;
 }
+
+void Ft8Applet::fuelleLauschFelder()
+{
+    const Band haupt = m_slice ? bandFromFrequency(m_slice->frequency())
+                               : Band::GEN;
+    const int plaetze = lauschPlaetze();
+    for (int k = 0; k < kLauschPlaetze; ++k) {
+        QComboBox* feld = m_lausch[k].feld;
+        if (!feld) { continue; }
+        feld->setVisible(k < std::max(plaetze, 1));
+        const QSignalBlocker sperre(feld);
+        feld->clear();
+        feld->addItem(tr("Off"), 0.0);
+
+        QVector<Band> reihe = {Band::Band160m, Band::Band80m, Band::Band60m,
+                               Band::Band40m,  Band::Band30m, Band::Band20m,
+                               Band::Band17m,  Band::Band15m, Band::Band12m,
+                               Band::Band10m,  Band::Band6m};
+        if (const auto nahe = naheliegendesLauschband(haupt)) {
+            reihe.removeAll(*nahe);
+            reihe.prepend(*nahe);
+        }
+        for (Band b : reihe) {
+            if (b == haupt) { continue; }   // dasselbe Band zweimal hoeren?
+            bool belegt = false;            // ... oder auf zwei Plaetzen
+            for (int j = 0; j < kLauschPlaetze; ++j) {
+                if (j != k && m_lausch[j].hz > 0.0
+                    && bandFromFrequency(m_lausch[j].hz) == b) {
+                    belegt = true;
+                }
+            }
+            if (belegt) { continue; }
+            const qint64 hz = DigiFrequenzen::anruffrequenz(
+                b, DigiFrequenzen::Digimodus::Ft8);
+            if (hz <= 0) { continue; }
+            feld->addItem(QStringLiteral("%1 · %2")
+                              .arg(bandLabel(b))
+                              .arg(double(hz) / 1.0e6, 0, 'f', 3),
+                          double(hz));
+        }
+        int gewaehlt = 0;
+        if (m_lausch[k].hz > 0.0) {
+            const Band lausch = bandFromFrequency(m_lausch[k].hz);
+            for (int i = 1; i < feld->count(); ++i) {
+                if (bandFromFrequency(feld->itemData(i).toDouble()) == lausch) {
+                    gewaehlt = i;
+                    break;
+                }
+            }
+        }
+        feld->setCurrentIndex(gewaehlt);
+    }
+}
+
 
 } // namespace Longpath

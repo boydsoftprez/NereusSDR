@@ -10,6 +10,9 @@
 
 #include <QLoggingCategory>
 
+#include <algorithm>
+#include <cmath>
+
 namespace Longpath {
 
 FlexLauschscheibe::FlexLauschscheibe(Sende sende, QObject* parent)
@@ -17,6 +20,40 @@ FlexLauschscheibe::FlexLauschscheibe(Sende sende, QObject* parent)
     , m_sende(std::move(sende))
 {
 }
+
+// ── Zugaenge je Platz ────────────────────────────────────────────────
+
+FlexLauschscheibe::Zustand FlexLauschscheibe::zustand(int platz) const
+{
+    return gueltig(platz) ? m_platz[platz].zustand : Zustand::Aus;
+}
+
+int FlexLauschscheibe::scheibe(int platz) const
+{
+    return gueltig(platz) ? m_platz[platz].scheibe : -1;
+}
+
+quint32 FlexLauschscheibe::strom(int platz) const
+{
+    return gueltig(platz) ? m_platz[platz].strom : 0;
+}
+
+double FlexLauschscheibe::gemeldeteFrequenzHz(int platz) const
+{
+    return gueltig(platz) ? m_platz[platz].gemeldetHz : 0.0;
+}
+
+double FlexLauschscheibe::gewuenschteFrequenzHz(int platz) const
+{
+    return gueltig(platz) ? m_platz[platz].gewuenschtHz : 0.0;
+}
+
+void FlexLauschscheibe::setPlaetze(int anzahl)
+{
+    m_plaetzeAnzahl = std::clamp(anzahl, 0, kMaxPlaetze);
+}
+
+// ── Was RadioModel liefert ───────────────────────────────────────────
 
 void FlexLauschscheibe::setHauptscheibe(const QString& id)
 {
@@ -33,22 +70,58 @@ void FlexLauschscheibe::setHauptscheibe(const QString& id)
             behandleUebrige(n);
         }
     }
-    if (m_zustand == Zustand::Aus && m_gewuenschtHz > 0.0 && bereit()) {
-        legeAn();
-    }
+    legeNaechstenAn();
 }
 
 void FlexLauschscheibe::setPanadapter(const QString& panId)
 {
     m_panId = panId;
-    if (m_zustand == Zustand::Aus && m_gewuenschtHz > 0.0 && bereit()) {
-        legeAn();
-    }
+    legeNaechstenAn();
+}
+
+void FlexLauschscheibe::setPanMitteQuelle(std::function<double()> quelle)
+{
+    m_panMitte = std::move(quelle);
 }
 
 void FlexLauschscheibe::setEigenerHandle(quint32 handle)
 {
     m_eigenerHandle = handle;
+}
+
+void FlexLauschscheibe::setHauptfrequenzHz(double hz)
+{
+    if (hz > 0.0) { m_hauptHz = hz; }
+}
+
+bool FlexLauschscheibe::bereit() const
+{
+    return m_sende && !m_hauptId.isEmpty() && !m_panId.isEmpty()
+           && m_hauptHz > 0.0;
+}
+
+// ── Welche Scheibe ist wessen ────────────────────────────────────────
+
+int FlexLauschscheibe::platzFuerScheibe(int sliceId) const
+{
+    if (sliceId < 0) { return -1; }
+    for (int k = 0; k < kMaxPlaetze; ++k) {
+        if (m_platz[k].scheibe == sliceId) { return k; }
+    }
+    // Waehrend des Anlegens kennt nur die Maschine die Nummer. Jede
+    // Scheibe, die weder die Hauptscheibe noch eine bekannte Lausch- oder
+    // Restscheibe ist, ist dann die neue.
+    if (m_anlegePlatz >= 0 && !m_hauptId.isEmpty()
+        && QString::number(sliceId) != m_hauptId
+        && !m_uebrige.contains(sliceId)) {
+        return m_anlegePlatz;
+    }
+    return -1;
+}
+
+bool FlexLauschscheibe::istLauschscheibe(int sliceId) const
+{
+    return platzFuerScheibe(sliceId) >= 0;
 }
 
 bool FlexLauschscheibe::istFremd(int sliceId) const
@@ -78,6 +151,17 @@ bool FlexLauschscheibe::istNichtHaupt(int sliceId) const
     }
     return false;
 }
+
+int FlexLauschscheibe::platzFuerStrom(quint32 streamId) const
+{
+    if (streamId == 0) { return -1; }
+    for (int k = 0; k < kMaxPlaetze; ++k) {
+        if (m_platz[k].strom == streamId) { return k; }
+    }
+    return -1;
+}
+
+// ── Uebrig aus einer frueheren Sitzung ───────────────────────────────
 
 bool FlexLauschscheibe::istUebrigeKandidat(int id,
                                            const QMap<QString, QString>& kv)
@@ -118,18 +202,24 @@ bool FlexLauschscheibe::istUebrigeKandidat(int id,
 void FlexLauschscheibe::behandleUebrige(int id)
 {
     m_uebrige.insert(id);
-    // Wird gerade gelauscht und hat die Lauschscheibe noch keine
-    // Nummer, uebernimmt sie die uebrige -- statt eine dritte
-    // anzulegen, die die Maschine ohnehin verweigern wuerde.
-    if (m_gewuenschtHz > 0.0 && m_scheibe < 0
-        && m_zustand != Zustand::Laeuft && !m_hauptId.isEmpty()) {
-        qCInfo(lcConnection) << "Flex-Lauschscheibe: Scheibe" << id
-                             << "aus einer frueheren Sitzung — uebernommen";
-        m_uebrige.remove(id);
-        m_scheibe = id;
-        setZustand(Zustand::Anlegen);
-        richteEin();
-        return;
+    // Wird auf einem Platz gelauscht, der noch keine Nummer hat, und
+    // legt gerade keiner an, uebernimmt er die uebrige -- statt eine
+    // weitere anzulegen, die die Maschine ohnehin verweigern wuerde.
+    if (!m_hauptId.isEmpty() && m_anlegePlatz < 0) {
+        for (int k = 0; k < m_plaetzeAnzahl; ++k) {
+            Platz& p = m_platz[k];
+            if (p.gewuenschtHz > 0.0 && p.scheibe < 0
+                && p.zustand == Zustand::Aus) {
+                qCInfo(lcConnection) << "Flex-Lauschscheibe: Scheibe" << id
+                                     << "aus einer frueheren Sitzung — uebernommen fuer Platz"
+                                     << k;
+                m_uebrige.remove(id);
+                p.scheibe = id;
+                setZustand(k, Zustand::Anlegen);
+                richteEin(k);
+                return;
+            }
+        }
     }
     if (m_entferntGeschickt.contains(id)) { return; }
     m_entferntGeschickt.insert(id);
@@ -138,56 +228,69 @@ void FlexLauschscheibe::behandleUebrige(int id)
     m_sende(QStringLiteral("slice remove %1").arg(id), {});
 }
 
-void FlexLauschscheibe::setHauptfrequenzHz(double hz)
-{
-    if (hz > 0.0) { m_hauptHz = hz; }
-}
+// ── Ein- und Ausschalten ─────────────────────────────────────────────
 
-bool FlexLauschscheibe::bereit() const
+void FlexLauschscheibe::setFrequenzHz(int platz, double hz)
 {
-    return m_sende && !m_hauptId.isEmpty() && !m_panId.isEmpty()
-           && m_hauptHz > 0.0;
-}
-
-void FlexLauschscheibe::setFrequenzHz(double hz)
-{
+    if (!gueltig(platz)) { return; }
+    Platz& p = m_platz[platz];
     if (!(hz > 0.0)) {
-        m_gewuenschtHz = 0.0;
-        if (m_zustand == Zustand::Anlegen) {
+        p.gewuenschtHz = 0.0;
+        if (p.zustand == Zustand::Anlegen && p.scheibe < 0) {
             // Die Nummer ist noch nicht da; abgebaut wird, sobald sie
             // kommt. Sonst bliebe eine Scheibe auf der Maschine stehen.
-            m_abbauNachAnlegen = true;
-        } else if (m_zustand == Zustand::Laeuft) {
-            abbauen();
+            p.abbauNachAnlegen = true;
+        } else if (p.zustand != Zustand::Aus) {
+            baueAb(platz);
         }
         return;
     }
 
-    m_gewuenschtHz = hz;
-    m_abbauNachAnlegen = false;
-    switch (m_zustand) {
+    p.gewuenschtHz = hz;
+    p.abbauNachAnlegen = false;
+    switch (p.zustand) {
     case Zustand::Aus:
-        if (bereit()) { legeAn(); }
+        legeNaechstenAn();
         break;
     case Zustand::Anlegen:
-        break;   // richteEin() nimmt die zuletzt gewuenschte
+        if (p.scheibe >= 0) { stimme(platz, hz); }   // sonst nimmt richteEin die letzte
+        break;
     case Zustand::Laeuft:
-        stimme(hz);
+        stimme(platz, hz);
         break;
     }
 }
 
-void FlexLauschscheibe::legeAn()
+void FlexLauschscheibe::legeNaechstenAn()
 {
-    setZustand(Zustand::Anlegen);
-    // Auf der Frequenz der Hauptscheibe, im Panadapter -- siehe Kopf.
+    if (m_anlegePlatz >= 0 || !bereit()) { return; }
+    for (int k = 0; k < m_plaetzeAnzahl; ++k) {
+        const Platz& p = m_platz[k];
+        if (p.zustand == Zustand::Aus && p.gewuenschtHz > 0.0) {
+            legeAn(k);
+            return;
+        }
+    }
+}
+
+void FlexLauschscheibe::legeAn(int platz)
+{
+    m_anlegePlatz = platz;
+    setZustand(platz, Zustand::Anlegen);
+    // Im Panadapter -- siehe Kopf. Seine Mitte, wenn bekannt; sonst die
+    // Frequenz der Hauptscheibe.
+    const double mitte = m_panMitte ? m_panMitte() : 0.0;
+    const double anlegeHz = mitte > 0.0 ? mitte : m_hauptHz;
     const QString befehl =
         QStringLiteral("slice create pan=%1 freq=%2 mode=DIGU")
             .arg(m_panId)
-            .arg(m_hauptHz / 1.0e6, 0, 'f', 6);
-    qCInfo(lcConnection) << "Flex-Lauschscheibe: lege an —" << befehl;
-    m_sende(befehl, [this](quint32 code, const QString& body) {
-        if (m_zustand != Zustand::Anlegen) { return; }   // inzwischen vergessen
+            .arg(anlegeHz / 1.0e6, 0, 'f', 6);
+    qCInfo(lcConnection) << "Flex-Lauschscheibe: lege an (Platz" << platz
+                         << ") —" << befehl;
+    m_sende(befehl, [this, platz](quint32 code, const QString& body) {
+        if (m_anlegePlatz != platz) { return; }   // inzwischen vergessen
+        m_anlegePlatz = -1;
+        Platz& p = m_platz[platz];
         bool ok = false;
         const int nummer = body.trimmed().toInt(&ok);
         if (code != 0 || !ok || nummer < 0) {
@@ -195,30 +298,34 @@ void FlexLauschscheibe::legeAn()
                 QStringLiteral("slice create abgelehnt, Code 0x%1 %2")
                     .arg(code, 0, 16).arg(body.trimmed());
             qCWarning(lcConnection) << "Flex-Lauschscheibe:" << grund;
-            m_gewuenschtHz = 0.0;
-            m_abbauNachAnlegen = false;
-            setZustand(Zustand::Aus);
-            emit abgelehnt(grund);
+            p.gewuenschtHz = 0.0;
+            p.abbauNachAnlegen = false;
+            setZustand(platz, Zustand::Aus);
+            emit abgelehnt(platz, grund);
+            legeNaechstenAn();
             return;
         }
-        m_scheibe = nummer;
-        if (m_abbauNachAnlegen) {
-            m_abbauNachAnlegen = false;
-            abbauen();
-            return;
+        p.scheibe = nummer;
+        if (p.abbauNachAnlegen) {
+            p.abbauNachAnlegen = false;
+            baueAb(platz);
+        } else {
+            richteEin(platz);
         }
-        richteEin();
+        legeNaechstenAn();
     });
 }
 
-void FlexLauschscheibe::richteEin()
+void FlexLauschscheibe::richteEin(int platz)
 {
-    const QString n = QString::number(m_scheibe);
+    Platz& p = m_platz[platz];
+    const QString n = QString::number(p.scheibe);
+    const int kanal = daxKanal(platz);
     // Erst stumm, dann weg: so hoert der Betreiber die neue Scheibe
     // nicht einmal kurz im Lautsprecher-Mix.
     m_sende(QStringLiteral("slice set %1 audio_mute=1").arg(n), {});
-    m_sende(QStringLiteral("slice set %1 dax=%2").arg(n).arg(kDaxKanal), {});
-    stimme(m_gewuenschtHz);
+    m_sende(QStringLiteral("slice set %1 dax=%2").arg(n).arg(kanal), {});
+    stimme(platz, p.gewuenschtHz);
     // Die Maschine macht die neue Scheibe zur AKTIVEN (gemessen am
     // 2026-11-19: `slice 1 … active=1`). Danach richten sich der Knopf
     // am Geraet und manches CAT-Programm -- also zurueck auf die
@@ -226,15 +333,16 @@ void FlexLauschscheibe::richteEin()
     if (!m_hauptId.isEmpty()) {
         m_sende(QStringLiteral("slice set %1 active=1").arg(m_hauptId), {});
     }
-    m_sende(QStringLiteral("stream create type=dax_rx dax_channel=%1")
-                .arg(kDaxKanal),
-            [this](quint32 code, const QString& body) {
-        if (m_scheibe < 0) { return; }   // inzwischen abgebaut
+    const int scheibeBeimAnlegen = p.scheibe;
+    m_sende(QStringLiteral("stream create type=dax_rx dax_channel=%1").arg(kanal),
+            [this, platz, scheibeBeimAnlegen](quint32 code, const QString& body) {
+        Platz& q = m_platz[platz];
+        if (q.scheibe < 0 || q.scheibe != scheibeBeimAnlegen) { return; }   // inzwischen abgebaut
         if (code != 0) {
             qCWarning(lcConnection).nospace()
                 << "Flex-Lauschscheibe: DAX-Strom abgelehnt, Code 0x"
                 << QString::number(code, 16) << " " << body.trimmed();
-            emit abgelehnt(QStringLiteral("stream create type=dax_rx abgelehnt"));
+            emit abgelehnt(platz, QStringLiteral("stream create type=dax_rx abgelehnt"));
             return;
         }
         // Hexadezimal ohne Vorsatz, wie beim Tonstrom
@@ -250,41 +358,53 @@ void FlexLauschscheibe::richteEin()
                                        " `stream create` ohne Kennung —" << body;
             return;
         }
-        m_strom = kennung;
+        q.strom = kennung;
         qCInfo(lcConnection).nospace().noquote()
-            << "Flex-Lauschscheibe: Scheibe " << m_scheibe
-            << ", DAX-Strom 0x" << QString::number(m_strom, 16);
-        setZustand(Zustand::Laeuft);
+            << "Flex-Lauschscheibe: Platz " << platz << ", Scheibe "
+            << q.scheibe << ", DAX-Kanal " << daxKanal(platz)
+            << ", Strom 0x" << QString::number(q.strom, 16);
+        setZustand(platz, Zustand::Laeuft);
     });
 }
 
-void FlexLauschscheibe::stimme(double hz)
+void FlexLauschscheibe::stimme(int platz, double hz)
 {
-    if (m_scheibe < 0 || !(hz > 0.0)) { return; }
-    m_sende(FlexCommandWire::tuneSliceCommand(QString::number(m_scheibe), hz), {});
+    const Platz& p = m_platz[platz];
+    if (p.scheibe < 0 || !(hz > 0.0)) { return; }
+    m_sende(FlexCommandWire::tuneSliceCommand(QString::number(p.scheibe), hz), {});
+}
+
+void FlexLauschscheibe::baueAb(int platz)
+{
+    Platz& p = m_platz[platz];
+    if (p.strom != 0) {
+        m_sende(QStringLiteral("stream remove 0x%1")
+                    .arg(QString::number(p.strom, 16)), {});
+    }
+    if (p.scheibe >= 0) {
+        m_sende(QStringLiteral("slice remove %1").arg(p.scheibe), {});
+    }
+    if (p.zustand == Zustand::Anlegen && p.scheibe < 0) {
+        // Die Antwort steht noch aus: dann raeumt sie selbst ab.
+        p.abbauNachAnlegen = true;
+        return;
+    }
+    if (p.scheibe >= 0 || p.strom != 0) {
+        qCInfo(lcConnection) << "Flex-Lauschscheibe: Platz" << platz << "abgebaut";
+    }
+    p.scheibe = -1;
+    p.strom = 0;
+    p.gemeldetHz = 0.0;
+    setZustand(platz, Zustand::Aus);
 }
 
 void FlexLauschscheibe::abbauen()
 {
-    if (m_strom != 0) {
-        m_sende(QStringLiteral("stream remove 0x%1")
-                    .arg(QString::number(m_strom, 16)), {});
+    for (int k = 0; k < kMaxPlaetze; ++k) {
+        if (m_platz[k].zustand != Zustand::Aus || m_platz[k].scheibe >= 0) {
+            baueAb(k);
+        }
     }
-    if (m_scheibe >= 0) {
-        m_sende(QStringLiteral("slice remove %1").arg(m_scheibe), {});
-    }
-    if (m_zustand == Zustand::Anlegen && m_scheibe < 0) {
-        // Die Antwort steht noch aus: dann raeumt sie selbst ab.
-        m_abbauNachAnlegen = true;
-        return;
-    }
-    if (m_scheibe >= 0 || m_strom != 0) {
-        qCInfo(lcConnection) << "Flex-Lauschscheibe: abgebaut";
-    }
-    m_scheibe = -1;
-    m_strom = 0;
-    m_gemeldetHz = 0.0;
-    setZustand(Zustand::Aus);
 }
 
 void FlexLauschscheibe::vergiss()
@@ -294,41 +414,63 @@ void FlexLauschscheibe::vergiss()
     m_sendetJe.clear();
     m_eigene.clear();
     m_eigenerHandle = 0;
-    m_scheibe = -1;
-    m_strom = 0;
-    m_gemeldetHz = 0.0;
-    m_abbauNachAnlegen = false;
+    m_anlegePlatz = -1;
     m_hauptId.clear();
     m_panId.clear();
-    // Der Wunsch bleibt: beim naechsten Verbinden wird wieder gelauscht.
-    setZustand(Zustand::Aus);
-}
-
-bool FlexLauschscheibe::istLauschscheibe(int sliceId) const
-{
-    if (sliceId < 0) { return false; }
-    if (m_scheibe >= 0) { return sliceId == m_scheibe; }
-    // Waehrend des Anlegens kennt nur die Maschine die Nummer. Jede
-    // Scheibe, die nicht die Hauptscheibe ist, ist dann die neue.
-    if (m_zustand == Zustand::Anlegen && !m_hauptId.isEmpty()) {
-        return QString::number(sliceId) != m_hauptId;
+    for (int k = 0; k < kMaxPlaetze; ++k) {
+        Platz& p = m_platz[k];
+        p.scheibe = -1;
+        p.strom = 0;
+        p.gemeldetHz = 0.0;
+        p.abbauNachAnlegen = false;
+        // Der Wunsch bleibt: beim naechsten Verbinden wird wieder gelauscht.
+        setZustand(k, Zustand::Aus);
     }
-    return false;
 }
 
-bool FlexLauschscheibe::istLauschstrom(quint32 streamId) const
-{
-    return m_strom != 0 && streamId == m_strom;
-}
+// ── Ton und Zustand ──────────────────────────────────────────────────
 
-void FlexLauschscheibe::tonAngekommen(int werte)
+void FlexLauschscheibe::tonAngekommen(int platz, const QVector<float>& werte)
 {
-    if (m_strom == 0 || m_tonGemeldetFuer == m_strom) { return; }
-    m_tonGemeldetFuer = m_strom;
-    qCInfo(lcConnection).nospace().noquote()
-        << "Flex-Lauschscheibe: erster DAX-Ton auf Strom 0x"
-        << QString::number(m_strom, 16) << " (" << werte
-        << " Werte) — die Scheibe ist stumm, DAX liefert trotzdem";
+    if (!gueltig(platz)) { return; }
+    Platz& p = m_platz[platz];
+    if (p.strom == 0) { return; }
+    if (p.tonGemeldetFuer != p.strom) {
+        p.tonGemeldetFuer = p.strom;
+        qCInfo(lcConnection).nospace().noquote()
+            << "Flex-Lauschscheibe: erster DAX-Ton auf Platz " << platz
+            << ", Strom 0x" << QString::number(p.strom, 16) << " ("
+            << werte.size() << " Werte) — die Scheibe ist stumm, DAX liefert trotzdem";
+        p.pegelUhr.start();
+        p.pegelSpitze = 0.0f;
+        p.pegelQuadrate = 0.0;
+        p.pegelWerte = 0;
+    }
+    for (float w : werte) {
+        const float b = std::fabs(w);
+        if (b > p.pegelSpitze) { p.pegelSpitze = b; }
+        p.pegelQuadrate += double(w) * double(w);
+    }
+    p.pegelWerte += werte.size();
+
+    constexpr qint64 kPegelAbstandMs = 60000;
+    if (p.pegelUhr.isValid() && p.pegelUhr.elapsed() >= kPegelAbstandMs
+        && p.pegelWerte > 0) {
+        const auto dbfs = [](double x) {
+            return x > 1e-12 ? 20.0 * std::log10(x) : -240.0;
+        };
+        const double effektiv = std::sqrt(p.pegelQuadrate / double(p.pegelWerte));
+        qCInfo(lcConnection).nospace().noquote()
+            << "Flex-Lauschscheibe: Platz " << platz
+            << ", DAX-Pegel der letzten Minute — Spitze "
+            << QString::number(dbfs(p.pegelSpitze), 'f', 1) << " dBFS, Mittel "
+            << QString::number(dbfs(effektiv), 'f', 1) << " dBFS, "
+            << p.pegelWerte << " Werte";
+        p.pegelUhr.restart();
+        p.pegelSpitze = 0.0f;
+        p.pegelQuadrate = 0.0;
+        p.pegelWerte = 0;
+    }
 }
 
 bool FlexLauschscheibe::nimmStatus(const QString& object,
@@ -336,7 +478,8 @@ bool FlexLauschscheibe::nimmStatus(const QString& object,
 {
     const int id = FlexCommandWire::sliceIdFromObject(object);
     if (id < 0) { return false; }
-    if (!istLauschscheibe(id)) {
+    int platz = platzFuerScheibe(id);
+    if (platz < 0) {
         if (!istUebrigeKandidat(id, kv)) {
             // Vor der Anmeldung noch nicht entscheidbar -- aber eine
             // eigene Scheibe, neben der eine andere sendet, darf schon
@@ -349,40 +492,41 @@ bool FlexLauschscheibe::nimmStatus(const QString& object,
             return true;
         }
         behandleUebrige(id);
-        if (!istLauschscheibe(id)) { return true; }   // entfernt
-        // uebernommen: weiter unten wie jede Meldung der Lauschscheibe
+        platz = platzFuerScheibe(id);
+        if (platz < 0) { return true; }   // entfernt
+        // uebernommen: weiter unten wie jede Meldung einer Lauschscheibe
     }
+    Platz& p = m_platz[platz];
 
     // Von aussen entfernt (SmartSDR, Maestro): vergessen, nicht wieder
     // anlegen -- das waere ein Kampf mit dem Betreiber.
-    if (kv.value(QStringLiteral("in_use")) == QLatin1String("0")
-        && m_scheibe == id) {
+    if (kv.value(QStringLiteral("in_use")) == QLatin1String("0") && p.scheibe == id) {
         qCInfo(lcConnection) << "Flex-Lauschscheibe: Scheibe" << id
-                             << "von der Maschine entfernt";
-        m_scheibe = -1;
-        m_strom = 0;
-        m_gemeldetHz = 0.0;
-        m_gewuenschtHz = 0.0;
-        setZustand(Zustand::Aus);
+                             << "(Platz" << platz << ") von der Maschine entfernt";
+        p.scheibe = -1;
+        p.strom = 0;
+        p.gemeldetHz = 0.0;
+        p.gewuenschtHz = 0.0;
+        setZustand(platz, Zustand::Aus);
         return true;
     }
 
     if (const auto hz = FlexCommandWire::frequencyHzFromSliceKvs(kv)) {
-        if (!qFuzzyCompare(*hz, m_gemeldetHz)) {
-            m_gemeldetHz = *hz;
+        if (!qFuzzyCompare(*hz, p.gemeldetHz)) {
+            p.gemeldetHz = *hz;
             qCInfo(lcConnection).nospace()
-                << "Flex-Lauschscheibe: steht auf "
+                << "Flex-Lauschscheibe: Platz " << platz << " steht auf "
                 << QString::number(*hz / 1.0e6, 'f', 6) << " MHz";
-            emit frequenzGemeldet(*hz);
+            emit frequenzGemeldet(platz, *hz);
         }
     }
     return true;
 }
 
-void FlexLauschscheibe::setZustand(Zustand z)
+void FlexLauschscheibe::setZustand(int platz, Zustand z)
 {
-    if (z == m_zustand) { return; }
-    m_zustand = z;
+    if (z == m_platz[platz].zustand) { return; }
+    m_platz[platz].zustand = z;
     emit zustandGeaendert();
 }
 

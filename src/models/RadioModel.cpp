@@ -7233,9 +7233,18 @@ void RadioModel::connectFlexRadio(const RadioInfo& info)
         connect(m_flexLausch, &FlexLauschscheibe::zustandGeaendert,
                 this, &RadioModel::lauschbandGeaendert);
         connect(m_flexLausch, &FlexLauschscheibe::frequenzGemeldet,
-                this, [this](double) { emit lauschbandGeaendert(); });
+                this, [this](int, double) { emit lauschbandGeaendert(); });
         connect(m_flexLausch, &FlexLauschscheibe::abgelehnt,
                 this, &RadioModel::lauschbandAbgelehnt);
+        // Die Lauschscheibe entsteht in der Mitte des Panadapters, wie
+        // ihn Longpath gerade fuehrt -- auch wenn die Maschine ihn noch
+        // nicht bestaetigt hat (uebernimmFlexPanMitte).
+        m_flexLausch->setPanMitteQuelle([this]() {
+            if (m_flexAusschnittTiefHz > 0.0 && m_flexAusschnittHochHz > 0.0) {
+                return 0.5 * (m_flexAusschnittTiefHz + m_flexAusschnittHochHz);
+            }
+            return 0.0;
+        });
         // Unsere Client-Kennung: daran erkennt die Lauschscheibe eine,
         // die die Maschine aus einer frueheren Sitzung wiederhergestellt
         // hat (core/FlexLauschscheibe.h).
@@ -7669,6 +7678,12 @@ void RadioModel::connectFlexRadio(const RadioInfo& info)
     qCInfo(lcConnection) << "Flex: verbinde nach" << info.address.toString()
                          << ":" << info.port;
     setConnectionState(ConnectionState::Connecting);
+    // Wie viele Baender mitgehoert werden koennen: alle Scheiben der
+    // Maschine bis auf die des Betreibers (`max_slices` im Erkennungsruf;
+    // FLEX-8400: 2 -> 1, FLEX-8600: 4 -> 3). Unbekannt: einer.
+    if (m_flexLausch) {
+        m_flexLausch->setPlaetze(info.maxReceivers > 1 ? info.maxReceivers - 1 : 1);
+    }
     m_flexConnection->connectToRadio(info.address, info.port);
 }
 
@@ -9197,15 +9212,17 @@ void RadioModel::startFlexStreams()
             // Der DAX-Strom der Lauschscheibe geht allein in den
             // zweiten FT8-Dekoder -- nicht in den Lautsprecher, nicht
             // in die Abgriffe der Hauptscheibe (2026-11-19).
-            if (m_flexLausch && m_flexLausch->istLauschstrom(id)) {
-                m_flexLausch->tonAngekommen(s.size());
+            const int lauschPlatz =
+                m_flexLausch ? m_flexLausch->platzFuerStrom(id) : -1;
+            if (lauschPlatz >= 0) {
+                m_flexLausch->tonAngekommen(lauschPlatz, s);
                 if (m_audioEngine && !s.isEmpty()) {
                     // Dieselbe Rate wie der Mix-Strom: Klasse 0x03E3,
                     // 24 kHz (MainWindow_Flex.cpp kFlexAudioRateHz,
                     // gemessen 24 012,3 Hz).
                     constexpr int kDaxRateHz = 24000;
                     m_audioEngine->feedFt8LauschAudio(
-                        0, s.constData(), s.size() / 2, kDaxRateHz);
+                        lauschPlatz, s.constData(), s.size() / 2, kDaxRateHz);
                 }
                 return;
             }
@@ -9529,25 +9546,30 @@ void RadioModel::setFlexSliceNoise(bool nr, bool nb, bool anf)
     m_flexConnection->sendCommand(befehl);
 }
 
-bool RadioModel::setLauschfrequenzHz(double hz)
+bool RadioModel::setLauschfrequenzHz(int platz, double hz)
 {
-    if (!kannLauschen()) { return false; }
-    m_flexLausch->setFrequenzHz(hz);
+    if (!kannLauschen() || platz < 0 || platz >= lauschPlaetze()) { return false; }
+    m_flexLausch->setFrequenzHz(platz, hz);
     return true;
 }
 
-bool RadioModel::lauschtGerade() const
+int RadioModel::lauschPlaetze() const
 {
-    return m_flexLausch
-           && m_flexLausch->zustand() == FlexLauschscheibe::Zustand::Laeuft;
+    return kannLauschen() ? m_flexLausch->plaetze() : 0;
 }
 
-double RadioModel::lauschfrequenzHz() const
+bool RadioModel::lauschtGerade(int platz) const
+{
+    return m_flexLausch
+           && m_flexLausch->zustand(platz) == FlexLauschscheibe::Zustand::Laeuft;
+}
+
+double RadioModel::lauschfrequenzHz(int platz) const
 {
     if (!m_flexLausch) { return 0.0; }
-    if (m_flexLausch->gewuenschteFrequenzHz() <= 0.0) { return 0.0; }
-    const double gemeldet = m_flexLausch->gemeldeteFrequenzHz();
-    return gemeldet > 0.0 ? gemeldet : m_flexLausch->gewuenschteFrequenzHz();
+    if (m_flexLausch->gewuenschteFrequenzHz(platz) <= 0.0) { return 0.0; }
+    const double gemeldet = m_flexLausch->gemeldeteFrequenzHz(platz);
+    return gemeldet > 0.0 ? gemeldet : m_flexLausch->gewuenschteFrequenzHz(platz);
 }
 
 void RadioModel::applyFlexAudioSetup()

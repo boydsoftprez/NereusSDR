@@ -252,6 +252,7 @@ public:
     /// frei, statt etwas zu behaupten.
     QString landFuer(const QString& rufzeichen) const;
     bool istNeuesLandAuf(const QString& senderRuf, double hz) const;
+    bool istNeuesBandAuf(const QString& senderRuf, double hz) const;
 
     /// Das eigene Rufzeichen aus den Einstellungen. `User/Callsign`
     /// ist der kanonische Schluessel (SpotHubDialog schreibt ihn);
@@ -384,18 +385,46 @@ public:
     /// die beiden, die der Betreiber genannt hat („10 und 15 meter als
     /// beispiel"): 15 m -> 10 m und 10 m -> 15 m. Sonst keine Vorgabe.
     static std::optional<Band> naheliegendesLauschband(Band hauptband);
+    /// Was vom zweiten Band in die Liste kommt (Optionen, „Second band
+    /// shows"): Gruende "NeuesLand" (Vorgabe), "NeuesBand", "NeuesGrid",
+    /// Einschraenkung "NurCq". Leer = alles.
+    static QStringList lauschbandZeigt();
+    /// Die Regel dazu, rein: kommt diese Zeile vom zweiten Band hinein?
+    static bool lauschZeileGewuenscht(const QStringList& zeigt, bool neuesLand,
+                                      bool neuesBand, bool neuesGrid, bool cq);
     /// Auf `hz` lauschen (Wahlfrequenz, DIGU); 0 schaltet ab.
     void setLauschfrequenzHz(double hz);
-    double lauschfrequenzHz() const { return m_lauschHz; }
+    /// Platz `platz` (0 .. lauschPlaetze()-1) auf `hz`; 0 schaltet ab.
+    void setLauschfrequenzHz(int platz, double hz);
+    double lauschfrequenzHz(int platz = 0) const
+    { return (platz >= 0 && platz < kLauschPlaetze) ? m_lausch[platz].hz : 0.0; }
+    /// Wie viele Baender neben dem Hauptband das Geraet hoeren kann
+    /// (FLEX-8400: 1, FLEX-8600: 3).
+    int lauschPlaetze() const;
+    static constexpr int kLauschPlaetze = 3;
     /// „10m", leer wenn aus.
-    QString lauschband() const { return m_lauschBand; }
+    QString lauschband(int platz = 0) const
+    { return (platz >= 0 && platz < kLauschPlaetze) ? m_lausch[platz].band : QString(); }
     /// Wie viele Funde das Lauschband in der letzten Periode hatte.
-    int lauschFundeZuletzt() const { return m_lauschZuletzt; }
+    int lauschFundeZuletzt(int platz = 0) const
+    { return (platz >= 0 && platz < kLauschPlaetze) ? m_lausch[platz].zuletzt : 0; }
     /// Eine Periode des Lauschbandes einspeisen, als waere sie dort
     /// dekodiert worden.
     void lauschPeriodeForTest(const QVector<Longpath::Ft8Decode>& funde);
-    Ft8Stream* lauschStreamForTest() const { return m_lauschStream; }
-    QComboBox* lauschFeldForTest() const { return m_lauschFeld; }
+    void lauschPeriodeForTest(int platz, const QVector<Longpath::Ft8Decode>& funde);
+    Ft8Stream* lauschStreamForTest(int platz = 0) const { return m_lausch[platz].stream; }
+    QComboBox* lauschFeldForTest(int platz = 0) const { return m_lausch[platz].feld; }
+    QPlainTextEdit* lauschListeForTest(int platz = 0) const { return m_lausch[platz].liste; }
+    QWidget* lauschSpalteForTest(int platz = 0) const { return m_lausch[platz].spalte; }
+    QLabel* lauschTitelForTest(int platz = 0) const { return m_lausch[platz].titel; }
+    QSplitter* listenTeilerForTest() const { return m_listenTeiler; }
+    /// Wie viele Plaetze gelten sollen, ohne Geraet (-1: vom Geraet).
+    void setLauschPlaetzeForTest(int n) { m_lauschPlaetzeForTest = n; fuelleLauschFelder(); }
+    /// Der Doppelklick in einer Spalte, wie ihn die Liste weiterreicht.
+    QString lauschDoppelklickForTest(int platz, const QString& zeile)
+    { return lauschZeileAngeklickt(platz, zeile); }
+    /// Das Optionsblatt oeffnen (modal) -- fuer Bild-Pruefstaende.
+    void zeigeOptionenForTest() { zeigeOptionen(); }
     /// Ohne Geraet mit zweiter Scheibe lauschen -- nur der Pruefstand
     /// speist die Funde selbst ein.
     void setLauschOhneGeraetForTest(bool an) { m_lauschOhneGeraet = an; }
@@ -551,8 +580,6 @@ protected:
     bool eventFilter(QObject* obj, QEvent* ev) override;
 
 private slots:
-    void onLauschDecoded(const QVector<Longpath::Ft8Decode>& funde,
-                         const QDateTime& periodStart);
     void onDecoded(const QVector<Longpath::Ft8Decode>& funde,
                    const QDateTime& periodStart);
 
@@ -574,19 +601,19 @@ private:
     Ft8Stream* m_stream{nullptr};
     std::unique_ptr<AudioTapRing> m_tapRing;
     // Das Lauschband (2026-11-19): eigener Dekoder, eigener Ring.
-    Ft8Stream* m_lauschStream{nullptr};
-    std::unique_ptr<AudioTapRing> m_lauschRing;
-    double  m_lauschHz{0.0};
-    QString m_lauschBand;
-    int     m_lauschZuletzt{0};
     /// Die Skala vor dem letzten Bandwechsel: wohin das Lauschband
     /// geht, wenn das Hauptband auf seines wechselt.
     double  m_letzteSkalaHz{0.0};
     bool    m_lauschOhneGeraet{false};
-    QComboBox* m_lauschFeld{nullptr};
     /// Das Feld „Also" neu fuellen: ohne das Hauptband, das
     /// naheliegende Band zuerst, die Wahl wie sie gilt.
-    void fuelleLauschFeld();
+    void fuelleLauschFelder();
+    /// Die Titel der Spalten („40M · 16 HEARD", „20M · MAIN · TX").
+    void zeigeSpaltenTitel();
+    QFont spaltenTitelSchrift() const;
+    QSplitter* m_listenTeiler{nullptr};
+    QLabel*    m_hauptTitel{nullptr};
+    int        m_lauschPlaetzeForTest{-1};
     QTimer* m_pumpTimer{nullptr};
     int     m_lastPeriodCount{-1};
     int     m_lineCount{0};
@@ -633,6 +660,25 @@ private:
     QString nimmZeileAn(const QString& angezeigteZeile);
     /// Tauschen (3A). Sendet nichts.
     QString wechsleAufLauschband(const Fundzeile& z);
+    /// Doppelklick in der Spalte von Platz `platz`.
+    QString lauschZeileAngeklickt(int platz, const QString& angezeigteZeile);
+    void onLauschDecoded(int platz, const QVector<Longpath::Ft8Decode>& funde,
+                         const QDateTime& periodStart);
+    void zeichneLauschListe(int platz);
+    // Ein Platz je mitgehoertem Band (2026-11-19).
+    struct LauschPlatz {
+        Ft8Stream* stream{nullptr};
+        std::unique_ptr<AudioTapRing> ring;
+        double  hz{0.0};
+        QString band;
+        int     zuletzt{0};
+        QComboBox*      feld{nullptr};
+        QWidget*        spalte{nullptr};
+        QLabel*         titel{nullptr};
+        QPlainTextEdit* liste{nullptr};
+        QVector<Fundzeile> zeilen;
+    };
+    LauschPlatz m_lausch[kLauschPlaetze];
     static constexpr int kMaxZeilen = 400;
 
     /// Welche Zeilen zu sehen sind. Eine Pille, nicht vier Haken:
@@ -650,6 +696,7 @@ private:
     void merkeZeile(const Fundzeile& z);
     /// Eine Zeile unten an die Textflaeche haengen, richtig gefaerbt.
     void haengeAn(const Fundzeile& z);
+    void haengeAn(QPlainTextEdit* liste, const Fundzeile& z);
     /// „10 Funde" bzw. „3 von 10" rechts neben den Pillen.
     void zeigeFundZahl();
     /// Die Uhr als Fehlerquelle sichtbar machen.
