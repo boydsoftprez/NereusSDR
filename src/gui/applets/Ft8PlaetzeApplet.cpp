@@ -86,6 +86,29 @@ constexpr int kFreiNebenText      = 40;
 /// Ein Wartender: 100 bis zum Land, 60 rechts davon fuer den Rapport.
 constexpr int kWarteNebenLand     = 160;
 
+// ── Die kleinen Dichten (2026-11-19) ────────────────────────────────
+//
+// Kompakt, zwei Zeilen. Oben: 28 links fuer die Platznummer, rechts 8,
+// die Tonlage („2280 Hz", 58 breit), 8 -- das Rufzeichen bekommt
+// (Kachelbreite - 102). Unten: 28 links, dann das Land, 8, der
+// Fortschritt (fuenf Striche zu 13 mit 4 dazwischen: 81), 8, die Pille
+// (48), 8 -- das Land bekommt (Kachelbreite - 181).
+constexpr int kKompaktTonB      = 58;
+constexpr int kKompaktStriche   = 5 * 13 + 4 * 4;
+constexpr int kPilleB           = 48;
+constexpr int kKompaktNebenRuf  = 28 + 8 + kKompaktTonB + 8;
+constexpr int kKompaktNebenLand = 28 + 8 + kKompaktStriche + 8 + kPilleB + 8;
+constexpr double kKompaktRufPt  = 14.0;
+// Zeile, eine Zeile. Von rechts: 8, die Tonlage ohne „Hz" (34), 8, die
+// Pille (48), 8, der Fortschritt (fuenf Striche zu 8 mit 3 dazwischen:
+// 52), 8, das Land. Links 28 und das Rufzeichen, 8.
+constexpr int kZeileTonB        = 34;
+constexpr int kZeileStriche     = 5 * 8 + 4 * 3;
+constexpr int kZeileNebenRuf    = 28 + 8 + kPilleB + 8 + kZeileTonB + 8;
+constexpr double kZeileRufPt    = 12.0;
+/// Unter dieser Breite lohnt ein Land nicht: es staende nur „…" da.
+constexpr int kLandMindestB     = 18;
+
 /// Die Untergrenze, damit das Raster nicht mit jedem Partner
 /// umspringt: ein gewoehnliches Rufzeichen in voller Laenge (zwei
 /// Buchstaben, Ziffer, drei Buchstaben -- hier aus den breitesten, die
@@ -133,6 +156,7 @@ Ft8PlaetzeFlaeche::Ft8PlaetzeFlaeche(QWidget* parent)
 void Ft8PlaetzeFlaeche::setzeStand(const Ft8PlaetzeStand& s)
 {
     m_stand = s;
+    merkeDichte();
     updateGeometry();
     update();
 }
@@ -170,7 +194,8 @@ void Ft8PlaetzeFlaeche::setzeStand(const Ft8PlaetzeStand& s)
 // Die Kacheln selbst werden dabei nie schmaler als ihre Mindestbreite
 // und nie niedriger.
 Ft8PlaetzeAnordnung Ft8PlaetzeFlaeche::rechne(int breite, int hoehe,
-                                              int spaltenFest) const
+                                              Dichte dichte, int spalten,
+                                              bool alleEinspaltig) const
 {
     Ft8PlaetzeAnordnung a;
     const int innen  = qMax(0, breite - 2 * kRandX);
@@ -178,18 +203,23 @@ Ft8PlaetzeAnordnung Ft8PlaetzeFlaeche::rechne(int breite, int hoehe,
     const int gesamt = qMax(m_stand.plaetzeGesamt, belegt);
     const int frei   = gesamt - belegt;
 
-    a.spalten = spaltenFest > 0
-        ? spaltenFest
-        : spaltenFuer(innen, kachelMindestbreite(), kKachelLuft, gesamt);
+    // Die Masze der Dichte: wie hoch eine Kachel, wie hoch ein freier
+    // Streifen, wie viel Luft dazwischen.
+    const int kachelH = kachelHoehe(dichte);
+    const int freiH   = freiHoehe(dichte);
+    const int luft    = luftFuer(dichte);
+
+    a.dichte  = dichte;
+    a.spalten = qMax(1, spalten);
 
     // ── Die Kacheln ─────────────────────────────────────────────
     int y = kKopfH;
     a.kacheln.reserve(belegt);
     for (int i = 0; i < belegt; ++i) {
-        a.kacheln.append(zelle(kRandX, innen, a.spalten, kKachelLuft,
+        a.kacheln.append(zelle(kRandX, innen, a.spalten, luft,
                                i % a.spalten,
-                               y + (i / a.spalten) * (kKachelH + kKachelLuft),
-                               kKachelH));
+                               y + (i / a.spalten) * (kachelH + luft),
+                               kachelH));
     }
     const int kachelZeilen = zeilenFuer(belegt, a.spalten);
 
@@ -198,41 +228,41 @@ Ft8PlaetzeAnordnung Ft8PlaetzeFlaeche::rechne(int breite, int hoehe,
     const int mitlaeufer  = angebrochen > 0
         ? qMin(frei, a.spalten - angebrochen) : 0;
     for (int k = 0; k < mitlaeufer; ++k) {
-        a.freie.append(zelle(kRandX, innen, a.spalten, kKachelLuft,
+        a.freie.append(zelle(kRandX, innen, a.spalten, luft,
                              angebrochen + k,
-                             y + (kachelZeilen - 1) * (kKachelH + kKachelLuft),
-                             kFreiH));
+                             y + (kachelZeilen - 1) * (kachelH + luft),
+                             qMin(freiH, kachelH)));
     }
-    y += kachelZeilen * (kKachelH + kKachelLuft);
+    y += kachelZeilen * (kachelH + luft);
 
     // ── Die Warteschlange: Pflicht, also vorab gerechnet ────────
     const int warten = int(m_stand.wartende.size());
-    const int warteSpalten = spaltenFest > 0
-        ? spaltenFest
+    const int warteSpalten = alleEinspaltig
+        ? 1
         : spaltenFuer(innen, warteMindestbreite(), kWarteLuft, warten);
     const int warteZeilen = zeilenFuer(warten, warteSpalten);
 
     // ── Zeilen aus lauter freien Plaetzen ───────────────────────
     const int uebrige = frei - mitlaeufer;
-    const int dichtSpalten = spaltenFest > 0
-        ? spaltenFest
-        : spaltenFuer(innen, freiMindestbreite(), kKachelLuft, uebrige);
+    const int dichtSpalten = alleEinspaltig
+        ? 1
+        : spaltenFuer(innen, freiMindestbreite(), luft, uebrige);
     // Was das Ganze braucht, wenn `freiZeilen` Zeilen freier Plaetze
     // dastehen: bis zur Unterkante des Letzten, das gemalt wird, und
     // `kFussH` darunter. KNAPP gerechnet -- danach entscheidet sich,
     // ob ein Rollbalken kommt, und der soll nicht wegen leerer Luft
     // unter der letzten Kachel erscheinen.
     auto braucht = [&](int freiZeilen) {
-        const int unterZeilen = y + freiZeilen * (kFreiH + kKachelLuft);
+        const int unterZeilen = y + freiZeilen * (freiH + luft);
         if (warten > 0) {
             return unterZeilen + kWarteKopfH
                    + (warteZeilen - 1) * kWarteZeileH + kWarteSchrift + kFussH;
         }
         const bool zeilen = kachelZeilen > 0 || freiZeilen > 0;
-        return (zeilen ? unterZeilen - kKachelLuft : kKopfH) + kFussH;
+        return (zeilen ? unterZeilen - luft : kKopfH) + kFussH;
     };
-    auto mitFreien = [&](int spalten) {
-        return braucht(zeilenFuer(uebrige, spalten));
+    auto mitFreien = [&](int freiSpalten) {
+        return braucht(zeilenFuer(uebrige, freiSpalten));
     };
 
     int freiSpalten = 0;
@@ -248,15 +278,15 @@ Ft8PlaetzeAnordnung Ft8PlaetzeFlaeche::rechne(int breite, int hoehe,
     int freiZeilen = 0;
     if (freiSpalten > 0) {
         for (int k = 0; k < uebrige; ++k) {
-            a.freie.append(zelle(kRandX, innen, freiSpalten, kKachelLuft,
+            a.freie.append(zelle(kRandX, innen, freiSpalten, luft,
                                  k % freiSpalten,
-                                 y + (k / freiSpalten) * (kFreiH + kKachelLuft),
-                                 kFreiH));
+                                 y + (k / freiSpalten) * (freiH + luft),
+                                 freiH));
         }
         freiZeilen = zeilenFuer(uebrige, freiSpalten);
     }
     a.hoehe = braucht(freiZeilen);
-    y += freiZeilen * (kFreiH + kKachelLuft);
+    y += freiZeilen * (freiH + luft);
 
     // ── Die Wartenden darunter, in ihren eigenen Spalten ────────
     if (warten > 0) {
@@ -273,21 +303,208 @@ Ft8PlaetzeAnordnung Ft8PlaetzeFlaeche::rechne(int breite, int hoehe,
     return a;
 }
 
+// ══ Drei Dichten, und welche gilt (2026-11-19) ════════════════════
+//
+// Betreiber, mit einem Bild seines Fensters bei rund 340 x 250 Punkt
+// („2 of 5", die zweite Karte unten abgeschnitten): „wie klein könnte
+// man die slots machen, um diese bei einem kleinen window auch noch
+// sehen zu können? mache vorschläge". Aus vier Blaettern
+// (werkzeug/entwuerfe-ft8-slots-klein-2026-11-19) wurde: automatisch
+// nach Platz, gross -> kompakt -> Zeile. „wir machen deinen vorschlag".
+//
+//   Gross    die Karte von immer, 92 Punkt;
+//   Kompakt  zwei Zeilen, 46 Punkt: Rufzeichen und Tonlage, darunter
+//            Land, Fortschritt und Zug;
+//   Zeile    eine Zeile, 24 Punkt: dasselbe nebeneinander, das Land
+//            gekuerzt oder weg.
+//
+// ── Die Regel ───────────────────────────────────────────────────────
+//
+// Es gilt die GROESSTE Dichte, bei der ALLE eingestellten Plaetze --
+// die belegten Karten und die freien Streifen -- ohne Rollen in die
+// Flaeche passen. Kein Schalter. Die Spaltenregel vom 2026-11-18
+// bleibt: nebeneinander, wenn die Breite es hergibt.
+//
+// Innerhalb einer Dichte zuerst so viele Spalten, dass das Land Platz
+// hat (`basisBreite`); reicht die Hoehe so nicht, mehr Spalten, bis zur
+// Breite, unter der ein Rufzeichen abgeschnitten wuerde (`hartBreite`).
+// Lieber ein gekuerztes Land als die naechstkleinere Karte.
+//
+// Passt selbst die Zeile nicht mit allen Plaetzen, weichen die freien
+// Streifen (belegte vor freien, wie bisher), und reicht auch das nicht,
+// rollt der Gastgeber.
+//
+// ── Die kleine Traegheit ────────────────────────────────────────────
+//
+// Beim Ziehen am Rand liegt die Hoehe laenger genau auf einer Grenze,
+// als man denkt, und ein schwebendes Fenster, das dem Hauptfenster
+// folgt, rundet hin und her. Darum wird eine GROESSERE Dichte erst
+// genommen, wenn sie mit `kHysterese` Punkt Luft passt; kleiner wird
+// es sofort. `bisher` ist die Dichte, die gerade gilt -- ohne
+// Vorgeschichte (`Gross`) ist die Regel rein.
+Ft8PlaetzeAnordnung Ft8PlaetzeFlaeche::anordnungFuer(int breite, int hoehe,
+                                                     Dichte bisher) const
+{
+    using D = Dichte;
+    const int innen  = qMax(0, breite - 2 * kRandX);
+    const int gesamt = qMax(m_stand.plaetzeGesamt,
+                            int(m_stand.plaetze.size()));
+
+    for (D d : {D::Gross, D::Kompakt, D::Zeile}) {
+        // Schmaler als ein Rufzeichen in dieser Dichte braucht: sie
+        // kommt nicht in Frage.
+        if (innen < hartBreite(d)) { continue; }
+        const int grenze =
+            hoehe - (int(d) < int(bisher) ? kHysterese : 0);
+        const int von = spaltenFuer(innen, basisBreite(d), luftFuer(d), gesamt);
+        const int bis = spaltenFuer(innen, hartBreite(d), luftFuer(d), gesamt);
+        for (int spalten = von; spalten <= bis; ++spalten) {
+            const Ft8PlaetzeAnordnung a = rechne(breite, grenze, d, spalten,
+                                                 false);
+            if (a.hoehe <= grenze
+                && a.freieArt != Ft8PlaetzeAnordnung::Freie::Gewichen) {
+                return a;
+            }
+        }
+    }
+
+    // Nichts zeigt alle Plaetze: die kleinste Dichte, die freien
+    // Streifen weichen. Auch hier zuerst die bequeme Spaltenzahl.
+    const D klein = innen >= hartBreite(D::Zeile) ? D::Zeile : D::Kompakt;
+    const int von = spaltenFuer(innen, basisBreite(klein), luftFuer(klein),
+                                gesamt);
+    const int bis = qMax(von, spaltenFuer(innen, hartBreite(klein),
+                                          luftFuer(klein), gesamt));
+    for (int spalten = von; spalten < bis; ++spalten) {
+        const Ft8PlaetzeAnordnung a = rechne(breite, hoehe, klein, spalten,
+                                             false);
+        if (a.hoehe <= hoehe) { return a; }
+    }
+    return rechne(breite, hoehe, klein, bis, false);
+}
+
 Ft8PlaetzeAnordnung Ft8PlaetzeFlaeche::anordnungFuer(int breite,
                                                      int hoehe) const
 {
-    return rechne(breite, hoehe, 0);
+    return anordnungFuer(breite, hoehe, Dichte::Gross);
+}
+
+void Ft8PlaetzeFlaeche::merkeDichte()
+{
+    m_dichte = anordnungFuer(width(), height(), m_dichte).dichte;
+}
+
+void Ft8PlaetzeFlaeche::resizeEvent(QResizeEvent* ev)
+{
+    QWidget::resizeEvent(ev);
+    merkeDichte();
 }
 
 int Ft8PlaetzeFlaeche::pflichtHoehe(int breite) const
 {
-    // Hoehe null: nichts Freiwilliges findet Platz.
-    return rechne(breite, 0, 0).hoehe;
+    // Hoehe null: nichts Freiwilliges findet Platz -- die kleinste
+    // Dichte, so viele Spalten wie moeglich, ohne freie Zeilen.
+    return anordnungFuer(breite, 0).hoehe;
 }
 
 int Ft8PlaetzeFlaeche::wunschHoehe(int breite) const
 {
-    return rechne(breite, QWIDGETSIZE_MAX, 0).hoehe;
+    return anordnungFuer(breite, QWIDGETSIZE_MAX).hoehe;
+}
+
+int Ft8PlaetzeFlaeche::kachelHoehe(Dichte d)
+{
+    switch (d) {
+    case Dichte::Gross:   return kKachelH;
+    case Dichte::Kompakt: return kKompaktH;
+    case Dichte::Zeile:   return kZeileH;
+    }
+    return kKachelH;
+}
+
+int Ft8PlaetzeFlaeche::freiHoehe(Dichte d)
+{
+    return d == Dichte::Gross ? kFreiH : kFreiFlachH;
+}
+
+int Ft8PlaetzeFlaeche::luftFuer(Dichte d)
+{
+    switch (d) {
+    case Dichte::Gross:   return kKachelLuft;
+    case Dichte::Kompakt: return kKompaktLuft;
+    case Dichte::Zeile:   return kZeileLuft;
+    }
+    return kKachelLuft;
+}
+
+// ── Woran die Breiten der kleinen Dichten haengen ───────────────────
+//
+// Wie bei der grossen Karte aus den Rechtecken, in die gemalt wird --
+// siehe `maleKompakt` und `maleZeile`; wer dort ein Masz aendert,
+// aendert es in den Konstanten oben.
+
+int Ft8PlaetzeFlaeche::rufBreite(Dichte d) const
+{
+    QFont fett = font();
+    fett.setPointSizeF(d == Dichte::Zeile ? kZeileRufPt : kKompaktRufPt);
+    QFont cq = fett;
+    fett.setBold(true);
+    const QFontMetrics mFett(fett);
+    const QFontMetrics mCq(cq);
+    int breite = mFett.horizontalAdvance(kMassRuf);
+    for (const Ft8PlatzStand& z : m_stand.plaetze) {
+        breite = qMax(breite, z.partner.isEmpty()
+                                  ? mCq.horizontalAdvance(tr("calling CQ"))
+                                  : mFett.horizontalAdvance(z.partner));
+    }
+    return breite + 2;
+}
+
+int Ft8PlaetzeFlaeche::landBreite() const
+{
+    QFont klein = font();
+    klein.setPointSizeF(9.0);
+    const QFontMetrics m(klein);
+    int breite = m.horizontalAdvance(kMassLand);
+    for (const Ft8PlatzStand& z : m_stand.plaetze) {
+        breite = qMax(breite, m.horizontalAdvance(
+            z.partner.isEmpty() ? tr("waiting for an answer") : z.land));
+    }
+    return breite + 2;
+}
+
+int Ft8PlaetzeFlaeche::hartBreite(Dichte d) const
+{
+    switch (d) {
+    case Dichte::Gross:
+        return kachelMindestbreite();
+    case Dichte::Kompakt:
+        // Oben das Rufzeichen neben der Tonlage, unten Fortschritt und
+        // Pille -- das Land darf dort ganz weichen.
+        return qMax(rufBreite(d) + kKompaktNebenRuf, kKompaktNebenLand);
+    case Dichte::Zeile:
+        // Nummer, Rufzeichen, Pille, Tonlage. Fortschritt und Land
+        // weichen vorher.
+        return rufBreite(d) + kZeileNebenRuf;
+    }
+    return kachelMindestbreite();
+}
+
+int Ft8PlaetzeFlaeche::basisBreite(Dichte d) const
+{
+    switch (d) {
+    case Dichte::Gross:
+        return kachelMindestbreite();
+    case Dichte::Kompakt:
+        // Mit dem ganzen Land in der zweiten Zeile.
+        return qMax(hartBreite(d), landBreite() + kKompaktNebenLand);
+    case Dichte::Zeile:
+        // Mit Fortschritt und einem gekuerzten Land -- der halben
+        // Breite des Maszlandes, „European…".
+        return rufBreite(d) + kZeileNebenRuf + kZeileStriche + 8
+               + landBreite() / 2 + 8;
+    }
+    return kachelMindestbreite();
 }
 
 int Ft8PlaetzeFlaeche::kachelMindestbreite() const
@@ -356,7 +573,8 @@ int Ft8PlaetzeFlaeche::noetigeHoehe() const
     // Die Rechnung ist dieselbe wie vor dem 2026-11-18: Kopf, je
     // Kachel 92 + 8, je freiem Platz 30 + 8 (Entwurf B, 2026-11-13),
     // die Wartenden, 10 darunter.
-    const int h = rechne(kHinweisBreite, QWIDGETSIZE_MAX, 1).hoehe
+    const int h = rechne(kHinweisBreite, QWIDGETSIZE_MAX, Dichte::Gross, 1,
+                         true).hoehe
                   + (m_stand.wartende.isEmpty() ? kHinweisLuftKacheln
                                                 : kHinweisLuftWartende);
     // ── Die Untergrenze ist kein Geschmack (2026-10-30) ─────────
@@ -393,13 +611,19 @@ void Ft8PlaetzeFlaeche::paintEvent(QPaintEvent*)
     p.fillRect(rect(), farbe(Style::kPanelBg));
 
     // Wo was steht, rechnet `anordnungFuer` -- aus der Groesse, die
-    // die Flaeche in DIESEM Augenblick hat. Kein gemerkter Stand, der
-    // beim Ziehen am Rand einen Zug hinterherhinken koennte.
+    // die Flaeche in DIESEM Augenblick hat. Gemerkt ist nur die Dichte
+    // (fuer die kleine Traegheit beim Ziehen), und die wird bei jeder
+    // Groessenaenderung und bei jedem neuen Stand nachgefuehrt.
     const Ft8PlaetzeAnordnung a = anordnung();
 
     maleKopfzeile(p);
     for (int i = 0; i < a.kacheln.size(); ++i) {
-        maleKachel(p, a.kacheln.at(i), i + 1, m_stand.plaetze.at(i));
+        const Ft8PlatzStand& z = m_stand.plaetze.at(i);
+        switch (a.dichte) {
+        case Dichte::Gross:   maleKachel(p, a.kacheln.at(i), i + 1, z);  break;
+        case Dichte::Kompakt: maleKompakt(p, a.kacheln.at(i), i + 1, z); break;
+        case Dichte::Zeile:   maleZeile(p, a.kacheln.at(i), i + 1, z);   break;
+        }
     }
     // Und die freien (Entwurf B, 2026-11-13): „schön wäre es, wenn
     // man dann auch alle 3 sieht." Sie stehen da, solange die Hoehe
@@ -540,6 +764,168 @@ void Ft8PlaetzeFlaeche::maleKachel(QPainter& p, const QRect& r, int nummer,
     }
 }
 
+// ── Kompakt: zwei Zeilen (2026-11-19) ────────────────────────────────
+//
+// Blatt A aus werkzeug/entwuerfe-ft8-slots-klein-2026-11-19: oben
+// Platznummer, Rufzeichen und Tonlage, darunter Land, Fortschritt und
+// Zug. Dieselben Farben und dieselbe Schrift wie die grosse Karte; es
+// fehlt nur die Rapportzeile -- sie ist das Erste, worauf man in einem
+// kleinen Fenster verzichten kann, der Zug sagt, wie weit es ist.
+void Ft8PlaetzeFlaeche::maleKompakt(QPainter& p, const QRect& r, int nummer,
+                                    const Ft8PlatzStand& z)
+{
+    const int w = r.width();
+    if (w < 80) { return; }
+    const bool cq = z.partner.isEmpty();
+
+    p.setPen(farbe(Style::kBorderSubtle));
+    p.setBrush(farbe(Style::kTileActiveBg));
+    p.drawRoundedRect(QRectF(r).adjusted(0.5, 0.5, -0.5, -0.5), 8, 8);
+
+    QFont klein = font();
+    klein.setPointSizeF(9.0);
+    p.setFont(klein);
+    p.setPen(farbe(Style::kTextInactive));
+    p.drawText(QRect(r.left() + 8, r.top() + 7, 14, 14),
+               Qt::AlignLeft | Qt::AlignVCenter, QString::number(nummer));
+
+    const int tx = r.left() + 28;
+
+    // Rufzeichen, fett -- in der kleinen Karte traegt es das Gewicht,
+    // das in der grossen die Groesse hat.
+    QFont ruf = font();
+    ruf.setPointSizeF(kKompaktRufPt);
+    ruf.setBold(!cq);
+    p.setFont(ruf);
+    p.setPen(farbe(cq ? Style::kTextScale : Style::kTextPrimary));
+    p.drawText(QRect(tx, r.top() + 3, w - kKompaktNebenRuf, 20),
+               Qt::AlignLeft | Qt::AlignVCenter,
+               cq ? tr("calling CQ") : z.partner);
+
+    p.setFont(Style::monoFont(font(), 12));
+    p.setPen(farbe(Style::kTextSecondary));
+    p.drawText(QRect(r.right() - 8 - kKompaktTonB, r.top() + 6,
+                     kKompaktTonB, 14),
+               Qt::AlignRight | Qt::AlignVCenter, tr("%1 Hz").arg(z.tonHz));
+
+    // Zweite Zeile, von rechts: Pille, Fortschritt, und was bleibt,
+    // bekommt das Land.
+    const QRect pille(r.right() - 8 - kPilleB, r.top() + 25, kPilleB, 15);
+    if (!z.zug.isEmpty()) {
+        p.setPen(farbe(Style::kBorder));
+        p.setBrush(farbe(Style::kPanelBg));
+        p.drawRoundedRect(QRectF(pille).adjusted(0.5, 0.5, -0.5, -0.5), 6, 6);
+        p.setFont(klein);
+        p.setPen(farbe(Style::kTextPrimary));
+        p.drawText(pille, Qt::AlignCenter, z.zug);
+    }
+    const int sx = pille.left() - 8 - kKompaktStriche;
+    const int sy = r.top() + 33;
+    for (int k = 0; k < kStufen; ++k) {
+        const int x0 = sx + k * 17;
+        p.setPen(QPen(farbe(k < z.stufe ? Style::kTextSecondary
+                                        : Style::kBorder), 2));
+        p.drawLine(x0, sy, x0 + 12, sy);
+    }
+
+    const int landB = sx - 8 - tx;
+    if (landB >= kLandMindestB) {
+        p.setFont(klein);
+        p.setPen(farbe(cq ? Style::kTextInactive : Style::kTextScale));
+        const QString land = cq ? tr("waiting for an answer") : z.land;
+        p.drawText(QRect(tx, r.top() + 25, landB, 15),
+                   Qt::AlignLeft | Qt::AlignVCenter,
+                   QFontMetrics(klein).elidedText(land, Qt::ElideRight, landB));
+    }
+}
+
+// ── Zeile: eine Zeile je Platz (2026-11-19) ──────────────────────────
+//
+// Blatt B: Nummer, Rufzeichen, Land, Fortschritt, Zug, Tonlage -- in
+// dieser Reihenfolge, und in umgekehrter weicht es, wenn die Breite
+// fehlt: zuerst kuerzt das Land („European…"), dann faellt es weg, dann
+// der Fortschritt. Nummer, Rufzeichen, Zug und Tonlage bleiben immer.
+//
+// Das Rufzeichen hat in allen Zeilen dieselbe Spaltenbreite (das
+// breiteste, das gerade dasteht), damit Land und Fortschritt
+// untereinander stehen.
+void Ft8PlaetzeFlaeche::maleZeile(QPainter& p, const QRect& r, int nummer,
+                                  const Ft8PlatzStand& z)
+{
+    const int w = r.width();
+    if (w < 80) { return; }
+    const bool cq = z.partner.isEmpty();
+
+    p.setPen(farbe(Style::kBorderSubtle));
+    p.setBrush(farbe(Style::kTileActiveBg));
+    p.drawRoundedRect(QRectF(r).adjusted(0.5, 0.5, -0.5, -0.5), 6, 6);
+
+    QFont klein = font();
+    klein.setPointSizeF(9.0);
+    p.setFont(klein);
+    p.setPen(farbe(Style::kTextInactive));
+    p.drawText(QRect(r.left() + 8, r.top(), 14, r.height()),
+               Qt::AlignLeft | Qt::AlignVCenter, QString::number(nummer));
+
+    const int tx    = r.left() + 28;
+    const int rufB  = rufBreite(Dichte::Zeile);
+
+    QFont ruf = font();
+    ruf.setPointSizeF(kZeileRufPt);
+    ruf.setBold(!cq);
+    p.setFont(ruf);
+    p.setPen(farbe(cq ? Style::kTextScale : Style::kTextPrimary));
+    p.drawText(QRect(tx, r.top(), rufB, r.height()),
+               Qt::AlignLeft | Qt::AlignVCenter,
+               cq ? tr("calling CQ") : z.partner);
+
+    // Von rechts: die Tonlage ohne „Hz" -- die Einheit steht in der
+    // grossen Karte, und vier Ziffern zwischen 200 und 3000 sind in
+    // diesem Fenster nichts anderes.
+    const QRect ton(r.right() - 8 - kZeileTonB, r.top(), kZeileTonB,
+                    r.height());
+    p.setFont(Style::monoFont(font(), 11));
+    p.setPen(farbe(Style::kTextSecondary));
+    p.drawText(ton, Qt::AlignRight | Qt::AlignVCenter,
+               QString::number(z.tonHz));
+
+    const QRect pille(ton.left() - 8 - kPilleB,
+                      r.top() + (r.height() - 16) / 2, kPilleB, 16);
+    if (!z.zug.isEmpty()) {
+        p.setPen(farbe(Style::kBorder));
+        p.setBrush(farbe(Style::kPanelBg));
+        p.drawRoundedRect(QRectF(pille).adjusted(0.5, 0.5, -0.5, -0.5), 6, 6);
+        p.setFont(klein);
+        p.setPen(farbe(Style::kTextPrimary));
+        p.drawText(pille, Qt::AlignCenter, z.zug);
+    }
+
+    // Der Fortschritt, wenn neben dem Rufzeichen Platz ist.
+    const int nachRuf = tx + rufB + 8;
+    int rechts = pille.left() - 8;          // bis hierher reicht das Land
+    const int sx = rechts - kZeileStriche;
+    if (sx >= nachRuf) {
+        const int sy = r.top() + r.height() / 2;
+        for (int k = 0; k < kStufen; ++k) {
+            const int x0 = sx + k * 11;
+            p.setPen(QPen(farbe(k < z.stufe ? Style::kTextSecondary
+                                            : Style::kBorder), 2));
+            p.drawLine(x0, sy, x0 + 7, sy);
+        }
+        rechts = sx - 8;
+    }
+
+    const int landB = rechts - nachRuf;
+    if (landB >= kLandMindestB) {
+        p.setFont(klein);
+        p.setPen(farbe(cq ? Style::kTextInactive : Style::kTextScale));
+        const QString land = cq ? tr("waiting for an answer") : z.land;
+        p.drawText(QRect(nachRuf, r.top(), landB, r.height()),
+                   Qt::AlignLeft | Qt::AlignVCenter,
+                   QFontMetrics(klein).elidedText(land, Qt::ElideRight, landB));
+    }
+}
+
 // ── Ein freier Platz (Entwurf B, 2026-11-13) ─────────────────────────
 //
 // Betreiber mit `slots 3` vor einem Fenster, das „1 of 3" und eine
@@ -565,15 +951,19 @@ void Ft8PlaetzeFlaeche::maleFreien(QPainter& p, const QRect& r, int nummer)
 
     p.setPen(farbe(Style::kBorderSubtle));
     p.setBrush(Qt::NoBrush);
-    p.drawRoundedRect(QRectF(r).adjusted(0.5, 0.5, -0.5, -0.5), 8, 8);
+    // In den kleinen Dichten ist der Streifen 18 hoch statt 30
+    // (2026-11-19); der Radius geht mit, sonst wird aus dem Streifen
+    // eine Pille.
+    const qreal radius = r.height() < kFreiH ? 6 : 8;
+    p.drawRoundedRect(QRectF(r).adjusted(0.5, 0.5, -0.5, -0.5), radius, radius);
 
     QFont klein = font();
     klein.setPointSizeF(9.0);
     p.setFont(klein);
     p.setPen(farbe(Style::kTextInactive));
-    p.drawText(QRect(r.left() + 8, r.top(), 14, kFreiH),
+    p.drawText(QRect(r.left() + 8, r.top(), 14, r.height()),
                Qt::AlignLeft | Qt::AlignVCenter, QString::number(nummer));
-    p.drawText(QRect(r.left() + 28, r.top(), w - 40, kFreiH),
+    p.drawText(QRect(r.left() + 28, r.top(), w - 40, r.height()),
                Qt::AlignLeft | Qt::AlignVCenter, tr("free"));
 }
 

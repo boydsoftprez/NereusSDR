@@ -56,6 +56,9 @@
 //                 (nebeneinander / Raster / untereinander). Martin
 //                 Fischer (OE5SOS), KI-gestuetzt ueber Anthropic
 //                 Claude (Claude Code).
+//   2026-11-19 — Drei Dichten (gross / kompakt / Zeile), die nach dem
+//                 Platz von selbst wechseln. Martin Fischer (OE5SOS),
+//                 KI-gestuetzt ueber Anthropic Claude (Claude Code).
 // =================================================================
 
 #include "AppletWidget.h"
@@ -74,6 +77,14 @@ namespace Longpath {
 /// -- die Malflaeche malt danach, und ein Prueflauf liest dieselben
 /// Rechtecke, statt Bildpunkte zu zaehlen.
 struct Ft8PlaetzeAnordnung {
+    /// Wie gross die Karten sind (2026-11-19). Von gross nach klein --
+    /// die Reihenfolge wird verglichen.
+    enum class Dichte {
+        Gross,    ///< die Karte von immer, 92 Punkt
+        Kompakt,  ///< zwei Zeilen, 46 Punkt
+        Zeile     ///< eine Zeile, 24 Punkt
+    };
+    Dichte dichte{Dichte::Gross};
     /// Spalten des Platz-Rasters.
     int spalten{1};
     /// Je Kachel ein Rechteck, in der Reihenfolge von
@@ -125,11 +136,44 @@ public:
     // Wartende -- darunter rollt der Gastgeber) und was das Panel
     // gern haette (`wunschHoehe`: dazu jeder freie Platz).
 
-    /// Fuer eine gegebene Groesse.
+    using Dichte = Ft8PlaetzeAnordnung::Dichte;
+
+    /// Fuer eine gegebene Groesse -- die reine Regel, ohne
+    /// Vorgeschichte.
     Ft8PlaetzeAnordnung anordnungFuer(int breite, int hoehe) const;
+    /// Dasselbe mit der Dichte, die gerade gilt: eine GROESSERE wird
+    /// erst genommen, wenn sie mit `kHysterese` Punkt Luft passt.
+    Ft8PlaetzeAnordnung anordnungFuer(int breite, int hoehe,
+                                      Dichte bisher) const;
     /// Fuer die Groesse, die die Flaeche gerade hat.
     Ft8PlaetzeAnordnung anordnung() const
-    { return anordnungFuer(width(), height()); }
+    { return anordnungFuer(width(), height(), m_dichte); }
+    /// Die Dichte, die gerade gilt.
+    Dichte dichte() const { return m_dichte; }
+
+    // ── Die Masze der kleinen Dichten (2026-11-19) ──────────────
+    // Aus den Blaettern A und B,
+    // werkzeug/entwuerfe-ft8-slots-klein-2026-11-19.
+    static constexpr int kKompaktH    = 46;
+    static constexpr int kKompaktLuft = 5;
+    static constexpr int kZeileH      = 24;
+    static constexpr int kZeileLuft   = 4;
+    /// Ein freier Platz in den kleinen Dichten: flacher als die 30
+    /// der grossen.
+    static constexpr int kFreiFlachH  = 18;
+    /// Wie viel Luft eine groessere Dichte braucht, bevor sie die
+    /// kleinere abloest.
+    static constexpr int kHysterese   = 6;
+
+    static int kachelHoehe(Dichte d);
+    static int freiHoehe(Dichte d);
+    static int luftFuer(Dichte d);
+    /// Unter dieser Breite wuerde in der Dichte `d` ein Rufzeichen
+    /// beschnitten -- sie kommt dann nicht in Frage.
+    int hartBreite(Dichte d) const;
+    /// Die bequeme Breite einer Karte: so breit, dass auch das Land
+    /// steht. Danach richtet sich die Spaltenzahl zuerst.
+    int basisBreite(Dichte d) const;
 
     int pflichtHoehe(int breite) const;
     int wunschHoehe(int breite) const;
@@ -140,8 +184,13 @@ public:
     /// langer Landesname brauchen -- sonst sprange das Raster mit
     /// jedem neuen Partner um.
     int kachelMindestbreite() const;
-    /// Die Breite, unter der eine Kachel beschnitten wuerde.
-    int mindestBreite() const { return kachelMindestbreite() + 2 * kRandX; }
+    /// Die Breite, unter der in JEDER Dichte etwas beschnitten wuerde
+    /// -- erst dann rollt das Fenster waagrecht.
+    int mindestBreite() const
+    {
+        return qMin(hartBreite(Dichte::Kompakt), hartBreite(Dichte::Zeile))
+               + 2 * kRandX;
+    }
 
     /// Die Breite, fuer die `sizeHint()` und `noetigeHoehe()` rechnen.
     static constexpr int kHinweisBreite = 320;
@@ -168,12 +217,19 @@ public:
 
 protected:
     void paintEvent(QPaintEvent*) override;
+    void resizeEvent(QResizeEvent* ev) override;
 
 private:
     /// Gibt die Hoehe zurueck, die sie gebraucht hat.
     int  maleKopfzeile(QPainter& p);
     void maleKachel(QPainter& p, const QRect& r, int nummer,
                     const Ft8PlatzStand& z);
+    /// Die Karte in zwei Zeilen (Blatt A, 2026-11-19).
+    void maleKompakt(QPainter& p, const QRect& r, int nummer,
+                     const Ft8PlatzStand& z);
+    /// Die Karte in einer Zeile (Blatt B, 2026-11-19).
+    void maleZeile(QPainter& p, const QRect& r, int nummer,
+                   const Ft8PlatzStand& z);
     /// Ein freier Platz als Streifen (Entwurf B).
     void maleFreien(QPainter& p, const QRect& r, int nummer);
     void maleWartende(QPainter& p, const Ft8PlaetzeAnordnung& a);
@@ -185,13 +241,25 @@ private:
     int freiMindestbreite() const;
 
     /// Die eine Rechnung hinter `anordnungFuer`, `pflichtHoehe`,
-    /// `wunschHoehe` und `noetigeHoehe`. `spaltenFest` > 0 legt die
-    /// Spaltenzahl fest, statt sie aus der Breite zu nehmen.
-    Ft8PlaetzeAnordnung rechne(int breite, int hoehe, int spaltenFest) const;
+    /// `wunschHoehe` und `noetigeHoehe`: die Rechtecke fuer EINE Dichte
+    /// und EINE Spaltenzahl. Welche gilt, waehlt `anordnungFuer`.
+    /// `alleEinspaltig` haelt auch Wartende und freie Streifen in einer
+    /// Spalte (der Groessenhinweis).
+    Ft8PlaetzeAnordnung rechne(int breite, int hoehe, Dichte dichte,
+                               int spalten, bool alleEinspaltig) const;
+    /// Die Dichte fuer die Groesse nachfuehren, die die Flaeche hat.
+    void merkeDichte();
+    /// Wie breit das breiteste Rufzeichen in der Dichte `d` steht.
+    int rufBreite(Dichte d) const;
+    /// Wie breit das laengste Land steht.
+    int landBreite() const;
     /// „sent -05   rcvd +12" -- gemalt und gemessen aus EINER Quelle.
     static QString rapportZeile(const Ft8PlatzStand& z);
 
     Ft8PlaetzeStand m_stand;
+    /// Die Dichte, die gerade gilt -- gemerkt nur fuer die kleine
+    /// Traegheit beim Ziehen (siehe `anordnungFuer`).
+    Dichte          m_dichte{Dichte::Gross};
 };
 
 class Ft8PlaetzeApplet : public AppletWidget

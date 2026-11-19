@@ -39,6 +39,11 @@
 // (`schmalUndHoch…`, `inSeinerGroesse…`, `derLeereHinweis…`) sind in
 // beiden Fassungen gruen -- sie halten fest, was bleiben muss.
 //
+// 2026-11-19, drei Dichten: `inSeinemKleinenFenster…` und
+// `beimZiehenInDieHoehe…` sind dazugekommen; „ganz zu sehen" haengt
+// seither daran, dass eine Kachel den Rand des Sichtbereichs nicht
+// beruehrt, statt an ihrer Hoehe (es gibt jetzt drei).
+//
 // =================================================================
 // Modification history (Longpath):
 //   2026-11-18 — Original fuer Longpath von Martin Fischer (OE5SOS),
@@ -143,7 +148,7 @@ struct Aufbau {
 
 /// Was im Sichtbereich an Kacheln zu SEHEN ist.
 struct Gesehen {
-    /// In voller Hoehe sichtbar, von links oben nach rechts unten.
+    /// Ganz sichtbar, von links oben nach rechts unten.
     QVector<QRect> ganze;
     /// Vom Rand des Sichtbereichs angeschnitten.
     QVector<QRect> angeschnittene;
@@ -212,12 +217,21 @@ Gesehen sucheKacheln(const Aufbau& a)
             const QRect r(qRound(links / dpr), qRound(oben / dpr),
                           qRound((rechts - links + 1) / dpr),
                           qRound((unten - oben + 1) / dpr));
-            if (r.width() < 60) { continue; }
-            // Die Mulde liegt einen Punkt innerhalb des Rahmens.
-            if (r.height() >= Ft8PlaetzeFlaeche::kKachelH - 4) {
-                g.ganze.append(r);
-            } else if (r.height() >= 3) {
+            if (r.width() < 60 || r.height() < 3) { continue; }
+            // Ganz zu sehen ist eine Kachel, die den Rand des
+            // Sichtbereichs NICHT beruehrt: unter und neben ihr steht
+            // noch ihr Rahmen und etwas Grund. Seit dem 2026-11-19 gibt
+            // es drei Kartenhoehen (92, 46, 24) -- an der Hoehe allein
+            // waere eine angeschnittene grosse Karte nicht mehr von
+            // einer ganzen kleinen zu unterscheiden.
+            const QSize sichtG = sicht->size();
+            const bool beruehrt = r.top() <= 0 || r.left() <= 0
+                || r.bottom() >= sichtG.height() - 2
+                || r.right() >= sichtG.width() - 2;
+            if (beruehrt) {
                 g.angeschnittene.append(r);
+            } else {
+                g.ganze.append(r);
             }
         }
     }
@@ -387,27 +401,29 @@ private slots:
 
     // ── Zu klein: ein Rollbalken, keine verlorene Kachel ──────────
     //
-    // Vorher gab es keinen -- das Applet behauptete 150 Punkt
-    // Mindesthoehe, der Rollbereich glaubte es, und die dritte Kachel
-    // war nicht zu erreichen.
+    // Vor dem 2026-11-18 gab es keinen -- das Applet behauptete 150
+    // Punkt Mindesthoehe, der Rollbereich glaubte es, und die dritte
+    // Kachel war nicht zu erreichen. Seit dem 2026-11-19 werden die
+    // Karten erst kleiner; gerollt wird, wenn auch sechs einzeilige
+    // nicht hineinpassen.
     void zuKleinKommtEinRollbalkenStattEinerVerlorenenKachel()
     {
-        Aufbau a(standMit(3, 3));
-        a.fenster->resize(300, 220);
+        Aufbau a(standMit(6, 6));
+        a.fenster->resize(300, 150);
         a.fenster->show();
         QVERIFY(QTest::qWaitForWindowExposed(a.fenster.get(), kFensterFrist));
         Aufbau::beruhige();
 
         QVERIFY2(a.rolltSenkrecht(),
-                 "drei Kacheln untereinander passen nicht in 220 Punkt -- "
-                 "ohne Rollbalken ist die dritte nicht zu erreichen");
-        const int alleDrei = kKopf + 3 * Ft8PlaetzeFlaeche::kKachelH
-                             + 2 * Ft8PlaetzeFlaeche::kKachelLuft;
-        QVERIFY2(a.roll->widget()->height() >= alleDrei,
-                 qPrintable(QStringLiteral("das Applet ist %1 hoch, drei "
-                                           "Kacheln brauchen %2")
+                 "sechs Zeilen untereinander passen nicht in 150 Punkt -- "
+                 "ohne Rollbalken ist die letzte nicht zu erreichen");
+        const int alleSechs = kKopf + 6 * Ft8PlaetzeFlaeche::kZeileH
+                              + 5 * Ft8PlaetzeFlaeche::kZeileLuft;
+        QVERIFY2(a.roll->widget()->height() >= alleSechs,
+                 qPrintable(QStringLiteral("das Applet ist %1 hoch, sechs "
+                                           "Zeilen brauchen %2")
                                 .arg(a.roll->widget()->height())
-                                .arg(alleDrei)));
+                                .arg(alleSechs)));
 
         // Oben: die erste ganz. Unten: die letzte ganz.
         const Gesehen oben = sucheKacheln(a);
@@ -421,6 +437,101 @@ private slots:
         QVERIFY2(unten.ganze.last().bottom()
                      < a.roll->viewport()->height(),
                  beschreibe(unten).constData());
+    }
+
+    // ══ Drei Dichten (2026-11-19) ═════════════════════════════════
+    //
+    // Betreiber, mit einem Bild seines Fensters bei rund 340 x 250
+    // („2 of 5", die zweite Karte unten abgeschnitten): „wie klein
+    // könnte man die slots machen, um diese bei einem kleinen window
+    // auch noch sehen zu können?"
+    //
+    // Drei Fenster, dieselben drei von fuenf Plaetzen: in jedem sind
+    // alle drei Karten GANZ zu sehen, ohne Rollbalken -- nur
+    // verschieden hoch. Der mittlere Fall ist seiner; gegen die
+    // Fassung vom 2026-11-18 ist er rot (die grossen Karten passen
+    // nicht, es rollt).
+    void inSeinemKleinenFensterStehenAlleDreiDa_data()
+    {
+        QTest::addColumn<int>("hoehe");
+        QTest::addColumn<int>("kartenhoeheVon");
+        QTest::addColumn<int>("kartenhoeheBis");
+        // Die Mulde liegt einen Punkt innerhalb des Rahmens: 90, 44, 22.
+        QTest::newRow("340x430 gross")   << 430 << 88 << 92;
+        QTest::newRow("340x250 kompakt") << 250 << 42 << 46;
+        QTest::newRow("340x190 Zeile")   << 190 << 20 << 24;
+    }
+    void inSeinemKleinenFensterStehenAlleDreiDa()
+    {
+        QFETCH(int, hoehe);
+        QFETCH(int, kartenhoeheVon);
+        QFETCH(int, kartenhoeheBis);
+        Aufbau a(standMit(3, 5));
+        a.fenster->resize(340, hoehe);
+        a.fenster->show();
+        QVERIFY(QTest::qWaitForWindowExposed(a.fenster.get(), kFensterFrist));
+        Aufbau::beruhige();
+
+        const Gesehen g = sucheKacheln(a);
+        QVERIFY2(g.ganze.size() == 3, beschreibe(g).constData());
+        QVERIFY2(g.angeschnittene.isEmpty(), beschreibe(g).constData());
+        QVERIFY2(!a.rolltSenkrecht(), beschreibe(g).constData());
+        for (const QRect& r : g.ganze) {
+            QVERIFY2(r.height() >= kartenhoeheVon
+                         && r.height() <= kartenhoeheBis,
+                     beschreibe(g).constData());
+        }
+        // Untereinander, gleich breit, und sie fuellen die Breite.
+        QVERIFY2(qAbs(g.ganze.at(0).left() - g.ganze.at(2).left()) <= 1,
+                 beschreibe(g).constData());
+        QVERIFY2(g.ganze.at(0).right() > a.roll->viewport()->width() - 20,
+                 beschreibe(g).constData());
+        // Und unter der letzten Karte ist noch Platz fuer die zwei
+        // freien Streifen -- sie gehoeren zu „alle Plaetze".
+        const int unterDerLetzten =
+            a.roll->viewport()->height() - g.ganze.last().bottom();
+        QVERIFY2(unterDerLetzten
+                     >= 2 * Ft8PlaetzeFlaeche::kFreiFlachH,
+                 beschreibe(g).constData());
+    }
+
+    // Beim Ziehen in die Hoehe: von der Zeile ueber die kompakte zur
+    // grossen Karte und zurueck. Bei JEDER Hoehe sind alle drei Karten
+    // ganz zu sehen, nie eine angeschnittene -- und sie werden auf dem
+    // Weg nach oben nie kleiner.
+    void beimZiehenInDieHoeheWerdenDieKartenGroesser()
+    {
+        Aufbau a(standMit(3, 5));
+        a.fenster->resize(340, 190);
+        a.fenster->show();
+        QVERIFY(QTest::qWaitForWindowExposed(a.fenster.get(), kFensterFrist));
+        Aufbau::beruhige();
+
+        int davor = 0;
+        QVector<int> stufen;
+        for (int h = 190; h <= 450; h += 4) {
+            a.zieheAuf(340, h);
+            const Gesehen g = sucheKacheln(a);
+            const QByteArray wo = QStringLiteral("Hoehe %1: ").arg(h).toUtf8()
+                                  + beschreibe(g);
+            QVERIFY2(g.ganze.size() == 3 && g.angeschnittene.isEmpty(),
+                     wo.constData());
+            QVERIFY2(!a.rolltSenkrecht(), wo.constData());
+            const int kh = g.ganze.first().height();
+            QVERIFY2(kh >= davor, wo.constData());
+            if (kh != davor) { stufen.append(kh); }
+            davor = kh;
+        }
+        // Drei Stufen, nicht mehr: kein Hin und Her an den Grenzen.
+        QVERIFY2(stufen.size() == 3,
+                 qPrintable(QStringLiteral("%1 verschiedene Kartenhoehen")
+                                .arg(stufen.size())));
+        // Und zurueck nach unten wird es wieder klein.
+        a.zieheAuf(340, 190);
+        const Gesehen klein = sucheKacheln(a);
+        QVERIFY2(klein.ganze.size() == 3
+                     && klein.ganze.first().height() <= 24,
+                 beschreibe(klein).constData());
     }
 
     // ── Etwa quadratisch: ein Raster ──────────────────────────────
@@ -473,8 +584,13 @@ private slots:
     // schmalen Seite kommt.
     void beimZiehenOrdnetEsSichNeuUndBleibtNichtHaengen()
     {
-        Aufbau a(standMit(3, 3));
-        a.fenster->resize(300, 210);
+        // Sechs belegte in 180 Punkt Hoehe: schmal passen auch sechs
+        // einzeilige nicht (es rollt), breiter stehen sie in zwei
+        // Spalten, noch breiter als kompakte Karten.
+        constexpr int kPlaetze = 6;
+        constexpr int kHoehe   = 180;
+        Aufbau a(standMit(kPlaetze, kPlaetze));
+        a.fenster->resize(300, kHoehe);
         a.fenster->show();
         QVERIFY(QTest::qWaitForWindowExposed(a.fenster.get(), kFensterFrist));
         Aufbau::beruhige();
@@ -486,26 +602,26 @@ private slots:
         QVector<int> hinweg;   // Zahl der ganz sichtbaren Kacheln
         QVector<bool> hinwegRollt;
         for (int b = kVon; b <= kBis; b += kSchritt) {
-            a.zieheAuf(b, 210);
+            a.zieheAuf(b, kHoehe);
             const Gesehen g = sucheKacheln(a);
             const QByteArray wo = QStringLiteral("Breite %1: ").arg(b)
                                       .toUtf8() + beschreibe(g);
             QVERIFY2(a.rolltSenkrecht()
-                         || (g.ganze.size() == 3
+                         || (g.ganze.size() == kPlaetze
                              && g.angeschnittene.isEmpty()),
                      wo.constData());
             hinweg.append(int(g.ganze.size()));
             hinwegRollt.append(a.rolltSenkrecht());
         }
-        // Am breiten Ende stehen alle drei da, ohne Balken.
-        QCOMPARE(hinweg.last(), 3);
+        // Am breiten Ende stehen alle da, ohne Balken.
+        QCOMPARE(hinweg.last(), kPlaetze);
         QVERIFY(!hinwegRollt.last());
         // Und am schmalen rollt es.
         QVERIFY(hinwegRollt.first());
 
         int i = hinweg.size() - 1;
         for (int b = kVon + i * kSchritt; b >= kVon; b -= kSchritt, --i) {
-            a.zieheAuf(b, 210);
+            a.zieheAuf(b, kHoehe);
             const Gesehen g = sucheKacheln(a);
             const QByteArray wo =
                 QStringLiteral("Rueckweg, Breite %1 (Hinweg: %2 ganze, "
@@ -513,7 +629,10 @@ private slots:
                     .arg(b).arg(hinweg.at(i)).arg(hinwegRollt.at(i))
                     .toUtf8() + beschreibe(g);
             QVERIFY2(a.rolltSenkrecht() == hinwegRollt.at(i), wo.constData());
-            QVERIFY2(int(g.ganze.size()) == hinweg.at(i), wo.constData());
+            // Wo es nicht rollt, stehen alle da -- hin wie zurueck.
+            if (!a.rolltSenkrecht()) {
+                QVERIFY2(int(g.ganze.size()) == kPlaetze, wo.constData());
+            }
         }
     }
 

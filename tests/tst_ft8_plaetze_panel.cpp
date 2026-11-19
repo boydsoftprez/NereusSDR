@@ -369,18 +369,23 @@ private slots:
     // unten hinaus.
     void breitUndNiedrigBrauchtNurEineZeile()
     {
+        using D = Ft8PlaetzeAnordnung::Dichte;
         Ft8PlaetzeFlaeche f;
         f.setzeStand(standMit(3, 3));
         const int k = f.kachelMindestbreite();
 
         // Knapp: Kopf, Kachel, vier Punkt darunter. Die Luft, die der
         // Groessenhinweis laesst, zaehlt hier nicht -- nach dieser Zahl
-        // entscheidet sich, ob ein Rollbalken kommt.
+        // entscheidet sich, ob die grosse Karte noch passt.
         const int eineZeile = Ft8PlaetzeFlaeche::kKopfH
                               + Ft8PlaetzeFlaeche::kKachelH
                               + Ft8PlaetzeFlaeche::kFussH;
-        QCOMPARE(f.pflichtHoehe(breiteFuer(k, 3)), eineZeile);
-        QCOMPARE(f.pflichtHoehe(breiteFuer(k, 1)),
+        QCOMPARE(f.wunschHoehe(breiteFuer(k, 3)), eineZeile);
+        const Ft8PlaetzeAnordnung passt =
+            f.anordnungFuer(breiteFuer(k, 3), eineZeile);
+        QCOMPARE(passt.dichte, D::Gross);
+        QCOMPARE(passt.spalten, 3);
+        QCOMPARE(f.wunschHoehe(breiteFuer(k, 1)),
                  eineZeile + 2 * (Ft8PlaetzeFlaeche::kKachelH
                                   + Ft8PlaetzeFlaeche::kKachelLuft));
     }
@@ -408,9 +413,14 @@ private slots:
         QCOMPARE(zwei.freie.first().height(), Ft8PlaetzeFlaeche::kFreiH);
 
         // Ein freier Platz NEBEN einer Kachel kostet keine Hoehe --
-        // also weicht er auch nicht, wenn es eng wird.
-        QCOMPARE(f.pflichtHoehe(b), f.wunschHoehe(b));
-        QCOMPARE(f.anordnungFuer(b, 0).freie.size(), 1);
+        // also weicht er auch nicht, wenn es eng wird: in jeder
+        // Dichte steht er da, bis hinunter zur kleinsten.
+        QCOMPARE(zwei.hoehe, Ft8PlaetzeFlaeche::kKopfH
+                                 + Ft8PlaetzeFlaeche::kKachelH
+                                 + Ft8PlaetzeFlaeche::kFussH);
+        for (int h : {zwei.hoehe - 1, 60, 0}) {
+            QCOMPARE(f.anordnungFuer(b, h).freie.size(), 1);
+        }
 
         f.setzeStand(standMit(3, 3));
         const Ft8PlaetzeAnordnung drei = f.anordnungFuer(b, 2000);
@@ -440,61 +450,89 @@ private slots:
             QCOMPARE(r.width(), a.kacheln.first().width());
         }
         // Eine Zeile Hoehe -- auch wenn es eng wird, bleiben die drei.
-        QCOMPARE(f.pflichtHoehe(b), f.wunschHoehe(b));
+        QCOMPARE(a.hoehe, Ft8PlaetzeFlaeche::kKopfH
+                              + Ft8PlaetzeFlaeche::kKachelH
+                              + Ft8PlaetzeFlaeche::kFussH);
         QCOMPARE(f.anordnungFuer(b, 0).freie.size(), 3);
     }
 
-    // ── Belegte vor freien ────────────────────────────────────────
+    // ── Belegte vor freien, gross vor klein ───────────────────────
     //
-    // Reicht die Hoehe nicht fuer alles, weichen die Zeilen aus
-    // lauter freien Plaetzen: erst ruecken sie zusammen, dann sind sie
-    // weg. Die Kacheln stehen in allen drei Faellen an derselben
-    // Stelle.
+    // Die ganze Leiter, von viel Hoehe nach wenig, immer einen Punkt
+    // unter dem, was die vorige Stufe brauchte. In JEDER Dichte ruecken
+    // die Zeilen aus lauter freien Plaetzen erst zusammen, bevor die
+    // naechstkleinere Dichte kommt; und erst ganz unten, in der
+    // kleinsten, weichen sie. Die Dichte wird dabei nie wieder
+    // groesser, und die belegten Kacheln sind auf jeder Stufe
+    // vollzaehlig.
     void freieWeichenVorDenBelegten()
     {
         using Art = Ft8PlaetzeAnordnung::Freie;
+        using D   = Ft8PlaetzeAnordnung::Dichte;
         Ft8PlaetzeFlaeche f;
         f.setzeStand(standMit(2, 6));
         // Eine Spalte: zwei Kacheln, darunter vier Streifen.
-        const int b       = breiteFuer(f.kachelMindestbreite(), 1);
+        const int b       = einspaltig(f);
         const int wunsch  = f.wunschHoehe(b);
         const int pflicht = f.pflichtHoehe(b);
         const int streifen = Ft8PlaetzeFlaeche::kFreiH
                              + Ft8PlaetzeFlaeche::kKachelLuft;
-        QCOMPARE(wunsch - pflicht, 4 * streifen);
 
         const Ft8PlaetzeAnordnung voll = f.anordnungFuer(b, wunsch);
+        QCOMPARE(voll.dichte, D::Gross);
         QCOMPARE(voll.freieArt, Art::Voll);
         QCOMPARE(voll.freie.size(), 4);
         QCOMPARE(voll.hoehe, wunsch);
         // Untereinander, in voller Breite -- Entwurf B vom 2026-11-13.
         QCOMPARE(voll.freie.at(0).left(), voll.freie.at(3).left());
         QCOMPARE(voll.freie.at(0).width(), voll.kacheln.at(0).width());
+        QCOMPARE(voll.freie.at(1).top() - voll.freie.at(0).top(), streifen);
 
         // Ein Punkt zu wenig: sie ruecken zusammen. Alle vier sind
-        // noch da, und es kostet weniger Hoehe.
+        // noch da, die Karten bleiben gross und stehen, wo sie standen.
         const Ft8PlaetzeAnordnung dicht = f.anordnungFuer(b, wunsch - 1);
+        QCOMPARE(dicht.dichte, D::Gross);
         QCOMPARE(dicht.freieArt, Art::Dicht);
         QCOMPARE(dicht.freie.size(), 4);
-        QVERIFY2(dicht.hoehe < wunsch,
-                 "zusammengerueckt muss es weniger Hoehe kosten");
         QVERIFY2(dicht.hoehe <= wunsch - 1, "und in die Hoehe passen");
         QCOMPARE(dicht.freie.at(0).top(), dicht.freie.at(1).top());
         QVERIFY(dicht.freie.at(1).left() > dicht.freie.at(0).right());
-
-        // Auch dafuer zu wenig: die Streifen sind weg, keine Kachel.
-        const Ft8PlaetzeAnordnung weg = f.anordnungFuer(b, dicht.hoehe - 1);
-        QCOMPARE(weg.freieArt, Art::Gewichen);
-        QVERIFY(weg.freie.isEmpty());
-        QCOMPARE(weg.hoehe, pflicht);
-
         QCOMPARE(dicht.kacheln, voll.kacheln);
-        QCOMPARE(weg.kacheln,   voll.kacheln);
-        QCOMPARE(weg.kacheln.size(), 2);
 
-        // Und NOCH weniger Hoehe aendert nichts mehr: die Kacheln
-        // bleiben ganz, der Gastgeber rollt.
-        QCOMPARE(f.anordnungFuer(b, 40).kacheln, voll.kacheln);
+        // Und von da die Leiter hinunter.
+        Ft8PlaetzeAnordnung a = dicht;
+        QVector<D> gesehen{D::Gross};
+        for (int stufe = 0; stufe < 12; ++stufe) {
+            const int h = a.hoehe - 1;
+            const Ft8PlaetzeAnordnung n = f.anordnungFuer(b, h);
+            const QByteArray wo =
+                QStringLiteral("Stufe %1, Hoehe %2").arg(stufe).arg(h).toUtf8();
+            QVERIFY2(int(n.dichte) >= int(a.dichte), wo.constData());
+            QVERIFY2(n.kacheln.size() == 2, wo.constData());
+            if (n.dichte == a.dichte) {
+                QVERIFY2(int(n.freieArt) > int(a.freieArt), wo.constData());
+            }
+            if (gesehen.last() != n.dichte) { gesehen.append(n.dichte); }
+            if (n.freieArt == Art::Gewichen) {
+                // Ganz unten: die kleinste Dichte, die Streifen weg --
+                // und von hier an rollt der Gastgeber.
+                QVERIFY2(n.dichte == D::Zeile, wo.constData());
+                QVERIFY2(n.freie.isEmpty(), wo.constData());
+                QVERIFY2(n.hoehe == pflicht, wo.constData());
+                a = n;
+                break;
+            }
+            // Bis dahin steht JEDER Platz da, und es passt.
+            QVERIFY2(n.freie.size() == 4, wo.constData());
+            QVERIFY2(n.hoehe <= h, wo.constData());
+            a = n;
+        }
+        QCOMPARE(a.freieArt, Art::Gewichen);
+        QCOMPARE(gesehen, (QVector<D>{D::Gross, D::Kompakt, D::Zeile}));
+
+        // Und NOCH weniger Hoehe aendert nichts mehr.
+        QCOMPARE(f.anordnungFuer(b, 20).kacheln, a.kacheln);
+        QCOMPARE(f.anordnungFuer(b, 20).hoehe, pflicht);
     }
 
     // ── Nichts ueberlappt, nichts ragt hinaus ─────────────────────
@@ -576,35 +614,239 @@ private slots:
     // eine von Hand gesetzte Mindesthoehe schlaegt die der Anordnung.
     // Der Rollbereich des Fensters sah also 150 und rollte nie -- die
     // dritte Kachel lief unten hinaus.
+    //
+    // Seit dem 2026-11-19 ist das Wenigste die KLEINSTE Dichte: sechs
+    // Zeilen statt sechs grosser Karten. Erst darunter rollt es.
     void dasAppletVerlangtDiePflichthoehe()
     {
+        using D = Ft8PlaetzeAnordnung::Dichte;
         RadioModel radio;
         Ft8PlaetzeApplet panel(&radio);
-        panel.zeigeStand(standMit(3, 3));
+        panel.zeigeStand(standMit(6, 6));
         Ft8PlaetzeFlaeche* f = panel.flaecheForTest();
         const int k = f->kachelMindestbreite();
 
-        // Schmal: drei untereinander.
-        panel.resize(breiteFuer(k, 1), 600);
+        // Schmal: sechs untereinander.
+        panel.resize(einspaltig(*f), 900);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel, 20000));
-        QTRY_COMPARE_WITH_TIMEOUT(panel.minimumHeight(),
-                                  f->pflichtHoehe(panel.width()), 3000);
+        const int sechsZeilen = Ft8PlaetzeFlaeche::kKopfH
+            + 6 * Ft8PlaetzeFlaeche::kZeileH + 5 * Ft8PlaetzeFlaeche::kZeileLuft
+            + Ft8PlaetzeFlaeche::kFussH;
+        QCOMPARE(f->pflichtHoehe(panel.width()), sechsZeilen);
+        QTRY_COMPARE_WITH_TIMEOUT(panel.minimumHeight(), sechsZeilen, 3000);
+        QVERIFY2(sechsZeilen > Ft8PlaetzeApplet::kMindestH,
+                 "die Untergrenze von 150 traegt hier -- so prueft der "
+                 "Fall die Rechnung nicht");
+        // 900 Punkt hoch: da stehen die grossen Karten.
+        QCOMPARE(f->anordnung().dichte, D::Gross);
         QCOMPARE(f->anordnung().spalten, 1);
-        QVERIFY2(panel.minimumHeight()
-                     >= 3 * Ft8PlaetzeFlaeche::kKachelH,
-                 "drei Kacheln untereinander brauchen ihre Hoehe");
 
-        // Breit: eine Zeile -- die Untergrenze von 150 traegt.
-        panel.resize(breiteFuer(k, 3), 600);
+        // Breit: die Untergrenze von 150 traegt.
+        panel.resize(breiteFuer(k, 6), 600);
         QTRY_COMPARE_WITH_TIMEOUT(panel.minimumHeight(),
                                   int(Ft8PlaetzeApplet::kMindestH), 3000);
 
         // Die Flaeche bekommt die ganze Hoehe des Applets: nur so
-        // weiss sie, ob die freien Plaetze hineinpassen.
+        // weiss sie, welche Dichte hineinpasst.
         QTRY_COMPARE_WITH_TIMEOUT(f->height(), panel.height(), 3000);
-        QCOMPARE(f->anordnung().kacheln.size(), 3);
-        QCOMPARE(f->anordnung().spalten, 3);
+        QCOMPARE(f->anordnung().kacheln.size(), 6);
+        QCOMPARE(f->anordnung().spalten, 6);
+    }
+
+    // ══ Drei Dichten (2026-11-19) ═════════════════════════════════
+    //
+    // Betreiber, mit einem Bild seines Fensters bei rund 340 x 250
+    // („2 of 5", die zweite Karte unten abgeschnitten): „wie klein
+    // könnte man die slots machen, um diese bei einem kleinen window
+    // auch noch sehen zu können? mache vorschläge". Gewaehlt: gross ->
+    // kompakt -> Zeile, von selbst nach dem Platz.
+
+    // Die Regel in Zahlen, fuer drei von fuenf in EINER Spalte -- sein
+    // Fall. Die Hoehen kommen aus den Maszen der Karten, nicht aus der
+    // Schrift: auf jedem Rechner dieselben.
+    void dieGroessteDichteDieAllePlaetzeZeigt()
+    {
+        using D   = Ft8PlaetzeAnordnung::Dichte;
+        using Art = Ft8PlaetzeAnordnung::Freie;
+        using F   = Ft8PlaetzeFlaeche;
+        F f;
+        f.setzeStand(standMit(3, 5));
+        const int b = einspaltig(f);
+
+        // Was drei Karten und zwei freie Streifen untereinander
+        // brauchen: Kopf, je Zeile Hoehe + Luft, die letzte Luft ab,
+        // der Fusz dazu.
+        auto alles = [](D d) {
+            return F::kKopfH
+                   + 3 * (F::kachelHoehe(d) + F::luftFuer(d))
+                   + 2 * (F::freiHoehe(d) + F::luftFuer(d))
+                   - F::luftFuer(d) + F::kFussH;
+        };
+        QCOMPARE(alles(D::Gross),   394);
+        QCOMPARE(alles(D::Kompakt), 220);
+        QCOMPARE(alles(D::Zeile),   150);
+
+        for (D d : {D::Gross, D::Kompakt, D::Zeile}) {
+            const Ft8PlaetzeAnordnung a = f.anordnungFuer(b, alles(d));
+            QCOMPARE(a.dichte, d);
+            QCOMPARE(a.freieArt, Art::Voll);
+            QCOMPARE(a.kacheln.size(), 3);
+            QCOMPARE(a.freie.size(), 2);
+            QCOMPARE(a.hoehe, alles(d));
+            QCOMPARE(a.spalten, 1);
+        }
+        // Seine drei Fenster. Die Titelleiste nimmt 22 Punkt:
+        //   340 x 250 -> 228 fuer die Flaeche: kompakt;
+        //   340 x 190 -> 168: Zeile;
+        //   340 x 430 -> 408: gross.
+        QCOMPARE(f.anordnungFuer(b, 228).dichte, D::Kompakt);
+        QCOMPARE(f.anordnungFuer(b, 168).dichte, D::Zeile);
+        QCOMPARE(f.anordnungFuer(b, 408).dichte, D::Gross);
+        for (int h : {228, 168, 408}) {
+            const Ft8PlaetzeAnordnung a = f.anordnungFuer(b, h);
+            QCOMPARE(a.kacheln.size() + a.freie.size(), 5);
+            QVERIFY(a.hoehe <= h);
+        }
+
+        // Unter der kleinsten: die Zeile bleibt, die freien weichen,
+        // und was dann noch fehlt, rollt.
+        const Ft8PlaetzeAnordnung eng = f.anordnungFuer(b, 100);
+        QCOMPARE(eng.dichte, D::Zeile);
+        QCOMPARE(eng.kacheln.size(), 3);
+        QCOMPARE(eng.freieArt, Art::Gewichen);
+        QCOMPARE(eng.hoehe, f.pflichtHoehe(b));
+    }
+
+    // ── Die kleine Traegheit ──────────────────────────────────────
+    //
+    // Kleiner wird es sofort, groesser erst mit sechs Punkt Luft.
+    // Sonst springt die Karte beim Ziehen an der Grenze hin und her.
+    void groesserWirdEsErstMitEtwasLuft()
+    {
+        using D = Ft8PlaetzeAnordnung::Dichte;
+        using F = Ft8PlaetzeFlaeche;
+        F f;
+        f.setzeStand(standMit(3, 3));
+        const int b = einspaltig(f);
+        const int gross = f.wunschHoehe(b);      // drei grosse Karten
+
+        // Ohne Vorgeschichte: genau an der Grenze.
+        QCOMPARE(f.anordnungFuer(b, gross).dichte, D::Gross);
+        QCOMPARE(f.anordnungFuer(b, gross - 1).dichte, D::Kompakt);
+
+        // Wer gross IST, bleibt es an der Grenze, und wird sofort
+        // kleiner, wenn ein Punkt fehlt.
+        QCOMPARE(f.anordnungFuer(b, gross, D::Gross).dichte, D::Gross);
+        QCOMPARE(f.anordnungFuer(b, gross - 1, D::Gross).dichte, D::Kompakt);
+
+        // Wer kompakt ist, wird erst mit Luft wieder gross.
+        QCOMPARE(f.anordnungFuer(b, gross, D::Kompakt).dichte, D::Kompakt);
+        QCOMPARE(f.anordnungFuer(b, gross + F::kHysterese - 1, D::Kompakt)
+                     .dichte, D::Kompakt);
+        QCOMPARE(f.anordnungFuer(b, gross + F::kHysterese, D::Kompakt).dichte,
+                 D::Gross);
+
+        // Dasselbe am Widget, wie beim Ziehen am Rand.
+        f.resize(b, gross + 40);
+        f.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&f, 20000));
+        QTRY_COMPARE_WITH_TIMEOUT(f.dichte(), D::Gross, 3000);
+        f.resize(b, gross - 1);
+        QTRY_COMPARE_WITH_TIMEOUT(f.dichte(), D::Kompakt, 3000);
+        for (int dazu = 0; dazu < F::kHysterese; ++dazu) {
+            f.resize(b, gross + dazu);
+            QCoreApplication::processEvents();
+            QCOMPARE(f.height(), gross + dazu);
+            QCOMPARE(f.dichte(), D::Kompakt);
+            QCOMPARE(f.anordnung().dichte, D::Kompakt);
+        }
+        f.resize(b, gross + F::kHysterese);
+        QTRY_COMPARE_WITH_TIMEOUT(f.dichte(), D::Gross, 3000);
+    }
+
+    // ── Lieber mehr Spalten als die kleinere Karte ────────────────
+    //
+    // Innerhalb einer Dichte zuerst so viele Spalten, dass das Land
+    // Platz hat; reicht die Hoehe so nicht, eine Spalte mehr -- mit
+    // gekuerztem Land --, bevor die naechstkleinere Dichte kommt.
+    void liebErMehrSpaltenAlsDieKleinereKarte()
+    {
+        using D = Ft8PlaetzeAnordnung::Dichte;
+        using F = Ft8PlaetzeFlaeche;
+        F f;
+        f.setzeStand(standMit(3, 3));
+        const int hart  = f.hartBreite(D::Kompakt);
+        const int basis = f.basisBreite(D::Kompakt);
+        QVERIFY2(basis > hart, "mit Land braucht die Karte mehr Breite");
+
+        // So breit, dass drei kompakte Karten gerade nebeneinander
+        // passen -- aber nicht drei mit ganzem Land.
+        const int b = 2 * F::kRandX + 3 * hart + 2 * F::kKompaktLuft;
+        const int eineZeile = F::kKopfH + F::kKompaktH + F::kFussH;
+        const int zweiZeilen = eineZeile + F::kKompaktH + F::kKompaktLuft;
+
+        const Ft8PlaetzeAnordnung bequem = f.anordnungFuer(b, zweiZeilen);
+        QCOMPARE(bequem.dichte, D::Kompakt);
+        QCOMPARE(bequem.spalten, 2);
+
+        const Ft8PlaetzeAnordnung eng = f.anordnungFuer(b, eineZeile);
+        QCOMPARE(eng.dichte, D::Kompakt);
+        QCOMPARE(eng.spalten, 3);
+        QCOMPARE(eng.kacheln.at(0).top(), eng.kacheln.at(2).top());
+        QVERIFY(eng.kacheln.at(0).width() >= hart);
+    }
+
+    // ── Breit und niedrig, fuenf Plaetze ──────────────────────────
+    //
+    // Alle fuenf in einer Hoehe, die keine grosse Karte fasst: sie
+    // stehen kompakt nebeneinander, und keiner fehlt.
+    void breitUndNiedrigStehenAlleFuenfDa()
+    {
+        using D = Ft8PlaetzeAnordnung::Dichte;
+        using F = Ft8PlaetzeFlaeche;
+        F f;
+        f.setzeStand(standMit(3, 5));
+        const int b = 2 * F::kRandX + 5 * f.basisBreite(D::Kompakt)
+                      + 4 * F::kKompaktLuft;
+        const int h = F::kKopfH + F::kKompaktH + F::kFussH;
+
+        const Ft8PlaetzeAnordnung a = f.anordnungFuer(b, h);
+        QCOMPARE(a.dichte, D::Kompakt);
+        QCOMPARE(a.spalten, 5);
+        QCOMPARE(a.kacheln.size(), 3);
+        QCOMPARE(a.freie.size(), 2);
+        QCOMPARE(a.hoehe, h);
+        for (const QRect& r : a.freie) {
+            QCOMPARE(r.top(), a.kacheln.first().top());
+        }
+        // Zwei Punkt weniger, und es ist die Zeile -- immer noch alle.
+        const Ft8PlaetzeAnordnung flach = f.anordnungFuer(b, h - 2);
+        QCOMPARE(flach.dichte, D::Zeile);
+        QCOMPARE(flach.kacheln.size() + flach.freie.size(), 5);
+        QVERIFY(flach.hoehe <= h - 2);
+    }
+
+    // ── Sechs belegte ─────────────────────────────────────────────
+    void sechsBelegteFindenInJederHoeheIhrePlatz()
+    {
+        using D = Ft8PlaetzeAnordnung::Dichte;
+        using F = Ft8PlaetzeFlaeche;
+        F f;
+        f.setzeStand(standMit(6, 6));
+        const int b = einspaltig(f);
+        auto sechs = [](D d) {
+            return F::kKopfH + 6 * F::kachelHoehe(d) + 5 * F::luftFuer(d)
+                   + F::kFussH;
+        };
+        QCOMPARE(sechs(D::Gross),   618);
+        QCOMPARE(sechs(D::Kompakt), 327);
+        QCOMPARE(sechs(D::Zeile),   190);
+        for (D d : {D::Gross, D::Kompakt, D::Zeile}) {
+            QCOMPARE(f.anordnungFuer(b, sechs(d)).dichte, d);
+            QCOMPARE(f.anordnungFuer(b, sechs(d)).hoehe, sechs(d));
+        }
+        QCOMPARE(f.pflichtHoehe(b), sechs(D::Zeile));
     }
 
 private:
@@ -639,6 +881,18 @@ private:
                 QString::fromLatin1(quellen[5 - i % 6].land), 3 * i - 7});
         }
         return s;
+    }
+
+    /// Eine Breite, in der JEDE der drei Dichten in Frage kommt und
+    /// jede in einer Spalte steht -- so breit wie die anspruchsvollste
+    /// der drei, und nicht breiter. (Die Zeile braucht fuer Rufzeichen,
+    /// Zug und Tonlage nebeneinander etwas mehr als die grosse Karte.)
+    static int einspaltig(const Ft8PlaetzeFlaeche& f)
+    {
+        using D = Ft8PlaetzeAnordnung::Dichte;
+        return 2 * Ft8PlaetzeFlaeche::kRandX
+               + qMax(f.hartBreite(D::Gross),
+                      qMax(f.hartBreite(D::Kompakt), f.hartBreite(D::Zeile)));
     }
 
     /// Die schmalste Flaeche, in der `n` Kacheln der Mindestbreite `k`
@@ -676,10 +930,30 @@ private:
                 QVERIFY2(!r.intersects(alle.at(j)), wo.constData());
             }
         }
+        // Jede Kachel so hoch, wie ihre Dichte sagt, und nie schmaler,
+        // als ein Rufzeichen in dieser Dichte braucht.
+        Q_UNUSED(k);
         for (const QRect& r : a.kacheln) {
-            QVERIFY2(r.width() >= k, wo.constData());
-            QVERIFY2(r.height() == Ft8PlaetzeFlaeche::kKachelH,
+            QVERIFY2(r.width() >= f.hartBreite(a.dichte), wo.constData());
+            QVERIFY2(r.height() == Ft8PlaetzeFlaeche::kachelHoehe(a.dichte),
                      wo.constData());
+        }
+        for (const QRect& r : a.freie) {
+            QVERIFY2(r.height() == Ft8PlaetzeFlaeche::freiHoehe(a.dichte),
+                     wo.constData());
+        }
+        // Die Regel: zeigt die Anordnung nicht alle Plaetze, dann ist
+        // es die kleinste Dichte -- eine groessere haette nicht mehr
+        // gezeigt, und eine kleinere gibt es nicht.
+        if (a.freie.size() < gesamt - belegt) {
+            QVERIFY2(a.dichte != Ft8PlaetzeAnordnung::Dichte::Gross,
+                     wo.constData());
+        }
+        // Passt es in die Hoehe, dann steht auch jeder Platz da -- oder
+        // es ist die letzte Stufe.
+        if (a.hoehe <= hoehe
+            && a.freieArt != Ft8PlaetzeAnordnung::Freie::Gewichen) {
+            QVERIFY2(a.freie.size() == gesamt - belegt, wo.constData());
         }
         // Die Wartenden stehen unter allem anderen.
         if (a.wartendeY >= 0) {
