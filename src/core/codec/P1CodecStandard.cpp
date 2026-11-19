@@ -17,6 +17,12 @@
 //                Claude Code. Lifted from P1RadioConnection::composeCcForBank
 //                which previously held the inline ramdor port; now
 //                delegates here.
+//   2026-11-19 - A Hermes (ANAN-10/100) whose discovery version is below
+//                v2.9 uses the two-receiver PureSignal map (feedback on
+//                DDC0, transmit monitor on DDC1). v2.9 is the first
+//                firmware that puts the DAC on receiver 4. Verified on
+//                Apple silicon. Brian Sutton (W4KZO), AI-assisted via
+//                xAI Grok.
 //   2026-09-24 - Plan Task 11: applyDdcAssignment gives every Protocol 1
 //                model Thetis's own receiver layout (Hermes, HermesII and
 //                Orion classes, RedPitaya), from console.cs UpdateDDCs and
@@ -633,9 +639,20 @@ PsDdcConfig P1CodecStandard::applyPureSignalDdcConfig(
         //   case HPSDRModel.ANAN100:
         //       P1_rxcount = 4; nddc = 4;  (4-DDC Hermes-class branch)
         case HPSDRModel::HERMES:
-        case HPSDRModel::ANAN_G2E:  // ANAN-G2E (HermesC10) //N1GP G2E added
         case HPSDRModel::ANAN10:
         case HPSDRModel::ANAN100:
+            // Discovery versions before v2.9 do not have receiver 4, so the
+            // four-receiver request comes back as two receivers repeated and
+            // the DAC is not in the slots PureSignal reads. Those radios use
+            // the two-receiver map: feedback on DDC0, transmit monitor on DDC1.
+            if (hermesPureSignalOnTwoReceivers()) {
+                return psDdcConfigHermesIIClass(psEnabled, diversityEnabled, moxState,
+                                                rx1Rate, rx2Rate, rx2Enabled);
+            }
+            return psDdcConfigHermesClass(psEnabled, diversityEnabled, moxState,
+                                          rx1Rate, rx2Rate, rx2Enabled);
+
+        case HPSDRModel::ANAN_G2E:  // ANAN-G2E (HermesC10) //N1GP G2E added
             return psDdcConfigHermesClass(psEnabled, diversityEnabled, moxState,
                                           rx1Rate, rx2Rate, rx2Enabled);
 
@@ -1120,11 +1137,22 @@ DdcAssignment P1CodecStandard::applyDdcAssignment(
 
         // From Thetis console.cs:8387-8392 [v2.10.3.15]:
         //   case HPSDRModel.HERMES:
-        //   case HPSDRModel.ANAN_G2E: //N1GP G2E added
         //   case HPSDRModel.ANAN10:
         //   case HPSDRModel.ANAN100:
         //       P1_rxcount = 4;                     // RX4 used for puresignal feedback
         //       nddc = 4;
+        // Firmware before v2.9 has no receiver 4. Same gate as
+        // applyPureSignalDdcConfig, so the frame count and the pair agree.
+        case HPSDRModel::HERMES:
+        case HPSDRModel::ANAN10:
+        case HPSDRModel::ANAN100:
+            if (hermesPureSignalOnTwoReceivers()) {
+                return ddcAssignmentHermesIIClass(ctx, slices);
+            }
+            return ddcAssignmentHermesClass(ctx, slices);
+
+        // From Thetis console.cs:8388 [v2.10.3.15] //N1GP G2E added
+        //   case HPSDRModel.ANAN_G2E:
         default:
             return ddcAssignmentHermesClass(ctx, slices);
     }

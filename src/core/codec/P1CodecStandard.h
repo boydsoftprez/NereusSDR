@@ -75,6 +75,18 @@ public:
         quint8 adcCtrl2
     ) const override;
 
+    // Discovery code version (major*10+minor). 0 means unknown. Below 29
+    // (Hermes v2.9) the Hermes / ANAN-10 / ANAN-100 PureSignal layout is
+    // the two-receiver map. Set by P1RadioConnection when the codec is built.
+    void setProtocol1FirmwareVersion(int version) { m_protocol1FirmwareVersion = version; }
+    int protocol1FirmwareVersion() const { return m_protocol1FirmwareVersion; }
+    // Hermes v2.9 (discovery code 29) is the first firmware that places the
+    // DAC echo on receiver 4. An earlier code version has two receivers.
+    bool hermesPureSignalOnTwoReceivers() const
+    {
+        return m_protocol1FirmwareVersion > 0 && m_protocol1FirmwareVersion < 29;
+    }
+
     DdcAssignment applyDdcAssignment(
         const CodecContext& ctx,
         const std::array<SliceConfig, 5>& slices) const override;
@@ -120,6 +132,8 @@ protected:
     DdcAssignment ddcAssignmentOrionClass(
         const CodecContext& ctx, const std::array<SliceConfig, 5>& slices,
         bool redPitaya) const;
+
+    int m_protocol1FirmwareVersion{0};
 };
 
 } // namespace NereusSDR
