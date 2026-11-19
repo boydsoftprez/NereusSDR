@@ -646,6 +646,72 @@ private slots:
         k.syncFromModel();          // darf nicht stuerzen
         QCOMPARE(rx->abgeglichen, 1);
     }
+
+    // ── Wer eine Seite wegnimmt, nimmt sie GANZ (2026-11-17) ────────
+    //
+    // Betreiber, mit Bild vom frisch gestarteten Programm: „schon wieder
+    // erscheint hier der rotor mitten im bild" -- Rotor/Log stand als
+    // eigenes Fenster ueber dem Panadapter UND als Pille im Feld.
+    //
+    // Ein Werkzeugfenster hatte das Panel am Feld vorbei umgehaengt
+    // (setParent), und das Feld fuehrte es weiter in seiner Liste:
+    // Reiter, Pille und der gemerkte Inhalt blieben stehen. Den Anlass
+    // (einen Startpfad im Hauptfenster) prueft
+    // tst_rotor_bleibt_im_kombi_feld am echten Fenster; hier die Regel
+    // am Feld selbst, fuer JEDE Art Seite.
+    void werEineSeiteWegnimmtNimmtSieGanz()
+    {
+        KombiApplet k(nullptr);
+        auto* rotor = new QWidget;
+        rotor->setObjectName(QStringLiteral("RotorLog"));
+        rotor->setWindowTitle(QStringLiteral("Rotor / Log"));
+        auto* tx = new Probepanel(QStringLiteral("Tx"), QStringLiteral("TX"));
+        auto* rx = new Probepanel(QStringLiteral("Rx"), QStringLiteral("RX"));
+        k.nimmAuf(rotor);
+        k.nimmAuf(tx);
+        k.nimmAuf(rx);
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("Kombi/Inhalt")).toString(),
+                 QStringLiteral("RotorLog,Tx,Rx"));
+
+        // Auf- und Zuklappen haengt die Seiten INNERHALB des Feldes um.
+        // Das darf keine verlieren -- sonst waere die Regel zu scharf.
+        k.setAufgeklappt(true);
+        k.setAufgeklappt(false);
+        QCOMPARE(k.seiten(), (QList<QWidget*>{rotor, tx, rx}));
+
+        // Ein fremdes Fenster nimmt den Rotor, wie ToolWindow es tut.
+        QWidget fenster;
+        rotor->setParent(&fenster);
+        QVERIFY2(!k.seiten().contains(rotor),
+                 "das Feld fuehrt eine Seite weiter, die laengst in einem "
+                 "anderen Fenster liegt — ein Panel an zwei Orten");
+        QCOMPARE(k.seiten(), (QList<QWidget*>{tx, rx}));
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("Kombi/Inhalt")).toString(),
+                 QStringLiteral("Tx,Rx"));
+        QVERIFY2(rotor->parentWidget() == &fenster,
+                 "das Feld darf dem neuen Besitzer das Panel nicht wieder "
+                 "wegnehmen — es zieht nur seine Buchfuehrung nach");
+
+        // Dasselbe fuer ein Applet (die Spalte haengt es genauso um).
+        QWidget spalte;
+        tx->setParent(&spalte);
+        QCOMPARE(k.seiten(), (QList<QWidget*>{rx}));
+        QCOMPARE(k.aktuelleSeiteForTest(), static_cast<QWidget*>(rx));
+
+        // Und es kommt auf dem ordentlichen Weg wieder hinein.
+        k.nimmAuf(rotor);
+        QCOMPARE(k.seiten(), (QList<QWidget*>{rx, rotor}));
+        QVERIFY(k.isAncestorOf(rotor));
+
+        // gibFrei bleibt, was es war: ohne Elternteil zurueck, einmal
+        // gemeldet.
+        QSignalSpy frei(&k, &KombiApplet::herausgeloest);
+        k.gibFrei(rotor);
+        QCOMPARE(frei.count(), 1);
+        QVERIFY(rotor->parentWidget() == nullptr);
+        QCOMPARE(k.seiten(), (QList<QWidget*>{rx}));
+        delete rotor;
+    }
 };
 
 QTEST_MAIN(TstKombiFeld)

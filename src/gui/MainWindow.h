@@ -624,6 +624,9 @@ public:
     class AppletWidget* appletForKeyForTest(const QString& key) const
     { return appletForKey(key); }
     class ToolWindow* rotorWindowForTest() const { return m_rotorWindow; }
+    // Der Weg hinter „Turn rotor to …", dem Spot-Doppelklick und dem
+    // Menueeintrag: Rotor/Log zeigen, wo es liegt (2026-11-17).
+    void raiseRotorPanelForTest() { raiseRotorPanel(); }
     QString sideAreaIdForWindowForTest(QWidget* w) const
     { return sideAreaIdForWindow(w); }
     QString sideAreaKeyForForTest(const QString& id) const
@@ -2141,6 +2144,11 @@ private:
     // gehen ueber kombiFelder() -- eine Kopie der Liste vergaesse eines.
     class KombiApplet* m_kombiApplet2{nullptr};
     QList<class KombiApplet*> kombiFelder() const;
+    /// Das Kombi-Feld, in dem dieses Panel als Seite liegt -- sonst
+    /// nullptr. Die eine Frage „liegt es schon in einem Feld?" fuer
+    /// jede Stelle, die ein Panel von sich aus irgendwohin legen will
+    /// (2026-11-17: ein Panel liegt an EINEM Ort).
+    class KombiApplet* kombiFeldMit(const QWidget* panel) const;
     void verdrahteKombiFeld(class KombiApplet* feld);
     class RxApplet* m_rxApplet{nullptr};
     // Phase 3M-3a-ii Batch 6: cached so SetupDialog instances can route

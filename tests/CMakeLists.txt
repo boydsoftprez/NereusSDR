@@ -5638,6 +5638,35 @@ longpath_add_test(tst_tx_fenster_bleibt_im_ft8_profil)
 target_compile_definitions(tst_tx_fenster_bleibt_im_ft8_profil PRIVATE
     LONGPATH_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
 list(APPEND _longpath_grosser_schirm tst_tx_fenster_bleibt_im_ft8_profil)
+# 2026-11-17, am selben Abend: „schon wieder erscheint hier der rotor
+# mitten im bild". #473 schloss den einen Weg (detachRotorPanel); dieser
+# Stand haelt die Nachbarstellen fest -- RotorPanelBelow im Startblock,
+# die Sichtbarkeits-Schleife nach dem Profil, das leere Dock bei „Rotor
+# zeigen". Drei Laeufe ueber DIESELBE Binaerdatei: sein echter Profilsatz
+# und derselbe mit je EINEM Widerspruch in „Neu" (Kopf der Quelldatei).
+# Sie schreiben dieselben Schluessel mit verschiedenen Werten in die
+# gemeinsame Pruef-Einstellungsdatei -- darum nacheinander.
+longpath_add_test(tst_rotor_bleibt_im_kombi_feld)
+target_compile_definitions(tst_rotor_bleibt_im_kombi_feld PRIVATE
+    LONGPATH_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
+list(APPEND _longpath_grosser_schirm tst_rotor_bleibt_im_kombi_feld)
+if(TEST tst_rotor_bleibt_im_kombi_feld)
+    get_test_property(tst_rotor_bleibt_im_kombi_feld LABELS _rotor_feld_labels)
+    set(_rotor_feld_laeufe tst_rotor_bleibt_im_kombi_feld)
+    foreach(_variante IN ITEMS unten tx-an)
+        string(REPLACE "-" "_" _variante_name "${_variante}")
+        set(_lauf tst_rotor_bleibt_im_kombi_feld_${_variante_name})
+        add_test(NAME ${_lauf} COMMAND tst_rotor_bleibt_im_kombi_feld)
+        set_tests_properties(${_lauf} PROPERTIES
+            LABELS "${_rotor_feld_labels}"
+            TIMEOUT ${LONGPATH_TEST_TIMEOUT}
+            ENVIRONMENT "LONGPATH_PRUEF_VARIANTE=${_variante}")
+        list(APPEND _longpath_grosser_schirm ${_lauf})
+        list(APPEND _rotor_feld_laeufe ${_lauf})
+    endforeach()
+    set_tests_properties(${_rotor_feld_laeufe}
+        PROPERTIES RESOURCE_LOCK longpath_rotor_im_kombi_feld_settings)
+endif()
 # Beide Plus-Knoepfe bieten dasselbe an (2026-11-12, Martin: „beim plus
 # oben oder unten muss alles natürlich erreichbar sein").
 longpath_add_test(tst_beide_plus_gleich)

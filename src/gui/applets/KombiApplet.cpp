@@ -9,6 +9,10 @@
 // Modification history (Longpath):
 //   2026-11-01 — Created in C++20/Qt6 for Longpath by Martin Fischer,
 //                 AI-assisted via Anthropic Claude (Cowork).
+//   2026-11-17 — Eine Seite, die am Feld vorbei umgehaengt wird, ist
+//                 keine Seite mehr (eventFilter, ParentChange): Reiter,
+//                 Pille und gemerkter Inhalt gehen mit. Martin Fischer,
+//                 AI-assisted via Anthropic Claude.
 // =================================================================
 
 #include "gui/applets/KombiApplet.h"
@@ -384,6 +388,37 @@ bool KombiApplet::eventFilter(QObject* watched, QEvent* ev)
             return true;        // nicht weiter nach oben
         }
         return false;
+    }
+
+    // ── Wer eine Seite wegnimmt, nimmt sie GANZ (2026-11-17) ─────────
+    //
+    // Betreiber, mit Bild vom frisch gestarteten Programm: „schon wieder
+    // erscheint hier der rotor mitten im bild" -- Rotor/Log stand als
+    // eigenes Fenster ueber dem Panadapter UND als Pille in diesem Feld.
+    //
+    // Der Anlass war ein Startpfad im Hauptfenster (dort behoben). Die
+    // Luecke dahinter liegt hier: das Feld fuehrt seine Seiten in einer
+    // eigenen Liste, und wer ein Panel am Feld vorbei umhaengte (ein
+    // Werkzeugfenster, die Spalte, das Dock), nahm nur das Widget mit --
+    // Reiter, Pille und der gemerkte Inhalt blieben stehen. Ein Panel an
+    // zwei Orten, und das fuer jede Art Seite, nicht nur fuer den Rotor.
+    //
+    // Der Filter haengt ohnehin an der Anwendung. Wechselt eine Seite
+    // den Elternteil und liegt danach nicht mehr in diesem Feld, ist sie
+    // keine Seite mehr. Kein gibFrei(): das Panel HAT schon einen neuen
+    // Platz -- hier wird nur die Buchfuehrung nachgezogen. Auf- und
+    // Zuklappen haengt die Seiten innerhalb des Feldes um; das trifft
+    // die Frage `isAncestorOf` nicht.
+    if (ev->type() == QEvent::ParentChange && watched->isWidgetType()) {
+        auto* w = static_cast<QWidget*>(watched);
+        if (!isAncestorOf(w)) {
+            for (int i = 0; i < m_inhalte.size(); ++i) {
+                if (m_inhalte.at(i).data() != w) { continue; }
+                m_inhalte.removeAt(i);
+                reiterNeu();
+                break;
+            }
+        }
     }
 
     // Der Filter haengt an der Anwendung: nur die EIGENEN Reiter zaehlen.

@@ -2443,6 +2443,17 @@ QList<KombiApplet*> MainWindow::kombiFelder() const
     return felder;
 }
 
+KombiApplet* MainWindow::kombiFeldMit(const QWidget* panel) const
+{
+    if (!panel) { return nullptr; }
+    for (KombiApplet* feld : kombiFelder()) {
+        if (feld && feld->seiten().contains(const_cast<QWidget*>(panel))) {
+            return feld;
+        }
+    }
+    return nullptr;
+}
+
 void MainWindow::verdrahteKombiFeld(KombiApplet* feld)
 {
     connect(feld, &KombiApplet::listeGewuenscht, this,
@@ -6392,8 +6403,39 @@ void MainWindow::buildUI()
     // das: diese globalen Schluessel stammen aus der Zeit davor und
     // wuerden es sonst wieder herausreissen (Profil laeuft VOR diesem
     // Block, siehe populateDefaultMeter oben).
+    //
+    // ── Dasselbe fuer das Kombi-Feld (2026-11-17) ────────────────────
+    //
+    // Betreiber, zweimal am selben Abend, zuletzt mit Bild vom frisch
+    // gestarteten Programm: „schon wieder erscheint hier der rotor
+    // mitten im bild." Rotor/Log stand als eigenes Fenster ueber dem
+    // Panadapter UND als Pille im Feld „Combined".
+    //
+    // Sein Startprofil fuehrt Rotor/Log im Kombi-Feld, und das Profil
+    // legt es oben auch hinein. Der Weg dorthin fuehrt ueber
+    // detachRotorPanel() (das Panel wird fuer einen Augenblick zum
+    // Fenster), und das schreibt RotorFloating=True. DIESER Block las
+    // den Schluessel gleich danach und riss das Panel wieder heraus --
+    // an den Platz aus ToolWindowGeometry_RotorLog, den jede solche
+    // Uebergabe neu schreibt (in seiner Datei 655,401 auf dem 1470
+    // breiten Schirm: die Bildmitte).
+    //
+    // #473 hat den einen Weg geschlossen: detachRotorPanel() laesst
+    // liegen, was in einem Feld liegt. Der Zweig darueber
+    // (RotorPanelBelow) geht aber an detachRotorPanel() vorbei --
+    // setRotorPanelBelow(true) haengt das Panel genauso um. Darum
+    // steht die Regel hier, wo die Frage gestellt wird, und fuer beide
+    // Zweige: was das Profil eben gelegt hat, gilt; die globalen
+    // Schluessel stammen aus der Zeit davor. Wie beim Seitenbereich.
+    const KombiApplet* rotorImFeld = kombiFeldMit(m_rotorPanel);
     if (sideAreaHas(QStringLiteral("WinRotorLog"))) {
         // nichts -- der Seitenbereich haelt es
+    } else if (rotorImFeld) {
+        // nichts -- das Kombi-Feld haelt es
+        qCInfo(lcConnection).noquote()
+            << "Rotor/Log liegt im Feld" << rotorImFeld->appletId()
+            << "— die gemerkte Fensterform (RotorFloating/RotorPanelBelow) "
+               "gilt beim Start nicht";
     } else if (AppSettings::instance().value(QStringLiteral("RotorPanelBelow"),
                                       QStringLiteral("False")).toString()
             == QStringLiteral("True")) {
@@ -11714,10 +11756,16 @@ void MainWindow::populateDefaultMeter()
                     // Verbindung IMMER wieder erscheinen -- das Flag gilt
                     // nur noch fuer den m_rotorDock-Zweig, wo es tatsaechlich
                     // die richtige Frage beantwortet.
+                    //
+                    // 2026-11-17: ein LEERES Dock wird nie gezeigt. Liegt
+                    // das Panel in einem Kombi-Feld, ist das Dock nur noch
+                    // die Huelle -- sie aufzumachen waere ein zweites
+                    // „Rotor / Log" ohne Inhalt.
                     if (m_rotorWindow) {
                         m_showRotorAfterConnectMask = true;
                     } else if (m_rotorDock) {
-                        m_rotorDock->setVisible(m_rotorDockWantedVisible);
+                        m_rotorDock->setVisible(m_rotorDockWantedVisible
+                                                && m_rotorDock->widget() != nullptr);
                     }
 
                     // Dieselbe Freigabe fuer die schwebenden Meter/Applet-
@@ -11784,8 +11832,19 @@ void MainWindow::populateDefaultMeter()
     // Kanalzug) und bleibt weiterhin ausgenommen: SWR-Sweep ist ohne
     // Funkgeraet sicherheitsrelevant bedeutungslos ("no radio" steht
     // selbst im Fenster), nicht nur uninformativ wie ein Applet.
+    //
+    // 2026-11-17, dieselbe Regel fuer das Kombi-Feld: ein Applet, das
+    // das Profil eben in ein Feld gelegt hat, liegt dort -- und wird
+    // hier nicht noch einmal eingebaut. applyAppletVisibility() haengt
+    // ein eingeschaltetes Applet, das nicht in der Spalte steht, in die
+    // Spalte ("Einschalten heisst notfalls EINBAUEN"); fuer eines im
+    // Feld waere das der zweite Ort. In seinem Profil sind TX und RX im
+    // Feld ausgeschaltet gefuehrt, darum traf es bisher nur den Rotor
+    // (siehe den Rotor/Log-Block im Konstruktor) -- die Luecke ist aber
+    // dieselbe.
     for (const QString& id : m_appletVis->registeredIds()) {
         if (id == QLatin1String("WinRotorLog")) { continue; }
+        if (kombiFeldMit(m_appletsById.value(id, nullptr))) { continue; }
         if ((!m_radioModel
              || m_radioModel->connectionState() != ConnectionState::Connected)
             && id == QLatin1String("WinAntenna")) {
@@ -19485,6 +19544,19 @@ RotorLogbookPanel* MainWindow::ensureRotorPanel()
 void MainWindow::raiseRotorPanel()
 {
     ensureRotorPanel();
+    // Liegt Rotor/Log in einem Kombi-Feld, ist DAS sein Ort
+    // (2026-11-17): die Seite zeigen und, wenn das Feld als eigenes
+    // Fenster schwebt, dieses nach vorn. Ohne diesen Zweig ging unten
+    // das Dock auf -- leer, denn das Panel liegt im Feld: ein zweites
+    // „Rotor / Log" am rechten Rand, ohne Inhalt.
+    if (KombiApplet* feld = kombiFeldMit(m_rotorPanel)) {
+        feld->zeigeSeite(static_cast<int>(feld->seiten().indexOf(m_rotorPanel.data())));
+        if (QWidget* gehaeuse = feld->window();
+            gehaeuse && gehaeuse != this && gehaeuse->isVisible()) {
+            gehaeuse->raise();
+        }
+        return;
+    }
     // m_rotorWindow zuerst: RotorFloating ist der Standardfall, und ein
     // sichtbares m_rotorWindow laesst ein daneben existierendes, aber
     // leeres m_rotorDock ohnehin unbeachtet (derselbe Vorrang wie in der
@@ -22213,6 +22285,14 @@ void MainWindow::holeKombiInhaltZurueck(KombiApplet* feld, const QStringList& vo
     int geholt = 0;
     for (const QString& id : ids) {
         if (id == QStringLiteral("RotorLog")) {
+            // Liegt er schon in einem Feld, bleibt er dort (2026-11-17):
+            // der Weg unten macht ihn erst zum Fenster, und das waere
+            // ein Herausreissen ohne Grund. Ein Panel hat einen Platz --
+            // nennen ihn zwei Listen, gilt die erste.
+            if (const KombiApplet* schonIn = kombiFeldMit(m_rotorPanel)) {
+                if (schonIn == feld) { ++geholt; }
+                continue;
+            }
             if (!m_rotorWindow) { detachRotorPanel(); }
             if (!m_rotorWindow) { continue; }
             ToolWindow* fenster = m_rotorWindow;
