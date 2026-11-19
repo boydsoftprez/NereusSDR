@@ -20,6 +20,24 @@
 //     Summe — genau darum geht es.
 // Hoehe folgt der Breite (hasHeightForWidth), das umschliessende
 // QVBoxLayout fragt danach.
+//
+// 2026-11-18, fuer die drei Reihen des FT8-Fensters (Betreiber: „hier
+// finde ich nun keinen button mehr für CQ" -- er stand rechts ausserhalb
+// des Fensters). Drei Dinge, die eine Reihe aus einem QHBoxLayout
+// mitbringt und die hier fehlten:
+//   * addSpacing(): ein fester Abstand ZWISCHEN zwei Elementen. Am
+//     Anfang und am Ende einer Zeile zaehlt er nicht -- eine
+//     umgebrochene Zeile faengt links an, nicht acht Punkt eingerueckt.
+//   * insertWidget() und addStretch(int): damit eine Reihe, die als
+//     QHBoxLayout geschrieben wurde, mit denselben Aufrufen umbricht.
+//   * Ein Element, das breiter waere als die ganze Zeile, bekommt die
+//     Zeilenbreite, soweit seine Mindestbreite es erlaubt. Eine
+//     Beschriftung mit QSizePolicy::Ignored zaehlt beim Umbruch mit
+//     ihrer Mindestbreite (nicht mit ihrem Text) und nimmt dann, was in
+//     der Zeile uebrig ist -- so bricht die Reihe nicht um, weil ein
+//     Text laenger wird.
+// Unveraendert: ein verstecktes Element zaehlt weiter mit Breite null
+// und seinem Abstand (Logbuch und Karte verlassen sich darauf).
 // =================================================================
 #pragma once
 
@@ -36,8 +54,22 @@ public:
     ~FlowLayout() override;
 
     void addItem(QLayoutItem* item) override;
-    // Eine dehnbare Luecke — wie QBoxLayout::addStretch().
-    void addStretch();
+    // Eine dehnbare Luecke — wie QBoxLayout::addStretch(). Der Faktor
+    // wird angenommen und nicht gebraucht (alle Luecken einer Zeile
+    // teilen gleich): so bleibt `addStretch(1)` aus einer QHBoxLayout-
+    // Reihe stehen, wie es ist.
+    void addStretch(int faktor = 0);
+    // Ein fester Abstand zwischen zwei Elementen — wie
+    // QBoxLayout::addSpacing(). Am Zeilenanfang und -ende entfaellt er.
+    void addSpacing(int breite);
+    // Wie QBoxLayout::insertWidget(): an die Stelle `index`.
+    void insertWidget(int index, QWidget* widget);
+    // Die dehnbare Luecke geht mit dem Element, das auf sie folgt, in
+    // dessen Zeile -- so bleibt „Clear" auch in einer umgebrochenen
+    // Zeile am rechten Rand. Ab Werk aus: dann bleibt die Luecke in der
+    // Zeile, in der sie eingehaengt wurde, und was danach umbricht,
+    // faengt links an (so stehen Logbuch und Karte seit 2026-09-21).
+    void setStretchFollowsNext(bool on) { m_stretchFollows = on; invalidate(); }
 
     int  count() const override { return m_items.size(); }
     QLayoutItem* itemAt(int i) const override { return m_items.value(i); }
@@ -65,6 +97,7 @@ private:
     QList<QLayoutItem*> m_items;
     int m_hSpace;
     int m_vSpace;
+    bool m_stretchFollows{false};
     mutable int m_rows{0};
 };
 

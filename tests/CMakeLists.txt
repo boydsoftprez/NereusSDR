@@ -6014,6 +6014,10 @@ longpath_add_test(tst_ft8_plaetze_panel)
 #   Am echten AppletFloatingWindow und am Abgriff gemessen, nicht an der
 #   Rechnung: Rollbereich, Mindestmasze und Rollbalken reden mit.
 longpath_add_test(tst_ft8_plaetze_anordnung)
+# tst_ft8_fenster_schmal (2026-11-18): das Fenster „FT8 DECODER" laesst
+#   sich schmal ziehen -- die drei Reihen brechen um, kein Bedienelement
+#   faellt rechts hinaus, CQ/Send/Stop bleiben bei jeder Breite da.
+longpath_add_test(tst_ft8_fenster_schmal)
 longpath_add_test(tst_panel_automatik)
 longpath_add_test(tst_ft8_dxpedition)
 # 2026-11-04: Typ 5, der EU-VHF-Contest. Dieselbe Klasse wie

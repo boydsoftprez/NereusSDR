@@ -409,6 +409,12 @@ private slots:
     /// GENAU auf ihrem sizeHint -- 80 und 156. Der Fall haelt das
     /// fest, damit eine kuenftige Verengung hier auffaellt statt im
     /// Bild des Betreibers.
+    ///
+    /// 2026-11-18: die Verengung ist gekommen -- die Reihen brechen
+    /// um, und das Panel ist jetzt wirklich 380 Punkt breit. Der Fall
+    /// hat angeschlagen, wie er sollte, und haelt weiter: Zaehler und
+    /// Schild rutschen zusammen in eine eigene Zeile und stehen dort
+    /// in voller Breite.
     void beiSchmalemPanelBleibtDieFundzahlLesbar()
     {
         RadioModel radio;
@@ -428,7 +434,16 @@ private slots:
         for (int i = 0; i < 6; ++i) {
             applet.periodeForTest(funde({1.9, 2.0, 2.1}));
         }
-        QCoreApplication::processEvents();
+        // Mehrere Runden, eine feste Zahl (2026-11-18): Zaehler, Schild
+        // und `Clear` stehen seit dem Umbruch der Reihen zusammen in
+        // einem eigenen Stueck. Ein neuer Text laeuft darum ueber ZWEI
+        // Anordnungen nach oben, und jede meldet sich mit einem eigenen
+        // geposteten Ereignis -- nach einer Runde stand das Schild noch
+        // in der Breite des vorigen Textes (gemessen: 152 statt 156).
+        for (int runde = 0; runde < 6; ++runde) {
+            QCoreApplication::sendPostedEvents();
+            QCoreApplication::processEvents();
+        }
 
         QLabel* zahl   = applet.lastLabelForTest();
         QLabel* schild = applet.uhrWarnungForTest();

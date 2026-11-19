@@ -108,6 +108,14 @@ public:
     QString appletTitle() const override { return QStringLiteral("FT8 Decoder"); }
     void    syncFromModel() override;
 
+    /// Wie hoch das Fenster bei dieser Breite mindestens sein muss
+    /// (2026-11-18). Seit die drei Reihen umbrechen, haengt die Hoehe
+    /// an der Breite -- und der Rollbereich des schwebenden Fensters
+    /// fragt danach. Qt antwortet von sich aus mit der WUNSCHhoehe; die
+    /// Fundliste gaebe dann nie Platz ab, und `Stop` rutschte unter den
+    /// Fensterrand, obwohl ueber ihm noch Luft ist. Siehe die .cpp.
+    int heightForWidth(int breite) const override;
+
     /// Wie beim CW- und RTTY-Dekoder: eine Flaeche, die der jeweils
     /// aktiven Scheibe folgt.
     void setSlice(SliceModel* slice);

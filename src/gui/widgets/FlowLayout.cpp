@@ -7,6 +7,8 @@
 #include <QSpacerItem>
 #include <QWidget>
 
+#include <utility>
+
 namespace Longpath {
 
 FlowLayout::FlowLayout(QWidget* parent, int hSpacing, int vSpacing)
@@ -28,9 +30,26 @@ void FlowLayout::addItem(QLayoutItem* item)
     invalidate();
 }
 
-void FlowLayout::addStretch()
+void FlowLayout::addStretch(int)
 {
     addItem(new QSpacerItem(0, 0, QSizePolicy::Expanding, QSizePolicy::Minimum));
+}
+
+void FlowLayout::addSpacing(int breite)
+{
+    addItem(new QSpacerItem(qMax(0, breite), 0,
+                            QSizePolicy::Fixed, QSizePolicy::Minimum));
+}
+
+void FlowLayout::insertWidget(int index, QWidget* widget)
+{
+    if (!widget) { return; }
+    // Dasselbe wie QLayout::addWidget(), nur an einer Stelle statt am
+    // Ende.
+    addChildWidget(widget);
+    m_items.insert(qBound(0, index, int(m_items.size())),
+                   new QWidgetItem(widget));
+    invalidate();
 }
 
 QLayoutItem* FlowLayout::takeAt(int i)
@@ -47,7 +66,9 @@ bool FlowLayout::wantsWidth(QLayoutItem* item)
         return sp->sizePolicy().horizontalPolicy() & QSizePolicy::ExpandFlag;
     }
     if (const QWidget* w = item->widget()) {
-        return w->sizePolicy().horizontalPolicy() & QSizePolicy::ExpandFlag;
+        // Ignored heisst in Qt: „bekommt so viel Platz wie moeglich".
+        return w->sizePolicy().horizontalPolicy()
+               & (QSizePolicy::ExpandFlag | QSizePolicy::IgnoreFlag);
     }
     return item->expandingDirections() & Qt::Horizontal;
 }
@@ -63,7 +84,11 @@ QSize FlowLayout::sizeHint() const
     // hoechste Element. Der Umbruch kommt erst, wenn weniger da ist.
     int w = 0, h = 0, n = 0;
     for (QLayoutItem* it : m_items) {
-        if (it->spacerItem()) { continue; }
+        if (QSpacerItem* sp = it->spacerItem()) {
+            // Ein fester Abstand gehoert zur Breite der einen Zeile.
+            if (!wantsWidth(it)) { w += sp->sizeHint().width(); }
+            continue;
+        }
         const QSize s = it->sizeHint();
         w += s.width() + (n > 0 ? m_hSpace : 0);
         h = qMax(h, s.height());
@@ -153,24 +178,66 @@ int FlowLayout::layOut(const QRect& rect, bool apply) const
 
     int lineWidth = 0;   // Breite der sichtbaren Elemente samt Abstaenden
     int visibleInRow = 0;
+    // Ein fester Abstand wartet, bis das naechste sichtbare Element
+    // kommt: steht es in derselben Zeile, liegt der Abstand davor;
+    // bricht es um, entfaellt er.
+    QLayoutItem* gap = nullptr;
+    int gapWidth = 0;
+    // Dehnbare Luecken, die auf ihr naechstes Element warten
+    // (setStretchFollowsNext).
+    QList<QLayoutItem*> waiting;
     for (QLayoutItem* it : m_items) {
-        const bool spacer = it->spacerItem() != nullptr;
-        if (spacer) {
-            row.append({it, 0, 0, wantsWidth(it)});
+        if (QSpacerItem* sp = it->spacerItem()) {
+            if (wantsWidth(it)) {
+                if (m_stretchFollows) {
+                    waiting.append(it);
+                } else {
+                    row.append({it, 0, 0, true});
+                }
+            } else {
+                gap = it;
+                gapWidth += sp->sizeHint().width();
+            }
             continue;
         }
+        // Ein VERSTECKTES Widget bleibt ein Element der Zeile, mit
+        // Breite null und seinem Abstand -- wie seit 2026-09-21. Am
+        // 2026-11-18 stand hier kurz „ueberspringen"; die Kartenleiste
+        // traegt aber ein Dutzend versteckte Elemente, passte dadurch
+        // vorübergehend in EINE Zeile, und `tst_logbuch_karte_pfeil`
+        // fand den Pfeil unter dem Radar (Linux-CI und lokal). Wer in
+        // seiner Reihe etwas versteckt, steckt es in ein eigenes Stueck
+        // mit QHBoxLayout -- der kennt versteckte Kinder.
         const QSize hint = it->sizeHint();
-        const int w = qMax(hint.width(), it->minimumSize().width());
+        const int minW = it->minimumSize().width();
+        int w = qMax(hint.width(), minW);
+        // Breiter als die ganze Zeile: so breit wie die Zeile, soweit
+        // die Mindestbreite es erlaubt -- statt rechts hinauszuragen.
+        if (w > width) { w = qMax(width, minW); }
         const int h = hint.height();
-        const int needed = lineWidth + (visibleInRow > 0 ? m_hSpace : 0) + w;
-        if (visibleInRow > 0 && needed > width) {
+        int before = visibleInRow > 0 ? m_hSpace + gapWidth : 0;
+        if (visibleInRow > 0 && lineWidth + before + w > width) {
             flush();
             lineWidth = 0;
             visibleInRow = 0;
+            before = 0;
         }
+        if (visibleInRow > 0 && gapWidth > 0 && gap) {
+            row.append({gap, gapWidth, 0, false});
+        }
+        gap = nullptr;
+        gapWidth = 0;
+        for (QLayoutItem* s : std::as_const(waiting)) {
+            row.append({s, 0, 0, true});
+        }
+        waiting.clear();
         row.append({it, w, h, wantsWidth(it)});
-        lineWidth += (visibleInRow > 0 ? m_hSpace : 0) + w;
+        lineWidth += before + w;
         ++visibleInRow;
+    }
+    // Eine Luecke, auf die nichts mehr folgt, bleibt in der letzten Zeile.
+    for (QLayoutItem* s : std::as_const(waiting)) {
+        row.append({s, 0, 0, true});
     }
     flush();
     m_rows = rowsDone;

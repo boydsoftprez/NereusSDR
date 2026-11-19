@@ -8,6 +8,10 @@
 // Modification history (Longpath):
 //   2026-11-15 — Original fuer Longpath von Martin Fischer (OE5SOS),
 //                 KI-gestuetzt ueber Anthropic Claude (Claude Code).
+//   2026-11-18 — Im schmalen Fenster weichen Tonlage und Locator, der
+//                 Hinweis verlangt keine Breite mehr. Martin Fischer
+//                 (OE5SOS), KI-gestuetzt ueber Anthropic Claude
+//                 (Claude Code).
 // =================================================================
 
 #include "Ft8DannListe.h"
@@ -20,6 +24,7 @@
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QResizeEvent>
 #include <QPushButton>
 #include <QStackedWidget>
 #include <QToolButton>
@@ -192,6 +197,30 @@ public:
     QToolButton* knopfNr(int i) const { return m_knoepfe[i]; }
 
 protected:
+    // ── Im schmalen Fenster weichen Tonlage und Locator (2026-11-18) ──
+    //
+    // Die Spalten haben feste Breiten, damit sie untereinander stehen;
+    // zusammen sind das 346 Punkt, und so breit musste das FT8-Fenster
+    // sein, sobald jemand in der Schlange stand. Seit die Arbeitsleiste
+    // keine Breite mehr verlangt (damit `Stop` nicht daran haengt), muss
+    // die Zeile mit weniger auskommen: das Land gibt zuerst nach (es hat
+    // keine feste Breite), dann die Tonlage, dann der Locator. Nummer,
+    // Rufzeichen, Rapport und die Handgriffe bleiben.
+    void resizeEvent(QResizeEvent* ev) override
+    {
+        QWidget::resizeEvent(ev);
+        const QMargins rand = layout()->contentsMargins();
+        const int luft = layout()->spacing();
+        // Nummer, Ruf, Land, Rapport, Platz: fuenf Stuecke, vier Abstaende.
+        const int bleibt = rand.left() + rand.right()
+                           + m_nr->minimumWidth() + m_ruf->minimumWidth()
+                           + m_snr->minimumWidth() + m_platz->minimumWidth()
+                           + 4 * luft;
+        const int mitLocator = bleibt + m_loc->minimumWidth() + luft;
+        const int mitTon     = mitLocator + m_hz->minimumWidth() + luft;
+        m_loc->setVisible(width() >= mitLocator);
+        m_hz->setVisible(width() >= mitTon);
+    }
     void enterEvent(QEnterEvent* ev) override
     {
         m_ueber = true;
@@ -300,6 +329,10 @@ Ft8DannListe::Ft8DannListe(QWidget* parent)
         zeigeZeilen();
     });
     kopf->addWidget(m_kopf);
+    // Der Hinweis ist ein ganzer Satz. Er nimmt den Rest der Zeile und
+    // endet rechts, wenn das Fenster schmal ist -- statt dem Fenster
+    // seine Laenge als Mindestbreite aufzuzwingen (2026-11-18).
+    m_hinweis->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     kopf->addWidget(m_hinweis, 1);
     kopf->addWidget(m_mehr);
     v->addLayout(kopf);
