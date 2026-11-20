@@ -4120,6 +4120,15 @@ public:
     /// das Tor fuer die IMD-Messung am Flex.
     bool flexZweitonAktiv() const { return m_flexTuneAn && m_flexTuneZweiton; }
 
+    /// Was die Flex je Band als Sendeleistung fuehrt (`transmit band N
+    /// ... rfpower=`), nach Bandname ("15", "20", ...). -1, solange die
+    /// Maschine fuer dieses Band nichts gemeldet hat. Siehe
+    /// verarbeiteFlexZustandszeile().
+    int flexBandLeistung(const QString& bandName) const
+    {
+        return m_flexBandLeistung.value(bandName, -1);
+    }
+
 #ifdef LONGPATH_BUILD_TESTS
     /// Eine Statuszeile der Maschine einspeisen, ohne Maschine. Geht
     /// durch DENSELBEN Weg wie der Zustandsschub
@@ -4253,6 +4262,11 @@ private:
     /// sie meldet. Zusammen ergeben sie `flexZweitonAktiv()`.
     bool m_flexTuneAn{false};
     bool m_flexTuneZweiton{false};
+    // Je Band, was die Maschine als rfpower fuehrt (Bandname -> Wert),
+    // und die zuletzt gemeldeten Werte der Sendeebene -- nur, um
+    // Aenderungen einmal ins Protokoll zu schreiben.
+    QHash<QString, int> m_flexBandLeistung;
+    QHash<QString, QString> m_flexSendeebene;
     /// „Sollte SWR ueber 2,5 sein, bitte nicht senden!" (Betreiber,
     /// 2026-10-30). Zwei Riegel: einer vor dem Tasten in
     /// `flexTasten()`, einer bei jeder Messung — FT8 tastet 13,2 s am

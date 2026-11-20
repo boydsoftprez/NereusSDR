@@ -8543,6 +8543,54 @@ void RadioModel::verarbeiteFlexZustandszeile(const QString& object,
         }
     }
 
+    // ── Die Leistung, wie die Maschine sie fuehrt (2026-11-19) ──────
+    //
+    // Betreiber, mit Bild: Regler 56, gemessen 36,3 W. Aus allen
+    // Protokollen des Novembers gezaehlt (FWDPWR gegen die Zeile
+    // „Leistung vor dem Tasten"): die Flex liefert je Band einen festen
+    // Anteil der Reglerzahl -- 15 m 0,64, 20 m 0,75, 10/17/40 m um 0,9,
+    // gleich bei 5 % wie bei 56 %, unabhaengig vom SWR und von der Zahl
+    // der FT8-Plaetze. Ein fester Anteil je Band ist keine Physik,
+    // sondern sieht nach einem Wert in der Maschine aus.
+    //
+    // Die Flex fuehrt je Band eine eigene Sendeleistung (`transmit
+    // band N band_name=15 rfpower=...`, AetherSDR RadioModel.cpp:10181
+    // [@d58e2b8a]) und dazu `max_power_level` in der Sendeebene. Beides
+    // kam bisher an (`sub tx all`) und wurde nirgends gelesen. Hier
+    // wird es festgehalten und bei jeder Aenderung EINMAL ins
+    // Protokoll geschrieben -- damit die naechste Sitzung zeigt, was
+    // die Maschine je Band wirklich hat, statt dass wir raten.
+    if (object == QLatin1String("transmit")) {
+        static const QStringList kSchluessel = {
+            QStringLiteral("rfpower"), QStringLiteral("max_power_level"),
+            QStringLiteral("tunepower"), QStringLiteral("hwalc_enabled")};
+        QStringList neu;
+        for (const QString& k : kSchluessel) {
+            if (kv.contains(k) && m_flexSendeebene.value(k) != kv.value(k)) {
+                m_flexSendeebene.insert(k, kv.value(k));
+                neu << (k + QLatin1Char('=') + kv.value(k));
+            }
+        }
+        if (!neu.isEmpty()) {
+            qCInfo(lcConnection).noquote()
+                << "Flex-Sendeebene:" << neu.join(QLatin1Char(' '));
+        }
+    } else if (object.startsWith(QLatin1String("transmit band "))) {
+        const QString band = kv.value(QStringLiteral("band_name"),
+                                      object.section(QLatin1Char(' '), 2, 2));
+        if (kv.contains(QStringLiteral("rfpower"))) {
+            bool ok = false;
+            const int wert = kv.value(QStringLiteral("rfpower")).toInt(&ok);
+            if (ok && m_flexBandLeistung.value(band, -1) != wert) {
+                m_flexBandLeistung.insert(band, wert);
+                qCInfo(lcConnection).noquote()
+                    << "Flex-Band" << band << "fuehrt rfpower" << wert
+                    << "tunepower" << kv.value(QStringLiteral("tunepower"), QStringLiteral("?"))
+                    << "hwalc" << kv.value(QStringLiteral("hwalc_enabled"), QStringLiteral("?"));
+            }
+        }
+    }
+
     // ── Die Vorverzerrung ────────────────────────────────────────────
     //
     // `apply` meldet nur, wenn sich wirklich etwas geaendert hat — die

@@ -2870,6 +2870,7 @@ endif()
 
 longpath_add_test(tst_flex_socketmeldung)
 
+longpath_add_test(tst_flex_leistung_je_band)
 longpath_add_test(tst_flex_zweiton_tor)
 if(TEST tst_flex_zweiton_tor)
     set_tests_properties(tst_flex_zweiton_tor PROPERTIES
