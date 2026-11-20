@@ -1205,6 +1205,8 @@ void SpectrumWidget::loadSettings()
     m_wfNfAgcEnabled = readBool(QStringLiteral("WaterfallNFAGCEnabled"), false);
     m_wfNfAgcOffsetDb = readInt(QStringLiteral("WaterfallAGCOffsetDb"), 0);
     m_wfStopOnTx = readBool(QStringLiteral("WaterfallStopOnTx"), false);
+    m_haltBildBeimSenden = readBool(QStringLiteral("DisplayHoldRxPictureOnTx"), true);
+    m_txDurchlassWieRx   = readBool(QStringLiteral("DisplayTxPassbandLikeRx"), true);
     m_wfOpacity          = readInt(QStringLiteral("DisplayWfOpacity"), 100);
     m_wfUpdatePeriodMs   = readInt(QStringLiteral("DisplayWfUpdatePeriodMs"), 30);
 
@@ -1504,6 +1506,10 @@ void SpectrumWidget::saveSettings()
     writeInt(QStringLiteral("WaterfallAGCOffsetDb"), m_wfNfAgcOffsetDb);
     s.setValue(settingsKey(QStringLiteral("WaterfallStopOnTx"), m_panIndex),
               m_wfStopOnTx ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(settingsKey(QStringLiteral("DisplayHoldRxPictureOnTx"), m_panIndex),
+              m_haltBildBeimSenden ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(settingsKey(QStringLiteral("DisplayTxPassbandLikeRx"), m_panIndex),
+              m_txDurchlassWieRx ? QStringLiteral("True") : QStringLiteral("False"));
     writeInt(QStringLiteral("DisplayWfOpacity"), m_wfOpacity);
     writeInt(QStringLiteral("DisplayWfUpdatePeriodMs"), m_wfUpdatePeriodMs);
     s.setValue(settingsKey(QStringLiteral("DisplayWaterfallHistoryMs"), m_panIndex),
@@ -3050,6 +3056,71 @@ void SpectrumWidget::setWaterfallStopOnTx(bool on)
     scheduleSettingsSave();
 }
 
+// ── Das Empfangsbild beim Senden halten (2026-11-20) ──────────────────
+//
+// Der Betreiber an der FLEX-8400, FT8 mit 40 W: „wenn ich sende ist alles
+// orange und keine peaks ersichtlich", dazu „beim emfang in gruen viel
+// besser". Zwei Dinge machten den Klotz:
+//
+//   * Die Flex liefert beim Senden, was ihr Empfaenger durch das
+//     Sende-Empfangs-Relais mitbekommt -- eine Flaeche ueber den ganzen
+//     TX-Bereich bei rund -58 dBm, ueber seinem Rasterende von -64,7.
+//     Laut FlexRadio selbst kein Bild der Sendung (community.flexradio.com
+//     6394510, 8030424). Andere Stationen sind in dieser Zeit ohnehin
+//     nicht zu hoeren.
+//   * Longpath tauschte beim Senden den Empfangsdurchlass gegen die
+//     orange TX-Flaeche (drawTxFilterOverlay).
+//
+// Gewaehlt wurde Entwurf 1 „wie Empfang" (werkzeug/entwuerfe-pan-beim-
+// senden-2026-11-20): das letzte Empfangsbild bleibt stehen, der
+// Wasserfall wird nicht beschrieben, und ein 3-px-Streifen oben zeigt den
+// Sendebereich. Nach dem Senden werden noch 400 ms verworfen, solange der
+// Empfaenger sich faengt -- dieselbe Zeit, die AetherSDR dafuer nimmt
+// (#2117, kPostTxAgcSettleMs), sonst steht nach jeder Sendung ein heller
+// Streifen im Wasserfall.
+//
+// Nicht waehrend des Zweiton-Tests: dort wird am Sendebild gemessen
+// (analyseImd laeuft im Datenweg), es muss also live bleiben.
+namespace {
+constexpr qint64 kEmpfangsbildNachlaufMs = 400;
+}
+
+void SpectrumWidget::setHoldReceivePictureOnTx(bool on)
+{
+    if (m_haltBildBeimSenden == on) { return; }
+    m_haltBildBeimSenden = on;
+    markOverlayDirty();
+    update();
+    scheduleSettingsSave();
+}
+
+bool SpectrumWidget::haeltEmpfangsbild() const
+{
+    if (!m_haltBildBeimSenden || m_testingIMD) { return false; }
+    if (m_moxOverlay) { return true; }
+    return m_sendeEndeMs > 0
+        && QDateTime::currentMSecsSinceEpoch() - m_sendeEndeMs
+               < kEmpfangsbildNachlaufMs;
+}
+
+// Getrennt vom Halten (Betreiber: „als option die gruene grafik auch in
+// der bandwith"): wer das Bild live will, kann den gruenen Durchlass
+// trotzdem behalten -- und umgekehrt die orange Flaeche ueber dem
+// gehaltenen Bild.
+void SpectrumWidget::setTxPassbandLikeRx(bool on)
+{
+    if (m_txDurchlassWieRx == on) { return; }
+    m_txDurchlassWieRx = on;
+    markOverlayDirty();
+    update();
+    scheduleSettingsSave();
+}
+
+bool SpectrumWidget::zeigtSendestreifen() const
+{
+    return m_txDurchlassWieRx && m_moxOverlay && !m_testingIMD;
+}
+
 // Issue #230 fix: Clarity is a Longpath-only override modeled on
 // Thetis's AGC pattern at display.cs:6584 [v2.10.3.13], where the AGC
 // running-min is a runtime field (_RX1waterfallPreviousMinValue) that
@@ -3605,6 +3676,18 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
                                           double windowEnb,
                                           double dbmOffset)
 {
+    // Beim Senden bleibt das letzte Empfangsbild stehen (siehe
+    // haeltEmpfangsbild): nichts von dem, was jetzt kommt, ist Empfang.
+    // Vor allem anderen, damit auch Rauschteppich, Lupe und Clarity-Boden
+    // nicht am Sendesignal lernen. Gehalten wird nur bei geschlossenem
+    // Zweiton-Tor -- ein altes Messergebnis gilt dann nicht mehr (sonst
+    // bliebe es stehen, wenn der Zweiton-Test mitten im Senden endet;
+    // tst_zweiton_ausserhalb_malvorgang hat das gefunden).
+    if (haeltEmpfangsbild()) {
+        m_imdAnalysisValid = false;
+        return;
+    }
+
     // Fuer dbmOverRange() gemerkt: die Umrechnung linear -> dBm
     // braucht denselben Versatz, den der Panadapter selbst benutzt.
     m_lastDbmOffset = dbmOffset;
@@ -5068,7 +5151,9 @@ void SpectrumWidget::drawWaterfallChrome(QPainter& p, const QRect& wfRect)
     // Plan 4 D9 (Cluster E): TX filter column on waterfall, MOX-gated.
     // m_showTxFilterOnRxWaterfall: user preference (Setup → Display).
     // m_moxOverlay: reused from H.1 (3M-1a); set by MoxController.
-    if (m_showTxFilterOnRxWaterfall && m_moxOverlay) {
+    // Nicht ueber das gehaltene Empfangsbild (2026-11-20): der Wasserfall
+    // steht dann und zeigt Empfang, keine Sendezeit.
+    if (m_showTxFilterOnRxWaterfall && m_moxOverlay && !zeigtSendestreifen()) {
         drawTxFilterWaterfallColumn(p, wfRect);
     }
     // Plan 4 D9c-1: RX zero-line uses m_rxZeroLineColor (was hardcoded red 180).
@@ -5082,7 +5167,8 @@ void SpectrumWidget::drawWaterfallChrome(QPainter& p, const QRect& wfRect)
     }
 
     // Plan 4 D9c-1: TX zero-line on waterfall — MOX-gated.
-    if (m_showTxZeroLineOnWaterfall && m_moxOverlay && m_vfoHz > 0.0) {
+    if (m_showTxZeroLineOnWaterfall && m_moxOverlay && !zeigtSendestreifen()
+        && m_vfoHz > 0.0) {
         const int x = hzToX(m_vfoHz, wfRect);
         if (x >= wfRect.left() && x <= wfRect.right()) {
             QPen txZeroPen(m_txZeroLineColor, 1);
@@ -7076,6 +7162,10 @@ void SpectrumWidget::zeigeFremdeWasserfallzeile(const QVector<float>& intensitae
     // der das Bild schreibt.
     if (!stelleWasserfallbildSicher()) { return; }
     if (m_wfStopOnTx && m_activePeakHold.txActive()) { return; }
+    // Gehaltenes Empfangsbild: die Kachel der Flex zeigt jetzt das eigene
+    // Sendesignal, nicht den Empfang.
+    if (haeltEmpfangsbild()) { return; }
+    ++m_wfZeilenGeschrieben;
 
     const qint64 jetzt = QDateTime::currentMSecsSinceEpoch();
     m_fremdeWasserfallquelle    = true;
@@ -7521,6 +7611,12 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& wfPixelsDbm)
     if (m_wfStopOnTx && m_activePeakHold.txActive()) {
         return;
     }
+    // Gehaltenes Empfangsbild: keine Zeile, auch nicht die zuletzt
+    // empfangene noch einmal -- der Zeitgeber schoebe sonst dieselbe
+    // Zeile 13 s lang weiter.
+    if (haeltEmpfangsbild()) {
+        return;
+    }
 
     // ── Kein Strom, keine Zeilen ────────────────────────────────────
     //
@@ -7557,6 +7653,7 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& wfPixelsDbm)
     // is still updated for any observability (paint debug, telemetry).
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     m_wfLastPushMs = now;
+    ++m_wfZeilenGeschrieben;
 
     const int n = wfPixelsDbm.size();
     int h = m_waterfall.height();
@@ -7962,7 +8059,11 @@ void SpectrumWidget::drawSliceMarker(QPainter& p, const QRect& specRect,
     // disappears during TX/TUNE.  The TX filter overlay (drawTxFilterOverlay)
     // takes over in that state — gives the user a clear visual swap between
     // the cyan RX shadow and the orange TX band on MOX/TUNE engage.
-    if (!m_moxOverlay) {
+    //
+    // Ausnahme seit 2026-11-20: beim gehaltenen Empfangsbild bleibt der
+    // Empfangsdurchlass stehen -- das Bild soll aussehen wie im Empfang,
+    // den Sendebereich zeigt dann nur der Streifen (drawTxFilterOverlay).
+    if (!m_moxOverlay || zeigtSendestreifen()) {
         // Spectrum passband fill — Plan 4 D9b: user-pickable m_rxFilterColor.
         // Previously hardcoded AetherSDR cyan alpha=35/25; now single user colour.
         if (specHeightClipped > 0 && !overSurface) {
@@ -8698,7 +8799,7 @@ void SpectrumWidget::paintPassbandOverSurface(QPainter& p, const QRect& specRect
 
         // MOX-Sperre wie im 2D-Zweig: waehrend TX/TUNE zeigt
         // drawTxFilterOverlay das Sendeband, nicht wir den Empfang.
-        if (!m_moxOverlay) {
+        if (!m_moxOverlay || zeigtSendestreifen()) {
             p.fillRect(xLo, specRect.top(), fW, specHeightClipped, kPassbandWash);
         }
         p.setPen(QPen(kPassbandEdgeLight, 1));
@@ -8902,6 +9003,8 @@ void SpectrumWidget::setMoxOverlay(bool isTx)
         return;  // idempotent
     }
     m_moxOverlay = isTx;
+    // Nachlauf des gehaltenen Empfangsbilds (siehe haeltEmpfangsbild).
+    m_sendeEndeMs = isTx ? 0 : QDateTime::currentMSecsSinceEpoch();
     markOverlayDirty();
     update();   // ensure QPainter path repaints immediately on MOX flip;
                 // markOverlayDirty alone waits for the next natural QRhi
@@ -9997,6 +10100,32 @@ void SpectrumWidget::drawTxFilterOverlay(QPainter& p, const QRect& specRect)
         return;
     }
     const int bandW = right - left;
+
+    // ── Streifen statt Flaeche (2026-11-20) ─────────────────────────
+    //
+    // Beim gehaltenen Empfangsbild nur eine schmale Marke oben ueber dem
+    // Sendebereich, in der TX-Farbe des Betreibers, aber deckend genug,
+    // um auf jedem Untergrund zu stehen; dazu „TX" klein darunter. Keine
+    // Flaeche, keine Kanten: das Bild darunter soll aussehen wie im
+    // Empfang (Entwurf 1). ON AIR, MOX-Knopf und der rote Rand sagen
+    // ohnehin, dass gesendet wird.
+    if (zeigtSendestreifen()) {
+        constexpr int kStreifenPx = 3;
+        QColor streifen(m_txFilterColor);
+        streifen.setAlpha(210);
+        p.fillRect(QRect(left, specRect.top(), bandW, kStreifenPx), streifen);
+        const QColor labelColor(0xff, 0xaa, 0x70);  // kTxFilterOverlayLabel
+        p.save();
+        QFont f = p.font();
+        f.setPixelSize(9);
+        f.setBold(true);
+        p.setFont(f);
+        p.setPen(labelColor);
+        p.drawText(left + 4, specRect.top() + kStreifenPx + 10,
+                   QStringLiteral("TX"));
+        p.restore();
+        return;
+    }
 
     // Reserve the bandplan strip at the bottom of specRect (drawBandPlan paints
     // colored segments there but leaves transparent gaps between segments;

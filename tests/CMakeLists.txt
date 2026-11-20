@@ -8719,6 +8719,13 @@ longpath_add_test(tst_freq_scale_labels)
 #   Geraete-Pixel. Gegenprobe gegen die alte Fassung gefahren.
 longpath_add_test(tst_panadapter_schaerfe)
 
+# tst_panadapter_beim_senden (2026-11-20): Betreiber „wenn ich sende ist
+#   alles orange und keine peaks ersichtlich" -- Entwurf 1 „wie Empfang".
+#   Beim Senden (und 400 ms danach) bleibt das letzte Empfangsbild stehen,
+#   der Wasserfall schreibt nichts, statt der TX-Flaeche ein Streifen oben;
+#   Zweiton-Test und Abwahl bleiben live. Gegenprobe gefahren.
+longpath_add_test(tst_panadapter_beim_senden)
+
 # ── Weiche Kante und Hof: die Zusage "beide aus = wie vorher" (2026-10-08) ──
 # tst_kurven_streifen: `Kurve::baue` entscheidet, aus wie vielen Baendern die
 #   GPU die Kurve zeichnet. Die Vorgabe beider Schalter ist AUS, und sie taugt

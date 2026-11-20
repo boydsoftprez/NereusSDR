@@ -900,6 +900,37 @@ public:
     // Stop-on-TX: pause pushWaterfallRow() while TX is active.
     void setWaterfallStopOnTx(bool on);
     bool waterfallStopOnTx() const { return m_wfStopOnTx; }
+    // Empfangsbild beim Senden halten (2026-11-20, Betreiber: „wenn ich
+    // sende ist alles orange und keine peaks ersichtlich", „beim emfang in
+    // gruen viel besser"; Entwurf 1 „wie Empfang"). Solange gesendet wird
+    // und 400 ms danach nimmt der Panadapter keine Spektren und keine
+    // Wasserfallzeilen an: Spur und Wasserfall bleiben das letzte
+    // Empfangsbild, der Empfangsdurchlass bleibt in seiner Farbe, und
+    // statt der TX-Flaeche zeigt ein 3-px-Streifen oben den Sendebereich.
+    // Ab Werk an, je Pan gespeichert (DisplayHoldRxPictureOnTx). Waehrend
+    // des Zweiton-Tests bleibt das Bild live -- dort wird gemessen.
+    void setHoldReceivePictureOnTx(bool on);
+    bool holdReceivePictureOnTx() const { return m_haltBildBeimSenden; }
+    // TX-Durchlass beim Senden wie im Empfang (2026-11-20, Betreiber:
+    // „kann man als option die gruene grafik auch in der bandwith als
+    // option haben?"). An: der Empfangsdurchlass bleibt in seiner Farbe
+    // stehen, den Sendebereich zeigt ein 3-px-Streifen oben. Aus: die
+    // orange TX-Flaeche wie bisher. Unabhaengig vom Halten des Bildes;
+    // ab Werk an, je Pan gespeichert (DisplayTxPassbandLikeRx).
+    void setTxPassbandLikeRx(bool on);
+    bool txPassbandLikeRx() const { return m_txDurchlassWieRx; }
+    // Haelt das Widget gerade das Empfangsbild (Senden oder Nachlauf)?
+    bool haeltEmpfangsbild() const;
+    // Zeigt es beim Senden den Empfangsdurchlass und den schmalen
+    // Streifen statt der TX-Flaeche?
+    bool zeigtSendestreifen() const;
+    // Pruefstand: wie viele Wasserfallzeilen bisher geschrieben wurden
+    // (beide Wege: aus den Spektren und die fertige Zeile der Flex).
+    quint64 waterfallRowsWrittenForTest() const { return m_wfZeilenGeschrieben; }
+    void paintTxOverlayForTest(QPainter& p, const QRect& specRect)
+    {
+        drawTxFilterOverlay(p, specRect);
+    }
     void setWfOpacity(int percent);          // 0..100
     int  wfOpacity() const { return m_wfOpacity; }
     void setWfUpdatePeriodMs(int ms);
@@ -3529,6 +3560,11 @@ private:
     // ---- MOX / TX overlay state (H.1, Phase 3M-1a) ----
     // From Thetis display.cs:1568 [v2.10.3.13]: static bool _mox = false;
     bool  m_moxOverlay{false};
+    // Empfangsbild beim Senden halten, siehe setHoldReceivePictureOnTx().
+    bool    m_haltBildBeimSenden{true};
+    bool    m_txDurchlassWieRx{true};
+    qint64  m_sendeEndeMs{0};        // Ende der letzten Sendung (Nachlauf)
+    quint64 m_wfZeilenGeschrieben{0};
     // TX attenuator cal offset — applied as an additional dBm shift during TX.
     // From Thetis display.cs:4840 [v2.10.3.13]: if (!local_mox) fOffset += rx1_preamp_offset;
     // Upstream tags preserved: //MW0LGE (from cited upstream lines) [v2.10.3.15]

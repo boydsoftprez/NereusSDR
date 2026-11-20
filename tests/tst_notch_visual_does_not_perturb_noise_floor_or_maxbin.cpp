@@ -427,6 +427,10 @@ private slots:
         configure(w);
         w.setNotchMarkers(oneNotch(200.0));
         w.setVisualNotchEnabled(true);
+        // Seit 2026-11-20 haelt der Panadapter beim Senden ab Werk das
+        // Empfangsbild (tst_panadapter_beim_senden); dieser Fall prueft den
+        // LIVE-Sendeweg, also das Halten abwaehlen.
+        w.setHoldReceivePictureOnTx(false);
         // From Thetis display.cs:5235 [v2.10.3.15] - the visual notch is
         // gated on !local_mox, on both planes (:6579 for the waterfall).
         w.setMoxOverlay(true);

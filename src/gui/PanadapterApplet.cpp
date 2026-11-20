@@ -1014,6 +1014,25 @@ QMenu* PanadapterApplet::buildDisplayMenu(QObject* parent)
         connect(lupe, &QAction::toggled, m_spectrum,
                 [this](bool an) { m_spectrum->setPassbandMagnifier(an ? 1 : 0); });
         menu->addSeparator();
+
+        // Beim Senden (2026-11-20, Entwurf 1 „wie Empfang"): beide ab
+        // Werk an, je einzeln abwaehlbar.
+        QAction* halten = menu->addAction(tr("Hold receive picture while transmitting"));
+        halten->setCheckable(true);
+        halten->setChecked(m_spectrum->holdReceivePictureOnTx());
+        halten->setToolTip(tr("While you transmit the receiver hears only your own "
+                              "signal. The last receive picture stays instead, and "
+                              "the waterfall pauses."));
+        connect(halten, &QAction::toggled, m_spectrum,
+                &SpectrumWidget::setHoldReceivePictureOnTx);
+        QAction* gruen = menu->addAction(tr("TX passband in RX colour"));
+        gruen->setCheckable(true);
+        gruen->setChecked(m_spectrum->txPassbandLikeRx());
+        gruen->setToolTip(tr("On: the passband keeps its receive colour and a thin "
+                             "strip on top marks the TX range. Off: orange TX area."));
+        connect(gruen, &QAction::toggled, m_spectrum,
+                &SpectrumWidget::setTxPassbandLikeRx);
+        menu->addSeparator();
     }
 
     // ── Spots je Quelle (2026-11-18) ─────────────────────────────────
