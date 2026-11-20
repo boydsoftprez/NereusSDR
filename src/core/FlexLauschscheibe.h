@@ -151,8 +151,20 @@ public:
     bool istLauschstrom(quint32 streamId) const { return platzFuerStrom(streamId) >= 0; }
     /// Ton eines DAX-Stroms ist angekommen: einmal je Strom eine Zeile
     /// ins Protokoll, dazu einmal je Minute der Pegel.
-    void tonAngekommen(int platz, const QVector<float>& werte);
-    void tonAngekommen(const QVector<float>& werte) { tonAngekommen(0, werte); }
+    void tonAngekommen(int platz, QVector<float>& werte);
+    void tonAngekommen(QVector<float>& werte) { tonAngekommen(0, werte); }
+    /// Unbrauchbare Proben (NaN, unendlich, weit ueber Vollaussteuerung)
+    /// auf 0 setzen. Gibt zurueck, wie viele es waren; `groesster` die
+    /// groesste verworfene Betragszahl.
+    ///
+    /// Am Geraet, 2026-11-20 10:32: in der ersten Minute nach dem Anlegen
+    /// meldete der Pegel „Spitze 708.3 dBFS" -- einzelne Werte um 1e35,
+    /// danach wieder normal. Eine solche Probe wird beim Quadrieren in der
+    /// FFT unendlich und kostet den Dekoder ein ganzes 15-s-Fenster.
+    static int bereinigeTon(QVector<float>& werte, float* groesster = nullptr);
+    /// Ab hier gilt eine Probe als unbrauchbar: +18 dBFS. Der Flex-Ton ist
+    /// float32 um ±1.0; was darueber liegt, ist kein Ton.
+    static constexpr float kTonGrenze = 8.0f;
 
     /// Eine Zustandszeile der Maschine. Gibt true zurueck, wenn sie einer
     /// Lauschscheibe gehoerte -- dann darf sie KEIN anderer Weg sehen.
@@ -189,6 +201,10 @@ private:
         float  pegelSpitze{0.0f};
         double pegelQuadrate{0.0};
         qint64 pegelWerte{0};
+        qint64 verworfen{0};       ///< seit der letzten Pegelzeile
+        float  verworfenGroesster{0.0f};
+        qint64 werteSeitStart{0};  ///< wo im Strom die erste kaputte lag
+        bool   kaputtGemeldet{false};
     };
 
     bool gueltig(int platz) const { return platz >= 0 && platz < kMaxPlaetze; }

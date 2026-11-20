@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace Longpath {
 
@@ -371,7 +372,27 @@ void FlexLauschscheibe::stimme(int platz, double hz)
 {
     const Platz& p = m_platz[platz];
     if (p.scheibe < 0 || !(hz > 0.0)) { return; }
-    m_sende(FlexCommandWire::tuneSliceCommand(QString::number(p.scheibe), hz), {});
+    // Mit Rueckmeldung ins Protokoll (2026-11-20): die Maschine echot
+    // eigene Abstimmbefehle oft NICHT als Zustand („steht auf" blieb am
+    // Geraet bei der Anlegefrequenz stehen, obwohl die Scheibe laengst
+    // auf dem Lauschband war). Ohne diese Zeile sah das Protokoll aus,
+    // als hoerte die Lauschscheibe das falsche Band.
+    const int scheibe = p.scheibe;
+    const QString befehl = FlexCommandWire::tuneSliceCommand(QString::number(scheibe), hz);
+    m_sende(befehl, [platz, scheibe, hz](quint32 code, const QString& body) {
+        if (code == 0) {
+            qCInfo(lcConnection).nospace().noquote()
+                << "Flex-Lauschscheibe: Platz " << platz << " (Scheibe " << scheibe
+                << ") auf " << QString::number(hz / 1.0e6, 'f', 6)
+                << " MHz gestimmt — von der Maschine bestaetigt";
+        } else {
+            qCWarning(lcConnection).nospace().noquote()
+                << "Flex-Lauschscheibe: Platz " << platz << " (Scheibe " << scheibe
+                << ") auf " << QString::number(hz / 1.0e6, 'f', 6)
+                << " MHz NICHT gestimmt, Code 0x" << QString::number(code, 16)
+                << " " << body.trimmed();
+        }
+    });
 }
 
 void FlexLauschscheibe::baueAb(int platz)
@@ -430,10 +451,31 @@ void FlexLauschscheibe::vergiss()
 
 // ── Ton und Zustand ──────────────────────────────────────────────────
 
-void FlexLauschscheibe::tonAngekommen(int platz, const QVector<float>& werte)
+int FlexLauschscheibe::bereinigeTon(QVector<float>& werte, float* groesster)
+{
+    int weg = 0;
+    float max = 0.0f;
+    for (float& w : werte) {
+        const float b = std::fabs(w);
+        if (!std::isfinite(w) || b > kTonGrenze) {
+            if (std::isfinite(b) && b > max) { max = b; }
+            if (!std::isfinite(b)) { max = std::numeric_limits<float>::infinity(); }
+            w = 0.0f;
+            ++weg;
+        }
+    }
+    if (groesster) { *groesster = max; }
+    return weg;
+}
+
+void FlexLauschscheibe::tonAngekommen(int platz, QVector<float>& werte)
 {
     if (!gueltig(platz)) { return; }
     Platz& p = m_platz[platz];
+    // Zuerst bereinigen: was danach kommt (Pegel, Wandler, Dekoder),
+    // sieht nur noch brauchbaren Ton.
+    float groesster = 0.0f;
+    const int weg = bereinigeTon(werte, &groesster);
     if (p.strom == 0) { return; }
     if (p.tonGemeldetFuer != p.strom) {
         p.tonGemeldetFuer = p.strom;
@@ -445,7 +487,25 @@ void FlexLauschscheibe::tonAngekommen(int platz, const QVector<float>& werte)
         p.pegelSpitze = 0.0f;
         p.pegelQuadrate = 0.0;
         p.pegelWerte = 0;
+        p.verworfen = 0;
+        p.verworfenGroesster = 0.0f;
+        p.werteSeitStart = 0;
+        p.kaputtGemeldet = false;
     }
+    if (weg > 0) {
+        if (!p.kaputtGemeldet) {
+            p.kaputtGemeldet = true;
+            qCWarning(lcConnection).nospace().noquote()
+                << "Flex-Lauschscheibe: Platz " << platz << ", Strom 0x"
+                << QString::number(p.strom, 16) << ": " << weg
+                << " unbrauchbare Proben in einem Paket (groesster Betrag "
+                << groesster << ") nach " << p.werteSeitStart
+                << " Werten — auf 0 gesetzt";
+        }
+        p.verworfen += weg;
+        p.verworfenGroesster = std::max(p.verworfenGroesster, groesster);
+    }
+    p.werteSeitStart += werte.size();
     for (float w : werte) {
         const float b = std::fabs(w);
         if (b > p.pegelSpitze) { p.pegelSpitze = b; }
@@ -465,7 +525,13 @@ void FlexLauschscheibe::tonAngekommen(int platz, const QVector<float>& werte)
             << ", DAX-Pegel der letzten Minute — Spitze "
             << QString::number(dbfs(p.pegelSpitze), 'f', 1) << " dBFS, Mittel "
             << QString::number(dbfs(effektiv), 'f', 1) << " dBFS, "
-            << p.pegelWerte << " Werte";
+            << p.pegelWerte << " Werte"
+            << (p.verworfen > 0
+                    ? QStringLiteral(", %1 unbrauchbare verworfen (groesster %2)")
+                          .arg(p.verworfen).arg(double(p.verworfenGroesster))
+                    : QString());
+        p.verworfen = 0;
+        p.verworfenGroesster = 0.0f;
         p.pegelUhr.restart();
         p.pegelSpitze = 0.0f;
         p.pegelQuadrate = 0.0;

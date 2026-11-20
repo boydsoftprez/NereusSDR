@@ -9292,14 +9292,17 @@ void RadioModel::startFlexStreams()
             const int lauschPlatz =
                 m_flexLausch ? m_flexLausch->platzFuerStrom(id) : -1;
             if (lauschPlatz >= 0) {
-                m_flexLausch->tonAngekommen(lauschPlatz, s);
-                if (m_audioEngine && !s.isEmpty()) {
+                // Bereinigt (core/FlexLauschscheibe::bereinigeTon), bevor
+                // es in Wandler und Dekoder geht.
+                QVector<float> ton = s;
+                m_flexLausch->tonAngekommen(lauschPlatz, ton);
+                if (m_audioEngine && !ton.isEmpty()) {
                     // Dieselbe Rate wie der Mix-Strom: Klasse 0x03E3,
                     // 24 kHz (MainWindow_Flex.cpp kFlexAudioRateHz,
                     // gemessen 24 012,3 Hz).
                     constexpr int kDaxRateHz = 24000;
                     m_audioEngine->feedFt8LauschAudio(
-                        lauschPlatz, s.constData(), s.size() / 2, kDaxRateHz);
+                        lauschPlatz, ton.constData(), ton.size() / 2, kDaxRateHz);
                 }
                 return;
             }
