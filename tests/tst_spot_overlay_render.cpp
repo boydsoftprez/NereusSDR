@@ -74,6 +74,7 @@ private slots:
     void rejectsBeyondVisibleRange();
     void historyOnlyMarkersCarryNoSpotIndex();
     void mixedMarkersKeepSpotIndicesStraight();
+    void im3dModusUeberDerFlaeche();
 };
 
 void TestSpotOverlayRender::emptyOverlayDrawsNothing()
@@ -295,6 +296,50 @@ void TestSpotOverlayRender::mixedMarkersKeepSpotIndicesStraight()
     QCOMPARE(seenSpotIndices, 2);
     // ... und die Verlaufsmarke bekommt keinen.
     QCOMPARE(seenHistory, 1);
+}
+
+// Betreiber, 2026-11-19: „aber da erscheint nichts." Panadapter auf 3D,
+// 1162 Spots, kein Rufzeichen im Bild: die Spots lagen in der
+// Chrome-Schicht UNTER der deckenden 3D-Flaeche. Im 3D-Modus muss die
+// Schicht UEBER der Flaeche sie malen, im 2D-Modus die Chrome-Schicht --
+// und jeweils nur eine von beiden.
+void TestSpotOverlayRender::im3dModusUeberDerFlaeche()
+{
+    SpectrumWidget sw;
+    sw.resize(800, 400);
+    sw.setFrequencyRange(18'100'000.0, 12'000.0);
+    QVector<SpectrumWidget::SpotMarker> markers;
+    markers.append(makeSpot(1, QStringLiteral("VE9ZY"), 18.1012));
+    sw.setSpotMarkers(markers);
+    const QRect specRect(0, 0, 800, 200);
+
+    // Malt an EINER der beiden Stellen und zaehlt die Klickfelder. Vorher
+    // leeren: malt die Stelle nicht, blieben sonst die alten stehen.
+    const auto male = [&](bool chrome) {
+        QImage img(specRect.size(), QImage::Format_ARGB32_Premultiplied);
+        img.fill(Qt::black);
+        {
+            QPainter leer(&img);
+            sw.setSpotMarkers({});
+            sw.drawSpotMarkersForTest(leer, specRect);
+        }
+        sw.setSpotMarkers(markers);
+        QPainter p(&img);
+        if (chrome) { sw.malSpotsInChromeForTest(p, specRect); }
+        else        { sw.malSpotsUeberFlaecheForTest(p, specRect); }
+        p.end();
+        return static_cast<int>(sw.spotClickRectsForTest().size());
+    };
+
+    sw.setSpectrumRenderMode(SpectrumRenderMode::Mode2D);
+    QCOMPARE(male(true), 1);
+    QCOMPARE(male(false), 0);
+
+    sw.setSpectrumRenderMode(SpectrumRenderMode::Mode3D);
+    QVERIFY2(male(false) == 1,
+             "im 3D-Modus malt die Schicht ueber der Flaeche das Rufzeichen");
+    QVERIFY2(male(true) == 0,
+             "und die Chrome-Schicht unter der Flaeche malt es nicht doppelt");
 }
 
 QTEST_MAIN(TestSpotOverlayRender)

@@ -992,6 +992,8 @@ private slots:
     void onPanBackgroundColour();
     void onPanBackgroundColourReset();
     void onPanDisplaySetup();
+    /// Ein Haken unter „Spots" im Zahnrad: Anzeige und Spot Hub nachziehen.
+    void onPanSpotSourcesChanged();
 
     /// Windrose im Spektrum ein-/ausblenden und ihr Bild nachfuehren.
     /// Gemalt wird sie vom Rotorzeiger selbst — EIN Zifferblatt im

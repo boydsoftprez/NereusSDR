@@ -283,6 +283,13 @@ public:
     // vor der Spot-Liste.
     void attachRoundtable(RoundtableHub* hub);
 
+    // Spots je Quelle (2026-11-18): der Haken im Panadapter-Zahnrad
+    // schreibt SpotSourceVisible/<Quelle>. Hier lesen die Haken im
+    // Reiter Display denselben Stand nach -- ueber setChecked, also
+    // ueber ihren eigenen toggled-Weg (Schluessel, settingsChanged,
+    // Spot-Liste). Unveraenderte Haken loesen nichts aus.
+    void reloadSourceVisibility();
+
 public:
 
 signals:

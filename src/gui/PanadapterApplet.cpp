@@ -1016,6 +1016,18 @@ QMenu* PanadapterApplet::buildDisplayMenu(QObject* parent)
         menu->addSeparator();
     }
 
+    // ── Spots je Quelle (2026-11-18) ─────────────────────────────────
+    //
+    // Betreiber: „rufzeichen aus dem cluster sollte man als option auch
+    // ein und ausblenden können". Den Schalter gab es — aber nur im
+    // Spot Hub, Reiter Display. Hier derselbe Schluessel
+    // (SpotSourceVisible/<Quelle>) und derselbe Weg: schreiben, die
+    // Maske aus den Einstellungen nachladen, und spotSourcesChanged()
+    // sagt MainWindow, dass der Spot Hub (Haken + Spot-Liste) nachzieht.
+    // Kein zweiter Speicher, keine zweite Maske.
+    addSpotSourceMenu(menu);
+    menu->addSeparator();
+
     menu->addAction(tr("Choose background image…"), this, [this]() {
         // ── Der Dialog gehoert dem FENSTER, nicht dem Applet ─────
         //
@@ -1111,6 +1123,72 @@ QMenu* PanadapterApplet::buildDisplayMenu(QObject* parent)
         emit displaySetupRequested();
     });
     return menu;
+}
+
+// Die Quellen in der Reihenfolge und mit den Namen des Spot Hub
+// (SpotHubDialog::buildDisplayTab). tst_pan_spot_sources vergleicht
+// beide Listen, damit eine neue Quelle nicht nur an einer Stelle steht.
+namespace {
+struct SpotQuelle { const char* quelle; const char* name; };
+constexpr SpotQuelle kSpotQuellen[] = {
+    {"Cluster",       "DX Cluster"},
+    {"RBN",           "RBN"},
+    {"WSJT-X",        "WSJT-X"},
+    {"SpotCollector", "SpotCollector"},
+    {"POTA",          "POTA"},
+    {"FreeDV",        "FreeDV"},
+    {"PSK",           "PSK Reporter"},
+    {"Roundtable",    "Roundtable"},
+    // Die eigenen Dekoder (Ft8Applet, RttyDecoderApplet) stempeln
+    // "Longpath". Ohne diesen Haken blieben die FT8-Rufzeichen im Bild,
+    // was immer man sonst abschaltet (2026-11-19).
+    {"Longpath",      "Own decoder (FT8, RTTY)"},
+};
+QString spotQuellenSchluessel(const char* quelle)
+{
+    return QStringLiteral("SpotSourceVisible/") + QLatin1String(quelle);
+}
+} // namespace
+
+void PanadapterApplet::setSpotSourcesVisible(const QStringList& quellen, bool an)
+{
+    // Wie `save` im Spot Hub: setzen, sichern — dann EIN Nachladen.
+    auto& s = AppSettings::instance();
+    for (const QString& q : quellen) {
+        s.setValue(QStringLiteral("SpotSourceVisible/") + q,
+                   an ? QStringLiteral("True") : QStringLiteral("False"));
+    }
+    s.save();
+    if (m_spectrum) { m_spectrum->loadSpotDisplaySettings(); }
+    emit spotSourcesChanged();
+}
+
+void PanadapterApplet::addSpotSourceMenu(QMenu* menu)
+{
+    auto* spots = menu->addMenu(tr("Spots"));
+    spots->setObjectName(QStringLiteral("panSpotSourcesMenu"));
+    const auto& s = AppSettings::instance();
+    QStringList alle;
+    for (const SpotQuelle& q : kSpotQuellen) {
+        const QString quelle = QLatin1String(q.quelle);
+        alle << quelle;
+        QAction* a = spots->addAction(QLatin1String(q.name));
+        a->setObjectName(QStringLiteral("panSpotSource_") + quelle);
+        a->setCheckable(true);
+        a->setChecked(s.value(spotQuellenSchluessel(q.quelle),
+                              QStringLiteral("True")).toString()
+                      == QStringLiteral("True"));
+        connect(a, &QAction::toggled, this, [this, quelle](bool an) {
+            setSpotSourcesVisible({quelle}, an);
+        });
+    }
+    spots->addSeparator();
+    spots->addAction(tr("Show all"), this, [this, alle]() {
+        setSpotSourcesVisible(alle, true);
+    });
+    spots->addAction(tr("Hide all"), this, [this, alle]() {
+        setSpotSourcesVisible(alle, false);
+    });
 }
 
 // ↗ heisst „ablösen", ↙ heisst „zurueck in die Anordnung".

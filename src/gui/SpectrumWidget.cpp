@@ -1823,6 +1823,9 @@ void SpectrumWidget::setSpectrumRenderMode(SpectrumRenderMode mode)
     // sees while the mode is off.
     m_dss.clear();
     m_dss3dNeedsUpload = true;
+    // Die Chrome-Schicht neu bauen: ob die Spots (und die Bandbreite)
+    // darin stehen, haengt am Modus -- siehe malSpotsInChrome().
+    markOverlayDirty();
     update();
 }
 
@@ -8641,6 +8644,41 @@ void SpectrumWidget::paintDurchlassLupe(QPainter& p, const QRect& specRect)
 // Schicht gemalt, die als letzte ueber die deckende DSS-Flaeche kommt —
 // siehe die Begruendung in drawSliceMarker. Hell statt tuerkis, weil
 // die Flaeche blau ist. Der Wasserfall-Teil bleibt in drawSliceMarker.
+// ── Spots im 3D-Modus: ueber die Flaeche (2026-11-19) ────────────────
+//
+// Betreiber, 2026-11-19, mit Bild: „aber da erscheint nichts." Der
+// Panadapter stand auf 3D, im Protokoll 1162 Spots, im Bild kein
+// einziges Rufzeichen. Dieselbe Ursache wie bei der Bandbreite
+// (drawSliceMarker, 2026-10): drawSpotMarkers malte in die STATISCHE
+// Chrome-Schicht, und die liegt unter der Kurve. Die 3D-Flaeche ist
+// deckend und verdeckte jedes Etikett. Im 3D-Modus gehen die Spots
+// deshalb in die DYNAMISCHE Schicht, die als letzte ueber die Flaeche
+// kommt; im 2D-Modus bleibt alles, wie es war.
+//
+// Genau eine der beiden Stellen malt -- sonst stuende jedes Etikett
+// doppelt und m_spotClickRects (die Klickfelder) gaelte nur fuer die
+// zweite.
+bool SpectrumWidget::spotsUeberDerFlaeche() const
+{
+    return m_renderMode == SpectrumRenderMode::Mode3D;
+}
+
+void SpectrumWidget::malSpotsInChrome(QPainter& p, const QRect& specRect)
+{
+    if (spotsUeberDerFlaeche()) { return; }
+    if (m_showSpots || m_showSignalHistory || m_showSignalHistoryQrm) {
+        drawSpotMarkers(p, specRect);
+    }
+}
+
+void SpectrumWidget::malSpotsUeberFlaeche(QPainter& p, const QRect& specRect)
+{
+    if (!spotsUeberDerFlaeche()) { return; }
+    if (m_showSpots || m_showSignalHistory || m_showSignalHistoryQrm) {
+        drawSpotMarkers(p, specRect);
+    }
+}
+
 void SpectrumWidget::paintPassbandOverSurface(QPainter& p, const QRect& specRect)
 {
     if (m_renderMode != SpectrumRenderMode::Mode3D) { return; }
@@ -9562,6 +9600,8 @@ void SpectrumWidget::loadSpotDisplaySettings()
         QStringLiteral("WSJT-X"),        QStringLiteral("SpotCollector"),
         QStringLiteral("POTA"),          QStringLiteral("FreeDV"),
         QStringLiteral("PSK"),           QStringLiteral("Roundtable"),
+        // Die eigenen Dekoder (FT8, RTTY), 2026-11-19.
+        QStringLiteral("Longpath"),
     };
     for (const QString& source : kSpotSources) {
         const QString key = QStringLiteral("SpotSourceVisible/") + source;
@@ -13535,9 +13575,10 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             // sit below the slice marker chrome. Mirrors the CPU paintEvent
             // ordering and AetherSDR SpectrumWidget.cpp:3787 [@0cd4559]
             // (drawSpotMarkers between trace and drawSliceMarkers).
-            if (m_showSpots || m_showSignalHistory || m_showSignalHistoryQrm) {
-                drawSpotMarkers(p, specRect);
-            }
+            //
+            // Im 3D-Modus NICHT hier: diese Schicht liegt unter der
+            // deckenden 3D-Flaeche -- siehe malSpotsUeberFlaeche().
+            malSpotsInChrome(p, specRect);
             drawVfoMarker(p, specRect, wfRect);
             drawOffScreenIndicator(p, specRect, wfRect);
 
@@ -13850,6 +13891,8 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             // Im 3D-Modus die Bandbreite UEBER die Flaeche — siehe
             // drawSliceMarker fuer den Grund.
             paintPassbandOverSurface(pd, specRect);
+            // Dasselbe fuer die Spots (2026-11-19).
+            malSpotsUeberFlaeche(pd, specRect);
 
             // Reuse PerfMonitor's ovly metric for the *dynamic* rebuild
             // cost since that's now the per-frame variable; chrome

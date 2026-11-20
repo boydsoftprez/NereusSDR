@@ -38,6 +38,7 @@
 
 #include <QWidget>
 #include <QString>
+#include <QStringList>
 #include <QByteArrayList>
 #include <QChar>
 #include <QSet>
@@ -206,7 +207,20 @@ public:
     /// verschachtelte Ereignisschleife zu starten.
     QMenu* buildDisplayMenuForTesting() { return buildDisplayMenu(this); }
 
+    // ── Spots je Quelle im Zahnrad (2026-11-18) ──────────────────────
+    //
+    // Derselbe Schluessel wie der Haken im Spot Hub (Reiter Display):
+    // SpotSourceVisible/<Quelle>, "True"/"False". Schreibt, sichert,
+    // laedt die Maske des eigenen Spektrums nach und meldet
+    // spotSourcesChanged(), damit MainWindow den Spot Hub nachzieht.
+    void setSpotSourcesVisible(const QStringList& sources, bool visible);
+
 signals:
+    /// Ein Haken unter „Spots" im Zahnrad hat SpotSourceVisible/<Quelle>
+    /// geaendert. MainWindow laedt die Spot-Anzeige nach und laesst den
+    /// Spot Hub (Haken + Spot-Liste) denselben Stand lesen.
+    void spotSourcesChanged();
+
     void activated(const QString& panId);  // emitted on any click within applet
     void closeRequested(const QString& panId);
     void activeSliceChanged(const QString& panId, int sliceIndex);
@@ -287,6 +301,8 @@ private:
     /// Das Menue hinter dem Zahnrad in der Kopfleiste: Hintergrundbild,
     /// Deckkraft, Grundfarbe, und der Weg in den Setup-Dialog.
     QMenu* buildDisplayMenu(QObject* parent);
+    /// Das Untermenue „Spots": ein Haken je Quelle, Show all / Hide all.
+    void addSpotSourceMenu(QMenu* menu);
 
     void aktualisiereAnzeigeZeile();
     void zeigeAnzeigeFrequenz(double hz);

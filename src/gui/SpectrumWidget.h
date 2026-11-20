@@ -1840,6 +1840,13 @@ public:
     const QVector<SpotMarker>&   spotMarkersForTest()   const { return m_spotMarkers; }
     const QVector<SpotHitRect>&  spotClickRectsForTest() const { return m_spotClickRects; }
     const QVector<SpotCluster>&  spotClustersForTest()  const { return m_spotClusters; }
+    // Die beiden Stellen, an denen der GPU-Weg die Spots malt.
+    void  malSpotsInChromeForTest(QPainter& p, const QRect& specRect) {
+        malSpotsInChrome(p, specRect);
+    }
+    void  malSpotsUeberFlaecheForTest(QPainter& p, const QRect& specRect) {
+        malSpotsUeberFlaeche(p, specRect);
+    }
     void  drawSpotMarkersForTest(QPainter& p, const QRect& specRect) {
         drawSpotMarkers(p, specRect);
     }
@@ -2411,6 +2418,12 @@ private:
     /// dynamische Schicht gemalt (ueber der deckenden DSS-Flaeche). Tut
     /// ausserhalb von Mode3D nichts. Begruendung in drawSliceMarker.
     void paintPassbandOverSurface(QPainter& p, const QRect& specRect);
+    // Spots: im 2D-Modus in der Chrome-Schicht, im 3D-Modus in der
+    // dynamischen Schicht ueber der deckenden Flaeche (2026-11-19).
+    // Genau eine der beiden malt.
+    bool spotsUeberDerFlaeche() const;
+    void malSpotsInChrome(QPainter& p, const QRect& specRect);
+    void malSpotsUeberFlaeche(QPainter& p, const QRect& specRect);
     void drawCursorInfo(QPainter& p, const QRect& specRect);
 
     // ---- Spot overlay (Phase 3J-2 Task E1) ----

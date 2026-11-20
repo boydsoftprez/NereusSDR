@@ -5109,6 +5109,9 @@ void MainWindow::wirePanBadgeHandlers()
         connect(applet, &PanadapterApplet::displaySetupRequested,
                 this, &MainWindow::onPanDisplaySetup,
                 Qt::UniqueConnection);
+        connect(applet, &PanadapterApplet::spotSourcesChanged,
+                this, &MainWindow::onPanSpotSourcesChanged,
+                Qt::UniqueConnection);
         // Phase 3F: clicking a pan makes it the active pan. Straight to the
         // stack's setter, exactly as AetherSDR MainWindow.cpp:12964 [@6a142807]
         // does it:
@@ -5251,6 +5254,21 @@ void MainWindow::onPanDisplaySetup()
     wireSetupDialog(dialog);
     dialog->selectPage(QStringLiteral("Colors & Theme"));
     dialog->show();
+}
+
+void MainWindow::onPanSpotSourcesChanged()
+{
+    // Derselbe Nachlauf wie bei settingsChanged aus dem Spot Hub: die
+    // Maske der aktiven Flaeche aus den Einstellungen laden. Steht der
+    // Spot Hub schon, lesen seine Haken den neuen Stand; ueber ihren
+    // toggled-Weg folgt auch die Spot-Liste. Ein spaeter gebauter Spot
+    // Hub liest die Schluessel ohnehin beim Aufbau.
+    if (activeSpectrumWidget()) {
+        activeSpectrumWidget()->loadSpotDisplaySettings();
+    }
+    if (m_spotHubDialog) {
+        m_spotHubDialog->reloadSourceVisibility();
+    }
 }
 
 void MainWindow::onPanDockRequested(const QString& panId)

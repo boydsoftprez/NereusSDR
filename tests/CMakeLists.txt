@@ -5723,6 +5723,9 @@ if(TEST tst_roundtable_key)
 endif()
 longpath_add_test(tst_asr_sprache_menue)
 longpath_add_test(tst_pan_options_button)
+# -- Spots je Quelle im Panadapter-Zahnrad (2026-11-18): derselbe Schluessel
+#    SpotSourceVisible/<Quelle> wie der Haken im Spot Hub. --
+longpath_add_test(tst_pan_spot_sources)
 longpath_add_test(tst_window_widgets)
 # -- Roter Knopf = zu, auch beim naechsten Start (2026-09-27): Kanalzug,
 #    Logbuch und Spot-Zentrale gingen trotz Schliessen immer wieder auf. --

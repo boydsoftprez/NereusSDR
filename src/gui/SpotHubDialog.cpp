@@ -3637,6 +3637,9 @@ void SpotHubDialog::buildDisplayTab(QTabWidget* tabs)
         {QStringLiteral("FreeDV"),        QStringLiteral("FreeDV")},
         {QStringLiteral("PSK"),           QStringLiteral("PSK Reporter")},
         {QStringLiteral("Roundtable"),    QStringLiteral("Roundtable")},
+        // 2026-11-19: die eigenen Dekoder (FT8, RTTY) stempeln
+        // "Longpath" -- bisher ohne Schalter, also nie ausblendbar.
+        {QStringLiteral("Longpath"),      QStringLiteral("Own decoder (FT8, RTTY)")},
     };
     auto* visGrid = new QGridLayout;
     visGrid->setColumnStretch(1, 1);
@@ -3851,6 +3854,20 @@ void SpotHubDialog::setHoveredPanadapterSpot(int spotIdx)
 //
 // Gestaltung vorlaeufig: dieselben Bausteine wie der POTA-Reiter, keine
 // neue Farbe ausser der Vorgabe der Spots (Style::kSpotRoundtableDefault).
+void SpotHubDialog::reloadSourceVisibility()
+{
+    const auto& s = AppSettings::instance();
+    const QString prefix = QStringLiteral("displaySourceShow_");
+    for (QCheckBox* cb : findChildren<QCheckBox*>()) {
+        if (!cb->objectName().startsWith(prefix)) { continue; }
+        const QString source = cb->objectName().mid(prefix.size());
+        const bool on = s.value(QStringLiteral("SpotSourceVisible/") + source,
+                                QStringLiteral("True")).toString()
+                        == QStringLiteral("True");
+        cb->setChecked(on);
+    }
+}
+
 void SpotHubDialog::attachRoundtable(RoundtableHub* hub)
 {
     if (hub == nullptr || m_roundtable != nullptr || m_tabs == nullptr) {
