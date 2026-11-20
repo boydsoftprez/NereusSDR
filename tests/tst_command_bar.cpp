@@ -29,6 +29,7 @@
 #include "core/AppSettings.h"
 #include "models/FilterPresetStore.h"
 #include "models/SliceModel.h"
+#include "models/RadioModel.h"
 #include "gui/widgets/DspParamPopup.h"
 #include "gui/widgets/DspQuickPopups.h"
 
@@ -760,6 +761,78 @@ private slots:
 #endif
         QVERIFY(all.contains(QStringLiteral("NNR")));
         QVERIFY(all.contains(QStringLiteral("NR4")));
+    }
+
+    /// An der FlexRadio zeigt die Rauschminderungs-Leiste nur, was die
+    /// Maschine fuehrt oder am Flex-Ton wirkt -- und die Maschine nennt
+    /// es bei ihrem Namen (2026-11-20, Betreiber: „bei flexnutzung sollte
+    /// natuerlich auch nur das angezeigt werden, was wir koennen").
+    ///
+    /// Die Attrappe ist setNrFlexModus(true); die Regeln sind die echten
+    /// Funktionen aus RadioModel. Ohne Flex (Anvelina, kein Funkgeraet)
+    /// muss alles genau so stehen wie vor der Aenderung.
+    void anDerFlexNurDieErlaubtenPillenMitFlexNamen()
+    {
+        SliceModel slice;
+        CommandBar bar;
+        bar.setNrFlexRegeln(
+            [](NrSlot s) { return RadioModel::flexNrAngeboten(s); },
+            [](NrSlot s) { return RadioModel::flexNrAnzeige(s); });
+        bar.attach(&slice);
+
+        // Ohne Flex: wie bisher, mit Longpath-Namen.
+        const QStringList ohneFlex = bar.allNrLabels();
+        QCOMPARE(bar.pillsIn(QStringLiteral("NR")),
+                 (QStringList{QStringLiteral("NR1"), QStringLiteral("NR2"),
+                              QStringLiteral("NR3")}));
+        QVERIFY(ohneFlex.contains(QStringLiteral("NNR")));
+        QVERIFY(ohneFlex.contains(QStringLiteral("NR4")));
+
+        bar.setNrFlexModus(true);
+
+        // Vorne die drei Pillen der Maschine, dahinter das „…": NRL, NR,
+        // NR3 vorne; NRS (NR4) und MNR (nur mit HAVE_MNR, also auf dem Mac)
+        // im „…". DFNR, BNR, NNR fehlen ganz.
+        QCOMPARE(bar.pillsIn(QStringLiteral("NR")),
+                 (QStringList{QStringLiteral("NRL"), QStringLiteral("NR"),
+                              QStringLiteral("NR3")}));
+        QStringList erwartet{QStringLiteral("NRL"), QStringLiteral("NR"),
+                             QStringLiteral("NR3"), QStringLiteral("NRS")};
+        if (ohneFlex.contains(QStringLiteral("MNR"))) {
+            erwartet << QStringLiteral("MNR");
+        }
+        QCOMPARE(bar.allNrLabels(), erwartet);
+        for (const char* weg : {"NR1", "NR2", "NR4", "DFNR", "BNR", "NNR"}) {
+            QVERIFY2(!bar.allNrLabels().contains(QString::fromLatin1(weg)),
+                     weg);
+        }
+
+        // Die Namen sind nur Namen: der Knopf „NRL" schaltet NR1 (lms_nr),
+        // der Knopf „NR" schaltet NR2 (nr), und die Leuchte folgt dem Modell.
+        QVERIFY(bar.clickPill(QStringLiteral("NR"), QStringLiteral("NRL")));
+        QCOMPARE(slice.activeNr(), NrSlot::NR1);
+        QCOMPARE(bar.activePill(QStringLiteral("NR")),
+                 QStringLiteral("NRL"));
+        QVERIFY(bar.clickPill(QStringLiteral("NR"), QStringLiteral("NRL")));
+
+        slice.setActiveNr(NrSlot::NR2);
+        QCOMPARE(bar.activePill(QStringLiteral("NR")),
+                 QStringLiteral("NR"));
+
+        // Die Zuordnung der Namen zu den Verfahren, ohne Oberflaeche:
+        QCOMPARE(RadioModel::flexNrAnzeige(NrSlot::NR1), QStringLiteral("NRL"));
+        QCOMPARE(RadioModel::flexNrAnzeige(NrSlot::NR2), QStringLiteral("NR"));
+        QCOMPARE(RadioModel::flexNrAnzeige(NrSlot::NR4), QStringLiteral("NRS"));
+        // NR3 und MNR laufen bei uns: ihr Name bleibt.
+        QVERIFY(RadioModel::flexNrAnzeige(NrSlot::NR3).isEmpty());
+        QVERIFY(RadioModel::flexNrAnzeige(NrSlot::MNR).isEmpty());
+
+        // Zurueck zu Anvelina: alles wie vorher.
+        bar.setNrFlexModus(false);
+        QCOMPARE(bar.allNrLabels(), ohneFlex);
+        QCOMPARE(bar.pillsIn(QStringLiteral("NR")),
+                 (QStringList{QStringLiteral("NR1"), QStringLiteral("NR2"),
+                              QStringLiteral("NR3")}));
     }
 
     /// Rechtsklick auf eine NR-Pille oeffnet ihre Schnellregler.

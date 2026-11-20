@@ -5918,6 +5918,20 @@ void MainWindow::buildUI()
     // und die eigenen Vorgaben aus Setup › Filter Presets (2026-09-28).
     m_commandBar->setFilterPresetStore(m_radioModel->filterPresetStore());
 
+    // ── Rauschminderung an der Flex (2026-11-20) ─────────────────────
+    //
+    // Mit einer FlexRadio zeigt die Leiste nur, was die Maschine fuehrt
+    // oder was am Flex-Ton wirkt, unter den Namen der Flex. Anvelina
+    // und kein Funkgeraet bleiben wie bisher (setNrFlexModus(false)).
+    m_commandBar->setNrFlexRegeln(
+        [](Longpath::NrSlot s) { return RadioModel::flexNrAngeboten(s); },
+        [](Longpath::NrSlot s) { return RadioModel::flexNrAnzeige(s); });
+    connect(m_radioModel, &RadioModel::connectionStateChanged, this,
+            [this](Longpath::ConnectionState) {
+        if (!m_commandBar || !m_radioModel) { return; }
+        m_commandBar->setNrFlexModus(m_radioModel->istFlexVerbunden());
+    });
+
     // ── RATE: einmal je Sekunde, was der Empfangskanal faehrt ─────────
     //
     // Kanalrate aus dem WDSP-Kanal selbst, nicht aus einer Einstellung,

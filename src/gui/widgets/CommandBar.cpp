@@ -1053,7 +1053,83 @@ void CommandBar::buildNrGroup(QHBoxLayout* row)
         });
     }
 
-    addOverflow(g, m_allNr, [this](NrSlot s) { pushNrToModel(s); });
+    // Das „…" liest die Liste beim KLICK, nicht beim Bau: die Flex-
+    // Fassung ändert sie zur Laufzeit (setNrFlexModus). Sonst gleicher
+    // Aufbau wie addOverflow().
+    auto* more = new QPushButton(QStringLiteral("…"), this);
+    more->setStyleSheet(pillStyle());
+    more->setCursor(Qt::PointingHandCursor);
+    more->setToolTip(tr("Show all %1").arg(m_allNr.size()));
+    g.overflow = more;
+    if (g.row) { g.row->addWidget(more); }
+    connect(more, &QPushButton::clicked, this, [this]() {
+        ScopedChildWidget<QMenu> menuOwner(window());   // am Fenster, siehe addOverflow()
+        QMenu& m = *menuOwner.get();
+        for (const auto& e : nrListe()) {
+            QAction* a = m.addAction(e.first);
+            connect(a, &QAction::triggered, this,
+                    [this, slot = e.second]() { pushNrToModel(slot); });
+        }
+        m.exec(QCursor::pos());
+    });
+}
+
+// ── Die Flex-Fassung der Rauschminderung (2026-11-20) ────────────────
+//
+// Betreiber am 2026-11-20: „bei flexnutzung sollte natürlich auch nur
+// das angezeigt werden, was wir können. hier heissen diese glaube ich
+// auch anders." Die Pillen stammen aus der Anvelina-Fassung; an der
+// Flex stehen Verfahren darin, die wir dort nicht ausführen (DFNR und
+// BNR rechnen auf I/Q und sind am Flex-Ton nicht hörbar, NNR ebenso),
+// und die Flex nennt ihre Verfahren anders. Die Regeln selbst stehen
+// bei RadioModel::flexNrAngeboten / flexNrAnzeige; hier nur die Leiste.
+void CommandBar::setNrFlexRegeln(const std::function<bool(NrSlot)>& angeboten,
+                                 const std::function<QString(NrSlot)>& anzeige)
+{
+    m_nrFlexAngeboten = angeboten;
+    m_nrFlexAnzeige   = anzeige;
+    if (m_nrFlex) { aktualisiereNrPillen(); }
+}
+
+void CommandBar::setNrFlexModus(bool flex)
+{
+    if (m_nrFlex == flex) { return; }
+    m_nrFlex = flex;
+    aktualisiereNrPillen();
+}
+
+QVector<QPair<QString, NrSlot>> CommandBar::nrListe() const
+{
+    if (!m_nrFlex) { return m_allNr; }
+    QVector<QPair<QString, NrSlot>> out;
+    for (const auto& e : m_allNr) {
+        if (m_nrFlexAngeboten && !m_nrFlexAngeboten(e.second)) { continue; }
+        const QString flexName = m_nrFlexAnzeige ? m_nrFlexAnzeige(e.second)
+                                                 : QString();
+        out.append({flexName.isEmpty() ? e.first : flexName, e.second});
+    }
+    return out;
+}
+
+// Die drei Pillen vorne bekommen die ersten drei der Liste. Die Liste
+// hat auch an der Flex immer mindestens drei Einträge (NR1, NR2, NR3
+// bleiben dort), daher braucht es kein Ausblenden.
+void CommandBar::aktualisiereNrPillen()
+{
+    Group* g = group(QStringLiteral("NR"));
+    if (!g) { return; }
+    const auto liste = nrListe();
+    for (int i = 0; i < g->pills.size() && i < liste.size(); ++i) {
+        g->pills.at(i)->setText(liste.at(i).first);
+        g->pills.at(i)->setProperty("nrSlot", static_cast<int>(liste.at(i).second));
+    }
+    if (g->overflow) {
+        g->overflow->setToolTip(tr("Show all %1").arg(liste.size()));
+    }
+    // Ein Verfahren, das gerade läuft und hier nicht mehr angeboten
+    // wird, bleibt in der Maschine; die Leiste zeigt es nicht. Der
+    // Stand wird unten aus dem Modell nachgezogen.
+    pullFromModel();
 }
 
 // ── RATE: was der Empfangskanal wirklich faehrt ──────────────────────
@@ -1354,7 +1430,8 @@ void CommandBar::pullFromModel()
     if (Group* g = group(QStringLiteral("NR"))) {
         const NrSlot cur = m_slice->activeNr();
         QString label;
-        for (const auto& e : m_allNr) {
+        const auto liste = nrListe();
+        for (const auto& e : liste) {
             if (e.second == cur) { label = e.first; break; }
         }
         if (!label.isEmpty()) {
@@ -1412,7 +1489,7 @@ QStringList CommandBar::pillsIn(const QString& groupName) const
 QStringList CommandBar::allNrLabels() const
 {
     QStringList out;
-    for (const auto& e : m_allNr) { out << e.first; }
+    for (const auto& e : nrListe()) { out << e.first; }
     return out;
 }
 

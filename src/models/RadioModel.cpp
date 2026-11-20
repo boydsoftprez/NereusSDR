@@ -7994,6 +7994,35 @@ QString RadioModel::flexNrSchluessel(NrSlot steckplatz)
     }
 }
 
+bool RadioModel::flexNrAngeboten(NrSlot steckplatz)
+{
+    switch (steckplatz) {
+    case NrSlot::NR1:   // Maschine: lms_nr
+    case NrSlot::NR2:   // Maschine: nr
+    case NrSlot::NR4:   // Maschine: speex_nr
+    case NrSlot::NR3:   // Longpath auf dem Ton (rnnoise)
+    case NrSlot::MNR:   // Longpath auf dem Ton (Apple Accelerate)
+        return true;
+    default:
+        return false;
+    }
+}
+
+QString RadioModel::flexNrAnzeige(NrSlot steckplatz)
+{
+    // NRL / NR / NRS: so heissen die Tasten an der Flex (Flex-Hilfe und
+    // AetherSDR VfoWidget.cpp). Die Zuordnung zur Befehlszeile ist aus
+    // AetherSDR belegt: SliceModel::setNr sendet `nr=`, setNrl `lms_nr=`,
+    // setNrs `speex_nr=` -- dieselben Schluessel wie flexNrSchluessel.
+    // Am Geraet noch nicht gegen die Oberflaeche gesehen.
+    switch (steckplatz) {
+    case NrSlot::NR1: return QStringLiteral("NRL");
+    case NrSlot::NR2: return QStringLiteral("NR");
+    case NrSlot::NR4: return QStringLiteral("NRS");
+    default:          return QString();
+    }
+}
+
 void RadioModel::setFlexSliceNoiseNbAnf(bool nb, bool anf)
 {
     schickeFlexScheibenbefehl(

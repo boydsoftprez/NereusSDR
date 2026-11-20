@@ -4037,6 +4037,17 @@ public:
     /// Leer heiszt: diesen gibt es dort nicht (DFNR, BNR, MNR rechnen
     /// wir selbst; NNR hat kein Gegenstueck).
     static QString flexNrSchluessel(NrSlot steckplatz);
+    /// Steht dieses Verfahren an der Flex in der Rauschminderungs-Leiste
+    /// (2026-11-20)? NR1, NR2, NR4 fuehrt die Maschine selbst; NR3 und MNR
+    /// rechnet Longpath auf dem Ton, und das geht an der Flex genauso.
+    /// DFNR, BNR und NNR rechnen auf den I/Q-Daten und sind am Flex-Ton
+    /// nicht hoerbar; NRF hat keinen Steckplatz und bleibt draussen.
+    static bool flexNrAngeboten(NrSlot steckplatz);
+    /// Der Name, unter dem die Flex das Verfahren fuehrt -- NUR, wo die
+    /// Zuordnung belegt ist (flexNrSchluessel + AetherSDR-Befehl je Taste).
+    /// NR3 und MNR bleiben bei ihrem Namen: die Flex-RNN laeuft bei uns
+    /// nicht, rechnen tut Longpath selbst. Leer = bisheriger Name.
+    static QString flexNrAnzeige(NrSlot steckplatz);
     /// Genau EINEN der fuenf einschalten, die anderen aus.
     void sendeFlexNrVerfahren(NrSlot steckplatz);
     /// Die Staerke des gewaehlten Verfahrens (0..100).

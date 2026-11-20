@@ -165,6 +165,18 @@ public:
     /// nichts tun. Leer = wir rechnen selbst.
     void setMaschinenNr(const std::function<QString(NrSlot)>& namen);
 
+    /// Die Flex-Fassung der Rauschminderungs-Leiste (2026-11-20). Die
+    /// Maschine fuehrt nicht alle Verfahren, die Longpath hat, und nennt
+    /// die uebrigen anders. `angeboten` sagt, ob ein Verfahren an der
+    /// Flex in der Leiste stehen darf; `anzeige` liefert den Namen, unter
+    /// dem die Flex es fuehrt — leer heisst: bisheriger Name. Wirksam nur,
+    /// solange `setNrFlexModus(true)` gilt.
+    void setNrFlexRegeln(const std::function<bool(NrSlot)>& angeboten,
+                         const std::function<QString(NrSlot)>& anzeige);
+    /// Ist eine FlexRadio verbunden? Dann zeigt die Leiste die Flex-
+    /// Fassung; sonst (Anvelina, kein Funkgeraet) alles wie bisher.
+    void setNrFlexModus(bool flex);
+
     /// Was das „…" der Filtergruppe gerade anbietet, in Reihenfolge:
     /// Name und Kanten. Ohne Scheibe leer.
     struct FilterMenuEntry {
@@ -297,6 +309,11 @@ private:
     // Dasselbe Muster wie Modus und Schrittweite, kein neues.
     void buildFilterGroup(QHBoxLayout* row);
     void buildNrGroup(QHBoxLayout* row);
+    /// Die Rauschminderungen, die die Leiste JETZT anbietet, mit dem Namen,
+    /// unter dem sie stehen. Ohne Flex-Modus: genau `m_allNr`.
+    QVector<QPair<QString, Longpath::NrSlot>> nrListe() const;
+    /// Schreibt die Beschriftung der NR-Pillen neu aus `nrListe()`.
+    void aktualisiereNrPillen();
     void buildBandGroup(QHBoxLayout* row);
     void buildRateGroup(QHBoxLayout* row);
     void applyRateStyle(bool warn);
@@ -345,6 +362,11 @@ private:
     QVector<QPair<QString, int>> m_allSteps;
     QVector<QPair<QString, Longpath::Band>> m_allBands;
     QVector<QPair<QString, Longpath::NrSlot>> m_allNr;
+
+    // Die Flex-Fassung (siehe setNrFlexRegeln / setNrFlexModus).
+    bool m_nrFlex{false};
+    std::function<bool(NrSlot)>    m_nrFlexAngeboten;
+    std::function<QString(NrSlot)> m_nrFlexAnzeige;
 };
 
 } // namespace Longpath
