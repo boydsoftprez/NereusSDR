@@ -276,7 +276,9 @@ async function raumUmschalten() {
     // Beim Zurueckschalten die Flaeche leeren: sonst steht das letzte
     // Raumbild unter dem anlaufenden Wasserfall.
     wfCtx.clearRect(0, 0, wf.width, wf.height);
+    wfLeer = true;
   }
+  wfDreck = true;
   zeichneBild();
 }
 
@@ -703,8 +705,67 @@ function sEinheit(dbm) {
 }
 
 // ── Panadapter + Wasserfall ─────────────────────────────────────────────────
+// ── Zeichenflaechen in der ECHTEN Aufloesung (2026-11-21) ──────────────────
+//
+// Bis hierher hatten #pan und #wf feste 373 x 96 / 373 x 160 Bildpunkte, und
+// das Stilblatt streckte sie auf die Anzeigebreite. Kurve, Raster, dBm-Zahlen
+// und Rufzeichen wurden in diese 373 Punkte gezeichnet und danach aufgezogen
+// -- Schrift und Linien waren weich, am iPhone (Faktor 3) und am Desktop erst
+// recht. Betreiber: „sehr unscharf".
+//
+// Jetzt:
+//   * #pan hat die Groesse der Anzeige mal devicePixelRatio. Gezeichnet wird
+//     in CSS-Punkten (panBreite x panHoehe); die Daten bleiben 373 Punkte und
+//     werden dazwischen interpoliert.
+//   * Der Wasserfall-PUFFER `wf` bleibt 373 x 160 (Daten und Zeilenvorschub
+//     aendern sich nicht). Er wird nur noch nicht mehr gezeigt, sondern auf
+//     das Anzeige-Canvas #wf (wfAnz) glatt hochskaliert.
+//   * Das Raumbild rechnet in Anzeigeaufloesung (hoechstens Faktor 2), damit
+//     die Rechenzeit im Rahmen bleibt.
+// Den Datenstrom beruehrt nichts davon: es werden weiter DATENPUNKTE Punkte
+// angefordert.
+const DATENPUNKTE = 373, WF_ZEILEN = 160;
 const pan = $('pan'), panCtx = pan.getContext('2d');
-const wf = $('wf'), wfCtx = wf.getContext('2d', { willReadFrequently: false });
+const wfAnz = $('wf'), wfAnzCtx = wfAnz.getContext('2d');
+const wf = document.createElement('canvas');
+wf.width = DATENPUNKTE; wf.height = WF_ZEILEN;
+const wfCtx = wf.getContext('2d', { willReadFrequently: false });
+const raumFl = document.createElement('canvas');
+const raumCtx = raumFl.getContext('2d');
+let wfLeer = true;          // noch keine Zeile da: die erste fuellt den ganzen Puffer
+let wfDreck = true;        // der Puffer hat sich geaendert -> neu auf die Anzeige
+let panBreite = DATENPUNKTE, panHoehe = 96, wfAnzHoehe = 104, anzDpr = 1;
+
+/** Groesse der Zeichenflaechen an die Anzeige anpassen -- nur bei Aenderung. */
+function anzeigeAnpassen() {
+  const dpr = window.devicePixelRatio || 1;
+  const rp = pan.getBoundingClientRect();
+  const rw = wfAnz.getBoundingClientRect();
+  if (!rp.width || !rw.width) { return; }
+  const bw = Math.max(1, Math.round(rp.width));
+  const ph = Math.max(1, Math.round(rp.height));
+  const wh = Math.max(1, Math.round(rw.height));
+  const pw = Math.round(bw * dpr), pH = Math.round(ph * dpr);
+  if (pan.width !== pw || pan.height !== pH) { pan.width = pw; pan.height = pH; }
+  const ww = Math.round(bw * dpr), wH = Math.round(wh * dpr);
+  if (wfAnz.width !== ww || wfAnz.height !== wH) { wfAnz.width = ww; wfAnz.height = wH; }
+  const rd = Math.min(dpr, 2);
+  const rW = Math.round(bw * rd), rH = Math.round(wh * rd);
+  if (raumFl.width !== rW || raumFl.height !== rH) { raumFl.width = rW; raumFl.height = rH; }
+  panBreite = bw; panHoehe = ph; wfAnzHoehe = wh; anzDpr = dpr;
+  wfZeigen();
+}
+
+/** Den Wasserfall-Puffer glatt auf die Anzeige bringen. */
+function wfZeigen() {
+  if (raumZeigen && raumbild) {
+    wfAnzCtx.drawImage(raumFl, 0, 0, raumFl.width, raumFl.height, 0, 0, wfAnz.width, wfAnz.height);
+    return;
+  }
+  wfAnzCtx.imageSmoothingEnabled = true;
+  wfAnzCtx.imageSmoothingQuality = 'high';
+  wfAnzCtx.drawImage(wf, 0, 0, wf.width, wf.height, 0, 0, wfAnz.width, wfAnz.height);
+}
 const N = 1024;
 const fft = new Fft(N);
 const spec = new Float32Array(N);
@@ -757,7 +818,7 @@ document.documentElement.dataset.wasserfall = WASSERFALL_BLAU ? 'blau' : 'longpa
 // Stellen 0 / .30 / .48 / .64 / .78 / .92 / 1.
 // Mac-Look (2026-11-21, Foto von Mac-Longpath): Wasserfall blau -> cyan ->
 // gruen -> gelb; kein Rot, kein Orange im Bild.
-const STOPS_LONGPATH = [[0,[0,0,40]],[.22,[0,18,130]],[.42,[0,90,225]],[.58,[0,195,240]],
+const STOPS_LONGPATH = [[0,[0,6,70]],[.22,[0,24,140]],[.42,[0,90,225]],[.58,[0,195,240]],
                         [.74,[30,222,100]],[.90,[222,232,40]],[1,[255,255,232]]];
 const STOPS_BLAU     = STOPS_LONGPATH;
 const STOPS = WASSERFALL_BLAU ? STOPS_BLAU : STOPS_LONGPATH;
@@ -813,6 +874,7 @@ function wasserfallLeeren() {
   try {
     wfCtx.fillStyle = WF_BG;
     wfCtx.fillRect(0, 0, wf.width, wf.height);
+    wfDreck = true; wfLeer = true;
   } catch (e) { /* vor dem ersten Zeichnen */ }
   neueZeilen = 0;
 }
@@ -845,6 +907,7 @@ function wasserfallSchieben(dHz) {
     wfCtx.fillStyle = WF_BG;
     wfCtx.fillRect(0, 0, wf.width, wf.height);
     wfCtx.drawImage(wfPuff, dx, 0);
+    wfDreck = true;
   } catch (e) { /* vor dem ersten Zeichnen */ }
 }
 
@@ -885,6 +948,7 @@ function wasserfallSchnitt() {
   try {
     wfCtx.fillStyle = 'rgba(216,165,95,.55)';   // Bernstein, wie alles Gemessene
     wfCtx.fillRect(0, 0, wf.width, 2);
+    wfDreck = true;
   } catch (e) { /* vor dem ersten Zeichnen */ }
 }
 link.addEventListener('iq', (e) => {
@@ -903,7 +967,8 @@ link.addEventListener('iq', (e) => {
 });
 
 function zeichneBild() {
-  const W = pan.width, H = pan.height;
+  const W = panBreite, H = panHoehe;
+  panCtx.setTransform(anzDpr, 0, 0, anzDpr, 0, 0);
 
   // Ohne Gerät kommt kein I/Q. Das muss dastehen, statt dass der Bediener
   // vor einer leeren Fläche sitzt und rät, ob die Verbindung hängt oder die
@@ -930,6 +995,7 @@ function zeichneBild() {
                     W / 2, H / 2 + 4);
     panCtx.textAlign = 'left';
     hatSpektrum = false;
+    wfZeigen();
     return;
   }
 
@@ -997,12 +1063,24 @@ function zeichneBild() {
       ? abstandJetzt : state.hfAbstand * 0.9 + abstandJetzt * 0.1;
 
   const spitze = new Float32Array(W);
-  for (let x = 0; x < W; x++) {
-    const von = Math.floor(x * M / W);
-    const bis = Math.max(von + 1, Math.floor((x + 1) * M / W));
-    let m = -Infinity;
-    for (let i = von; i < bis && i < M; i++) if (quelle[i] > m) m = quelle[i];
-    spitze[x] = m;
+  if (W > M) {
+    // Mehr Bildpunkte als Daten: dazwischen LINEAR interpolieren (wie am Mac),
+    // statt Stufen zu zeichnen.
+    for (let x = 0; x < W; x++) {
+      const p = (x + 0.5) * M / W - 0.5;
+      const i0 = Math.max(0, Math.floor(p));
+      const i1 = Math.min(M - 1, i0 + 1);
+      const t = Math.min(1, Math.max(0, p - i0));
+      spitze[x] = quelle[i0] * (1 - t) + quelle[i1] * t;
+    }
+  } else {
+    for (let x = 0; x < W; x++) {
+      const von = Math.floor(x * M / W);
+      const bis = Math.max(von + 1, Math.floor((x + 1) * M / W));
+      let m = -Infinity;
+      for (let i = von; i < bis && i < M; i++) if (quelle[i] > m) m = quelle[i];
+      spitze[x] = m;
+    }
   }
 
   const g = panCtx.createLinearGradient(0, 0, 0, H);
@@ -1060,7 +1138,7 @@ function zeichneBild() {
         const el = document.querySelector('.feinschritt');
         const rr = el ? el.getBoundingClientRect() : null;
         if (rr && rr.width) {
-          const k = pan.width / rPan.width;
+          const k = panBreite / rPan.width;
           sperrVonX = (rr.left - rPan.left) * k;
           sperrBisY = (rr.bottom - rPan.top) * k;
         }
@@ -1114,13 +1192,14 @@ function zeichneBild() {
       neueZeilen--;
       raumbild.zeileAufnehmen(spitze.subarray ? spitze.subarray(0, W) : spitze);
     }
-    raumbild.malen(wfCtx, wf.width, wf.height, {
+    raumbild.malen(raumCtx, raumFl.width, raumFl.height, {
       bodenDbm: rLo,
       spanneDb: rHi - rLo,
       zKurve: 0.7,
       palette: (db) => rampe((db - rLo) / (rHi - rLo)),
       grund: rampe(0),
     });
+    wfZeigen();
     return;
   }
 
@@ -1142,13 +1221,38 @@ function zeichneBild() {
     const wfLo = state.wfBoden - 3, wfHi = wfLo + 42;
     const d = zeile.data;
     for (let x = 0; x < wf.width; x++) {
-      const db = spitze[Math.min(W - 1, Math.floor(x * W / wf.width))];
+      const db = spitze[Math.min(W - 1, Math.floor((x + 0.5) * W / wf.width))];
       const c = rampe((db - wfLo) / (wfHi - wfLo));
       const o = x * 4;
       d[o] = c[0]; d[o+1] = c[1]; d[o+2] = c[2]; d[o+3] = 255;
     }
     wfCtx.putImageData(zeile, 0, 0);
+    // Die allererste Zeile fuellt den ganzen Puffer: statt einer leeren
+    // dunkelblauen Flaeche, die erst nach gut einer Minute von oben her
+    // Farbe bekommt, steht von Anfang an der Rauschboden da (die Rampe).
+    if (wfLeer) {
+      wfLeer = false;
+      wfCtx.drawImage(wf, 0, 0, wf.width, 1, 0, 1, wf.width, wf.height - 1);
+    }
+    wfDreck = true;
   }
+  // Nur auf die Anzeige bringen, wenn sich der Puffer wirklich geaendert hat
+  // (neue Zeile, Schub, Schnitt) -- nicht bei jedem Bild.
+  if (wfDreck) { wfDreck = false; wfZeigen(); }
+}
+
+// Groesse der Zeichenflaechen bei Aenderung nachfuehren (Drehen, Fenstergroesse,
+// Zoomstufe, anderer Bildschirm mit anderem devicePixelRatio).
+{
+  anzeigeAnpassen();
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(() => anzeigeAnpassen()).observe($('scope'));
+  }
+  window.addEventListener('resize', anzeigeAnpassen);
+  try {
+    window.matchMedia('(resolution: ' + (window.devicePixelRatio || 1) + 'dppx)')
+      .addEventListener('change', anzeigeAnpassen);
+  } catch (e) { /* aeltere Browser */ }
 }
 
 // Der AF-Regler des Telefons — mit VERSTAERKUNGSVORRAT.
@@ -1637,7 +1741,7 @@ function spanneSetzen(hz) {
     Math.abs(b - hz) < Math.abs(a - hz) ? b : a);
   if (neu === state.spanneHz) { return; }
   state.spanneHz = neu;
-  link.send(`spectrum_start:${state.trx},${pan.width},12,${neu}`);
+  link.send(`spectrum_start:${state.trx},${DATENPUNKTE},12,${neu}`);
   // Nach einem Zoom decken dieselben Zeilen eine andere Bandbreite ab.
   // Schieben hilft da nicht — ein Schnitt sagt, ab wo der neue Massstab
   // gilt, und laesst das Alte sichtbar hinauswandern.
@@ -2121,13 +2225,13 @@ $('scope').addEventListener('pointerup', (e) => {
     // `spotMarken` beim Zeichnen so entstanden ist.
     const r = $('scope').getBoundingClientRect();
     const xCanvas = r.width
-      ? (e.clientX - r.left) / r.width * pan.width : -1;
+      ? (e.clientX - r.left) / r.width * panBreite : -1;
     // Der Panadapter ist nur der OBERE Teil des Feldes; darunter liegt der
     // Wasserfall. Die y-Umrechnung muss darum auf die Hoehe des Canvas
     // gehen und nicht auf die des ganzen Feldes.
     const rPan2 = pan.getBoundingClientRect();
     const yCanvas = rPan2.height
-      ? (e.clientY - rPan2.top) / rPan2.height * pan.height : -1;
+      ? (e.clientY - rPan2.top) / rPan2.height * panHoehe : -1;
 
     // ── Auf der SCHRIFT: das Rufzeichen ist gemeint, nicht die Frequenz ──
     //
@@ -2294,7 +2398,7 @@ link.addEventListener('open', () => {
   // der Schirm nicht zeigen. Gegen rohes I/Q spart das den Faktor sechzig.
   // Ein fremder Server (Thetis, ExpertSDR) kennt den Befehl nicht und
   // verwirft ihn antwortlos — deshalb steht darunter der Rückfall.
-  link.send(`spectrum_start:${state.trx},${pan.width},12,${state.spanneHz}`);
+  link.send(`spectrum_start:${state.trx},${DATENPUNKTE},12,${state.spanneHz}`);
 
   // Rückfall auf rohes I/Q — aber nur, wenn der Server den Befehl gar nicht
   // KENNT, nicht schon dann, wenn gerade keine Bilder kommen.

@@ -637,3 +637,7 @@ footer #onAir.an{color:var(--tx-border)}
 .mikhalt b{font-size:var(--f-small)}
 .mikhalt small{font-size:var(--f-caption)}
 .mikhalt{background:var(--flat);border-color:var(--flatB);box-shadow:none}
+
+/* Zeichenflaechen: feste Anzeigehoehe, die Pixelgroesse stellt app.js nach
+   Anzeigegroesse x devicePixelRatio ein (anzeigeAnpassen). */
+#pan{height:96px}
