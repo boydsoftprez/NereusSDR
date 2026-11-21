@@ -205,6 +205,22 @@ private slots:
     }
 
     // --- in-use flag: byte[2] == 0x03 → info.inUse == true ---
+    void p2HardwareRevision24Bit()
+    {
+        QByteArray bytes = p2Reply(static_cast<int>(HPSDRHW::OrionMKII), 22, 14);
+        bytes[22] = char(0x10);
+        RadioInfo info;
+        QVERIFY(RadioDiscovery::parseP2Reply(
+            bytes, QHostAddress(QStringLiteral("192.168.1.77")), info));
+        QCOMPARE(info.hardwareRevision, quint8(0x10));
+        QVERIFY(info.supports24BitAudio());
+
+        bytes[22] = char(0x00);
+        QVERIFY(RadioDiscovery::parseP2Reply(
+            bytes, QHostAddress(QStringLiteral("192.168.1.77")), info));
+        QVERIFY(!info.supports24BitAudio());
+    }
+
     void inUseFlagParsed()
     {
         QByteArray bytes = loadFixture("p1_hermeslite_reply.hex");

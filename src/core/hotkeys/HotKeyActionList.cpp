@@ -7,10 +7,6 @@
 //   2026-11-08 - J.J. Boyd (KG4VCF), hot keys: on a Mac CW message 5 has no
 //                default key, since Cmd+F5 is VoiceOver's.
 //                AI-assisted implementation via Anthropic Claude Code.
-//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 13: eight voice
-//                messages, Escape stops one, and F1 to F8 send the message
-//                the transmit slice's mode calls for (msg.1 to msg.8).
-//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "core/hotkeys/HotKeyActionList.h"
 
@@ -39,7 +35,6 @@ QList<HotKeyAction> buildActions()
     const QString transmit = QStringLiteral("Transmit");
     const QString cw = QStringLiteral("CW");
     const QString voice = QStringLiteral("Voice");
-    const QString messages = QStringLiteral("Messages");
 
     QList<HotKeyAction> a;
     const auto add = [&a](const QString& id, const QString& name, const QString& group,
@@ -108,24 +103,11 @@ QList<HotKeyAction> buildActions()
     add(QStringLiteral("cw.dash"), QStringLiteral("CW dash"), cw, G::Hold, true, S::TransmitSlice, {QStringLiteral(".")});
     add(QStringLiteral("cw.straight"), QStringLiteral("CW straight key"), cw, G::Hold, true, S::TransmitSlice, {QStringLiteral("/")});
 
-    // Design V8: M1 to M8. Ctrl+Shift+F5 is not the VoiceOver key (Cmd+F5), so
-    // the Mac exception above does not reach it.
-    for (int n = 1; n <= 8; ++n) {
+    for (int n = 1; n <= 4; ++n) {
         add(QStringLiteral("voice.msg%1").arg(n), QStringLiteral("Voice message %1").arg(n), voice, G::Press, true,
             S::TransmitSlice, {QStringLiteral("Ctrl+Shift+F%1").arg(n)});
     }
-    // Design 6.6: Escape stops the message. The keyboard's usual rules still
-    // apply, so Escape in a text field or an open popup keeps its meaning.
-    add(QStringLiteral("voice.stop"), QStringLiteral("Stop voice message"), voice, G::Press, false, S::TransmitSlice,
-        {QStringLiteral("Ctrl+Shift+F10"), QStringLiteral("Esc")});
-
-    // Design V8: F1 to F8 send voice message n in a voice mode and CW message n
-    // in CW, by the transmit slice's mode. Plain F5 is not the VoiceOver key
-    // either, so every message keeps its default on a Mac.
-    for (int n = 1; n <= 8; ++n) {
-        add(QStringLiteral("msg.%1").arg(n), QStringLiteral("Message %1").arg(n), messages, G::Press, true,
-            S::TransmitSlice, {QStringLiteral("F%1").arg(n)});
-    }
+    add(QStringLiteral("voice.stop"), QStringLiteral("Stop voice message"), voice, G::Press, false, S::TransmitSlice, {QStringLiteral("Ctrl+Shift+F10")});
 
     return a;
 }

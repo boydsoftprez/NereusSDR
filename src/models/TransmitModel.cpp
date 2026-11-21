@@ -1611,12 +1611,25 @@ void TransmitModel::setLimitTunePowerForBand(Band band, int watts)
 // (console.Designer.cs:3686-3689, 3942-3945 [v2.10.3.15]).
 void TransmitModel::setPowerLimit(int watts)
 {
-    m_powerLimit = std::clamp(watts, 0, 100);
+    const int clamped = std::clamp(watts, 0, 100);
+    if (clamped == m_powerLimit) { return; }
+    m_powerLimit = clamped;
+    emit powerLimitChanged(clamped);
+}
+
+void TransmitModel::setPowerSliderLimitEnabled(bool enabled)
+{
+    if (enabled == m_powerSliderLimitEnabled) { return; }
+    m_powerSliderLimitEnabled = enabled;
+    emit powerSliderLimitEnabledChanged(enabled);
 }
 
 void TransmitModel::setTunePowerLimit(int watts)
 {
-    m_tunePowerLimit = std::clamp(watts, 0, 100);
+    const int clamped = std::clamp(watts, 0, 100);
+    if (clamped == m_tunePowerLimit) { return; }
+    m_tunePowerLimit = clamped;
+    emit tuneLimitChanged(clamped);
 }
 
 void TransmitModel::setFmTxOffsetMhz(double mhz)
@@ -1812,6 +1825,29 @@ bool TransmitModel::pureSignalActive() const noexcept
 //
 // Always finite (no NaN / Inf) for any int input — even INT_MAX produces a
 // finite (then-clamped) result via std::pow.
+namespace {
+
+// Thetis "Use Max" (Setup -> PA Gain). When the band's Max W is in use the
+// drive slider is a percentage of that maximum, so the watts asked of the
+// radio scale with it: 80% of a 50 W band is 40 W. Without Use Max the
+// slider's 0..100 is the watt reference, which is Thetis's own contract.
+//
+// The drive-adjust table is indexed by the percentage either way: its nine
+// cells sit at 10%..90% of the slider's range, so they trim the same points
+// whether the band is capped or not.
+double driveTargetWatts(const PaProfile& profile, Band band, int drivePercent)
+{
+    if (profile.getMaxPowerUse(band)) {
+        const double maxWatts = static_cast<double>(profile.getMaxPower(band));
+        if (maxWatts > 0.5) {
+            return static_cast<double>(drivePercent) * maxWatts / 100.0;
+        }
+    }
+    return static_cast<double>(drivePercent);
+}
+
+}  // namespace
+
 double TransmitModel::computeAudioVolume(const PaProfile& profile,
                                          Band band,
                                          int sliderWatts,
@@ -1872,8 +1908,13 @@ double TransmitModel::computeAudioVolume(const PaProfile& profile,
     //   double target_dbm = 10 * (double)Math.Log10((double)new_pwr * 1000);
     //   ...
     //   target_dbm -= gbb;
+    //
+    // Use Max: the slider is a percentage of the band's Max W, so the watts
+    // behind that percentage are targetWatts. Without Use Max the two are the
+    // same (0..100 W reference).
+    const double targetWatts = driveTargetWatts(profile, band, sliderWatts);
     const double targetDbmRaw =
-        10.0 * std::log10(static_cast<double>(sliderWatts) * 1000.0);
+        10.0 * std::log10(targetWatts * 1000.0);
     const double targetDbm = targetDbmRaw - static_cast<double>(gbb);
 
     // From Thetis console.cs:46734 [v2.10.3.13]:
@@ -2088,10 +2129,29 @@ TransmitModel::TxPowerResult TransmitModel::setPowerUsingTargetDbm(
                         }
                     }
                     break;
-                case DrivePowerSource::Fixed:
-                    new_pwr = m_tunePower;
+                case DrivePowerSource::Fixed: {
+                    // Setup's Fixed Tune Power is in WATTS, while new_pwr
+                    // below is the PWR slider's scale: percent when Use Max
+                    // caps the band, watts otherwise. Convert so 25 W means
+                    // 25 W on a band whose max is 50 W (50 %, not 25 %).
+                    const double maxWatts =
+                        static_cast<double>(activeProfile.getMaxPower(currentBand));
+                    if (activeProfile.getMaxPowerUse(currentBand)
+                        && maxWatts > 0.5) {
+                        new_pwr = qRound(static_cast<double>(m_tunePower)
+                                         * 100.0 / maxWatts);
+                    } else {
+                        new_pwr = m_tunePower;
+                    }
+                    new_pwr = std::clamp(new_pwr, 0, 100);
+                    // The red Tune limit stays the safety cap even for a
+                    // Fixed request.
+                    if (new_pwr > std::clamp(m_tunePowerLimit, 0, 100)) {
+                        new_pwr = std::clamp(m_tunePowerLimit, 0, 100);
+                    }
                     result.bConstrain = false;
                     break;
+                }
             }
             break;
         case 2:  // 2-tone mode — Thetis console.cs:46693-46708.
@@ -2166,8 +2226,12 @@ TransmitModel::TxPowerResult TransmitModel::setPowerUsingTargetDbm(
         result.targetDbm = 0.0;
     } else {
         const float gbb = activeProfile.getGainForBand(currentBand, new_pwr);
+        // Use Max scales the percentage to the band's watts (see
+        // driveTargetWatts); without it targetWatts == new_pwr.
+        const double targetWatts =
+            driveTargetWatts(activeProfile, currentBand, new_pwr);
         result.targetDbm =
-            10.0 * std::log10(static_cast<double>(new_pwr) * 1000.0)
+            10.0 * std::log10(targetWatts * 1000.0)
             - static_cast<double>(gbb);
     }
 
@@ -2609,6 +2673,22 @@ void TransmitModel::loadFromSettings(const QString& mac)
                                          QStringLiteral("0.5")).toFloat();
     setMonitorVolume(monitorVolume);
 
+    // TX audio check without MOX/PTT. Thetis keeps this as a global Setup
+    // option, so it is not under the per-MAC pfx.
+    setTxAudioCheckEnabled(
+        s.value(QStringLiteral("TxAudioCheckNoMox"), QStringLiteral("False"))
+            .toString() == QLatin1String("True"));
+
+    // A previous session may have ended while TX/N held the receive equalizer
+    // off. TX/N is not running now, so put it back before anything reads it.
+    if (!m_txAudioCheckEnabled
+        && AppSettings::instance().value(QStringLiteral("Audio/RxEqSavedByTxN"),
+                                         QStringLiteral("False")).toString() == QLatin1String("True")) {
+        AppSettings::instance().setValue(QStringLiteral("Audio/RxEqSavedByTxN"), QStringLiteral("False"));
+        AppSettings::instance().setValue(QStringLiteral("Audio/RxEqEnabled"), QStringLiteral("True"));
+        emit rxEqualizerEnabledChanged(true);
+    }
+
     // ── Mic source ────────────────────────────────────────────────────────
     // micSource: default Pc (NereusSDR-native; always safe and available).
     //
@@ -2701,6 +2781,14 @@ void TransmitModel::loadFromSettings(const QString& mac)
     const bool twoTonePulsed = s.value(pfx + QLatin1String("TwoTonePulsed"),
                                         QStringLiteral("False")).toString() == QLatin1String("True");
     setTwoTonePulsed(twoTonePulsed);
+
+    // Pulsed tune (P-TU) carrier parameters, saved per radio.
+    setPulseTuneRateHz(s.value(pfx + QLatin1String("PulseTuneRate"),
+                               QStringLiteral("10")).toInt());
+    setPulseTuneDutyPct(s.value(pfx + QLatin1String("PulseTuneDuty"),
+                                QStringLiteral("25")).toInt());
+    setPulseTuneRampMs(s.value(pfx + QLatin1String("PulseTuneRamp"),
+                               QStringLiteral("9")).toInt());
 
     // ── Two-tone drive-power source (3M-1c B.3) ──────────────────────────
     // Default DriveSlider per Thetis console.cs:46553 [v2.10.3.13].
@@ -3408,6 +3496,46 @@ void TransmitModel::setMonEnabled(bool on)
     emit monEnabledChanged(on);
 }
 
+void TransmitModel::setTxAudioCheckEnabled(bool on)
+{
+    if (on == m_txAudioCheckEnabled) { return; }
+    m_txAudioCheckEnabled = on;
+    // The Thetis option is global (Setup > Audio > Recording), not per-MAC.
+    AppSettings::instance().setValue(QStringLiteral("TxAudioCheckNoMox"),
+                                     on ? QStringLiteral("True")
+                                        : QStringLiteral("False"));
+
+    // TX/N monitors the transmit chain, so a receive equalizer must not colour
+    // the monitored or recorded audio. Save its state, switch it off, and put
+    // it back when the check ends. The RX EQ is not built yet; the switch is
+    // the shared setting Audio/RxEqEnabled, so this works unchanged when it is.
+    AppSettings& settings = AppSettings::instance();
+    const auto rxEqOn = [&settings] {
+        return settings.value(QStringLiteral("Audio/RxEqEnabled"),
+                              QStringLiteral("False")).toString()
+            == QLatin1String("True");
+    };
+    if (on) {
+        if (rxEqOn()) {
+            m_rxEqSavedByTxAudioCheck = true;
+            // Persist the "was on" flag: if Nereus exits during TX/N the
+            // equalizer must still come back on the next start.
+            settings.setValue(QStringLiteral("Audio/RxEqSavedByTxN"), QStringLiteral("True"));
+            settings.setValue(QStringLiteral("Audio/RxEqEnabled"), QStringLiteral("False"));
+            emit rxEqualizerEnabledChanged(false);
+        }
+    } else if (m_rxEqSavedByTxAudioCheck
+               || settings.value(QStringLiteral("Audio/RxEqSavedByTxN"),
+                                 QStringLiteral("False")).toString() == QLatin1String("True")) {
+        m_rxEqSavedByTxAudioCheck = false;
+        settings.setValue(QStringLiteral("Audio/RxEqSavedByTxN"), QStringLiteral("False"));
+        settings.setValue(QStringLiteral("Audio/RxEqEnabled"), QStringLiteral("True"));
+        emit rxEqualizerEnabledChanged(true);
+    }
+
+    emit txAudioCheckEnabledChanged(on);
+}
+
 void TransmitModel::setMonitorVolume(float volume)
 {
     // Clamp to normalized scalar range [0.0f, 1.0f].
@@ -3785,6 +3913,35 @@ void TransmitModel::setTwoTonePulsed(bool on)
     m_twoTonePulsed = on;
     persistOne(QStringLiteral("TwoTonePulsed"), on ? QStringLiteral("True") : QStringLiteral("False"));
     emit twoTonePulsedChanged(on);
+}
+
+// Pulsed tune (P-TU) carrier parameters. Clamped to the ranges Setup's
+// spin boxes show; persisted per radio like the two-tone pulse settings.
+void TransmitModel::setPulseTuneRateHz(int hz)
+{
+    const int v = std::clamp(hz, 1, 50);
+    if (v == m_pulseTuneRateHz) { return; }
+    m_pulseTuneRateHz = v;
+    persistOne(QStringLiteral("PulseTuneRate"), QString::number(v));
+    emit pulseTuneParamsChanged();
+}
+
+void TransmitModel::setPulseTuneDutyPct(int pct)
+{
+    const int v = std::clamp(pct, 5, 95);
+    if (v == m_pulseTuneDutyPct) { return; }
+    m_pulseTuneDutyPct = v;
+    persistOne(QStringLiteral("PulseTuneDuty"), QString::number(v));
+    emit pulseTuneParamsChanged();
+}
+
+void TransmitModel::setPulseTuneRampMs(int ms)
+{
+    const int v = std::clamp(ms, 0, 50);
+    if (v == m_pulseTuneRampMs) { return; }
+    m_pulseTuneRampMs = v;
+    persistOne(QStringLiteral("PulseTuneRamp"), QString::number(v));
+    emit pulseTuneParamsChanged();
 }
 
 // ── Two-tone drive-power source (3M-1c B.3) ────────────────────────────────

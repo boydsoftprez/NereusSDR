@@ -324,11 +324,18 @@ void ExternalVariableEngine::startWorker(MmioEndpoint* ep)
 {
     if (!ep) { return; }
     ITransportWorker* worker = makeWorker(ep);
-    if (!worker) { return; }
+    if (!worker) {
+        emit endpointFault(ep->guid(), QStringLiteral("The transport could not be created."));
+        return;
+    }
 
     worker->moveToThread(m_workerThread);
     connect(worker, &ITransportWorker::valueBatchReceived,
             this,   &ExternalVariableEngine::onValueBatchReceived);
+    const QUuid guid = ep->guid();
+    connect(worker, &ITransportWorker::errorOccurred, this,
+            [this, guid](const QString& message) { emit endpointFault(guid, message); },
+            Qt::QueuedConnection);
 
     {
         QWriteLocker locker(&m_registryLock);
@@ -365,6 +372,7 @@ void ExternalVariableEngine::onValueBatchReceived(const QHash<QString, QVariant>
     MmioEndpoint* ep = endpoint(guid);
     if (!ep) { return; }
     ep->mergeBatch(batch);
+    emit dataReceived(guid);
 }
 
 void ExternalVariableEngine::loadFromSettings()

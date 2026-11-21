@@ -363,6 +363,28 @@ void MoxDisplayController::setKeyed(bool keyed, int txSliceId)
     emit keyedOwnerCommitted(m_panId);
 }
 
+// TX audio check (TX/N): the same transmit panadapter/waterfall presentation
+// as a real MOX, but the radio is not keyed. Thetis did this with
+// Display.TXAudioCheckMode (display.cs), which the display thread treated as
+// a local MOX for the TX analyzer while console.MOX stayed false.
+void MoxDisplayController::setTxAudioCheckDisplay(bool on, int txSliceId)
+{
+    if (on == m_txAudioCheckDisplay) {
+        return;
+    }
+    m_txAudioCheckDisplay = on;
+    note(on ? QStringLiteral("txAudioCheckDisplay(true)")
+            : QStringLiteral("txAudioCheckDisplay(false)"));
+    resetPeaksOnEveryPan();
+    keyEveryPan(on);
+    if (on) {
+        rise(txSliceId);
+    } else {
+        fall();
+    }
+    applyHighSwr();
+}
+
 // ── PR #212 follow-up bench fix (J.J. KG4VCF, 2026-05-07) ────────
 // MOX-aware panadapter source switch: FFTEngine (RX-DDC FFTW3) ↔
 // TxAnalyzer (WDSP TX siphon, pre-IQC).

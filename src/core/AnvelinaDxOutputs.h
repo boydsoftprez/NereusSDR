@@ -92,6 +92,10 @@ private:
     std::atomic<quint8> m_bits{0};
     std::array<QString, kOutputCount> m_labels{};
     QString m_mac;
+    // True once load() has hydrated this state for m_mac; save()
+    // refuses to write before that (a save on an unloaded block
+    // overwrote the stored pattern with defaults).
+    bool m_loaded{false};
 };
 
 } // namespace NereusSDR

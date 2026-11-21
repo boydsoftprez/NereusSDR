@@ -146,6 +146,36 @@ public:
     void rescalePowerSlidersForModel(HPSDRModel model);
     void updatePowerSliderLabels();
 
+    // PA-gain "Use Max" watts for the transmit band. When > 0 the two
+    // sliders work in watts (0..watts) and the labels read "nW", with the
+    // range's top value shown at the right of each row. 0 keeps the relative
+    // per-SKU drive scale.
+    void setPaMaxWatts(int watts);
+    int  paMaxWatts() const { return m_paMaxWatts; }
+    int  sliderToPercent(int sliderValue) const;
+    int  percentToSlider(int percent) const;
+    QLabel* rfPowerMaxLabel() const { return m_rfPowerMax; }
+    QLabel* tunePowerMaxLabel() const { return m_tunePwrMax; }
+
+    // Thetis PrettyTrackBar limits (Setup parity): right-drag inside each
+    // trackbar sets its red limit bar. The values are percentages of the
+    // slider's range, so they survive the Use Max watt rescale. RF and Tune
+    // are independent, and each is stored per band by the model.
+    void setPowerLimitsPercent(int rfPercent, int tunePercent);
+    void setRfLimitPercent(int percent);
+    void setTuneLimitPercent(int percent);
+    // The two-tone test bypasses the PWR limit around its fixed drive source
+    // (Thetis PWRSliderLimitEnabled). Hide the RF bar while it does.
+    void setPowerLimitEnabled(bool enabled);
+
+signals:
+    /// A right-drag moved one trackbar's limit (already converted to a
+    /// percentage of the slider's range).
+    void rfPowerLimitChanged(int percent);
+    void tunePowerLimitChanged(int percent);
+
+public:
+
     // The smoothed forward-power reading, so the applet can carry it across
     // a model swap without a jump.
     double smoothedForwardPowerW() const { return m_fwdPowerSmoothedW; }
@@ -158,6 +188,9 @@ public:
 
 private:
     void buildUI(int rowSpacing, const MainPowerMeter* meter);
+    // The limit callout text in this row's units: watts under Use Max,
+    // otherwise the SKU's shown drive value (HL2 dB, others integer).
+    QString limitText(int sliderValue, bool tune) const;
     // The margins this section gives itself.  The applet's own rows
     // give none, because the applet's column already has them; a copy
     // in a container has no column of its own, so it gives itself the
@@ -169,8 +202,18 @@ private:
     BarInstrument* m_swrGauge = nullptr;
     QSlider* m_rfPowerSlider = nullptr;
     QLabel*  m_rfPowerValue = nullptr;
+    QLabel*  m_rfPowerMax = nullptr;
     QSlider* m_tunePwrSlider = nullptr;
     QLabel*  m_tunePwrValue = nullptr;
+    QLabel*  m_tunePwrMax = nullptr;
+
+    // 0 = the per-SKU relative drive scale; >0 = PA "Use Max" watts.
+    int m_paMaxWatts = 0;
+
+    // True while a limit drag is showing "Lim 84W" in the reading cell, so a
+    // drive update cannot overwrite the callout mid-drag.
+    bool m_rfLimitLabelActive = false;
+    bool m_tuneLimitLabelActive = false;
 
     double m_fwdPowerSmoothedW = 0.0;
     HPSDRModel m_powerSliderModel = HPSDRModel::FIRST;

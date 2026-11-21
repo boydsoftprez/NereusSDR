@@ -7,8 +7,6 @@
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 18: the arrow caps say Tune.
 //                AI-assisted implementation via Anthropic Claude Code.
-//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 13: the Messages
-//                group (F1 to F8). AI-assisted via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "gui/setup/KeyboardMapWidget.h"
 
@@ -490,8 +488,6 @@ QColor KeyboardMapWidget::groupColor(const QString& group)
         {QStringLiteral("Transmit"), QColor(0xa3, 0x2a, 0x2a)},
         {QStringLiteral("CW"), QColor(0x5b, 0x46, 0x90)},
         {QStringLiteral("Voice"), QColor(0x8a, 0x3a, 0x6c)},
-        // F1 to F8: CW or voice by the mode, so between the two.
-        {QStringLiteral("Messages"), QColor(0x73, 0x40, 0x7e)},
     };
     return kColors.value(group);
 }

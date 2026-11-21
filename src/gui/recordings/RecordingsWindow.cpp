@@ -447,6 +447,10 @@ void RecordingsWindow::buildUi()
         return b;
     };
     m_play = button(QStringLiteral("Play"), "RecordingsPlay");
+    // Port step 2: a direct REC control. The per-slice flag button is not
+    // ported yet; this records the first slice.
+    m_record = button(QStringLiteral("REC"), "RecordingsRecord");
+    acts->addWidget(m_record);
     m_rename = button(QStringLiteral("Rename…"), "RecordingsRename");
     m_soundOnly = button(QStringLiteral("Save sound only…"), "RecordingsSoundOnly");
     m_copy = button(QStringLiteral("Save a copy here…"), "RecordingsCopy");
@@ -461,6 +465,17 @@ void RecordingsWindow::buildUi()
     acts->addWidget(m_delete);
     body->addLayout(acts);
     connect(m_play, &QPushButton::clicked, this, &RecordingsWindow::playSelected);
+    connect(m_record, &QPushButton::clicked, this, [this] {
+        if (m_access == nullptr) { return; }
+        m_recordOn = !m_recordOn;
+        if (m_recordOn) {
+            m_access->start(0);
+            m_record->setText(QStringLiteral("STOP"));
+        } else {
+            m_access->stop(0);
+            m_record->setText(QStringLiteral("REC"));
+        }
+    });
     connect(m_rename, &QPushButton::clicked, this, &RecordingsWindow::renameSelected);
     connect(m_soundOnly, &QPushButton::clicked, this, &RecordingsWindow::saveSoundOfSelected);
     connect(m_copy, &QPushButton::clicked, this, &RecordingsWindow::saveCopiesOfSelected);

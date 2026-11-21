@@ -453,6 +453,10 @@ public:
     virtual bool takeStaticPresentationChange() { return false; }
     virtual bool advanceMeter(qint64 monotonicMs) { Q_UNUSED(monotonicMs); return false; }
     virtual void resetForTxTransition(bool inTx);
+    // Hold: while the surface holds its peaks (operator's Hold button, off-air)
+    // an item that renders live data may keep what it last showed. Items
+    // without live text ignore this.
+    virtual void setReadingHold(bool on) { Q_UNUSED(on); }
     // GUI source handoff: RX presentation only, preserving TX/PA/MMIO state.
     virtual void resetRxSource();
     virtual void setPowerScale(int watts);

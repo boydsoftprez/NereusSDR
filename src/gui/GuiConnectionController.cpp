@@ -41,8 +41,10 @@
 #include "models/RadioModel.h"
 
 #include <QDateTime>
+#include <QHash>
 #include <QNetworkInterface>
 #include <QScopedValueRollback>
+#include <QSet>
 #include <QTimer>
 #include <QUrl>
 
@@ -181,6 +183,13 @@ GuiConnectionController::GuiConnectionController(QObject* parent)
     connect(&m_sessions, &GuiSessionCoordinator::stationOperationFailed, this,
             [this](const QString& reason) {
         if (m_shuttingDown) { return; }
+        // During the startup auto-connect retry window a failure is expected
+        // (the radio is still booting or not yet seen); do not throw the
+        // Connections window at the operator. Its state text carries it.
+        if (m_selectorAutoOpenBlockedUntil.isValid()
+            && QDateTime::currentDateTimeUtc() < m_selectorAutoOpenBlockedUntil) {
+            return;
+        }
         m_selector->setNotice(reason);
         showConnections();
     }, Qt::QueuedConnection);
@@ -217,6 +226,10 @@ void GuiConnectionController::start(const StationStartupRequest& request)
 {
     QString error;
     m_storeLoaded = m_store.load(&error);
+    // Automatic startup: failures in the first minute are retried quietly
+    // (the radio may still be booting); only an explicit Connect opens the
+    // Connections window.
+    m_selectorAutoOpenBlockedUntil = QDateTime::currentDateTimeUtc().addSecs(300);
     if (m_storeLoaded) { observeNetworkGeneration(); }
     // Startup may reuse a paired key already on disk; Settings itself never loads or creates one.
     m_existingDeviceIdentity = ClientDeviceIdentity::existingForThisProfile();
@@ -229,7 +242,10 @@ void GuiConnectionController::start(const StationStartupRequest& request)
                        selected && shouldStartStationConnection(request, *selected, m_store));
     if (!error.isEmpty()) {
         m_selector->setNotice(error);
-        showConnections();
+        if (!m_selectorAutoOpenBlockedUntil.isValid()
+            || QDateTime::currentDateTimeUtc() >= m_selectorAutoOpenBlockedUntil) {
+            showConnections();
+        }
     }
 }
 
@@ -275,6 +291,20 @@ void GuiConnectionController::attachWindow(MainWindow* window)
         if (generation == m_sessions.generation() && !m_shuttingDown) { refresh(); }
     };
     m_windowConnections.append(connect(model, &RadioModel::connectionStateChanged, this, update));
+    // Dismiss Connections on a successful connection even when the connect
+    // did not start from the selector itself (startup auto-connect, the
+    // 60 s retry window, or another entry point). A selector the operator
+    // opened while already connected stays open for inspection.
+    m_windowConnections.append(connect(model, &RadioModel::connectionStateChanged, this,
+        [this, generation](ConnectionState state) {
+        if (m_shuttingDown || generation != m_sessions.generation()
+            || state != ConnectionState::Connected
+            || m_selectorOpenedWhileConnected || !m_selector->isVisible()) {
+            return;
+        }
+        cancelSelectorDismissal();
+        m_selector->hide();
+    }));
     m_windowConnections.append(connect(model, &RadioModel::infoChanged, this, update));
     m_windowConnections.append(connect(model, &RadioModel::stationLinkStateChanged, this, update));
     m_windowConnections.append(connect(window, &MainWindow::setupDialogCreated, this,
@@ -440,7 +470,46 @@ void GuiConnectionController::refresh()
     RadioModel* model = window->radioModel();
     const auto current = m_sessions.selection();
     QMap<QString, RadioInfo> radios = m_radios;
-    for (const SavedRadio& saved : AppSettings::instance().savedRadios()) {
+    const QList<SavedRadio> savedRadios = AppSettings::instance().savedRadios();
+    // A manual saved entry (MANUAL:ip:port) and the radio discovery reports
+    // by MAC are the same physical unit. Keep one row: the manual entry,
+    // which carries the operator's name and model override and the per-MAC
+    // settings the connection actually uses, and hide its discovered twin.
+    // Do this against saved entries too, not only live discoveries: on a
+    // cold start discovery has not replied yet, so the saved MAC entry's
+    // address is the only evidence that it is the manual entry's twin.
+    QSet<QString> manualEndpoints;
+    for (const SavedRadio& saved : savedRadios) {
+        if (saved.info.macAddress.startsWith(QLatin1String("MANUAL:"))) {
+            manualEndpoints.insert(
+                saved.info.address.toString() + QLatin1Char(':') + QString::number(saved.info.port));
+        }
+    }
+    QHash<QString, QString> manualToDiscovered;
+    QSet<QString> discoveredCoveredByManual;
+    for (const SavedRadio& saved : savedRadios) {
+        if (!saved.info.macAddress.startsWith(QLatin1String("MANUAL:"))) {
+            continue;
+        }
+        for (auto it = m_radios.cbegin(); it != m_radios.cend(); ++it) {
+            if (it->address == saved.info.address && it->port == saved.info.port) {
+                manualToDiscovered.insert(saved.info.macAddress, it.key());
+                discoveredCoveredByManual.insert(it.key());
+                break;
+            }
+        }
+    }
+    QSet<QString> savedCoveredByManual;
+    for (const SavedRadio& saved : savedRadios) {
+        if (saved.info.macAddress.startsWith(QLatin1String("MANUAL:"))) {
+            continue;
+        }
+        if (manualEndpoints.contains(
+                saved.info.address.toString() + QLatin1Char(':') + QString::number(saved.info.port))) {
+            savedCoveredByManual.insert(saved.info.macAddress);
+        }
+    }
+    for (const SavedRadio& saved : savedRadios) {
         if (!radios.contains(saved.info.macAddress)) { radios.insert(saved.info.macAddress, saved.info); }
     }
     QList<ConnectionTargetRow> rows;
@@ -449,17 +518,37 @@ void GuiConnectionController::refresh()
         model->ownsLocalDsp() ? tr("Selected") : tr("Available"), !model->ownsLocalDsp(), false, false});
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     for (auto it = radios.cbegin(); it != radios.cend(); ++it) {
+        // Covered by the manual entry for the same address; one row per radio.
+        if (discoveredCoveredByManual.contains(it.key())
+            || savedCoveredByManual.contains(it.key())) { continue; }
         const RadioInfo& radio = it.value();
+        const QString discoveredMac = manualToDiscovered.value(it.key());
+        const RadioInfo& wireRadio = discoveredMac.isEmpty()
+            ? radio : m_radios.value(discoveredMac);
+        const QString currentMac = model->currentRadioMac();
         const bool connected = model->ownsLocalDsp() && model->isConnected()
-            && model->currentRadioMac().compare(radio.macAddress, Qt::CaseInsensitive) == 0;
+            && (currentMac.compare(radio.macAddress, Qt::CaseInsensitive) == 0
+                || (!discoveredMac.isEmpty()
+                    && currentMac.compare(discoveredMac, Qt::CaseInsensitive) == 0));
+        const qint64 seenAt = m_seenAt.value(discoveredMac.isEmpty() ? it.key() : discoveredMac);
         QString state = tr("Saved / not seen");
         if (connected) { state = tr("Connected locally"); }
-        else if (ConnectionPanel::statePillForLastSeen(m_seenAt.value(it.key()), now)
+        else if (ConnectionPanel::statePillForLastSeen(seenAt, now)
                  == ConnectionPanel::StatePill::Online) {
-            state = radio.inUse ? tr("In use") : tr("Available");
+            state = wireRadio.inUse ? tr("In use") : tr("Available");
+        }
+        // The Radio column names the SKU the operator chose; the manual
+        // Anvelina entry carries "Anvelina Pro 3" even though the board
+        // byte only says OrionMKII.
+        QString radioText = tr("This computer's Core");
+        if (const auto savedForRow = AppSettings::instance().savedRadio(it.key());
+            savedForRow.has_value()
+            && savedForRow->info.modelOverride != HPSDRModel::FIRST) {
+            radioText = QString::fromLatin1(
+                NereusSDR::displayName(savedForRow->info.modelOverride));
         }
         rows.append({QStringLiteral("radio:") + it.key(), ConnectionTargetKind::LocalRadio,
-            radio.name.isEmpty() ? radio.displayName() : radio.name, tr("This computer's Core"),
+            radio.name.isEmpty() ? radio.displayName() : radio.name, radioText,
             radio.address.toString(), state, !connected, true,
             AppSettings::instance().savedRadio(it.key()).has_value()});
     }
@@ -747,6 +836,19 @@ void GuiConnectionController::showConnections()
     // A queued local disconnect notification can raise an already-visible
     // selector while its newly requested connection is still starting.
     if (!m_selector->isVisible()) { cancelSelectorDismissal(); }
+    // Remember whether the operator is inspecting an already-live session.
+    // A selector opened while disconnected dismisses itself once a
+    // connection succeeds; one opened while connected stays put.
+    m_selectorOpenedWhileConnected = false;
+    if (MainWindow* window = m_sessions.window()) {
+        if (m_remoteControls) {
+            m_selectorOpenedWhileConnected =
+                (m_remoteControls->state() == ConnectionState::Connected);
+        } else if (window->radioModel()) {
+            m_selectorOpenedWhileConnected =
+                (window->radioModel()->connectionState() == ConnectionState::Connected);
+        }
+    }
     refresh();
     m_selector->show();
     m_selector->raise();
@@ -951,6 +1053,37 @@ void GuiConnectionController::connectTarget(const QString& key)
         AppSettings& settings = AppSettings::instance();
         const HPSDRModel modelOverride = settings.modelOverride(mac);
         if (modelOverride != HPSDRModel::FIRST) { radio.modelOverride = modelOverride; }
+        // A saved MANUAL: entry has no discovery row of its own, so its board
+        // can be stale (older entries fell back to Hermes Lite 2). Take the
+        // live board and hardware revision from the discovery record for the
+        // same address; a model override, when present, still governs.
+        if (m_discovery != nullptr) {
+            for (const RadioInfo& found : m_discovery->discoveredRadios()) {
+                const bool sameAddress = !radio.address.isNull()
+                    && found.address == radio.address
+                    && (!radio.port || found.port == radio.port);
+                const bool sameMac = !radio.macAddress.isEmpty()
+                    && !radio.macAddress.startsWith(QLatin1String("MANUAL:"))
+                    && found.macAddress.compare(radio.macAddress, Qt::CaseInsensitive) == 0;
+                if (!sameAddress && !sameMac) { continue; }
+                if (radio.modelOverride == HPSDRModel::FIRST
+                    && found.boardType != HPSDRHW::Unknown) {
+                    radio.boardType = found.boardType;
+                }
+                if (radio.hardwareRevision == 0) {
+                    radio.hardwareRevision = found.hardwareRevision;
+                }
+                if (radio.firmwareVersion == 0) {
+                    radio.firmwareVersion = found.firmwareVersion;
+                    radio.firmwareBetaVersion = found.firmwareBetaVersion;
+                }
+                if (found.reportedReceivers > 0) {
+                    radio.reportedReceivers = found.reportedReceivers;
+                    radio.maxReceivers = found.reportedReceivers;
+                }
+                break;
+            }
+        }
         settings.saveRadioOnConnect(radio);
         settings.setLastConnected(radio.macAddress);
         if (!settings.save()) { m_selector->setNotice(tr("The local radio preference could not be saved.")); }

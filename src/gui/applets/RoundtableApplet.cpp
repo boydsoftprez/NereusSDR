@@ -7,10 +7,6 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-11-16: While the slice plays the past the panel stays on the room
-//               where it was live, says it is paused, and shows no own
-//               reading. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
-//               Claude Code.
 //   2026-11-04: A tune leaves a read the open inspector holds. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 //   2026-11-04: setSliceSource: a window gives the applet its own slice, so the
@@ -45,7 +41,6 @@
 #include "models/RadioModel.h"
 #include "models/RoundtableModel.h"
 #include "models/SliceModel.h"
-#include "models/recordings/RecordingsAccess.h"
 
 #include <QDesktopServices>
 #include <QHBoxLayout>
@@ -112,14 +107,6 @@ RoundtableApplet::RoundtableApplet(RadioModel* model, RoundtableModel* roundtabl
         connect(m_model, &RadioModel::transmittingChanged, this,
                 [this](bool transmitting) { m_panel->setTuneAllowed(!transmitting); });
         m_panel->setTuneAllowed(!m_model->isTransmitting());
-        // A slice playing the past (rewind sound) pauses its Roundtable.
-        if (RecordingsAccess* recordings = m_model->recordings()) {
-            connect(recordings, &RecordingsAccess::documentChanged, this,
-                    [this, recordings]() { notePastDocument(recordings->document()); });
-            m_pastRewound = recordings->document()
-                                .value(QStringLiteral("dsr")).toObject()
-                                .value(QStringLiteral("rewound")).toArray();
-        }
     }
     bindActiveSlice();
 }
@@ -211,27 +198,20 @@ void RoundtableApplet::bindActiveSlice()
     m_slice = slice;
     m_boundSliceId = sliceId;
     if (slice == nullptr) {
-        m_pastLiveHz = 0;
-        m_panel->setPausedForPast(false);
         m_panel->followSlice(-1);
         m_panel->setSliceFrequency(0);
         return;
     }
     // Its meter is your own reading, which the panel shows only to you
-    // while nothing about the station is sent. Not while it plays the past:
-    // that meter reads the past.
+    // while nothing about the station is sent.
     m_sliceMeter = connect(slice, &SliceModel::meterReadingNsChanged, this, [this]() {
-        if (m_slice && m_pastLiveHz <= 0) {
+        if (m_slice) {
             m_panel->setOwnReading(m_slice->signalStrengthDbm(), RoundtableModel::nowMs());
         }
     });
     // Tuning the slice anywhere goes back to following it (design 11.1), unless an
     // open inspector is showing that read: a band click leaves it (overlay design D27).
-    // A tune in the past leaves the panel where the slice was live.
     m_sliceFrequency = connect(slice, &SliceModel::frequencyChanged, this, [this](double hz) {
-        if (m_pastLiveHz > 0) {
-            return;
-        }
         m_panel->setSliceContext(std::llround(hz), m_slice ? familyOf(m_slice->dspMode()) : QString());
         if (!m_panel->holdsRead()) {
             m_panel->backToSlice();
@@ -239,51 +219,11 @@ void RoundtableApplet::bindActiveSlice()
     });
     m_sliceMode = connect(slice, &SliceModel::dspModeChanged, this, [this](DSPMode mode) {
         if (m_slice) {
-            m_panel->setSliceContext(contextHz(), familyOf(mode));
+            m_panel->setSliceContext(std::llround(m_slice->frequency()), familyOf(mode));
         }
     });
     m_panel->followSlice(slice->sliceIndex());
-    m_pastLiveHz = 0;
-    m_panel->setPausedForPast(false);
-    updatePastPause();
-    m_panel->setSliceContext(contextHz(), familyOf(slice->dspMode()));
-}
-
-void RoundtableApplet::notePastDocument(const QJsonObject& document)
-{
-    m_pastRewound = document.value(QStringLiteral("dsr")).toObject().value(QStringLiteral("rewound")).toArray();
-    updatePastPause();
-}
-
-void RoundtableApplet::updatePastPause()
-{
-    qint64 liveHz = 0;
-    if (m_slice != nullptr) {
-        for (const QJsonValue& v : std::as_const(m_pastRewound)) {
-            const QJsonObject o = v.toObject();
-            if (o.value(QStringLiteral("slice")).toInt(-1) == m_slice->sliceIndex()) {
-                liveHz = o.value(QStringLiteral("liveFrequencyHz")).toInteger(0);
-            }
-        }
-    }
-    if (liveHz == m_pastLiveHz) {
-        return;
-    }
-    m_pastLiveHz = liveHz;
-    m_panel->setPausedForPast(liveHz > 0);
-    if (m_slice != nullptr) {
-        // Back where it was live while paused; on to the slice's own
-        // frequency once it is live (LIVE, or a key on the past frequency).
-        m_panel->setSliceContext(contextHz(), familyOf(m_slice->dspMode()));
-    }
-}
-
-qint64 RoundtableApplet::contextHz() const
-{
-    if (m_pastLiveHz > 0) {
-        return m_pastLiveHz;
-    }
-    return m_slice != nullptr ? std::llround(m_slice->frequency()) : 0;
+    m_panel->setSliceContext(std::llround(slice->frequency()), familyOf(slice->dspMode()));
 }
 
 void RoundtableApplet::tuneHere(qint64 hz, const QString& family)

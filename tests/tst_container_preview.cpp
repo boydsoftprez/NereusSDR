@@ -378,7 +378,7 @@ private slots:
         QCOMPARE(rect[0],moved.contents[0].extensions["freeCanvasRect"].toArray()[0]);
         QCOMPARE(rect[2].toDouble(),exact[2].toDouble()+43);QCOMPARE(rect[3].toDouble(),exact[3].toDouble()+29);
         const auto resized=preview.document();drag(grip,{-300,12},true);QCOMPARE(preview.document(),resized);
-        auto locked=resized;locked.locked=true;preview.setDocument(locked);drag(grip,{20,20});drag(corner,{20,20});QCOMPARE(preview.document(),locked);
+        auto locked=resized;locked.lockItemPositions=true;preview.setDocument(locked);drag(grip,{20,20});drag(corner,{20,20});QCOMPARE(preview.document(),locked);
         QCOMPARE(poller.targetCountForTest(),0);
     }
     void largeSignalFontFitsTitleReadingAndPeak() {

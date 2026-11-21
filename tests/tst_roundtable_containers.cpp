@@ -20,10 +20,6 @@
 //   2026-10-26: the container's Pop Out and Return while Roundtable's own
 //               window is open. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
-//   2026-11-16: run as three ctest entries (TestFunctionGroups): every
-//               case builds a MainWindow, about 9 s of each case, and the
-//               whole binary took 85 to 120 s on the hosted Linux runner.
-//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -46,7 +42,6 @@
 #include "core/RadioDiscovery.h"
 #include "core/roundtable/RoundtableState.h"
 #include "core/session/IStationLink.h"
-#include "TestFunctionGroups.h"
 #include "fakes/RemoteWindowHarness.h"
 #include "gui/MainWindow.h"
 #include "gui/applets/RoundtableApplet.h"
@@ -607,26 +602,5 @@ private slots:
     }
 };
 
-int main(int argc, char** argv)
-{
-    QApplication app(argc, argv);
-    app.setAttribute(Qt::AA_Use96Dpi, true);
-    TstRoundtableContainers test;
-    QTEST_SET_MAIN_SOURCE_PATH
-    // Each case builds a fresh MainWindow, about 9 s of every case on a Mac
-    // (the window's constructor); the rooms-refresh waits are 1 to 1.5 s a
-    // case. All eight windows took 112 s here and 85 s to past the 120 s limit on
-    // the hosted 4-core Linux runner. The limit is not raised: the two
-    // groups below run as tst_roundtable_containers_<group>
-    // (tests/CMakeLists.txt) and the rest as tst_roundtable_containers,
-    // two or three windows to an entry.
-    const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
-        test.metaObject(), app.arguments(), "NEREUS_ROUNDTABLE_CONTAINERS_GROUP",
-        {{QStringLiteral("settings"), {QStringLiteral("containerSettingsMovesItToANewContainer")}},
-         {QStringLiteral("popout"),
-          {QStringLiteral("popOutIsTheContainerPopOut"),
-           QStringLiteral("theContainerPopOutWithTheOwnWindowOpen"),
-           QStringLiteral("aPoppedOutRoundtableSnapsToAnEdge")}}});
-    return arguments ? QTest::qExec(&test, *arguments) : 1;
-}
+QTEST_MAIN(TstRoundtableContainers)
 #include "tst_roundtable_containers.moc"

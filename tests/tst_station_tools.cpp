@@ -4,9 +4,6 @@
 // RadioModel; no radio, no socket listens, no audio device is opened.
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-11-16: The Voice Keyer and Recordings tools counted and checked
-//               (recording plan Tasks 17 and 18). J.J. Boyd (KG4VCF),
-//               AI-assisted via Claude Code.
 //   2026-10-26: CW transmit, CWX is built and offered (R-CW-46). J.J. Boyd
 //               (KG4VCF), AI-assisted via Claude Code.
 //   2026-09-28  J.J. Boyd / KG4VCF  Created (iPhone app plan Task 25, D41).
@@ -85,14 +82,7 @@ private slots:
         const QJsonObject catalog = StationCatalog::build(
             inputsFor(HPSDRModel::ANAN_G2, /*stationTci=*/true, /*vax=*/true));
         const QHash<QString, bool> tools = offeredById(catalog, QStringLiteral("tools"));
-        // 2026-11-16: 15 with the Voice Keyer and Recordings tools (recording
-        // plan Tasks 17 and 18), listed on every Core and offered only where
-        // the Core runs the recordings service; these inputs run none.
-        QCOMPARE(tools.size(), 15);
-        for (const char* recordingTool : {"voiceKeyer", "recordings"}) {
-            QVERIFY2(tools.contains(QString::fromLatin1(recordingTool)), recordingTool);
-            QVERIFY2(!tools.value(QString::fromLatin1(recordingTool)), recordingTool);
-        }
+        QCOMPARE(tools.size(), 13);
         // No rotor is set up: listed, not offered.
         QVERIFY(tools.contains(QStringLiteral("rotor")));
         QCOMPARE(tools.value(QStringLiteral("rotor")), false);

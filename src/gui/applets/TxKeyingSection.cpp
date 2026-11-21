@@ -24,9 +24,6 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-11-16 - VOICE, the third button in the TUNE / MOX row (the voice
-//                 keyer, recording plan Task 12; VoiceButton drives it).
-//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - The row's parts (SectionParts), which a container copy
 //                 hides and orders from its entry config. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -139,6 +136,44 @@ m_tuneBtn->setAccessibleName(QStringLiteral("Tune carrier"));
 m_tuneBtn->setToolTip(QStringLiteral("Enable TUNE carrier (single-tone CW)"));
 row->addWidget(m_tuneBtn, 1);
 
+// Pulsed tune (Thetis's Tune Check, "TC"): after TUNE, before xPA. A safer
+// tune carrier, keyed in short bursts (10 Hz, 25 % duty, 9 ms ramp), with
+// the SWR protections forced on while it runs. TUNE is locked while it is
+// armed, as Thetis disables chkTUN during TC.
+//   From Thetis console.cs:54580-54612 [v2.10.3.15] chkTC_CheckedChanged
+//   From Thetis console.cs:30361-30386 [v2.10.3.15] SetupTunePulse
+m_pulseTuneBtn = new QPushButton(QStringLiteral("P-TU"), this);
+m_pulseTuneBtn->setCheckable(true);
+m_pulseTuneBtn->setFixedHeight(22);
+m_pulseTuneBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+m_pulseTuneBtn->setStyleSheet(btnStyle + Style::blueCheckedStyle());
+m_pulseTuneBtn->setEnabled(true);
+m_pulseTuneBtn->setAccessibleName(QStringLiteral("Pulsed tune"));
+m_pulseTuneBtn->setToolTip(QStringLiteral(
+    "Pulsed tune (Tune Check): keys TUNE with a pulsed carrier "
+    "(10 Hz, 25 % duty) and the SWR protections on. Press again to stop. "
+    "Right-click for the pulse settings."));
+row->addWidget(m_pulseTuneBtn, 1);
+
+// External PA (xPA), after P-TU in the keying row: the amplifier enable.
+// OC transmit pins ticked "TX PA" in Setup > Hardware > OC Outputs only
+// close while this is on, so with xPA off a TUNE carrier never keys the
+// amplifier.
+//   From Thetis console.cs:46667-46690 [v2.10.3.15] chkExternalPA
+//   From Thetis HPSDR/Penny.cs:319-324 [v2.10.3.15]
+m_xpaBtn = new QPushButton(QStringLiteral("xPA"), this);
+m_xpaBtn->setCheckable(true);
+m_xpaBtn->setFixedHeight(22);
+m_xpaBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+m_xpaBtn->setStyleSheet(btnStyle + Style::amberCheckedStyle());
+m_xpaBtn->setEnabled(true);
+m_xpaBtn->setAccessibleName(QStringLiteral("External PA enable"));
+m_xpaBtn->setToolTip(QStringLiteral(
+    "External PA enable: OC transmit pins ticked \"TX PA\" in Setup > "
+    "Hardware > OC Outputs only close while xPA is on. Turn xPA off to "
+    "tune without keying the amplifier."));
+row->addWidget(m_xpaBtn, 1);
+
 m_moxBtn = new QPushButton(QStringLiteral("MOX"), this);
 m_moxBtn->setCheckable(true);
 m_moxBtn->setFixedHeight(22);
@@ -149,9 +184,8 @@ m_moxBtn->setAccessibleName(QStringLiteral("MOX transmit"));
 m_moxBtn->setToolTip(QStringLiteral("Manual transmit (MOX)"));
 row->addWidget(m_moxBtn, 1);
 
-// Recording plan Task 12 (spec 6.6, Desktop VOICE): the voice keyer's
-// button, the third in the row, the same height and stretch as TUNE and
-// MOX. VoiceButton opens its box and shows a message going out.
+// Imported feature (voice keyer): VOICE, after MOX. VoiceButton gives it its
+// look and its box.
 m_voiceBtn = new QPushButton(QStringLiteral("VOICE"), this);
 m_voiceBtn->setObjectName(QStringLiteral("TxVoiceButton"));
 m_voiceBtn->setFixedHeight(22);
@@ -201,8 +235,9 @@ vbox->addWidget(m_takeTransmitBtn);
 // indicators are the letter row, the holder line and Take transmit
 // together, as setSliceIndicatorsHidden hides them.
 m_parts.add(QStringLiteral("tune"), QStringLiteral("TUNE button"), 0, {m_tuneBtn});
+m_parts.add(QStringLiteral("pulseTune"), QStringLiteral("P-TU button"), 0, {m_pulseTuneBtn});
+m_parts.add(QStringLiteral("xpa"), QStringLiteral("xPA button"), 0, {m_xpaBtn});
 m_parts.add(QStringLiteral("mox"), QStringLiteral("MOX button"), 0, {m_moxBtn});
-m_parts.add(QStringLiteral("voice"), QStringLiteral("VOICE button"), 0, {m_voiceBtn});
 m_parts.add(QStringLiteral("sliceIndicators"), QStringLiteral("Slice indicators"), -1,
             {m_sliceIndicatorRow, m_holderLabel, m_takeTransmitBtn});
 }

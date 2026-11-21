@@ -98,6 +98,9 @@ struct AsioBackend::Shared {
     QHash<QString, AsioDriverCaps> caps;
     QSet<QString> inUse;
     QSet<QString> describing;      // asked, not answered
+    // Fast startup: the first enumeration describes only these drivers.
+    QStringList startupDrivers;
+    bool startupFilterPending = false;
 
     // The session: every open output, in open order.
     QList<AsioOutputBus*> buses;
@@ -596,6 +599,23 @@ bool AsioBackend::running() const
     return m_shared->linked();
 }
 
+void AsioBackend::setStartupDriverFilter(const QStringList& drivers)
+{
+    std::lock_guard lock(m_shared->mutex);
+    m_shared->startupDrivers = drivers;
+}
+
+void AsioBackend::describeRemainingDrivers()
+{
+    std::lock_guard lock(m_shared->mutex);
+    if (!m_shared->linked()) { return; }
+    // The full list, described in the background after startup. Answering
+    // posts DevicesChanged, so the Setup page fills in.
+    m_shared->startupFilterPending = false;
+    m_shared->listAsked = true;
+    m_shared->link.describe(QString());
+}
+
 QList<AudioDeviceInfo> AsioBackend::enumerate()
 {
     if (audioDevicesBarredForTestRun()) {
@@ -609,12 +629,25 @@ QList<AudioDeviceInfo> AsioBackend::enumerate()
     // come back through onAsioCaps, which posts DevicesChanged.
     if (!m_shared->listAsked) {
         m_shared->listAsked = true;
-        m_shared->link.describe(QString());
+        if (m_shared->startupDrivers.isEmpty()) {
+            m_shared->link.describe(QString());
+        } else {
+            // Fast startup: only the operator's saved driver(s) are described
+            // now. The rest follow from describeRemainingDrivers().
+            m_shared->startupFilterPending = true;
+            for (const QString& driver : std::as_const(m_shared->startupDrivers)) {
+                if (m_shared->drivers.contains(driver) && !m_shared->caps.contains(driver)) {
+                    m_shared->describing.insert(driver);
+                    m_shared->link.describe(driver);
+                }
+            }
+        }
     }
     QList<AudioDeviceInfo> devices;
     for (const QString& driver : std::as_const(m_shared->drivers)) {
         const auto known = m_shared->caps.constFind(driver);
-        if (known == m_shared->caps.constEnd() && !m_shared->describing.contains(driver)) {
+        if (!m_shared->startupFilterPending && known == m_shared->caps.constEnd()
+            && !m_shared->describing.contains(driver)) {
             m_shared->describing.insert(driver);
             m_shared->link.describe(driver);
         }

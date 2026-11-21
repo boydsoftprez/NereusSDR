@@ -19,14 +19,6 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-11-16: The microphone clip tap in pullTxMic (recording plan Task
-//               12). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
-//               Code.
-//   2026-11-15: Recording player (spec 6.1, 6.3): the playback slots are
-//               registered with the speakers mixer, and each drain names
-//               the local one and each owner mix's own, each topped up
-//               from the playback feed first.
-//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-17 : openRole() gives the bus its stream event sink before
 //                 it opens, so a device lost during or right after the
 //                 open reaches the supervisor; each bus has a generation
@@ -406,6 +398,7 @@
 
 #include "AudioEngine.h"
 #include <QDateTime>
+#include "audio/PlaybackFeed.h"
 #include "core/settings/SettingsScope.h"
 
 #include "AppSettings.h"
@@ -429,6 +422,7 @@
 #include "audio/LinuxPipeBus.h"
 #endif
 #if defined(Q_OS_LINUX) && defined(NEREUS_HAVE_PIPEWIRE)
+#include "core/audio/AsioBackend.h"
 #include "core/audio/PipeWireBus.h"
 #include "core/audio/PipeWireThreadLoop.h"
 #endif
@@ -447,8 +441,6 @@
 #include <bit>
 #include <array>
 #include <thread>
-
-#include "core/audio/PlaybackFeed.h"
 #include <vector>
 
 #ifdef HAVE_WDSP
@@ -560,6 +552,14 @@ int AudioEngine::paTerminateCallsForTest()
 }
 #endif
 
+namespace {
+bool& startupEnumerationDeferred()
+{
+    static bool deferred = false;
+    return deferred;
+}
+} // namespace
+
 AudioEngine::AudioEngine(QObject* parent)
     : QObject(parent)
 {
@@ -653,7 +653,7 @@ AudioEngine::AudioEngine(QObject* parent)
     // drain for kStallTolerance periods on every TX transition.
     m_masterMix.setSliceOpportunistic(kTxMonitorSlotId, true);
 
-    // Recording player (spec 6.1, 6.3): the playback slots, registered here
+    // Recording player (imported feature): the playback slots, registered here
     // for the same reason as the monitor's (no insert once the DSP thread
     // reads the map). Each reaches only the speakers sum that names it, and
     // never the anti-VOX mixer.
@@ -1863,6 +1863,10 @@ IAudioDeviceCatalog* AudioEngine::catalogue()
 
 bool AudioEngine::ensureCatalogue()
 {
+    // Startup holds the first enumeration until the window is up.
+    if (m_deferDeviceEnumeration) {
+        return false;
+    }
     if (m_catalogue) {
         return true;
     }
@@ -1873,6 +1877,37 @@ bool AudioEngine::ensureCatalogue()
         m_backends = makeSystemAudioBackends(m_backendContext);
     }
     linkAsioBackend();
+    // Fast startup: describe only the operator's saved ASIO driver(s) first;
+    // the rest follow a moment later (describeRemainingDrivers), so the Setup
+    // list is complete without paying eight driver loads before the window.
+    {
+        QStringList savedAsioDrivers;
+        const auto addSaved = [&savedAsioDrivers](const QString& prefix) {
+            const AudioDeviceConfig cfg = AudioDeviceConfig::loadFromSettings(prefix);
+            if (cfg.engine && *cfg.engine == AudioEngineKind::Asio
+                && !cfg.deviceId.isEmpty() && !savedAsioDrivers.contains(cfg.deviceId)) {
+                savedAsioDrivers.append(cfg.deviceId);
+            }
+        };
+        addSaved(rolePrefix(AudioRole::Speakers));
+        addSaved(rolePrefix(AudioRole::Headphones));
+        addSaved(rolePrefix(AudioRole::TxInput));
+        for (int channel = 1; channel <= 4; ++channel) { addSaved(rolePrefix(vaxRole(channel))); }
+        for (const auto& backend : m_backends) {
+            if (auto* asio = dynamic_cast<AsioBackend*>(backend.get())) {
+                asio->setStartupDriverFilter(savedAsioDrivers);
+            }
+        }
+        if (!savedAsioDrivers.isEmpty()) {
+            QTimer::singleShot(2500, this, [this] {
+                for (const auto& backend : m_backends) {
+                    if (auto* asio = dynamic_cast<AsioBackend*>(backend.get())) {
+                        asio->describeRemainingDrivers();
+                    }
+                }
+            });
+        }
+    }
     m_defaultEngine = defaultAudioEngine(m_backends);
     m_catalogue = std::make_unique<AudioDeviceCatalog>(m_backends);
     // The older drivers are listed, and PortAudio started, only on need.
@@ -1924,6 +1959,27 @@ void AudioEngine::setSpeakersWaitForPick(bool waiting)
 bool AudioEngine::prepareAudioDevices()
 {
     return ensureAudioDevices(DeviceStart::MicOnly);
+}
+
+void AudioEngine::deferDeviceEnumeration(bool defer)
+{
+    m_deferDeviceEnumeration = defer;
+}
+
+void AudioEngine::deferStartupEnumeration()
+{
+    startupEnumerationDeferred() = true;
+}
+
+void AudioEngine::resumeDeviceEnumeration()
+{
+    if (!m_deferDeviceEnumeration) {
+        return;
+    }
+    m_deferDeviceEnumeration = false;
+    // What the construction-time call would have done: list the devices and
+    // start the outputs (the microphone opens on its own demand).
+    ensureAudioDevices();
 }
 
 AudioRoleStatus AudioEngine::roleStatus(AudioRole role) const
@@ -4011,7 +4067,6 @@ int AudioEngine::acquireOwnerMix()
         if (!slot.taken.load(std::memory_order_acquire)) {
             slot.sliceMask.store(0, std::memory_order_release);
             slot.monitor.store(0, std::memory_order_release);
-            slot.playback.store(false, std::memory_order_release);
             slot.listenMask.store(0, std::memory_order_release);
             slot.taken.store(true, std::memory_order_release);
             return k;
@@ -4035,7 +4090,6 @@ void AudioEngine::releaseOwnerMix(int slot)
     owner.headphones.admissionClosed.store(false, std::memory_order_seq_cst);
     owner.sliceMask.store(0, std::memory_order_release);
     owner.monitor.store(0, std::memory_order_release);
-    owner.playback.store(false, std::memory_order_release);
     owner.listenMask.store(0, std::memory_order_release);
     owner.taken.store(false, std::memory_order_release);
 }
@@ -4112,57 +4166,6 @@ MasterMixer::OwnerMonitor AudioEngine::ownerMixMonitor(int slot) const
         ? static_cast<MasterMixer::OwnerMonitor>(
               m_ownerMixes[static_cast<size_t>(slot)].monitor.load(std::memory_order_acquire))
         : MasterMixer::OwnerMonitor::None;
-}
-
-void AudioEngine::setOwnerMixPlayback(int slot, bool on)
-{
-    if (!validOwnerMixSlot(slot)) {
-        return;
-    }
-    m_ownerMixes[static_cast<size_t>(slot)].playback.store(on, std::memory_order_release);
-}
-
-void AudioEngine::setPlaybackFeed(RecordingPlaybackFeed* feed)
-{
-    m_playbackFeed.store(feed, std::memory_order_seq_cst);
-    while (m_playbackFeedCalls.load(std::memory_order_seq_cst) != 0) {
-        std::this_thread::yield();
-    }
-}
-
-// DSP thread, inside drainMixes: the slot is topped up to `frames`, what
-// this drain can take, so it never holds more than one drain's worth.
-void AudioEngine::feedPlaybackSlot(int slotId, int frames)
-{
-    m_playbackFeedCalls.fetch_add(1, std::memory_order_seq_cst);
-    RecordingPlaybackFeed* const feed = m_playbackFeed.load(std::memory_order_seq_cst);
-    if (feed != nullptr) {
-        int want = frames - m_masterMix.queuedFrames(slotId);
-        while (want > 0) {
-            const int ask = std::min(want, kPlaybackPumpFrames);
-            const int got = feed->pullSpeaker(slotId, m_playbackPumpMono.data(), ask);
-            if (got <= 0) {
-                break;
-            }
-            for (int i = 0; i < got; ++i) {
-                m_playbackPumpStereo[static_cast<size_t>(2 * i)] = m_playbackPumpMono[static_cast<size_t>(i)];
-                m_playbackPumpStereo[static_cast<size_t>(2 * i + 1)] =
-                    m_playbackPumpMono[static_cast<size_t>(i)];
-            }
-            m_masterMix.accumulate(slotId, m_playbackPumpStereo.data(), got);
-            want -= got;
-            if (got < ask) {
-                break;
-            }
-        }
-    }
-    m_playbackFeedCalls.fetch_sub(1, std::memory_order_seq_cst);
-}
-
-bool AudioEngine::ownerMixPlayback(int slot) const
-{
-    return validOwnerMixSlot(slot)
-        && m_ownerMixes[static_cast<size_t>(slot)].playback.load(std::memory_order_acquire);
 }
 
 void AudioEngine::setOwnerMixSliceMask(int slot, quint32 mask)
@@ -4251,6 +4254,43 @@ int AudioEngine::ownerMixCount() const
         }
     }
     return count;
+}
+
+void AudioEngine::setPlaybackFeed(RecordingPlaybackFeed* feed)
+{
+    m_playbackFeed.store(feed, std::memory_order_seq_cst);
+    while (m_playbackFeedCalls.load(std::memory_order_seq_cst) != 0) {
+        std::this_thread::yield();
+    }
+}
+
+// DSP thread, just before the mix: the slot is topped up to `frames`, what
+// this drain can take, so it never holds more than one drain's worth.
+void AudioEngine::feedPlaybackSlot(int slotId, int frames)
+{
+    m_playbackFeedCalls.fetch_add(1, std::memory_order_seq_cst);
+    RecordingPlaybackFeed* const feed = m_playbackFeed.load(std::memory_order_seq_cst);
+    if (feed != nullptr) {
+        int want = frames - m_masterMix.queuedFrames(slotId);
+        while (want > 0) {
+            const int ask = std::min(want, kPlaybackPumpFrames);
+            const int got = feed->pullSpeaker(slotId, m_playbackPumpMono.data(), ask);
+            if (got <= 0) {
+                break;
+            }
+            for (int i = 0; i < got; ++i) {
+                m_playbackPumpStereo[static_cast<size_t>(2 * i)] = m_playbackPumpMono[static_cast<size_t>(i)];
+                m_playbackPumpStereo[static_cast<size_t>(2 * i + 1)] =
+                    m_playbackPumpMono[static_cast<size_t>(i)];
+            }
+            m_masterMix.accumulate(slotId, m_playbackPumpStereo.data(), got);
+            want -= got;
+            if (got < ask) {
+                break;
+            }
+        }
+    }
+    m_playbackFeedCalls.fetch_sub(1, std::memory_order_seq_cst);
 }
 
 void AudioEngine::closeAndDrainSliceTap(SliceTapSlot& slot)
@@ -4448,6 +4488,10 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
     // it.
     if (m_moxActive.load(std::memory_order_acquire)
         && sliceId == m_moxWithdrawnSlice.load(std::memory_order_acquire)) {
+        if (sliceId >= 0 && sliceId < kMaxSliceAudioViews) {
+            m_sliceRxPeak[static_cast<size_t>(sliceId)].store(
+                0.0f, std::memory_order_relaxed);
+        }
         // R-R3-43: a receiver tap hears nothing either, but is told how
         // many frames were withheld so its positions keep real time.
         skipSliceTaps(sliceId, frames);
@@ -4479,6 +4523,24 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
     // R-R3-45: the route rides in the same way (VAX design 6.2): the mixer
     // builds this slice into the speakers sum or the headphones sum.
     const bool toHeadphones = slice.headphones;
+
+    // RX EQ badge tap: the loudest sample in this block, after WDSP's RX EQ
+    // and before AF, volume and mute. A muted slice reads 0 so a muted
+    // receiver does not look alive to the meter.
+    if (sliceId >= 0 && sliceId < kMaxSliceAudioViews) {
+        float peak = 0.0f;
+        if (!slice.muted) {
+            const int count = frames * 2;
+            for (int i = 0; i < count; ++i) {
+                const float v = std::fabs(samples[i]);
+                if (v > peak) {
+                    peak = v;
+                }
+            }
+        }
+        m_sliceRxPeak[static_cast<size_t>(sliceId)].store(
+            peak, std::memory_order_relaxed);
+    }
     //
     // Slice control plan Task 6 (JJ's ruling): the slice's AF level rides
     // in too. WDSP's panel gain stays at 1.0, so the mixer applies AF to
@@ -4594,6 +4656,15 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
     drainMixes(frames);
 }
 
+float AudioEngine::sliceRxPeak(int sliceId) const
+{
+    if (sliceId < 0 || sliceId >= kMaxSliceAudioViews) {
+        return 0.0f;
+    }
+    return m_sliceRxPeak[static_cast<size_t>(sliceId)].load(
+        std::memory_order_relaxed);
+}
+
 // Remote-window parity Task 32: the drain, the taps and the output pushes,
 // split out of rxBlockReady unchanged so the MOX-gated slice's own call
 // runs them too. Called only from rxBlockReady, inside its mix region.
@@ -4670,10 +4741,6 @@ void AudioEngine::drainMixes(int frames, bool monitorOnly)
             owner.listenLevels = levels.data();
         }
         owner.listenSlot = k;
-        // Recording player: this owner's own playback, in its speakers.
-        if (slot.playback.load(std::memory_order_acquire)) {
-            owner.playbackSlot = ownerPlaybackSlotId(k);
-        }
         ++ownerCount;
     }
     const quint32 localListen = m_localListenMask.load(std::memory_order_acquire);
@@ -4703,8 +4770,8 @@ void AudioEngine::drainMixes(int frames, bool monitorOnly)
     // CW transmit (R-CW-39, D15): the computer sidetone into the monitor
     // slot, the frames this drain will take, just before it sums.
     produceCwSidetone(drainFrames);
-    // Recording player (spec 6.1, 6.3): each playback slot this drain sums,
-    // topped up from the decoded playback, just before it sums.
+    // Recording player: each playback slot this drain sums, topped up from
+    // the decoded playback just before it sums.
     feedPlaybackSlot(kLocalPlaybackSlotId, drainFrames);
     for (int k = 0; k < ownerCount; ++k) {
         if (owners[static_cast<size_t>(k)].playbackSlot != MasterMixer::kNoPlaybackSlot) {
@@ -5153,9 +5220,10 @@ int AudioEngine::pullTxMic(float* dst, int n)
         }
     }
 
-    // Recording plan Task 12: a copy for the microphone clip tap, before
-    // any processing. Lock-free and allocation-free; a copy that does not
-    // fit is dropped, and what goes to the transmitter is unchanged.
+    // Recording plan Task 12 (imported feature): a copy for the microphone
+    // clip tap, before any processing. Lock-free and allocation-free; a copy
+    // that does not fit is dropped, and what goes to the transmitter is
+    // unchanged.
     if (gotMonoSamples > 0 && m_txMicClipTapOn.load(std::memory_order_acquire)) {
         m_txMicClipTapRateHz.store(fmt.sampleRate > 0 ? fmt.sampleRate : 48000,
                                    std::memory_order_release);

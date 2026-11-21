@@ -268,6 +268,10 @@ public:
     QString resolvedText1() const { return resolveText(m_text1); }
     QString resolvedText2() const { return resolveText(m_text2); }
 
+    // Hold: while the surface holds its peaks off-air, the resolved lines are
+    // frozen too, so a token such as %swr2% keeps the value it showed.
+    void setReadingHold(bool on) override;
+
     Layer renderLayer() const override { return Layer::OverlayDynamic; }
     void paint(QPainter& p, int widgetW, int widgetH) override;
     QString serialize() const override;
@@ -291,6 +295,9 @@ private:
     // (time and slice tokens change with nothing else).
     bool refreshResolvedText();
     bool effectiveTransmitting() const { return transmitting() && !foreignSession(); }
+    // Hold state and the lines it froze (see setReadingHold).
+    bool m_holdText{false};
+    mutable QHash<QString, QString> m_holdResolved;
     bool coverFadeActive() const;
     bool checkPanelFlip();
     QFont swapFont(bool tx, const QPaintDevice* device, int widgetW) const;
@@ -341,6 +348,9 @@ private:
     // LED gates (saved). From Thetis MeterManager.cs:27554-27558
     // [v2.10.3.15]: both logic flags default false, both IDs "".
     bool    m_rxLedLogic{false};
+    // Centre each line in its box (the WaveNode centre column reads as a
+    // stack of centred rows). Absent from older records: left aligned.
+    bool    m_centred{false};
     bool    m_txLedLogic{false};
     QString m_rxFourChar;
     QString m_txFourChar;

@@ -755,7 +755,7 @@ void CwxApplet::applyMarks()
         sent.cursor.setPosition(m_sentFrom);
         sent.cursor.setPosition(m_markedCurrent, QTextCursor::KeepAnchor);
         QColor dim(Style::kTextPrimary);
-        dim.setAlphaF(kSentOpacity);
+        dim.setAlphaF(static_cast<float>(kSentOpacity));
         sent.format.setForeground(dim);
         marks.append(sent);
     }

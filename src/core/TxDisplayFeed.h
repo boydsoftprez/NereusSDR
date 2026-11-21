@@ -90,6 +90,13 @@ public:
     bool isGoverning(int id) const;
     int governingViewer() const;
     bool isKeyed() const noexcept { return m_keyed; }
+    /// True while the TX analyzer feeds the pan: a real MOX key or the
+    /// no-MOX TX audio check. The frequency view (carrier/passband) is the
+    /// same; only the RF state differs.
+    bool displayActive() const noexcept { return m_keyed || m_txAudioCheck; }
+    /// TX audio check (TX/N) drives the same transmit panadapter/waterfall
+    /// without keying the radio.
+    void setTxAudioCheckActive(bool on);
     int viewerCount() const noexcept { return static_cast<int>(m_viewers.size()); }
 
     TxAnalyzer* analyzer() const { return m_analyzer.data(); }
@@ -128,6 +135,7 @@ private:
     };
 
     void onMoxStateChanged(bool keyed);
+    void updateDisplayActive();
     void watchTransmitSlice();
     /// Recomputes the carrier and the governing viewer's view; while keyed,
     /// applies it to the analyzer and emits viewChanged when it moved.
@@ -151,6 +159,8 @@ private:
     int m_nextViewerId{1};
     int m_governor{0};
     bool m_keyed{false};
+    bool m_txAudioCheck{false};
+    bool m_displayActive{false};
     TxDisplayView m_view;
     QPointer<SliceModel> m_watchedSlice;
     /// When a remote viewer's change last reached the analyzer, and the

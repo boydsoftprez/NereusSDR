@@ -86,11 +86,6 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-11-16: Recording plan Task 22: handleDsr, rewind sound's verbs.
-//   2026-11-16: Recording plan Task 23: handleDsrPast, the past picture's
-//               verbs. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
-//               Code.
-//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05: Band stack plan Task 5: parseBandStackRecall.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05: Band stack plan Task 4: the bandStack.* verbs (handleBandStack).
@@ -270,7 +265,6 @@
 #include <QObject>
 #include <QPointer>
 #include <QHash>
-#include <QJsonObject>
 #include <QSet>
 
 #include <functional>
@@ -454,23 +448,6 @@ public:
     /// so a device that only listens to a slice is refused too.
     using SliceAccess = std::function<QString(const QByteArray& requester, int sliceId)>;
     void setSliceAccess(SliceAccess access) { m_sliceAccess = std::move(access); }
-    /// Recording plan Task 5: the requester's name as a recording's
-    /// startedBy and a kept recording's device ("iPhone"). Unset, or empty
-    /// for a device, a device is "Another device". The station device and an
-    /// empty requester are the Core's own window ("").
-    using RecordingsDeviceName = std::function<QString(const QByteArray& requester)>;
-    void setRecordingsDeviceName(RecordingsDeviceName name) { m_recordingsDeviceName = std::move(name); }
-    /// Recording plan Task 11: the requester as the station link names a
-    /// device (StationServer::wireIdOf): the voice keyer's `sending`
-    /// `deviceId`, so the sender's own window knows its message goes out.
-    /// Unset, the station device's id for the Core's own window and the
-    /// device id in base64url otherwise.
-    using RecordingsDeviceWireId = std::function<QString(const QByteArray& requester)>;
-    void setRecordingsDeviceWireId(RecordingsDeviceWireId wireId) { m_recordingsDeviceWireId = std::move(wireId); }
-    /// Recording plan Task 5: the listener whose recordings.play is running
-    /// now. A playback refusal for it is that command's answer, so the Core
-    /// sends it on no other path. Empty between plays.
-    const QString& recordingsPlayInFlight() const { return m_recordingsPlayInFlight; }
 
     /// iPhone app plan Task 34 (R-IOS-02, R-IOS-13; ruling 7.4, D60): the
     /// Core's transmit rules for the requester. onAir: the on-air refusal
@@ -719,19 +696,6 @@ private:
     /// Who may act on a slice through the band stack: the listener's words or
     /// the Core's changeRefusal text. Empty when the requester may.
     QString bandStackSliceRefusal(int sliceId) const;
-    /// Recording plan Task 5: every recordings.* verb (recordingsVersion 1).
-    void handleRecordings(const NereusSDR::SessionMessage& invoke);
-    /// The requester as a recording names it: "" for the Core's own window.
-    QString recordingsDeviceName() const;
-    /// Recording plan Task 11: every voiceKeyer.* verb (recordingsVersion 3).
-    /// voiceKeyer.send keys the radio as the requester.
-    void handleVoiceKeyer(const NereusSDR::SessionMessage& invoke);
-    /// Recording plan Task 22: dsr.rewind, dsr.live and dsr.seek, rewind
-    /// sound (recordingsVersion 4). None keys the radio.
-    void handleDsr(const NereusSDR::SessionMessage& invoke);
-    /// Recording plan Task 23: dsr.rows, dsr.spectrum and dsr.hours, the
-    /// past picture, answered once the recordings worker has drawn it.
-    void handleDsrPast(const NereusSDR::SessionMessage& invoke, const QJsonObject& arguments, int slice);
     void handleRadeResetVocoder(const NereusSDR::SessionMessage& invoke);
     // R-IOS-13 / R-R3-49 (txEqCurveVersion 2): txEq.setCurve and
     // txEq.resetCurve, through TxEqCurveAccess.
@@ -804,9 +768,6 @@ private:
     std::function<void(int)> m_rateClose;
     QString m_rateChangedReason;
     SliceAccess m_sliceAccess;
-    RecordingsDeviceName m_recordingsDeviceName;
-    RecordingsDeviceWireId m_recordingsDeviceWireId;
-    QString m_recordingsPlayInFlight;
     // Slice control plan Task 4.
     QPointer<SliceAccessController> m_sliceAccessController;
     bool m_requesterSharesSlices = false;

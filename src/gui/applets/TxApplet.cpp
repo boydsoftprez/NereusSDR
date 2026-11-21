@@ -12,10 +12,6 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-11-16 - VOICE in each keying row (recording plan Task 12): a
-//                 VoiceButton per row on the model's recordings access,
-//                 gated with TUNE and MOX, with Take transmit in its box.
-//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - The dynamic shows and hides of PS-A, the holder line and
 //                 Take transmit go through each row's parts, so a container
 //                 copy that hides one keeps it hidden. J.J. Boyd (KG4VCF),
@@ -396,7 +392,7 @@
 // 11.  2-Tone test       — HIDDEN until Phase 3M-3
 // 12.  PS-A toggle       — HIDDEN until Phase 3M-4
 // 13.  DUP               — checkable (NYI — 3M-3)
-// 14.  xPA indicator     — checkable (NYI — 3M-3)
+// 14.  xPA button        - built: between TUNE and MOX (OcMatrix xPA gate)
 // 15.  SWR protection LED — QLabel indicator (NYI — 3M-3)
 
 #include "TxApplet.h"
@@ -407,8 +403,6 @@
 #include "TxProcessingSection.h"
 #include "TxFilterSection.h"
 #include "TxKeyingSection.h"
-#include "gui/recordings/VoiceButton.h"
-#include "models/recordings/RecordingsAccess.h"
 #include "TxMonitorSection.h"
 #include "TxPowerSection.h"
 #include "TxVoxSection.h"
@@ -435,9 +429,13 @@
 #include "core/session/PureSignalSessionFacade.h"
 #include "core/TwoToneController.h"
 #include "core/TxChannel.h"
+#include "core/WdspTypes.h"
 #include "core/TxSliceArbiter.h"
 #include "models/PureSignalSettings.h"
 #include "models/RadioModel.h"
+#include "models/SliceModel.h"
+#include "core/PaProfile.h"
+#include "core/PaProfileManager.h"
 #include "models/SliceModel.h"
 #include "models/TransmitModel.h"
 
@@ -446,6 +444,7 @@
 #include <QEvent>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSlider>
@@ -628,7 +627,6 @@ void TxApplet::buildUI()
     // here rather than inside the section.
     connect(m_keyingSection->takeTransmitButton(), &QPushButton::clicked, this,
             &TxApplet::takeTransmitRequested);
-    addVoiceButton(m_keyingSection);
 
     // ── 4b. VOX row (3M-3a-iii bench polish 2026-05-04) ───────────────────────
     // Relocated from PhoneCwApplet (Phone tab Control #10).  Operators
@@ -707,6 +705,47 @@ void TxApplet::wireControls()
 
     TransmitModel& tx = m_model->transmitModel();
 
+    // The PA Gain profile's per-band "Use Max" watts decides whether the
+    // power rows read in percent or watts, so follow the profile's changes.
+    if (PaProfileManager* manager = m_model->paProfileManager()) {
+        const auto refresh = [this]() { updatePaPowerScale(); syncFromModel(); };
+        connect(manager, &PaProfileManager::activeProfileChanged, this,
+                [refresh](const QString&) { refresh(); });
+        connect(manager, &PaProfileManager::profileDataChanged, this, refresh);
+        connect(manager, &PaProfileManager::profileSaved, this,
+                [refresh](const QString&) { refresh(); });
+        connect(manager, &PaProfileManager::bankLoaded, this, refresh);
+    }
+
+    // The two-tone test turns the PWR slider limit off around its fixed
+    // drive source and back on at the stop (Thetis PWRSliderLimitEnabled).
+    for (TxPowerSection* section : allPowerSections()) {
+        section->setPowerLimitEnabled(tx.powerSliderLimitEnabled());
+    }
+    connect(&tx, &TransmitModel::powerSliderLimitEnabledChanged, this,
+            [this](bool enabled) {
+        for (TxPowerSection* section : allPowerSections()) {
+            section->setPowerLimitEnabled(enabled);
+        }
+    });
+
+    // The red bars follow the live limits: the PA calibration lifts them for
+    // its 100 % reading and restores them on Apply/Clear/close.
+    for (TxPowerSection* section : allPowerSections()) {
+        section->setRfLimitPercent(tx.powerLimit());
+        section->setTuneLimitPercent(tx.tunePowerLimit());
+    }
+    connect(&tx, &TransmitModel::powerLimitChanged, this, [this](int percent) {
+        for (TxPowerSection* section : allPowerSections()) {
+            section->setRfLimitPercent(percent);
+        }
+    });
+    connect(&tx, &TransmitModel::tuneLimitChanged, this, [this](int percent) {
+        for (TxPowerSection* section : allPowerSections()) {
+            section->setTuneLimitPercent(percent);
+        }
+    });
+
     wirePowerSection(m_powerSection);
     wireKeyingSection(m_keyingSection);
 
@@ -714,7 +753,27 @@ void TxApplet::wireControls()
     // reruns setupTuneDriveSlider on each source change and on TUN and 2TONE
     // (console.cs:46651, 46673, 30206, 44832 [v2.10.3.15]).
     connect(&tx, &TransmitModel::tuneDrivePowerSourceChanged,
-            this, [this](DrivePowerSource) { applyDriveSourceGate(); });
+            this, [this](DrivePowerSource) {
+        applyDriveSourceGate();
+        if (!m_model) { return; }
+        for (TxPowerSection* s : allPowerSections()) {
+            QSignalBlocker b(s->tunePowerSlider());
+            s->tunePowerSlider()->setValue(tunePowerSliderValue(s, m_currentBand));
+        }
+        updatePowerSliderLabels();
+    });
+    // Fixed Tune Power edits (Setup > Transmit > Power) reach the console
+    // slider at once while Fixed is the source.
+    connect(&tx, &TransmitModel::tunePowerChanged,
+            this, [this](int) {
+        if (!m_model) { return; }
+        if (m_model->transmitModel().tuneDrivePowerSource() != DrivePowerSource::Fixed) { return; }
+        for (TxPowerSection* s : allPowerSections()) {
+            QSignalBlocker b(s->tunePowerSlider());
+            s->tunePowerSlider()->setValue(tunePowerSliderValue(s, m_currentBand));
+        }
+        updatePowerSliderLabels();
+    });
     connect(&tx, &TransmitModel::twoToneDrivePowerSourceChanged,
             this, [this](DrivePowerSource) { applyDriveSourceGate(); });
     connect(&tx, &TransmitModel::tuneChanged,
@@ -809,6 +868,8 @@ void TxApplet::wireControls()
     m_voxMeterTimer->setInterval(100);
     connect(m_voxMeterTimer, &QTimer::timeout,
             this, &TxApplet::pollVoxMeter);
+    connect(m_voxMeterTimer, &QTimer::timeout,
+            this, &TxApplet::pollTxStageBadges);
     m_voxMeterTimer->start();
 
     // ── MON row (TxMonitorSection) ───────────────────────────────────────────
@@ -1014,6 +1075,9 @@ void TxApplet::syncRemoteIndicators()
 
 void TxApplet::syncFromModel()
 {
+    // The PA ceiling for this band decides whether the power rows read in
+    // percent or watts, so refresh it before the sliders are placed.
+    updatePaPowerScale();
     if (!m_model) { return; }
 
     TransmitModel& tx = m_model->transmitModel();
@@ -1028,15 +1092,14 @@ void TxApplet::syncFromModel()
     // RF Power
     for (TxPowerSection* s : allPowerSections()) {
         QSignalBlocker b(s->rfPowerSlider());
-        s->rfPowerSlider()->setValue(tx.power());
+        s->rfPowerSlider()->setValue(s->percentToSlider(tx.power()));
     }
 
     // Tune Power for current band
     {
-        const int tunePwr = shownTunePower(m_currentBand);
         for (TxPowerSection* s : allPowerSections()) {
             QSignalBlocker b(s->tunePowerSlider());
-            s->tunePowerSlider()->setValue(tunePwr);
+            s->tunePowerSlider()->setValue(tunePowerSliderValue(s, m_currentBand));
         }
     }
 
@@ -1425,13 +1488,16 @@ void TxApplet::setCurrentBand(Band band)
 
     if (!m_model) { return; }
 
+    // The PA Gain "Use Max" ceiling is per band, so the sliders' units
+    // (percent or watts) can change here.
+    updatePaPowerScale();
+
     // Update the Tune Power slider to reflect the per-band stored value.
     {
-        const int tunePwr = shownTunePower(band);
         m_updatingFromModel = true;
         for (TxPowerSection* s : allPowerSections()) {
             QSignalBlocker b(s->tunePowerSlider());
-            s->tunePowerSlider()->setValue(tunePwr);
+            s->tunePowerSlider()->setValue(tunePowerSliderValue(s, band));
         }
         // Issue #175 Task 7: HL2 dB / non-HL2 integer — replaces the
         // bare m_powerSection->tunePowerLabel()->setText(QString::number(tunePwr)) so HL2
@@ -1816,30 +1882,6 @@ QPushButton* TxApplet::takeTransmitButton() const
     return m_keyingSection ? m_keyingSection->takeTransmitButton() : nullptr;
 }
 
-VoiceButton* TxApplet::voiceButton() const
-{
-    return m_voiceButtons.isEmpty() ? nullptr : m_voiceButtons.first().data();
-}
-
-// Recording plan Task 12: the row's VOICE, on the model's recordings
-// access, starting as gated as TUNE and MOX are now.
-void TxApplet::addVoiceButton(TxKeyingSection* section)
-{
-    if (section == nullptr || section->voiceButton() == nullptr) {
-        return;
-    }
-    auto* voice = new VoiceButton(section, m_model ? m_model->recordings() : nullptr);
-    voice->setTransmitPermitted(m_transmitPermitted, m_transmitPermissionReason);
-    voice->setTakeTransmitOffered(m_takeTransmitOffered);
-    connect(voice, &VoiceButton::panelRequested, this, &TxApplet::voiceKeyerPanelRequested);
-    connect(voice, &VoiceButton::takeTransmitRequested, this, &TxApplet::takeTransmitRequested);
-    connect(voice, &VoiceButton::refusalShown, this, &TxApplet::voiceRefused);
-    // Dropped from the list when the next one is added once its row is gone.
-    // (No destroyed() hook: the applet's own row goes after this list does.)
-    m_voiceButtons.removeAll(QPointer<VoiceButton>());
-    m_voiceButtons.append(voice);
-}
-
 QList<QPushButton*> TxApplet::transmitSliceButtons() const
 {
     return m_keyingSection ? m_keyingSection->transmitSliceButtons() : QList<QPushButton*>();
@@ -1940,6 +1982,47 @@ void TxApplet::pollVoxMeter()
     for (TxVoxSection* s : allVoxSections()) {
         s->setThresholdMarker(
             std::clamp((thDb + 80.0) / 80.0, 0.0, 1.0));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// pollTxStageBadges - the TX chain's live stage quality.
+//
+// The same readings Thetis shows on its TxEq, TxLevelerGain, TxCfcGain and
+// TxAlcGain meters, read from the transmit lane's cached meters (the call
+// MeterPoller makes). They exist only while the chain is running, so the
+// badges stay blank when idle; TX/N (TX audio check) runs the chain without
+// RF, so the badges work there too.
+// ---------------------------------------------------------------------------
+void TxApplet::pollTxStageBadges()
+{
+    if (!m_model) {
+        return;
+    }
+    TransmitModel& tx = m_model->transmitModel();
+    TxChainSection::StageReadings readings;
+    readings.keyed = m_model->isTransmitting() || tx.txAudioCheckEnabled();
+    readings.levOn = tx.txLevelerOn();
+    readings.eqOn = tx.txEqEnabled();
+    readings.cfcOn = tx.cfcEnabled();
+
+    TxChannel* channel = m_model->txChannel();
+    readings.keyed = readings.keyed && channel != nullptr;
+    if (channel != nullptr) {
+        const auto readRaw = [channel](TxMeterType meter) {
+            return channel->txMeter(meter);
+        };
+        readings.compReductionDb =
+            thetisTxReading(ThetisTxReading::LvlG, readRaw);
+        readings.eqDb = thetisTxReading(ThetisTxReading::EqPk, readRaw);
+        readings.cfcReductionDb =
+            thetisTxReading(ThetisTxReading::CfcG, readRaw);
+        readings.alcReductionDb =
+            thetisTxReading(ThetisTxReading::AlcG, readRaw);
+    }
+
+    for (TxChainSection* s : allChainSections()) {
+        s->setStageReadings(readings);
     }
 }
 
@@ -2201,13 +2284,6 @@ void TxApplet::setTransmitPermitted(bool permitted, const QString& unavailableRe
         apply(s->tuneButton());
         apply(s->moxButton());
     }
-    // Recording plan Task 12: VOICE dims with the same reason, and its box
-    // offers Take transmit (VoiceButton).
-    for (const QPointer<VoiceButton>& voice : std::as_const(m_voiceButtons)) {
-        if (voice) {
-            voice->setTransmitPermitted(permitted, reason);
-        }
-    }
     // Fix wave 2 (M8): VOX also needs this computer's microphone line.
     for (TxVoxSection* s : allVoxSections()) {
         gateTransmitControl(s->button(), permitted && m_voxPermitted,
@@ -2373,11 +2449,6 @@ void TxApplet::setTakeTransmitOffered(bool offered, bool holderOnAir)
 {
     m_takeTransmitOffered = offered;
     m_holderOnAir = holderOnAir;
-    for (const QPointer<VoiceButton>& voice : std::as_const(m_voiceButtons)) {
-        if (voice) {
-            voice->setTakeTransmitOffered(offered);
-        }
-    }
     for (TxKeyingSection* s : allKeyingSections()) {
         if (!s->takeTransmitButton()) { continue; }
         // Through the parts: a copy that hides its slice indicators keeps
@@ -2424,6 +2495,20 @@ int TxApplet::shownTunePower(Band band) const
     // review; Thetis shows TunePWR, the transmit band's).
     return (remoteTunePower() || tx.tuneTxBandKnown()) ? tx.tunePowerForTxBand()
                                                        : tx.tunePowerForBand(band);
+}
+
+int TxApplet::tunePowerSliderValue(TxPowerSection* section, Band band) const
+{
+    if (!m_model || !section) { return 0; }
+    const TransmitModel& tx = m_model->transmitModel();
+    if (tx.tuneDrivePowerSource() == DrivePowerSource::Fixed) {
+        // The Fixed Tune Power spinbox stores the same 0..max value the
+        // slider uses (watts with Use Max, raw drive otherwise).  Do not
+        // scale it through the per-band percentage.
+        QSlider* slider = section->tunePowerSlider();
+        return qBound(slider->minimum(), tx.tunePower(), slider->maximum());
+    }
+    return section->percentToSlider(shownTunePower(band));
 }
 
 void TxApplet::requestRemoteTunePower(int watts)
@@ -2671,6 +2756,47 @@ void TxApplet::wireMonitorSection(TxMonitorSection* s)
         monitorVolumeValue->setText(QString::number(uiVal));
         m_updatingFromModel = false;
     });
+
+    // ── REC / PLAY / STOP: processed TX audio to WAV and back ──────────────
+    if (auto* recBtn = s->recordButton()) {
+        connectRow(s, recBtn, &QPushButton::clicked, [this, recBtn](bool) {
+            if (recBtn->isChecked()) {
+                QString error;
+                if (!m_model->startTxAudioRecording(&error)) {
+                    QSignalBlocker b(recBtn);
+                    recBtn->setChecked(false);
+                    QMessageBox::warning(this, tr("TX audio recording"), error);
+                }
+            } else {
+                m_model->stopTxAudioRecording();
+            }
+        });
+        connectRow(s, m_model, &RadioModel::txAudioRecordingChanged,
+                [recBtn](bool on) {
+            QSignalBlocker b(recBtn);
+            recBtn->setChecked(on);
+        });
+        connectRow(s, m_model, &RadioModel::txAudioRecorderError,
+                [this](const QString& message) {
+            QMessageBox::warning(this, tr("TX audio recording"), message);
+        });
+    }
+    if (auto* playBtn = s->playButton()) {
+        connectRow(s, playBtn, &QPushButton::clicked, [this](bool) {
+            QString error;
+            if (!m_model->playLastTxAudioRecording(&error)) {
+                QMessageBox::warning(this, tr("TX audio playback"), error);
+            }
+        });
+        connectRow(s, m_model, &RadioModel::txAudioPlaybackChanged,
+                [playBtn](bool playing) { playBtn->setEnabled(!playing); });
+    }
+    if (auto* stopBtn = s->stopButton()) {
+        connectRow(s, stopBtn, &QPushButton::clicked, [this](bool) {
+            m_model->stopTxAudioRecording();
+            m_model->stopTxAudioPlayback();
+        });
+    }
 }
 
 // The gap the applet's own column puts between its rows, so an independent
@@ -2750,13 +2876,77 @@ QList<QWidget*> TxApplet::monitorOutputControls() const
 // it (createPowerSection). Both are wired here, so both show and set the same
 // model state, and both follow the same permission gates.
 // ---------------------------------------------------------------------------
-void TxApplet::wirePowerSection(TxPowerSection* s)
+// The transmit band's PA Gain "Use Max" ceiling, in watts. 0 when the band
+// does not use one, in which case the power rows keep their relative drive
+// scale (Thetis: "a relative value ... unless the PA profile is configured
+// with MAX watts @ 100%").
+void TxApplet::updatePaPowerScale()
 {
-    if (!s || !m_model) {
+    if (!m_model) { return; }
+
+    Band band = m_currentBand;
+    if (SliceModel* slice = m_model->txBoundSlice()) { band = slice->band(); }
+
+    int maxWatts = 0;
+    if (PaProfileManager* manager = m_model->paProfileManager()) {
+        if (const PaProfile* profile = manager->activeProfile()) {
+            const auto wattsFor = [profile](Band b) -> int {
+                return profile->getMaxPowerUse(b) ? qRound(profile->getMaxPower(b)) : 0;
+            };
+            maxWatts = wattsFor(band);
+            // The transmit band can be reported later than the applet's band;
+            // take either one that has a ceiling.
+            if (maxWatts <= 0 && band != m_currentBand) { maxWatts = wattsFor(m_currentBand); }
+        }
+    }
+    for (TxPowerSection* s : allPowerSections()) { s->setPaMaxWatts(maxWatts); }
+    // Use Max changes the slider units; re-render the tune value so a Fixed
+    // value appears in the new scale instead of the old per-band percentage.
+    for (TxPowerSection* s : allPowerSections()) {
+        QSignalBlocker b(s->tunePowerSlider());
+        s->tunePowerSlider()->setValue(tunePowerSliderValue(s, band));
+    }
+    updatePowerSliderLabels();
+
+    // The red bars follow the LIVE limits (powerLimitChanged/tuneLimitChanged,
+    // wired in wireControls). Seeding them from the stored per-band values here
+    // fought with a measurement's temporary 100 % lift, so it is not done.
+}
+
+void TxApplet::wirePowerSection(TxPowerSection* s)
+{    if (!s || !m_model) {
         return;
     }
     TransmitModel& tx = m_model->transmitModel();
     MoxController* mox = m_model->moxController();
+
+    // ── PrettyTrackBar limits (Thetis parity, 2026-11-16) ───────────────────
+    // Right-drag inside either trackbar sets THAT trackbar's limit for the
+    // current band (RF and Tune are independent), persists it per band and
+    // clamps the drive at once. The red bar and the "(%1)" reading are drawn
+    // by TxPowerSection/LimitSlider.
+    connect(s, &TxPowerSection::rfPowerLimitChanged, this,
+            [this](int percent) {
+        if (!m_model) { return; }
+        TransmitModel& model = m_model->transmitModel();
+        model.setLimitPowerForBand(txBand(), percent);
+        model.setPowerLimit(percent);
+        m_model->refreshDrivePower();
+        for (TxPowerSection* section : allPowerSections()) {
+            section->updatePowerSliderLabels();
+        }
+    });
+    connect(s, &TxPowerSection::tunePowerLimitChanged, this,
+            [this](int percent) {
+        if (!m_model) { return; }
+        TransmitModel& model = m_model->transmitModel();
+        model.setLimitTunePowerForBand(txBand(), percent);
+        model.setTunePowerLimit(percent);
+        m_model->refreshDrivePower();
+        for (TxPowerSection* section : allPowerSections()) {
+            section->updatePowerSliderLabels();
+        }
+    });
     // ── Forward-power gauge ← RadioStatus::powerChanged ─────────────────────
     // 3M-1a (2026-04-27): wire the previously-NYI fwd-power gauge to the
     // radio's reported forward power.  Pipeline:
@@ -2863,10 +3053,10 @@ void TxApplet::wirePowerSection(TxPowerSection* s)
     // which formats the value in -X.X dB on HL2 and bare integer on every
     // other SKU.  The old direct setText(QString::number(val)) would have
     // bypassed the dB conversion on HL2.
-    connectRow(s, s->rfPowerSlider(), &QSlider::valueChanged, [this, &tx](int val) {
+    connectRow(s, s->rfPowerSlider(), &QSlider::valueChanged, [this, s, &tx](int val) {
         updatePowerSliderLabels();
         if (m_updatingFromModel) { return; }
-        tx.setPower(val);
+        tx.setPower(s->sliderToPercent(val));
         // The per-band slot (Thetis ptbPWR_Scroll, console.cs:28682-28693
         // [v2.10.3.15]: `power_by_band[(int)_tx_band] = ptbPWR.Value;`) has
         // one writer: RadioModel on the radio's side, which saves PWR into
@@ -2886,7 +3076,7 @@ void TxApplet::wirePowerSection(TxPowerSection* s)
     connectRow(s, &tx, &TransmitModel::powerChanged, [this, s](int power) {
         QSignalBlocker b(s->rfPowerSlider());
         m_updatingFromModel = true;
-        s->rfPowerSlider()->setValue(power);
+        s->rfPowerSlider()->setValue(s->percentToSlider(power));
         updatePowerSliderLabels();   // Issue #175 Task 7: HL2 dB / non-HL2 int
         m_updatingFromModel = false;
     });
@@ -2907,25 +3097,26 @@ void TxApplet::wirePowerSection(TxPowerSection* s)
     connectRow(s, s->tunePowerSlider(), &QSlider::valueChanged, [this, s, &tx](int val) {
         updatePowerSliderLabels();
         if (m_updatingFromModel) { return; }
+        const int percent = s->sliderToPercent(val);
         // R-R3-49 (parity Task 2): a remote window asks the Core, which
         // does what the lines below do for its own transmit band. A drag
         // asks once, on release.
         if (remoteTunePower()) {
             if (!s->tunePowerSlider()->isSliderDown()) {
-                requestRemoteTunePower(val);
+                requestRemoteTunePower(percent);
             }
             return;
         }
         // The tune drive source stays as Setup > Transmit > Power set it:
         // Thetis ptbTune_Scroll (console.cs:46607-46630 [v2.10.3.15]) writes
         // tunePower_by_band and never _tuneDrivePowerSource.
-        if (tx.setTunePowerForTxBand(val)) { return; }
-        tx.setTunePowerWithNoBand(m_currentBand, val);
+        if (tx.setTunePowerForTxBand(percent)) { return; }
+        tx.setTunePowerWithNoBand(m_currentBand, percent);
     });
 
     connectRow(s, s->tunePowerSlider(), &QSlider::sliderReleased, [this, s]() {
         if (m_updatingFromModel || !remoteTunePower()) { return; }
-        requestRemoteTunePower(s->tunePowerSlider()->value());
+        requestRemoteTunePower(s->sliderToPercent(s->tunePowerSlider()->value()));
     });
 
     // Fix round 1 (minor 2): the change answered, the slider shows the
@@ -2933,10 +3124,11 @@ void TxApplet::wirePowerSection(TxPowerSection* s)
     // (or a value it clamped). Not while the operator holds the slider.
     connectRow(s, &tx, &TransmitModel::tunePowerForTxBandWriteInFlightChanged,
             [this, s, &tx](bool inFlight) {
+        if (tx.tuneDrivePowerSource() == DrivePowerSource::Fixed) { return; }
         if (inFlight || !remoteTunePower() || s->tunePowerSlider()->isSliderDown()) { return; }
         QSignalBlocker b(s->tunePowerSlider());
         m_updatingFromModel = true;
-        s->tunePowerSlider()->setValue(tx.tunePowerForTxBand());
+        s->tunePowerSlider()->setValue(s->percentToSlider(tx.tunePowerForTxBand()));
         updatePowerSliderLabels();
         m_updatingFromModel = false;
     });
@@ -2946,6 +3138,7 @@ void TxApplet::wirePowerSection(TxPowerSection* s)
     // transmit band's (PA on-air gate review).
     connectRow(s, &tx, &TransmitModel::tunePowerForTxBandChanged,
             [this, s, &tx](int watts) {
+        if (tx.tuneDrivePowerSource() == DrivePowerSource::Fixed) { return; }
         if (!remoteTunePower() && !tx.tuneTxBandKnown()) { return; }
         // Fix wave GUI-I6: the Core's value does not move the slider out
         // from under the operator's hand, nor back to an older value while
@@ -2957,7 +3150,7 @@ void TxApplet::wirePowerSection(TxPowerSection* s)
         }
         QSignalBlocker b(s->tunePowerSlider());
         m_updatingFromModel = true;
-        s->tunePowerSlider()->setValue(watts);
+        s->tunePowerSlider()->setValue(s->percentToSlider(watts));
         updatePowerSliderLabels();
         m_updatingFromModel = false;
     });
@@ -2967,14 +3160,19 @@ void TxApplet::wirePowerSection(TxPowerSection* s)
     // tunePowerForTxBandChanged above repaints it).
     connectRow(s, &tx, &TransmitModel::tunePowerByBandChanged,
             [this, s, &tx](Band band, int watts) {
+        if (tx.tuneDrivePowerSource() == DrivePowerSource::Fixed) { return; }
         if (band != m_currentBand || remoteTunePower() || tx.tuneTxBandKnown()) { return; }
         QSignalBlocker b(s->tunePowerSlider());
         m_updatingFromModel = true;
-        s->tunePowerSlider()->setValue(watts);
+        s->tunePowerSlider()->setValue(s->percentToSlider(watts));
         updatePowerSliderLabels();   // Issue #175 Task 7: HL2 dB / non-HL2 int
         m_updatingFromModel = false;
     });
 
+    // The PA bank loads after the window is built, so the rows take their
+    // watts once now and once after it has loaded.
+    QTimer::singleShot(0, this, [this] { updatePaPowerScale(); });
+    QTimer::singleShot(1500, this, [this] { updatePaPowerScale(); });
 }
 
 // ---------------------------------------------------------------------------
@@ -3120,6 +3318,33 @@ void TxApplet::wireChainSection(TxChainSection* s)
             requestOpenCfcDialog();
         });
     }
+
+    // TX audio check (TX/N): two-way with the persistent Settings option.
+    if (s->txCheckButton()) {
+        const auto updateText = [s](bool on) {
+            s->txCheckButton()->setText(on ? QStringLiteral("TX/N")
+                                           : QStringLiteral("TX/Y"));
+        };
+        connectRow(s, s->txCheckButton(), &QPushButton::toggled,
+                [this, &tx, updateText](bool on) {
+            if (m_updatingFromModel) { return; }
+            updateText(on);
+            tx.setTxAudioCheckEnabled(on);
+        });
+        connectRow(s, &tx, &TransmitModel::txAudioCheckEnabledChanged,
+                [this, s, updateText](bool on) {
+            QSignalBlocker b(s->txCheckButton());
+            m_updatingFromModel = true;
+            s->txCheckButton()->setChecked(on);
+            updateText(on);
+            m_updatingFromModel = false;
+        });
+        {
+            QSignalBlocker b(s->txCheckButton());
+            s->txCheckButton()->setChecked(tx.txAudioCheckEnabled());
+            updateText(tx.txAudioCheckEnabled());
+        }
+    }
     // ── Phase 3M-1c J.1 ─ TX Profile combo wiring ────────────────────────────
     // User-driven currentTextChanged → MicProfileManager::setActiveProfile.
     // Guarded with m_updatingFromModel so the rebuildProfileCombo() echo
@@ -3139,6 +3364,33 @@ void TxApplet::wireChainSection(TxChainSection* s)
     connectRow(s, s->profileCombo(), &QComboBox::customContextMenuRequested,
             [this](const QPoint& /*pos*/) {
         emit txProfileMenuRequested();
+    });
+
+    // ── Stage badges: click for adjustments ─────────────────────────────────
+    // EQ and CFC open the same modeless editors their buttons open on
+    // right-click; the leveler and ALC live on Setup → DSP → AGC/ALC.
+    connectRow(s, s, &TxChainSection::adjustRequested,
+            [this](TxChainSection::Stage stage) {
+        if (!m_model) { return; }
+        switch (stage) {
+        case TxChainSection::Stage::Eq: {
+            TxEqDialog* dlg = TxEqDialog::instance(m_model, this);
+            if (dlg != nullptr) {
+                dlg->show();
+                dlg->raise();
+                dlg->activateWindow();
+            }
+            break;
+        }
+        case TxChainSection::Stage::Cfc:
+            requestOpenCfcDialog();
+            break;
+        case TxChainSection::Stage::Lev:
+        case TxChainSection::Stage::Alc:
+            emit openSetupRequested(QStringLiteral("DSP"),
+                                    QStringLiteral("AGC/ALC"));
+            break;
+        }
     });
 
 }
@@ -3284,7 +3536,6 @@ TxKeyingSection* TxApplet::createKeyingSection(QWidget* parent, bool preview)
         connect(s->takeTransmitButton(), &QPushButton::clicked, this,
                 &TxApplet::takeTransmitRequested);
     }
-    addVoiceButton(s);
     m_extraKeyingSections.append(s);
     // The copy belongs to the container, which owns it and may destroy it
     // when the operator closes the container or removes the item.  The
@@ -3421,7 +3672,9 @@ QList<QWidget*> TxApplet::rxOnlyLockedControls() const
     QList<QWidget*> controls;
     for (const TxKeyingSection* s : allKeyingSections()) {
         controls << s->moxButton()
-                 << s->tuneButton();
+                 << s->tuneButton()
+                 << s->pulseTuneButton()
+                 << s->xpaButton();
     }
     for (const TxProcessingSection* s : allProcessingSections()) {
         controls << s->twoToneButton();
@@ -3752,6 +4005,58 @@ void TxApplet::wireKeyingSection(TxKeyingSection* s)
         s->tuneButton()->setText(QStringLiteral("TUNE"));
         m_updatingFromModel = false;
     });
+
+    // xPA button, between TUNE and MOX: the external-PA enable. With xPA
+    // off, the OC transmit pins ticked "TX PA" in Setup > Hardware > OC
+    // Outputs stay open, so a TUNE carrier reaches the radio but not the
+    // amplifier.
+    //   From Thetis console.cs:46667-46690 [v2.10.3.15] chkExternalPA_CheckedChanged
+    //   From Thetis HPSDR/Penny.cs:319-324 [v2.10.3.15] adjustForTXAction
+    {
+        OcMatrix& oc = m_model->ocMatrixMutable();
+        {
+            QSignalBlocker b(s->xpaButton());
+            s->xpaButton()->setChecked(oc.extPaEnabled());
+        }
+        connectRow(s, s->xpaButton(), &QPushButton::toggled, [this](bool on) {
+            if (!m_model) { return; }
+            m_model->ocMatrixMutable().setExtPaEnabled(on);
+        });
+        // Reverse: a remote window's change (or a per-radio reload) reaches
+        // this window's button.
+        connectRow(s, &oc, &OcMatrix::extPaEnabledChanged, [s](bool on) {
+            QSignalBlocker b(s->xpaButton());
+            s->xpaButton()->setChecked(on);
+        });
+    }
+
+    // P-TU (pulsed tune, Thetis "TC"): arms TUNE with the pulsed carrier and
+    // locks the TUNE button while it runs, as Thetis disables chkTUN during
+    // TC. Pressing it again stops TUNE and restores the protections.
+    {
+        const auto syncPulse = [this, s]() {
+            const bool on = m_model && m_model->pulseTuneEnabled();
+            QSignalBlocker b(s->pulseTuneButton());
+            s->pulseTuneButton()->setChecked(on);
+            s->tuneButton()->setEnabled(!on);
+        };
+        syncPulse();
+        connectRow(s, s->pulseTuneButton(), &QPushButton::toggled, [this](bool on) {
+            if (!m_model) { return; }
+            m_model->setPulseTune(on);
+        });
+        connectRow(s, m_model, &RadioModel::pulseTuneChanged,
+                   [s, syncPulse](bool) { syncPulse(); });
+
+        // Right-click P-TU opens Setup > Transmit > Power, where the pulse
+        // rate, duty and ramp live. Mirrors the VOX button's right-click.
+        s->pulseTuneButton()->setContextMenuPolicy(Qt::CustomContextMenu);
+        connectRow(s, s->pulseTuneButton(), &QWidget::customContextMenuRequested,
+                [this](const QPoint&) {
+            emit openSetupRequested(QStringLiteral("Transmit"),
+                                    QStringLiteral("Power"));
+        });
+    }
 
     // ── MOX button → RadioModel::setMoxFromButton(bool) ─────────────────────
     // B.5 setter: drives state machine through RX→TX or TX→RX transitions.

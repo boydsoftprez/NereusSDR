@@ -153,6 +153,44 @@ private slots:
         QCOMPARE(m2.pinAction(5), OcMatrix::TXPinAction::TuneTwoTone);
     }
 
+    // xPA: a pin whose TX PA / RX PA box is ticked only closes while the
+    // console xPA button is on (Thetis Penny.cs:277-282 and 319-324).
+    void xpa_gates_pa_flagged_pins() {
+        const QString mac = QStringLiteral("55:66:77:88:99:AA");
+        OcMatrix m;
+        m.setMacAddress(mac);
+        m.setPin(Band::Band20m, 1, /*tx=*/true, true);   // pin 2
+        m.setTxPinPa(1, true);
+        QCOMPARE(m.maskFor(Band::Band20m, /*tx=*/true), quint8(0x00));  // xPA off
+        m.setExtPaEnabled(true);
+        QCOMPARE(m.maskFor(Band::Band20m, /*tx=*/true), quint8(0x02));
+        m.setExtPaEnabled(false);
+        QCOMPARE(m.maskFor(Band::Band20m, /*tx=*/true), quint8(0x00));
+
+        // A pin without the flag is unaffected by xPA.
+        m.setPin(Band::Band20m, 2, /*tx=*/true, true);   // pin 3
+        QCOMPARE(m.maskFor(Band::Band20m, /*tx=*/true), quint8(0x04));
+        m.setExtPaEnabled(true);
+        QCOMPARE(m.maskFor(Band::Band20m, /*tx=*/true), quint8(0x06));
+        m.setExtPaEnabled(false);
+
+        // Receive arm: RX PA hides the pin while xPA is off.
+        m.setPin(Band::Band20m, 4, /*tx=*/false, true);  // pin 5
+        m.setRxPinPa(4, true);
+        QCOMPARE(m.maskFor(Band::Band20m, /*tx=*/false), quint8(0x00));
+        m.setExtPaEnabled(true);
+        QCOMPARE(m.maskFor(Band::Band20m, /*tx=*/false), quint8(0x10));
+        QVERIFY(m.anyPinPa());
+
+        // The per-pin flags and the button state are saved per radio.
+        OcMatrix reread;
+        reread.setMacAddress(mac);
+        reread.load();
+        QVERIFY(reread.txPinPa(1));
+        QVERIFY(reread.rxPinPa(4));
+        QVERIFY(reread.extPaEnabled());
+    }
+
     // Issue #191 regression: resetDefaults must persist immediately so
     // that the user-visible "Reset OC defaults" button survives restart.
     // Establish a non-default baseline via an explicit save() first, so

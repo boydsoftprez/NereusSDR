@@ -1211,6 +1211,47 @@ void SetTXAPostGenTTPulseTransition(int channel, double transtime);
 void SetTXAPostGenTTPulseIQout(int channel, int IQout);
 
 // ---------------------------------------------------------------------------
+// TX PostGen (gen1) — single-tone pulsed TUNE carrier (gen.c)
+//
+// gen1 mode 6 = pulse. Thetis's Tune Check (TC) / "pulsed tune" path uses
+// these to key a safer, pulsed tune carrier:
+// From Thetis console.cs:30361-30386 [v2.10.3.15] SetupTunePulse:
+//   radio.GetDSPTX(0).TXPostGenPulseToneFreq = +/-cw_pitch;
+//   radio.GetDSPTX(0).TXPostGenMode = 6;
+//   radio.GetDSPTX(0).TXPostGenPulseIQOut = true;
+//   radio.GetDSPTX(0).TXPostGenPulseMag = MAX_TONE_MAG;
+//   radio.GetDSPTX(0).TXPostGenPulseFreq = 10;      // per second
+//   radio.GetDSPTX(0).TXPostGenPulseDutyCycle = 0.25f;
+//   radio.GetDSPTX(0).TXPostGenPulseTransition = 0.009f;  // 9 ms
+//   radio.GetDSPTX(0).TXPostGenRun = 1;
+// From Thetis wdsp/gen.c:863-913 [v2.10.3.15].
+// ---------------------------------------------------------------------------
+
+// Pulse-mode tone amplitude (linear).
+// From Thetis wdsp/gen.c:863-869 [v2.10.3.15] — txa[ch].gen1.p->pulse.mag
+void SetTXAPostGenPulseMag(int channel, double mag);
+
+// Pulse-mode window rate (Hz — pulses per second).
+// From Thetis wdsp/gen.c:871-878 [v2.10.3.15] — txa[ch].gen1.p->pulse.pf
+void SetTXAPostGenPulseFreq(int channel, double freq);
+
+// Pulse-mode duty cycle (fraction 0..1).
+// From Thetis wdsp/gen.c:880-887 [v2.10.3.15] — txa[ch].gen1.p->pulse.pdutycycle
+void SetTXAPostGenPulseDutyCycle(int channel, double dc);
+
+// Pulse-mode tone frequency (Hz; signed per sideband by the caller).
+// From Thetis wdsp/gen.c:889-896 [v2.10.3.15] — txa[ch].gen1.p->pulse.tf
+void SetTXAPostGenPulseToneFreq(int channel, double freq);
+
+// Pulse-mode ramp transition time (seconds).
+// From Thetis wdsp/gen.c:898-905 [v2.10.3.15] — txa[ch].gen1.p->pulse.ptranstime
+void SetTXAPostGenPulseTransition(int channel, double transtime);
+
+// Pulse-mode I/Q-out enable flag (0 = real out only, 1 = I and Q both).
+// From Thetis wdsp/gen.c:907-913 [v2.10.3.15] — txa[ch].gen1.p->pulse.IQout
+void SetTXAPostGenPulseIQout(int channel, int IQout);
+
+// ---------------------------------------------------------------------------
 // TX stage Run setters — TxChannel::setRunning() + setStageRunning()
 //
 // These are called from TxChannel::setRunning() (cfir only) and from
@@ -1265,6 +1306,23 @@ void SetTXAAMSQRun(int channel, int run);
 
 // eqp (stage 6): TX parametric EQ.
 // From Thetis wdsp/eq.c:742-747 [v2.10.3.13].
+// Receive audio equalizer (RXAEQ). Same family as the TX EQ below, applied by
+// WDSP to the demodulated receive audio before it leaves the channel.
+// From Thetis wdsp/eq.c:656-813 [v2.10.3.15].
+void SetRXAEQRun(int channel, int run);
+void SetRXAEQNC(int channel, int nc);
+void SetRXAEQMP(int channel, int mp);
+void SetRXAEQProfile(int channel, int nfreqs, double* F, double* G);
+void SetRXAEQCtfmode(int channel, int mode);
+void SetRXAEQWintype(int channel, int wintype);
+void SetRXAGrphEQ10(int channel, int* rxeq);
+// siphon.c:190/205 - copy the RX audio tap (post-EQ, pre-output) into `out`.
+// Read-only: the tap is a ring of recent samples, so polling it from the UI
+// thread cannot disturb the DSP lane.
+void RXAGetaSipF(int channel, float* out, int size);
+// siphon.c:82 - the same tap for the transmit chain (post-EQ, pre-DAC).
+void TXAGetaSipF(int channel, float* out, int size);
+
 void SetTXAEQRun(int channel, int run);
 
 // TX EQ DSP-tier setters — Phase 3M-3a-i Task B-1.

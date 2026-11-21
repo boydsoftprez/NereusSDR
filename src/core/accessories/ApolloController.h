@@ -138,6 +138,10 @@ private:
     bool m_tunerEnabled{false};
 
     QString m_mac;
+    // True once load() has hydrated this state for m_mac; save()
+    // refuses to write before that (a save on an unloaded block
+    // overwrote the stored pattern with defaults).
+    bool m_loaded{false};
 
     QString persistenceKey() const;  // "hardware/<mac>/apollo"
 };

@@ -205,12 +205,70 @@ QColor withAlpha(QColor c, int alpha)
 // From Thetis parseText() (MeterManager.cs:20587-20716 [v2.10.3.15]), by
 // way of the token table in OverlayTokens.
 // ---------------------------------------------------------------------------
+namespace {
+// Hold applies to the power and SWR readings only: not the protect/trip
+// status lines, temperatures or volts. SWR OK / SWR 1.03 does count.
+bool isHeldReadingToken(const QString& text)
+{
+    const QString lower = text.toLower();
+    if (lower.contains(QStringLiteral("swrprotect"))
+        || lower.contains(QStringLiteral("swrlimit"))
+        || lower.contains(QStringLiteral("swrtrip"))) {
+        return false;
+    }
+    return lower.contains(QStringLiteral("fwdpwr"))
+        || lower.contains(QStringLiteral("refpwr"))
+        || lower.contains(QStringLiteral("peakpwr"))
+        || lower.contains(QStringLiteral("swr"));
+}
+}  // namespace
+
 QString TextOverlayItem::resolveText(const QString& templateText) const
 {
     if (templateText.isEmpty()) {
         return {};
     }
-    return resolveOverlayTokens(templateText, overlayContext(templateText));
+    // Held: the line keeps the last text seen while transmitting. The rolling
+    // cache is filled by the TX paints, so the first transmission holds too
+    // (it is not resolved from an already-zeroed reading at unkey).
+    if (m_holdText) {
+        const auto frozen = m_holdResolved.constFind(templateText);
+        if (frozen != m_holdResolved.constEnd()) { return *frozen; }
+        return resolveOverlayTokens(templateText, overlayContext(templateText));
+    }
+    const QString resolved = resolveOverlayTokens(templateText, overlayContext(templateText));
+    if (transmitting()) {
+        // Cache both lines, not just the one painted this instant: the RX
+        // template is the one shown after unkey, and it must hold the values
+        // seen during the transmission.
+        for (const QString& text : { m_text1, m_text2 }) {
+            if (!text.isEmpty() && isHeldReadingToken(text)) {
+                m_holdResolved.insert(
+                    text, resolveOverlayTokens(text, overlayContext(text)));
+            }
+        }
+    }
+    return resolved;
+}
+
+void TextOverlayItem::setReadingHold(bool on)
+{
+    if (on == m_holdText) { return; }
+    if (on) {
+        // Keep only the power/SWR lines; everything else stays live. Resolve
+        // any not seen during the TX once, before the flag closes the cache.
+        for (const QString& text : { m_text1, m_text2 }) {
+            if (!text.isEmpty() && isHeldReadingToken(text)
+                && !m_holdResolved.contains(text)) {
+                m_holdResolved.insert(
+                    text, resolveOverlayTokens(text, overlayContext(text)));
+            }
+        }
+        m_holdText = true;
+    } else {
+        m_holdText = false;
+        m_holdResolved.clear();
+    }
 }
 
 OverlayContext TextOverlayItem::overlayContext(const QString& templateText) const
@@ -294,6 +352,7 @@ void TextOverlayItem::paintBoth(QPainter& p, const QRect& rect)
     // Step 2: resolve substituted text for both lines
     const QString resolved1 = resolveText(m_text1);
     const QString resolved2 = resolveText(m_text2);
+    const Qt::Alignment hAlign = m_centred ? Qt::AlignHCenter : Qt::AlignLeft;
 
     // Step 3: layout rects
     const int pad = static_cast<int>(m_padding * static_cast<float>(rect.height()));
@@ -320,7 +379,7 @@ void TextOverlayItem::paintBoth(QPainter& p, const QRect& rect)
         if (m_showTextBack1 && lineRect1.isValid()) {
             const QFontMetrics fm1(font1,p.device());
             const QRect textBound = fm1.boundingRect(lineRect1,
-                                                      Qt::AlignLeft | Qt::AlignVCenter | Qt::TextWordWrap,
+                                                      hAlign | Qt::AlignVCenter | Qt::TextWordWrap,
                                                       resolved1);
             p.fillRect(textBound, ItemColourLook::effective("TextOverlay.textBackColour1", m_textBackColour1, this));
         }
@@ -347,7 +406,7 @@ void TextOverlayItem::paintBoth(QPainter& p, const QRect& rect)
                 m_scrollOffset1 = static_cast<float>(lineRect1.width());
             }
         } else {
-            p.drawText(lineRect1, Qt::AlignLeft | Qt::AlignVCenter | Qt::TextWordWrap, resolved1);
+            p.drawText(lineRect1, hAlign | Qt::AlignVCenter | Qt::TextWordWrap, resolved1);
         }
     }
 
@@ -365,7 +424,7 @@ void TextOverlayItem::paintBoth(QPainter& p, const QRect& rect)
         if (m_showTextBack2 && lineRect2.isValid()) {
             const QFontMetrics fm2(font2,p.device());
             const QRect textBound = fm2.boundingRect(lineRect2,
-                                                      Qt::AlignLeft | Qt::AlignVCenter | Qt::TextWordWrap,
+                                                      hAlign | Qt::AlignVCenter | Qt::TextWordWrap,
                                                       resolved2);
             p.fillRect(textBound, ItemColourLook::effective("TextOverlay.textBackColour2", m_textBackColour2, this));
         }
@@ -390,7 +449,7 @@ void TextOverlayItem::paintBoth(QPainter& p, const QRect& rect)
                 m_scrollOffset2 = static_cast<float>(lineRect2.width());
             }
         } else {
-            p.drawText(lineRect2, Qt::AlignLeft | Qt::AlignVCenter | Qt::TextWordWrap, resolved2);
+            p.drawText(lineRect2, hAlign | Qt::AlignVCenter | Qt::TextWordWrap, resolved2);
         }
     }
 }
@@ -439,15 +498,12 @@ QColor TextOverlayItem::panelColour() const
     return withAlpha(c, flipFade ? m_panelFadeValue : ContentFade::kUndimmedLevel);
 }
 
-// The panel is the item's width wide and padding * width tall (Thetis
-// sizes the item SpacerPadding high, MeterManager.cs:27565
-// [v2.10.3.15]); it stops at the item's bottom edge, as LEDItem's does.
+// Thetis fills the text overlay's whole item-group rectangle as its panel
+// (renderTextOverlay, MeterManager.cs:34167-34173 [v2.10.3.15]); the
+// SpacerPadding field is not the panel height here.
 QRect TextOverlayItem::swapPanelRect(int widgetW, int widgetH) const
 {
-    QRect rect = pixelRect(widgetW, widgetH);
-    const int height = qRound(static_cast<double>(rect.width()) * static_cast<double>(m_padding));
-    rect.setHeight(std::clamp(height, 0, rect.height()));
-    return rect;
+    return pixelRect(widgetW, widgetH);
 }
 
 QFont TextOverlayItem::swapFont(bool tx, const QPaintDevice* device, int widgetW) const
@@ -523,7 +579,12 @@ void TextOverlayItem::paintSwap(QPainter& p, int widgetW, int widgetH)
     const QSizeF size = fm.boundingRect(QRectF(0, 0, 1.0e9, 1.0e9),
                                         Qt::AlignLeft | Qt::AlignTop, line.text).size();
     measured = size.width();
-    const QRectF box(line.topLeft, size);
+    QRectF box(line.topLeft, size);
+    // The centre column reads as centred rows: keep the measured size but
+    // move the line so it sits in the middle of the item.
+    if (m_centred && m_scrollX == 0.0f) {
+        box.moveLeft(rect.left() + (rect.width() - size.width()) / 2.0);
+    }
 
     // NereusSDR: Thetis's overlay spans the container, so text scrolled
     // past its left edge leaves the container; here it stops at the item's
@@ -854,7 +915,8 @@ QString TextOverlayItem::serialize() const
         // The IDs are joined, not substituted (user text); setRxFourChar
         // and setTxFourChar keep them to letters and digits, so no '|'.
         + QLatin1Char('|') + m_rxFourChar
-        + QLatin1Char('|') + m_txFourChar;
+        + QLatin1Char('|') + m_txFourChar
+        + QStringLiteral("|%1").arg(m_centred ? 1 : 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -997,6 +1059,7 @@ bool TextOverlayItem::deserialize(const QString& data)
     m_txFourChar = parts.size() > 40 ? cleanFourChar(parts[40]) : QString();
     setRxLedLogic(flagAt(37));
     setTxLedLogic(flagAt(38));
+    m_centred = flagAt(41);
 
     // Runtime state starts again.
     m_scrollXOffset1 = 0.0f;

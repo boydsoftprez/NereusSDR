@@ -253,6 +253,7 @@
 //============================================================================================//
 
 #include "RxApplet.h"
+#include "RxEqDialog.h"
 #include "RxControlSections.h"
 #include "gui/ScopedChildWidget.h"
 #include "gui/styles/WorkspacePreview.h"
@@ -265,6 +266,7 @@
 #include "core/BoardCapabilities.h"
 #include "core/ControlRanges.h"
 #include "core/HpsdrModel.h"
+#include "core/ParaEqCurve.h"
 #include "core/SkuUiProfile.h"
 #include "core/P2RadioConnection.h"
 #include "gui/AntennaPopupBuilder.h"
@@ -284,10 +286,13 @@
 #include "models/PanadapterModel.h"
 #include "models/FilterPresetStore.h"
 #include "models/RadioModel.h"
+#include "models/RxEqModel.h"
 #include "models/SliceModel.h"
+#include "models/TransmitModel.h"
 #include "gui/widgets/FilterPresetEditDialog.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include <QAction>
 #include <QAbstractItemView>
@@ -298,6 +303,8 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QSizePolicy>
+#include <QTimer>
 #include <QMenu>
 #include <QPainter>
 #include <QPushButton>
@@ -852,6 +859,73 @@ void RxApplet::buildUi()
         row->addWidget(m_lockBtn);
         // Lock is live in S2.9 — no NYI badge.
 
+        // RX equalizer: opens the RX EQ dialog (global curve, applied in
+        // WDSP's RXAEQ stage after demodulation). The button mirrors the
+        // model: lit while the equalizer is on, dark while it is off - which
+        // includes the TX/N check, which disables it for the monitored path.
+        m_eqBtn = new QPushButton(QStringLiteral("EQ"), this);
+        m_eqBtn->setObjectName(QStringLiteral("RxEqButton"));
+        m_eqBtn->setFlat(true);
+        m_eqBtn->setCheckable(true);
+        m_eqBtn->setStyleSheet(QStringLiteral(
+            "QPushButton {"
+            "  color: #4488ff; background: transparent; border: none;"
+            "  font-size: 10px; font-weight: bold; padding: 0 2px;"
+            "}"
+            "QPushButton:hover { color: #66aaff; }"
+            "QPushButton:checked { color: #00e0ff; }"));
+        const auto syncEqButton = [this] {
+            if (!m_model || !m_eqBtn) { return; }
+            const bool on = m_model->rxEqModel().rxEqEnabled();
+            const bool txCheck = m_model->transmitModel().txAudioCheckEnabled();
+            {
+                const QSignalBlocker block(m_eqBtn);
+                m_eqBtn->setChecked(on);
+            }
+            m_eqBtn->setToolTip(
+                txCheck
+                    ? tr("Receive equalizer is off while TX audio check (TX/N) is on; "
+                         "right-click to adjust")
+                    : tr("Click to turn the receive equalizer on or off; "
+                         "right-click to adjust (applies to all slices)"));
+            refreshRxEqBadges();
+        };
+        connect(&m_model->rxEqModel(), &RxEqModel::rxEqEnabledChanged, this,
+                [syncEqButton](bool) { syncEqButton(); });
+        connect(&m_model->transmitModel(), &TransmitModel::txAudioCheckEnabledChanged,
+                this, [syncEqButton](bool) { syncEqButton(); });
+        connect(&m_model->rxEqModel(), &RxEqModel::rxEqPreampChanged, this,
+                [this](int) { refreshRxEqBadges(); });
+        connect(&m_model->rxEqModel(), &RxEqModel::rxEqBandChanged, this,
+                [this](int, int) { refreshRxEqBadges(); });
+        connect(&m_model->rxEqModel(), &RxEqModel::rxEqUseLegacyChanged, this,
+                [this](bool) { refreshRxEqBadges(); });
+        connect(&m_model->rxEqModel(), &RxEqModel::rxEqParaEqDataChanged, this,
+                [this](const QString&) { refreshRxEqBadges(); });
+        syncEqButton();
+        // Left click toggles the equalizer, exactly like the TX applet's EQ
+        // button. The dialog is the adjustment surface, opened by right-click.
+        connect(m_eqBtn, &QPushButton::clicked, this, [this, syncEqButton](bool on) {
+            if (!m_model) { return; }
+            // TX/N holds the RX EQ off for the monitored path; do not let a
+            // click re-enable it behind the check.
+            if (m_model->transmitModel().txAudioCheckEnabled()) {
+                syncEqButton();
+                return;
+            }
+            m_model->rxEqModel().setRxEqEnabled(on);
+        });
+        m_eqBtn->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(m_eqBtn, &QPushButton::customContextMenuRequested, this,
+                [this](const QPoint& /*pos*/) {
+            if (!m_model) { return; }
+            RxEqDialog* dlg = RxEqDialog::instance(m_model, this);
+            dlg->show();
+            dlg->raise();
+            dlg->activateWindow();
+        });
+        row->addWidget(m_eqBtn);
+
         // Control 3: RX antenna button (flat, color #4488ff, transparent bg)
         // From AetherSDR RxApplet.cpp lines 270-289
         // §A2 one-off: #4488ff/"#66aaff" are NereusSDR-original "live blue" accent.
@@ -906,6 +980,59 @@ void RxApplet::buildUi()
         row->addStretch(1);
 
         root->addLayout(row);
+    }
+
+    // ── RX EQ badges: BOOST (curve headroom) and LVL (post-EQ level) ────────
+    // Shown only while the receive equalizer is on. BOOST is the largest
+    // boost in the curve; LVL is the live peak after the WDSP RX EQ stage.
+    // Right-click the EQ button (or click here) to open the editor.
+    {
+        m_rxEqBadgeRow = new QWidget(this);
+        auto* badges = new QHBoxLayout(m_rxEqBadgeRow);
+        badges->setContentsMargins(0, 0, 0, 0);
+        badges->setSpacing(2);
+
+        const auto makeBadge = [this](const QString& name,
+                                      const QString& title,
+                                      const QString& tip) {
+            auto* badge = new QLabel(QStringLiteral("--"), m_rxEqBadgeRow);
+            badge->setObjectName(name);
+            badge->setAlignment(Qt::AlignCenter);
+            badge->setFixedHeight(15);
+            badge->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+            badge->setAccessibleName(title);
+            badge->setToolTip(tip);
+            badge->setProperty("stageLevel", 0);
+            badge->setStyleSheet(QStringLiteral(
+                "QLabel { background: #333333; color: #9a9a9a;"
+                " border-radius: 3px; font-size: 7.5pt; font-weight: 600;"
+                " padding: 0 2px; }"));
+            return badge;
+        };
+
+        m_rxEqBoostBadge = makeBadge(
+            QStringLiteral("RxEqBoostBadge"), tr("RX EQ maximum boost"),
+            tr("Largest boost in the RX EQ curve (preamp plus the highest band).\n"
+               "Yellow: no boost (flat or cutting).\n"
+               "Green: up to +9 dB.\n"
+               "Red: above +9 dB (clipping and ringing risk)."));
+        m_rxEqLevelBadge = makeBadge(
+            QStringLiteral("RxEqLevelBadge"), tr("Post-EQ level"),
+            tr("Peak level after the RX EQ stage for this slice, in dBFS.\n"
+               "Yellow: below -30 dBFS (low).\n"
+               "Green: -30 to -3 dBFS.\n"
+               "Red: above -3 dBFS (clipping risk)."));
+        badges->addWidget(m_rxEqBoostBadge, 1);
+        badges->addWidget(m_rxEqLevelBadge, 1);
+        m_rxEqBadgeRow->setVisible(false);
+        root->addWidget(m_rxEqBadgeRow);
+
+        m_rxEqMeterTimer = new QTimer(this);
+        m_rxEqMeterTimer->setInterval(100);
+        connect(m_rxEqMeterTimer, &QTimer::timeout,
+                this, &RxApplet::pollRxEqMeters);
+        m_rxEqMeterTimer->start();
+        refreshRxEqBadges();
     }
 
     // ── Control 6: Mode combo ─────────────────────────────────────────────
@@ -3370,5 +3497,114 @@ QString RxApplet::attLabelTextForTest() const
     return m_attLabel ? m_attLabel->text() : QString();
 }
 #endif
+
+// ---------------------------------------------------------------------------
+// RX EQ badges
+//
+// BOOST is the largest boost in the current curve (preamp plus the highest
+// band), the headroom guide: a big boost is what makes an RX EQ clip or ring.
+// LVL is the peak of this slice's receive audio after the WDSP RX EQ stage,
+// read from the engine's block tap at 10 Hz with a slow peak-hold. Both are
+// hidden while the equalizer is off (or held off by TX/N).
+// ---------------------------------------------------------------------------
+namespace {
+
+void paintRxEqBadge(QLabel* badge, const QString& prefix, const QString& value,
+                    int level)
+{
+    if (badge == nullptr) {
+        return;
+    }
+    const QString text = value.isEmpty() ? prefix
+                                         : prefix + QLatin1Char(' ') + value;
+    if (badge->text() != text) {
+        badge->setText(text);
+    }
+    if (badge->property("stageLevel").toInt() == level
+        && badge->property("stageText").toString() == text) {
+        return;
+    }
+    badge->setProperty("stageLevel", level);
+    badge->setProperty("stageText", text);
+    QString background;
+    QString foreground;
+    switch (level) {
+    case 1:  background = QStringLiteral("#8a6d00"); foreground = QStringLiteral("#ffffff"); break;
+    case 2:  background = QStringLiteral("#1f7a34"); foreground = QStringLiteral("#ffffff"); break;
+    case 3:  background = QStringLiteral("#b3261e"); foreground = QStringLiteral("#ffffff"); break;
+    default: background = QStringLiteral("#333333"); foreground = QStringLiteral("#9a9a9a"); break;
+    }
+    badge->setStyleSheet(QStringLiteral(
+        "QLabel { background: %1; color: %2; border-radius: 3px;"
+        " font-size: 7.5pt; font-weight: 600; padding: 0 2px; }")
+        .arg(background, foreground));
+}
+
+} // namespace
+
+double RxApplet::rxEqMaxBoostDb() const
+{
+    if (!m_model) {
+        return 0.0;
+    }
+    const RxEqModel& eq = m_model->rxEqModel();
+    const double preamp = eq.rxEqPreamp();
+    if (eq.rxEqUseLegacy()) {
+        int maxBand = RxEqModel::kBandDbMin;
+        for (int i = 0; i < RxEqModel::kBandCount; ++i) {
+            maxBand = std::max(maxBand, eq.rxEqBand(i));
+        }
+        return preamp + maxBand;
+    }
+    const ParaEqCurve::TxEqPoints points =
+        ParaEqCurve::txEqPointsFromParaEqData(eq.rxEqParaEqData());
+    double maxBand = 0.0;
+    for (double gain : points.g) {
+        maxBand = std::max(maxBand, gain);
+    }
+    return points.preampDb + maxBand;
+}
+
+void RxApplet::refreshRxEqBadges()
+{
+    if (!m_model || m_rxEqBadgeRow == nullptr) {
+        return;
+    }
+    const bool on = m_model->rxEqModel().rxEqEnabled()
+                    && !m_model->transmitModel().txAudioCheckEnabled();
+    m_rxEqBadgeRow->setVisible(on);
+    if (!on) {
+        m_rxEqLevelHoldDb = -120.0;
+        return;
+    }
+    const double boost = rxEqMaxBoostDb();
+    const int level = boost > 9.0 ? 3 : (boost <= 0.0 ? 1 : 2);
+    paintRxEqBadge(m_rxEqBoostBadge, QStringLiteral("BOOST"),
+                   QString::number(qRound(boost)), level);
+}
+
+void RxApplet::pollRxEqMeters()
+{
+    if (!m_model || !m_slice || m_rxEqBadgeRow == nullptr
+        || !m_rxEqBadgeRow->isVisible()) {
+        return;
+    }
+    const double peak =
+        static_cast<double>(m_model->sliceRxAudioPeak(m_slice->sliceIndex()));
+    const double levelDb =
+        peak > 1.0e-7 ? 20.0 * std::log10(peak) : -120.0;
+    // Peak hold: the loudest of the last second, falling 15 dB/s.
+    m_rxEqLevelHoldDb = std::max(levelDb, m_rxEqLevelHoldDb - 1.5);
+
+    QString value = QStringLiteral("--");
+    int level = 0;
+    if (m_rxEqLevelHoldDb > -60.0) {
+        value = QString::number(qRound(m_rxEqLevelHoldDb));
+        level = m_rxEqLevelHoldDb < -30.0 ? 1
+              : m_rxEqLevelHoldDb > -3.0  ? 3
+                                          : 2;
+    }
+    paintRxEqBadge(m_rxEqLevelBadge, QStringLiteral("LVL"), value, level);
+}
 
 } // namespace NereusSDR

@@ -5,10 +5,14 @@
 
 #include <QComboBox>
 #include <QHBoxLayout>
+#include <QLabel>
+#include <QMouseEvent>
 #include <QPushButton>
 #include <QSizePolicy>
 #include <QVBoxLayout>
 #include <QWidget>
+
+#include <functional>
 
 // =================================================================
 // src/gui/applets/TxChainSection.cpp  (NereusSDR)
@@ -100,6 +104,34 @@
 
 namespace NereusSDR {
 
+namespace {
+
+// A badge that behaves like a small button: either mouse button asks for
+// that stage's adjustments, matching the EQ/CFC buttons' right-click.
+class BadgeLabel : public QLabel
+{
+public:
+    using QLabel::QLabel;
+    std::function<void()> onClick;
+
+protected:
+    void mouseReleaseEvent(QMouseEvent* event) override
+    {
+        if ((event->button() == Qt::LeftButton
+             || event->button() == Qt::RightButton)
+            && rect().contains(event->position().toPoint())) {
+            if (onClick) {
+                onClick();
+            }
+            event->accept();
+            return;
+        }
+        QLabel::mouseReleaseEvent(event);
+    }
+};
+
+} // namespace
+
 TxChainSection::TxChainSection(QWidget* parent, int rowSpacing,
                                const QMargins& outerMargins)
     : QWidget(parent)
@@ -181,6 +213,92 @@ void TxChainSection::buildUI(int rowSpacing)
         m_cfcBtn->setContextMenuPolicy(Qt::CustomContextMenu);
         row->addWidget(m_cfcBtn, 1);
 
+        // TX audio check (Thetis chkTXAudioCheck). TX/Y is normal transmit;
+        // TX/N runs the TX processing chain with no RF so EQ/CFC/leveler can
+        // be heard through MON. The persistent option is in Settings.
+        m_txCheckBtn = new QPushButton(QStringLiteral("TX/Y"), this);
+        m_txCheckBtn->setCheckable(true);
+        m_txCheckBtn->setFixedHeight(22);
+        m_txCheckBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        m_txCheckBtn->setStyleSheet(Style::buttonBaseStyle()
+                                    + Style::redCheckedStyle());
+        m_txCheckBtn->setObjectName(QStringLiteral("TxAudioCheckButton"));
+        m_txCheckBtn->setAccessibleName(QStringLiteral("TX audio check"));
+        m_txCheckBtn->setToolTip(QStringLiteral(
+            "TX audio check.\n"
+            "TX/Y = normal transmit allowed.\n"
+            "TX/N = run mic > EQ > CFC > leveler > ALC locally with NO RF. "
+            "MOX/PTT/VOX are disabled; MON stays off until you turn it on."));
+        row->addWidget(m_txCheckBtn, 1);
+
+        vbox->addLayout(row);
+    }
+
+    // ── Stage quality badges (LEV/COMP, EQ, CFC, ALC) ───────────────────────
+    // One small pill under each stage, aligned with the buttons above. It
+    // shows the live reading and turns yellow when the stage is under-driven,
+    // green when it sits in its useful range, red when it is overdriven.
+    // Thetis shows the same readings on its TX meters; these make them
+    // visible beside the controls that set them.
+    {
+        auto* row = new QHBoxLayout;
+        row->setSpacing(2);
+
+        const auto makeBadge = [this](Stage stage,
+                                      const QString& name,
+                                      const QString& title,
+                                      const QString& tip) {
+            auto* badge = new BadgeLabel(QStringLiteral("--"), this);
+            badge->setObjectName(name);
+            badge->setAlignment(Qt::AlignCenter);
+            badge->setFixedHeight(15);
+            badge->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+            badge->setAccessibleName(title);
+            badge->setToolTip(tip + tr("\n\nClick for adjustments."));
+            badge->setCursor(Qt::PointingHandCursor);
+            badge->onClick = [this, stage] { emit adjustRequested(stage); };
+            badge->setProperty("stageLevel", 0);
+            badge->setStyleSheet(QStringLiteral(
+                "QLabel { background: #333333; color: #9a9a9a;"
+                " border-radius: 3px; font-size: 7.5pt; font-weight: 600;"
+                " padding: 0 2px; }"));
+            return badge;
+        };
+
+        m_levBadge = makeBadge(
+            Stage::Lev,
+            QStringLiteral("TxLevBadge"), tr("Leveler gain reduction"),
+            tr("Leveler gain reduction (COMP), live while transmitting.\n"
+               "Yellow: under 1 dB (not levelling).\n"
+               "Green: 1 to 10 dB.\n"
+               "Red: over 10 dB (too much compression)."));
+        m_eqBadge = makeBadge(
+            Stage::Eq,
+            QStringLiteral("TxEqBadge"), tr("Post-EQ level"),
+            tr("Post-EQ peak level, live while transmitting.\n"
+               "Yellow: below -30 dB (too little drive).\n"
+               "Green: -30 to -3 dB.\n"
+               "Red: above -3 dB (close to clipping)."));
+        m_cfcBadge = makeBadge(
+            Stage::Cfc,
+            QStringLiteral("TxCfcBadge"), tr("CFC gain reduction"),
+            tr("CFC gain reduction, live while transmitting.\n"
+               "Yellow: under 1 dB (not compressing).\n"
+               "Green: 1 to 8 dB.\n"
+               "Red: over 8 dB (too much compression)."));
+        m_alcBadge = makeBadge(
+            Stage::Alc,
+            QStringLiteral("TxAlcBadge"), tr("ALC gain reduction"),
+            tr("ALC gain reduction, live while transmitting.\n"
+               "Yellow: 0 dB (no control; drive is low).\n"
+               "Green: 0 to -6 dB.\n"
+               "Red: below -6 dB (ALC is holding the drive down)."));
+
+        row->addWidget(m_levBadge, 1);
+        row->addWidget(m_eqBadge, 1);
+        row->addWidget(m_cfcBadge, 1);
+        row->addWidget(m_alcBadge, 1);
+
         vbox->addLayout(row);
     }
 
@@ -216,7 +334,108 @@ void TxChainSection::buildUI(int rowSpacing)
     m_parts.add(QStringLiteral("lev"), QStringLiteral("LEV button"), 0, {m_levBtn});
     m_parts.add(QStringLiteral("eq"), QStringLiteral("EQ button"), 0, {m_eqBtn});
     m_parts.add(QStringLiteral("cfc"), QStringLiteral("CFC button"), 0, {m_cfcBtn});
+    m_parts.add(QStringLiteral("txcheck"), QStringLiteral("TX audio check"), 0, {m_txCheckBtn});
     m_parts.add(QStringLiteral("profile"), QStringLiteral("TX profile"), -1, {m_profileCombo});
+}
+
+// Colour band for a badge: 0 blank/idle, 1 low (yellow), 2 good (green),
+// 3 overdriven (red). Styling happens only when the text or band changes,
+// because this runs on the 100 ms meter tick.
+namespace {
+
+void paintBadge(QLabel* badge, const QString& prefix, const QString& value,
+                int level)
+{
+    if (badge == nullptr) {
+        return;
+    }
+    const QString text = value.isEmpty() ? prefix
+                                         : prefix + QLatin1Char(' ') + value;
+    if (badge->text() != text) {
+        badge->setText(text);
+    }
+    if (badge->property("stageLevel").toInt() == level
+        && badge->property("stageText").toString() == text) {
+        return;
+    }
+    badge->setProperty("stageLevel", level);
+    badge->setProperty("stageText", text);
+    QString background;
+    QString foreground;
+    switch (level) {
+    case 1:  background = QStringLiteral("#8a6d00"); foreground = QStringLiteral("#ffffff"); break;
+    case 2:  background = QStringLiteral("#1f7a34"); foreground = QStringLiteral("#ffffff"); break;
+    case 3:  background = QStringLiteral("#b3261e"); foreground = QStringLiteral("#ffffff"); break;
+    default: background = QStringLiteral("#333333"); foreground = QStringLiteral("#9a9a9a"); break;
+    }
+    badge->setStyleSheet(QStringLiteral(
+        "QLabel { background: %1; color: %2; border-radius: 3px;"
+        " font-size: 7.5pt; font-weight: 600; padding: 0 2px; }")
+        .arg(background, foreground));
+}
+
+} // namespace
+
+void TxChainSection::setStageReadings(const StageReadings& readings)
+{
+    constexpr double kNoReading = -300.0;
+    const auto whole = [](double value) {
+        return QString::number(qRound(value));
+    };
+
+    // LEV/COMP: the leveler's gain reduction, positive dB.
+    {
+        QString value;
+        int level = 0;
+        if (readings.keyed && readings.levOn
+            && readings.compReductionDb > kNoReading) {
+            value = whole(readings.compReductionDb);
+            level = readings.compReductionDb > 10.0 ? 3
+                  : readings.compReductionDb < 1.0  ? 1
+                                                    : 2;
+        }
+        paintBadge(m_levBadge, QStringLiteral("LEV"), value, level);
+    }
+
+    // EQ: post-EQ peak level, dBFS (negative).
+    {
+        QString value;
+        int level = 0;
+        if (readings.keyed && readings.eqOn && readings.eqDb > kNoReading) {
+            value = whole(readings.eqDb);
+            level = readings.eqDb > -3.0  ? 3
+                  : readings.eqDb < -30.0 ? 1
+                                          : 2;
+        }
+        paintBadge(m_eqBadge, QStringLiteral("EQ"), value, level);
+    }
+
+    // CFC: gain reduction, positive dB.
+    {
+        QString value;
+        int level = 0;
+        if (readings.keyed && readings.cfcOn
+            && readings.cfcReductionDb > kNoReading) {
+            value = whole(readings.cfcReductionDb);
+            level = readings.cfcReductionDb > 8.0 ? 3
+                  : readings.cfcReductionDb < 1.0 ? 1
+                                                  : 2;
+        }
+        paintBadge(m_cfcBadge, QStringLiteral("CFC"), value, level);
+    }
+
+    // ALC: gain reduction, negative dB (0 when the ALC is not acting).
+    {
+        QString value;
+        int level = 0;
+        if (readings.keyed && readings.alcReductionDb > kNoReading) {
+            value = whole(readings.alcReductionDb);
+            level = readings.alcReductionDb < -6.0 ? 3
+                  : readings.alcReductionDb > -0.5 ? 1
+                                                   : 2;
+        }
+        paintBadge(m_alcBadge, QStringLiteral("ALC"), value, level);
+    }
 }
 
 } // namespace NereusSDR

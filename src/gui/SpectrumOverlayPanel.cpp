@@ -21,12 +21,6 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-11-17 - The zoom row stays wholly inside a very short pan. J.J.
-//                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
-//   2026-11-16 - The zoom row stays on the waterfall, under the Roundtable
-//                strip, and follows the waterfall top as the split or the
-//                strip changes (SpectrumWidget::waterfallTopChanged). J.J.
-//                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22 - A closed Display pill no longer lays itself out on every
 //                 remote telemetry tick: geometry refreshes wait for the
 //                 pill to open, unchanged remote and station gates and an
@@ -201,6 +195,7 @@
 #include "gui/styles/WorkspaceStyle.h"
 #include "core/AntennaLabels.h"
 #include "core/AppSettings.h"
+#include "gui/HelperApps.h"
 #include "core/settings/PanDisplayKeys.h"
 #include "core/BoardCapabilities.h"
 #include "core/ControlRanges.h"
@@ -552,6 +547,46 @@ SpectrumOverlayPanel::SpectrumOverlayPanel(QWidget* parent)
         m_menuBtns.append(btn);  // index 6
     }
 
+    // Button 9: TF (Tuner Follow), directly below ATT. It follows the same
+    // setting as Options and the HF-Auto container's TF button, and is
+    // offered only while HF-Auto is enabled.
+    {
+        m_tfBtn = makeMenuBtn("TF", this);
+        m_tfBtn->setObjectName(QStringLiteral("tunerFollowButton"));
+        m_tfBtn->setCheckable(true);
+        m_tfBtn->setToolTip(tr("Tuner Follow: let HF-Auto track the operating frequency"));
+        // Same size, border and font as the ATT / VAX / Display group above;
+        // the checked state uses the strip's blue accent so the switch is
+        // visibly on or off.
+        m_tfBtn->setStyleSheet(menuBtnNormalStyle()
+            + QStringLiteral("QPushButton:checked { background: rgba(0,112,192,220);"
+                             " border: 1px solid #0090e0; color: #ffffff; }"));
+        m_tfBtn->setChecked(AppSettings::instance()
+                                .value(QStringLiteral("Helpers/HfAutoFollow"), true)
+                                .toBool());
+        connect(m_tfBtn, &QPushButton::toggled, this, [](bool on) {
+            AppSettings::instance().setValue(QStringLiteral("Helpers/HfAutoFollow"), on);
+        });
+        m_menuBtns.append(m_tfBtn);  // index 7
+
+        m_tfAvailable = HelperApps::instance().enabled(HelperApps::Helper::HfAuto);
+        connect(&HelperApps::instance(), &HelperApps::enabledChanged, this,
+                [this](HelperApps::Helper helper, bool on) {
+                    if (helper != HelperApps::Helper::HfAuto || !m_tfBtn) { return; }
+                    m_tfAvailable = on;
+                    updateLayout();
+                });
+        // Keep this button in step with the Options checkbox and the
+        // container's TF button.
+        m_tfObserverId = AppSettings::instance().addWriteObserver(
+            [this](const QString& key) {
+                if (key != QLatin1String("Helpers/HfAutoFollow") || !m_tfBtn) { return; }
+                const QSignalBlocker block(m_tfBtn);
+                m_tfBtn->setChecked(AppSettings::instance()
+                                        .value(key, true).toBool());
+            });
+    }
+
     // The strip used to end in a disabled "MNF" twin of the +TNF button
     // above. It is gone rather than shipped beside a live control that does
     // the same job.
@@ -578,6 +613,13 @@ SpectrumOverlayPanel::SpectrumOverlayPanel(QWidget* parent)
     }
 
     updateLayout();
+}
+
+SpectrumOverlayPanel::~SpectrumOverlayPanel()
+{
+    if (m_tfObserverId >= 0) {
+        AppSettings::instance().removeWriteObserver(m_tfObserverId);
+    }
 }
 
 // ── eventFilter — auto-close flyout on outside click ─────────────────────────
@@ -842,7 +884,8 @@ void SpectrumOverlayPanel::updateLayout()
     int shownCount = 0;
     for (int i = 0; i < m_menuBtns.size(); ++i) {
         QPushButton* btn = m_menuBtns[i];
-        const bool offered = i != 3 || m_antAvailable;  // index 3 is ANT
+        const bool offered = (i != 3 || m_antAvailable)  // index 3 is ANT
+            && (btn != m_tfBtn || m_tfAvailable);
         btn->setVisible(m_expanded && offered);
         if (m_expanded && offered) {
             btn->move(kPad, y);
@@ -4979,9 +5022,6 @@ void SpectrumOverlayPanel::buildZoomButtons()
         });
         connect(pan, &SpectrumWidget::panDisplayReset, this,
                 [this]() { repositionZoomButtons(); });
-        // The split or the Roundtable strip moved the waterfall's top.
-        connect(pan, &SpectrumWidget::waterfallTopChanged, this,
-                [this]() { repositionZoomButtons(); });
     }
 }
 
@@ -5003,14 +5043,6 @@ void SpectrumOverlayPanel::repositionZoomButtons()
     int x = kMargin;
     int y = spectrum->height() - freqScaleH - m_zoomStrip->height() - kMargin;
     y = std::max(kMargin, y);
-    // Never above the waterfall's top: on a short waterfall the row would
-    // rise into the Roundtable strip or the frequency scale.
-    if (pan) {
-        y = std::max(y, pan->waterfallTop() + kMargin);
-    }
-    // On a very short pan with the divider pulled low, that can put the row
-    // past the bottom edge: it stays wholly inside the pan.
-    y = std::max(0, std::min(y, spectrum->height() - m_zoomStrip->height()));
     // Task 26: on a short pan the open button column reaches down to the
     // row and the row covered its lower buttons (ATT). Then the row moves to
     // just right of the column at the same height; on a tall pan, or with

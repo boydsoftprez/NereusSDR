@@ -104,6 +104,11 @@ public:
     std::optional<AsioDriverCaps> driverCaps(const QString& driver) const;
     bool driverInUse(const QString& driver) const;
     QString sessionDriver() const;     // empty with no output open
+    // Fast startup: describe only these drivers on the first enumeration
+    // (the operator's saved choices). The rest are described later by
+    // describeRemainingDrivers(), so Setup still lists every driver.
+    void setStartupDriverFilter(const QStringList& drivers);
+    void describeRemainingDrivers();
     // Native audio plan Task 17 (R-AUD-20): the buffer and rate the open
     // session runs at (0 before it answers or with no output open), and
     // a note that audio/Asio/BufferFrames or SampleRate changed, so the

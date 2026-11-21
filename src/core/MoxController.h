@@ -924,6 +924,11 @@ public slots:
     void setRadioLinkDown(bool on);
     bool isRadioLinkDown() const noexcept { return m_radioLinkDown; }
 
+    // TX audio check without MOX/PTT (Thetis chkTXAudioCheck). While on,
+    // every keying source is refused and the TX DSP chain runs locally.
+    void setTxAudioCheck(bool on);
+    bool isTxAudioCheck() const noexcept { return m_txAudioCheck; }
+
     // transmitBlockReason: the words setMox(true) refuses with while TX
     // inhibit, a PA trip, receive only or a lost radio link holds (the lost
     // link first, then the trip, then receive only, then TX inhibit); empty
@@ -1834,11 +1839,14 @@ private:
     QString  m_rxOnlyReason;
     // m_radioLinkDown: the link to the radio is lost (setRadioLinkDown).
     bool     m_radioLinkDown{false};
+    // m_txAudioCheck: TX audio check mode, no MOX/PTT (Thetis TX/N).
+    bool     m_txAudioCheck{false};
     // One predicate for the gates that block every source: the three
     // PollPTT gates and the lost radio link.
     bool     transmitBlocked() const noexcept
     {
-        return m_txInhibited || m_paTripped || m_rxOnly || m_radioLinkDown;
+        return m_txInhibited || m_paTripped || m_rxOnly || m_radioLinkDown
+            || m_txAudioCheck;
     }
     // Emits transmitBlockChanged when transmitBlockReason() differs from
     // `before` (a gate setter's value on entry).

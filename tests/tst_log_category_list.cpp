@@ -17,8 +17,6 @@
 //                 Anthropic Claude Code.
 //   2026-10-11 - CAT is the list's last row. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
-//   2026-11-15 - Recordings is appended after CAT. J.J. Boyd (KG4VCF),
-//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -61,17 +59,10 @@ private slots:
         QCOMPARE(list.at(1).toObject().value(QStringLiteral("label")).toString(),
                  QStringLiteral("Connection"));
         // CAT has a row, so its port and PTT input lines can be turned up.
-        const QJsonObject cat = list.at(list.size() - 2).toObject();
-        QCOMPARE(cat.value(QStringLiteral("id")).toString(), QStringLiteral("nereus.cat"));
-        QCOMPARE(cat.value(QStringLiteral("label")).toString(), QStringLiteral("CAT"));
-        // Recordings (lcRecordings) is the last row: the Core's recording
-        // files, voice keyer messages and spectrum recorder.
         QCOMPARE(list.last().toObject().value(QStringLiteral("id")).toString(),
-                 QStringLiteral("nereus.recordings"));
+                 QStringLiteral("nereus.cat"));
         QCOMPARE(list.last().toObject().value(QStringLiteral("label")).toString(),
-                 QStringLiteral("Recordings"));
-        QCOMPARE(QString::fromLatin1(lcRecordings().categoryName()),
-                 QStringLiteral("nereus.recordings"));
+                 QStringLiteral("CAT"));
     }
 
     void radioCarriesItConstant()

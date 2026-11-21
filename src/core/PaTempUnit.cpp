@@ -11,8 +11,6 @@
 
 #include "core/AppSettings.h"
 
-#include <QGlobalStatic>
-
 namespace NereusSDR {
 
 namespace {
@@ -37,13 +35,16 @@ QLatin1String encodeUnit(PaTempUnit unit) noexcept
 
 }  // namespace
 
-Q_GLOBAL_STATIC(PaTempUnitNotifier, kPaTempUnitNotifier)
-
 PaTempUnitNotifier::PaTempUnitNotifier() = default;
 
 PaTempUnitNotifier& PaTempUnitNotifier::instance()
 {
-    return *kPaTempUnitNotifier;
+    // Function-local static rather than Q_GLOBAL_STATIC: on MSVC 2026 the
+    // Q_GLOBAL_STATIC holder's dynamic atexit destructor is emitted into the
+    // NereusCore export table and fails to resolve at link time. The local
+    // static has identical lifetime and thread-safe construction.
+    static PaTempUnitNotifier notifier;
+    return notifier;
 }
 
 PaTempUnit PaTempUnitNotifier::currentUnit()

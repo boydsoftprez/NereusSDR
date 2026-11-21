@@ -47,7 +47,12 @@
 #include "gui/meters/presets/BarPresetItem.h"
 #include "gui/meters/WaveformMeterItem.h"
 #include <QVBoxLayout>
+#include <QElapsedTimer>
 #include <QLabel>
+#include "core/LogCategories.h"
+#include <QLoggingCategory>
+#include <QResizeEvent>
+#include <algorithm>
 #include <QSet>
 #include <memory>
 namespace NereusSDR {
@@ -60,7 +65,7 @@ ContainerPreviewWidget::ContainerPreviewWidget(ContainerContentRegistry& registr
     m_canvas=new FreeCanvasSurface(this);m_canvas->hide();
     connect(m_canvas,&FreeCanvasSurface::entrySelected,this,&ContainerPreviewWidget::entrySelected);
     connect(m_canvas,&FreeCanvasSurface::geometryEdited,this,[this](const QString& id,const QRectF& rect){
-        if(m_document.locked) {return;}
+        if(m_document.lockItemPositions) {return;}
         for(auto& entry:m_document.contents) {if(entry.id==id) {entry.setFreeCanvasRect(rect);break;}}
         emit freeCanvasRectEdited(id,rect);
     });
@@ -101,7 +106,33 @@ void ContainerPreviewWidget::setDocument(const ContainerDocument& document)
         m_document=document;if(document.layout==ContentLayout::FreeCanvas) {m_canvas->project(document,m_views);}return;
     }
     const auto prior=m_document; const bool reuse=m_materialized && document.layout!=ContentLayout::LegacyCanvas && prior.layout==document.layout;
+    QElapsedTimer buildClock; buildClock.start();
     const auto oldViews=m_views; QSet<QWidget*> retained;
+    m_legacyCanvas=nullptr;
+    if (document.geometry.width() > 0 && document.geometry.height() > 0) {
+        // The preview draws no title bar. Match the live window's content
+        // area, not its outer height, or floating previews stretch
+        // vertically against the real container.
+        double contentHeight = document.geometry.height();
+        if (document.dockMode == DockMode::Floating) {
+            contentHeight = qMax(1.0, contentHeight - ContainerWidget::kTitleBarHeight);
+        }
+        m_legacyAspect = contentHeight / double(document.geometry.width());
+        // A helper window saved while minimized would otherwise preview with
+        // shorter rows than its width-scaled text. Keep enough height for
+        // the intended faces.
+        const QString helperKind =
+            document.config.value(QStringLiteral("helperContainer")).toString();
+        const double minimumAspect =
+            helperKind == QLatin1String("helper.hfauto") ? 0.50
+            : helperKind == QLatin1String("helper.wavenode") ? 0.39 : 0.0;
+        m_legacyAspect = qMax(m_legacyAspect, minimumAspect);
+        m_legacyWidth = document.geometry.width();
+        m_legacyContentHeight = qRound(contentHeight);
+    } else {
+        m_legacyWidth = 0;
+        m_legacyContentHeight = 0;
+    }
     QString background=document.config.value("backgroundColor").toString("#0f0f1a");
     if (WorkspacePreview::enabled()) {
         // The window's path: the container's content background and the
@@ -126,13 +157,21 @@ void ContainerPreviewWidget::setDocument(const ContainerDocument& document)
         if (document.layout==ContentLayout::LegacyCanvas && !entry.typeId.startsWith("applet:") && m_registry->isAvailable(entry)) {
             std::unique_ptr<MeterItem> item(m_registry->createMeterItem(entry,nullptr,ContentRenderMode::Preview));
             if(item) {
-                if (!canvas) { canvas=new MeterWidget(); canvas->setAttribute(Qt::WA_TransparentForMouseEvents); canvas->setParent(this); canvas->setMinimumHeight(220); m_layout->addWidget(canvas); m_surfaces.append({canvas,context}); }
+                if (!canvas) { canvas=new MeterWidget(); canvas->setAttribute(Qt::WA_TransparentForMouseEvents); canvas->setParent(this); canvas->setMinimumHeight(120); m_layout->addWidget(canvas); m_legacyCanvas=canvas; m_surfaces.append({canvas,context}); }
                 item->setProperty("containerSourceContext",context);
                 if (context!=m_surfaces.first().context) {
                     item->setProperty("containerUnsupportedSource",true);
                     item->setProperty("unsupportedSourceReason",QStringLiteral("This legacy canvas contains different slice sources; move this entry to a stack to read its source"));
                 }
                 if(auto* bar=qobject_cast<BarPresetItem*>(item.get())) {bar->setContainerFace(document.config.value("meterFace").toString("Classic"));}
+                // Use the document rect, exactly as the live legacy canvas
+                // does, rather than whatever geometry the item's serialized
+                // record happens to carry. Clear stack metadata as the live
+                // host does, or rows that came from a stack record all paint
+                // in the same slot.
+                item->clearStackMetadata();
+                item->setRect(entry.canvasRect.x(), entry.canvasRect.y(),
+                              entry.canvasRect.width(), entry.canvasRect.height());
                 canvas->addItem(item.release()); m_views[entry.id]=canvas; continue;
             }
         }
@@ -186,9 +225,22 @@ void ContainerPreviewWidget::setDocument(const ContainerDocument& document)
             m_surfaces.append({meter,context});
         }
     }
+    // The live legacy canvas sorts its items by z-order; the preview adds
+    // them in document order. Sort here too, or an LED added after a text
+    // overlay paints over the text in the preview only.
+    if (canvas) {
+        QVector<MeterItem*> ordered = canvas->items();
+        std::sort(ordered.begin(), ordered.end(), [](const MeterItem* left, const MeterItem* right) {
+            if (left->zOrder() != right->zOrder()) { return left->zOrder() < right->zOrder(); }
+            return left->property("containerEntryId").toString()
+                < right->property("containerEntryId").toString();
+        });
+        canvas->replaceItems(ordered);
+    }
     QSet<QWidget*> retired;
     for(const auto& view:oldViews) { if(view && !retained.contains(view) && !retired.contains(view)) { retired.insert(view); delete view.data(); } }
     if(document.layout==ContentLayout::FreeCanvas) {m_canvas->project(document,m_views);}
+    updateLegacyCanvasHeight();
     m_inTx=m_poller->inTx();
     updateFadeViews();
     for (const auto& surface : m_surfaces) {
@@ -202,7 +254,25 @@ void ContainerPreviewWidget::setDocument(const ContainerDocument& document)
         if (!reusedMeters.contains(surface.widget)) { m_poller->replayReadings(surface.widget,surface.context); }
         emit presentationRequested(surface.widget,surface.context);
     }
+    qCInfo(lcContainer) << "preview build" << document.id << document.contents.size() << "entries"
+                        << buildClock.elapsed() << "ms";
 }
+void ContainerPreviewWidget::updateLegacyCanvasHeight()
+{
+    if (!m_legacyCanvas) { return; }
+    // Scale the whole live layout uniformly: the item boxes and the text
+    // both follow the canvas width, so a small live window still gets a
+    // readable preview of the same arrangement instead of a tiny copy.
+    const int available = m_legacyCanvas->width() > 0 ? m_legacyCanvas->width() : width();
+    m_legacyCanvas->setFixedHeight(qMax(120, qRound(available * m_legacyAspect)));
+}
+
+void ContainerPreviewWidget::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+    updateLegacyCanvasHeight();
+}
+
 QRect ContainerPreviewWidget::entryBoundary(const QString& id) const
 {
     QWidget* view=m_views.value(id);if(!view) {return {};}
@@ -235,10 +305,13 @@ ContainerDocument ContainerPreviewWidget::seededFromStack() const
     result.setFreeCanvasExtent(QSizeF(qMax(0.,extent.right()),qMax(0.,extent.bottom())));
     result.layout=ContentLayout::FreeCanvas;return result;
 }
-ContainerDocument ContainerPreviewWidget::convertedLegacyPositions() const
+ContainerDocument ContainerPreviewWidget::convertedLegacyPositions(QSizeF targetExtent) const
 {
     ContainerDocument result=m_document;if(result.locked) {return result;}
-    const QSizeF extent(qMax(320,width()),qMax(220,height()));
+    const QSizeF extent = (targetExtent.isValid() && targetExtent.width() > 0
+                           && targetExtent.height() > 0)
+        ? targetExtent
+        : QSizeF(qMax(320, width()), qMax(220, height()));
     for(auto& entry:result.contents) {
         if(!entry.visible || !m_registry || !m_registry->isAvailable(entry)) {continue;}
         const QRectF saved=entry.canvasRect;

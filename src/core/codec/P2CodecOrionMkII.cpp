@@ -334,7 +334,8 @@ void P2CodecOrionMkII::composeCmdHighPriority(const CodecContext& ctx, quint8 bu
     buf[1400] = ctx.p2SpeakerAmpOff ? 0x02 : 0x00;
 
     // From Thetis network.c:1037-1038 [@501e3f5] — Mercury Attenuator
-    buf[1403] = static_cast<quint8>(ctx.p2Rx1Preamp << 1 | ctx.rxPreamp[0]);
+    buf[1403] = static_cast<quint8>((ctx.p2Rx1Preamp ? 1 : 0) << 1
+                                     | (ctx.rxPreamp[0] ? 1 : 0));
 
     // From Thetis network.c:1055-1057 [@501e3f5] — Step Attenuators
     buf[1442] = static_cast<quint8>(ctx.rxStepAttn[1]);
@@ -357,10 +358,14 @@ void P2CodecOrionMkII::composeCmdRx(const CodecContext& ctx, quint8 buf[1444]) c
     buf[4] = static_cast<quint8>(ctx.p2NumAdc);
 
     // From Thetis network.c:1080-1082 [@501e3f5] — Dither
-    buf[5] = static_cast<quint8>((ctx.dither[2] << 2 | ctx.dither[1] << 1 | ctx.dither[0]) & 0x7);
+    buf[5] = static_cast<quint8>((((ctx.dither[2] ? 1 : 0) << 2)
+                                  | ((ctx.dither[1] ? 1 : 0) << 1)
+                                  | (ctx.dither[0] ? 1 : 0)) & 0x7);
 
     // From Thetis network.c:1088-1090 [@501e3f5] — Random
-    buf[6] = static_cast<quint8>((ctx.random[2] << 2 | ctx.random[1] << 1 | ctx.random[0]) & 0x7);
+    buf[6] = static_cast<quint8>((((ctx.random[2] ? 1 : 0) << 2)
+                                  | ((ctx.random[1] ? 1 : 0) << 1)
+                                  | (ctx.random[0] ? 1 : 0)) & 0x7);
 
     // From Thetis network.c:1097-1103 [@501e3f5] — Enable bitmask
     buf[7] = static_cast<quint8>(

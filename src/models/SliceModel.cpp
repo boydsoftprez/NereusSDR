@@ -2141,6 +2141,15 @@ void SliceModel::setNnrLoadWarning(const QString& warning)
     emit nnrLoadWarningChanged(warning);
 }
 
+void SliceModel::setNnrDspLoadPercent(int percent)
+{
+    if (m_nnrDspLoadPercent == percent) {
+        return;
+    }
+    m_nnrDspLoadPercent = percent;
+    emit nnrDspLoadPercentChanged(percent);
+}
+
 void SliceModel::setNnrLimit(int limit)
 {
     if (!isValidNnrLimit(limit) || m_nnrLimit == limit) {
@@ -3880,6 +3889,22 @@ void SliceModel::saveToSettings(Band band)
     s.setValue(sp + QStringLiteral("LastBand"), bandKeyName(band));
 }
 
+// TX audio check crash recovery (see the header). The check owns the mute
+// while it runs; MutedBeforeCheck is the operator's own value, kept in the
+// settings so a crash cannot make the check's mute permanent.
+void SliceModel::rememberMuteForAudioCheck(int sliceIndex, bool muted)
+{
+    AppSettings::instance().setValue(
+        slicePrefix(sliceIndex) + QStringLiteral("MutedBeforeCheck"),
+        muted ? QStringLiteral("True") : QStringLiteral("False"));
+}
+
+void SliceModel::forgetMuteForAudioCheck(int sliceIndex)
+{
+    AppSettings::instance().remove(
+        slicePrefix(sliceIndex) + QStringLiteral("MutedBeforeCheck"));
+}
+
 void SliceModel::copyFilterMemoryFrom(const SliceModel& source, Band band)
 {
     if (this == &source) {
@@ -4664,6 +4689,25 @@ void SliceModel::loadFromSettings()
 {
     restoreNnrSettings();
     loadAudioRoutingFromSettings();
+
+    // A TX audio check remembers the operator's own mute before it silences
+    // the receiver (rememberMuteForAudioCheck). The key still being here
+    // means that check never ended — the app went down during it — so the
+    // mute comes back instead of the receiver starting up silenced.
+    auto& s = AppSettings::instance();
+    const QString sp = slicePrefix(m_sliceIndex);
+    if (s.contains(sp + QStringLiteral("MutedBeforeCheck"))) {
+        const bool ownMute = s.value(sp + QStringLiteral("MutedBeforeCheck"))
+                                 .toString() == QLatin1String("True");
+        setMuted(ownMute);
+        // The ordinary key, so the check's True cannot come back on the next
+        // start either.
+        s.setValue(sp + QStringLiteral("Muted"),
+                   ownMute ? QStringLiteral("True") : QStringLiteral("False"));
+        s.remove(sp + QStringLiteral("MutedBeforeCheck"));
+        qCInfo(lcDsp) << "TX audio check recovery: Slice" << m_sliceIndex
+                      << "mute restored to" << ownMute;
+    }
 }
 
 void SliceModel::loadAudioRoutingFromSettings()

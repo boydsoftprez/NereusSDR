@@ -40,6 +40,7 @@ void ButtonBoxItemEditor::setItem(MeterItem* item)
     m_spinMargin->setValue(static_cast<double>(b->margin()));
     m_spinCornerRadius->setValue(static_cast<double>(b->cornerRadius()));
     m_spinHeightRatio->setValue(static_cast<double>(b->heightRatio()));
+    m_spinTextScale->setValue(static_cast<double>(b->textScale()) * 100.0);
     m_chkFadeOnRx->setChecked(b->fadeOnRx());
     m_chkFadeOnTx->setChecked(b->fadeOnTx());
     endProgrammaticUpdate();
@@ -120,6 +121,19 @@ void ButtonBoxItemEditor::buildButtonBoxSection()
         ButtonBoxItem* b = qobject_cast<ButtonBoxItem*>(m_item);
         if (!b) { return; }
         b->setHeightRatio(static_cast<float>(v));
+        notifyChanged();
+    });
+
+    // Caption height as a percentage of each button cell.  The long-standing
+    // look is 40 %; smaller values leave room for longer labels.
+    m_spinTextScale = makeDoubleRow(QStringLiteral("Text size %"), 10.0, 100.0, 5.0, 0);
+    m_spinTextScale->setSuffix(QStringLiteral(" %"));
+    connect(m_spinTextScale, qOverload<double>(&QDoubleSpinBox::valueChanged),
+            this, [this](double v) {
+        if (isProgrammaticUpdate()) { return; }
+        ButtonBoxItem* b = qobject_cast<ButtonBoxItem*>(m_item);
+        if (!b) { return; }
+        b->setTextScale(static_cast<float>(v / 100.0));
         notifyChanged();
     });
 

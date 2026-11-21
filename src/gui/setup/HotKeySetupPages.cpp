@@ -5,8 +5,6 @@
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 11: what the MIDI page
 //                shares moved to HotKeySetupCommon.h.
 //                AI-assisted implementation via Anthropic Claude Code.
-//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 13: the Messages
-//                group (F1 to F8). AI-assisted via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "gui/setup/HotKeySetupPages.h"
 
@@ -79,7 +77,7 @@ QStringList legendGroups()
     return {QStringLiteral("Tuning"), QStringLiteral("Filter"), QStringLiteral("Audio"),
             QStringLiteral("Band and mode"), QStringLiteral("Display"), QStringLiteral("DSP"),
             QStringLiteral("Transmit"), QStringLiteral("CW"), QStringLiteral("Voice"),
-            QStringLiteral("Messages"), KeyboardMapWidget::menuGroup()};
+            KeyboardMapWidget::menuGroup()};
 }
 
 QString chipStyle()

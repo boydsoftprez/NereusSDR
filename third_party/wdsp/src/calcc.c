@@ -17,7 +17,7 @@
 // Ported from Thetis source:
 //   Project Files/Source/wdsp/calcc.c @ v2.10.3.13 (commit 501e3f5)
 //   Verbatim vendor of the PureSignal calcc engine (TAPR v1.29 has no
-//   calcc/iqc — the entire PS subsystem must come from Thetis upstream).
+//   calcc/iqc ΓÇö the entire PS subsystem must come from Thetis upstream).
 //   No NereusSDR-level edits. Original NR0V GPLv2-or-later license header
 //   preserved verbatim below.  See docs/attribution/WDSP-PROVENANCE.md
 //   "Partial sync record" for the line-level scope of this vendor.
@@ -51,13 +51,13 @@ warren@wpratt.com
 
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-05-06 — Phase 3M-4 Task 2: vendored verbatim from Thetis
+//   2026-05-06 ΓÇö Phase 3M-4 Task 2: vendored verbatim from Thetis
 //                v2.10.3.13 @501e3f51 by J.J. Boyd (KG4VCF), with
 //                AI-assisted source-first protocol via Anthropic
 //                Claude Code. No source-level modifications.
 //                Cross-platform compatibility via existing
 //                third_party/wdsp/src/linux_port.h shim.
-//   2026-05-06 — Phase 3M-4 Task 3 attribution fix: NereusSDR-block
+//   2026-05-06 ΓÇö Phase 3M-4 Task 3 attribution fix: NereusSDR-block
 //                "Ported from Thetis source" preamble added above the
 //                original NR0V license header, mirroring the cfcomp.c
 //                convention so verify-thetis-headers.py and
@@ -107,7 +107,7 @@ warren@pratt.one
 // The "No NereusSDR-level edits" line in the historical record above
 // describes the retired May 2026 Thetis vendor only, not this file.
 
-// 2026-10-02 — NereusSDR by J.J. Boyd (KG4VCF), AI-assisted via OpenAI
+// 2026-10-02 ΓÇö NereusSDR by J.J. Boyd (KG4VCF), AI-assisted via OpenAI
 // Codex: CALCC installs correction under its update lock, transfers curve
 // ownership, then releases the lock across audio-dependent IQC waits.
 // Completion and stop retire only the captured calculation epoch.
@@ -924,7 +924,7 @@ static int sin_cos_identity_check(CALCC a)
 	}
 	if (max_identity_err > SC_IDENTITY_TOL) error = 1;
 	if (error) 
-		dprintf("***** PS: sin²+cos² deviates by %.3f\n", max_identity_err);
+		dprintf("***** PS: sin┬▓+cos┬▓ deviates by %.3f\n", max_identity_err);
 	return error;
 }
 

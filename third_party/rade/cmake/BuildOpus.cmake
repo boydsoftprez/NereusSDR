@@ -262,7 +262,22 @@ set(_opus_model_sha "4ed9445b96698bad25d852e912b41495ddfa30c8dbc8a55f9cde5826ed7
 # CMake-built Opus (no BUILD_IN_SOURCE) puts the static lib in a
 # separate build tree under build_opus-prefix/src/build_opus-build/.
 set(_opus_binary_dir ${CMAKE_CURRENT_BINARY_DIR}/build_opus-prefix/src/build_opus-build)
-set(_opus_static_lib ${_opus_binary_dir}/${CMAKE_STATIC_LIBRARY_PREFIX}opus${CMAKE_STATIC_LIBRARY_SUFFIX})
+if(CMAKE_CONFIGURATION_TYPES)
+    # Multi-configuration generators (Visual Studio, Xcode) put the static
+    # library in a per-configuration subdirectory.  Single-configuration
+    # generators (Ninja, Make) put it directly in the binary directory.
+    set(_opus_build_byproducts "")
+    foreach(_cfg Debug Release RelWithDebInfo MinSizeRel)
+        set(_opus_lib_${_cfg}
+            "${_opus_binary_dir}/${_cfg}/${CMAKE_STATIC_LIBRARY_PREFIX}opus${CMAKE_STATIC_LIBRARY_SUFFIX}")
+        list(APPEND _opus_build_byproducts "${_opus_lib_${_cfg}}")
+    endforeach()
+    set(_opus_static_lib "${_opus_lib_Release}")
+else()
+    set(_opus_static_lib
+        "${_opus_binary_dir}/${CMAKE_STATIC_LIBRARY_PREFIX}opus${CMAKE_STATIC_LIBRARY_SUFFIX}")
+    set(_opus_build_byproducts "${_opus_static_lib}")
+endif()
 
 ExternalProject_Add(build_opus
     DOWNLOAD_EXTRACT_TIMESTAMP NO
@@ -291,7 +306,7 @@ ExternalProject_Add(build_opus
         -DOPUS_BUILD_TESTING=OFF
         -DOPUS_INSTALL_PKG_CONFIG_MODULE=OFF
         -DOPUS_INSTALL_CMAKE_CONFIG_MODULE=OFF
-    BUILD_BYPRODUCTS ${_opus_static_lib}
+    BUILD_BYPRODUCTS ${_opus_build_byproducts}
     INSTALL_COMMAND ""
 )
 _nereus_opus_model_steps(build_opus)
@@ -300,10 +315,22 @@ ExternalProject_Get_Property(build_opus SOURCE_DIR)
 add_library(opus STATIC IMPORTED)
 add_dependencies(opus build_opus)
 
-set_target_properties(opus PROPERTIES
-    IMPORTED_LOCATION "${_opus_static_lib}"
-    IMPORTED_IMPLIB   "${_opus_static_lib}"
-)
+if(CMAKE_CONFIGURATION_TYPES)
+    set(_opus_imported_configs "")
+    foreach(_cfg Debug Release RelWithDebInfo MinSizeRel)
+        string(TOUPPER "${_cfg}" _cfg_upper)
+        set_target_properties(opus PROPERTIES
+            IMPORTED_LOCATION_${_cfg_upper} "${_opus_lib_${_cfg}}"
+            IMPORTED_IMPLIB_${_cfg_upper}   "${_opus_lib_${_cfg}}")
+        list(APPEND _opus_imported_configs "${_cfg}")
+    endforeach()
+    set_target_properties(opus PROPERTIES
+        IMPORTED_CONFIGURATIONS "${_opus_imported_configs}")
+else()
+    set_target_properties(opus PROPERTIES
+        IMPORTED_LOCATION "${_opus_static_lib}"
+        IMPORTED_IMPLIB   "${_opus_static_lib}")
+endif()
 
 include_directories(${SOURCE_DIR}/dnn ${SOURCE_DIR}/celt ${SOURCE_DIR}/include ${SOURCE_DIR})
 

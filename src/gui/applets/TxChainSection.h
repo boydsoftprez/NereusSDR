@@ -95,6 +95,7 @@
 #include "SectionParts.h"
 
 class QComboBox;
+class QLabel;
 class QPushButton;
 
 namespace NereusSDR {
@@ -113,6 +114,24 @@ class TxChainSection : public QWidget
 {
     Q_OBJECT
 public:
+    // Which stage's adjustment a badge click asks for.
+    enum class Stage { Lev, Eq, Cfc, Alc };
+    Q_ENUM(Stage)
+
+    // Live stage quality, polled while the chain runs. Reductions are the
+    // positive dB the stage is taking off; eqDb is the post-EQ level in dBFS
+    // (negative). kNoReading leaves a stage blank.
+    struct StageReadings {
+        bool keyed{false};
+        bool levOn{false};
+        double compReductionDb{0.0};
+        bool eqOn{false};
+        double eqDb{0.0};
+        bool cfcOn{false};
+        double cfcReductionDb{0.0};
+        double alcReductionDb{0.0};
+    };
+
     // rowSpacing is the gap the applet's own column puts between rows, so the
     // rows inside this section keep the same gap they had there.
     explicit TxChainSection(QWidget* parent, int rowSpacing, const QMargins& outerMargins);
@@ -120,12 +139,26 @@ public:
     QPushButton* levButton() const { return m_levBtn; }
     QPushButton* eqButton() const { return m_eqBtn; }
     QPushButton* cfcButton() const { return m_cfcBtn; }
+    // TX/Y ↔ TX/N: the no-MOX/TX-audio-check toggle, synced with the
+    // persistent option in Settings.
+    QPushButton* txCheckButton() const { return m_txCheckBtn; }
     QComboBox*   profileCombo() const { return m_profileCombo; }
+
+    // Paint the four stage badges. Called on the applet's meter tick.
+    void setStageReadings(const StageReadings& readings);
+    QLabel* levBadge() const { return m_levBadge; }
+    QLabel* eqBadge() const { return m_eqBadge; }
+    QLabel* cfcBadge() const { return m_cfcBadge; }
+    QLabel* alcBadge() const { return m_alcBadge; }
 
     // The row's parts, which a container copy hides and orders
     // (SectionParts::apply).  The applet's own row never applies a config.
     SectionParts& parts() { return m_parts; }
     const SectionParts& parts() const { return m_parts; }
+
+signals:
+    // A badge was clicked (left or right): open that stage's adjustments.
+    void adjustRequested(TxChainSection::Stage stage);
 
 private:
     void buildUI(int rowSpacing);
@@ -139,7 +172,13 @@ private:
     QPushButton* m_levBtn = nullptr;
     QPushButton* m_eqBtn = nullptr;
     QPushButton* m_cfcBtn = nullptr;
+    QPushButton* m_txCheckBtn = nullptr;
     QComboBox*   m_profileCombo = nullptr;
+
+    QLabel* m_levBadge = nullptr;
+    QLabel* m_eqBadge = nullptr;
+    QLabel* m_cfcBadge = nullptr;
+    QLabel* m_alcBadge = nullptr;
 };
 
 } // namespace NereusSDR

@@ -762,9 +762,9 @@ void RotorDialWidget::paintFace(QPainter& p)
         const double  lr = roseRadius();
         QRadialGradient lamp(lc, lr * 1.05);
         QColor warm(kActual);
-        warm.setAlphaF(0.12);
+        warm.setAlphaF(0.12f);
         lamp.setColorAt(0.0, warm);
-        warm.setAlphaF(0.0);
+        warm.setAlphaF(0.0f);
         lamp.setColorAt(1.0, warm);
         p.setPen(Qt::NoPen);
         p.setBrush(lamp);
@@ -1072,7 +1072,7 @@ void RotorDialWidget::paintElevation(QPainter& p)
     // A faint glow over the quarter, the arcs and the two axes.
     {
         QColor glow(kActual);
-        glow.setAlphaF(0.05);
+        glow.setAlphaF(0.05f);
         p.setPen(Qt::NoPen);
         p.setBrush(glow);
         p.drawPie(box, 0, 90 * 16);

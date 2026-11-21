@@ -1,17 +1,5 @@
 # Changelog
 
-## [Unreleased]
-
-### Roundtable
-
-- **Roundtable moves off the spectrum on the desktop.** While Roundtable is on,
-  each pan has a thin strip between the frequency scale and the waterfall. Your
-  frequency's readings sit in one line there beside the slice's dial, and the
-  other frequencies' tags sit at their spots in the same strip. The spectrum
-  keeps its full height; the waterfall gives up the room. Click the line or a
-  tag and the details open over the waterfall, or upward over the spectrum when
-  the waterfall is too short.
-
 ## [2026.11.1] - 2026-11-08
 
 Changes since desktop/Core 2026.11.0. Update the Core and desktop together.
@@ -320,6 +308,120 @@ These reach phones and iPads with the app's next build, not with this download.
   full on an iPad, so its handle did nothing. Half height now holds and the
   handle works. Phones are unchanged.
   ([#755](https://github.com/boydsoftprez/NereusSDR/pull/755))
+
+### Desktop
+
+- **TX audio check (TX/N).** Ported from Thetis's no-MOX transmit audio
+  check. **Setup → General → Options** has the persistent switch, and the TX
+  applet's `LEV/EQ/CFC` row mirrors it as **TX/N**. It runs mic → EQ → CFC →
+  leveler → ALC with no RF, refuses MOX/PTT/VOX, mutes the receivers, and
+  keeps MON off until selected so the processed TX audio can be heard on its
+  own. The transmitting panadapter and waterfall show the TX frequency view
+  and audio spectrum while the check runs, and all state is restored on
+  TX/Y.
+- **Intel P-Core option.** **Setup → General → Options** gains
+  **Intel P-Core enable — Nereus audio stability**, ported from Thetis's
+  P-cores-only process affinity. On an Intel hybrid CPU it restricts Nereus
+  and the audio callback threads created inside it to the performance cores;
+  unchecking restores every core. CPUs without a P/E split are unaffected.
+- **TX audio recorder.** The MON row gains **REC / PLAY / STOP**. REC writes
+  the processed transmit chain (mic, EQ, CFC, leveler, ALC) to a WAV in
+  `Music/NereusSDR`; PLAY plays the last take on the default output; STOP ends
+  either. REC works with MON on or off, so EQ/CFC changes can be compared
+  against a known take.
+- **One Connections row per radio.** A manual-IP saved entry and the same
+  radio's discovered MAC entry now collapse to one row, keyed by address and
+  port. The manual entry keeps the operator's name, model override and
+  per-radio settings; the discovered twin is hidden even on a first start
+  before discovery has replied.
+- **Snapshot title.** The main window now reads
+  **NereusSDR 2026.11.1 (11.9.26)**, naming this build in the title bar and
+  taskbar.
+- **Per-digit VFO wheel tuning.** In the VFO flag's frequency readout, the
+  digit under the pointer highlights; the mouse wheel steps that digit's
+  place (1 Hz through 10 MHz) instead of the current tune step, with normal
+  carry. The pointer follows the chosen digit when the flag moves, and the
+  separators and the box around the readout keep the normal step tuning.
+- **WaveNode helper updates.** A shipped helper binary whose timestamp the
+  installer rounds upward now replaces the per-user copy instead of failing
+  with **Could not install Wavenode.exe**. A helper left running by an earlier
+  session is stopped before the replacement, so WaveNode starts normally after
+  an update and its `Zjjg.*` MMIO variables are available again.
+- Meter containers gain Thetis's two independent locks. **Lock** protects a
+  container's place and membership; **Lock items** freezes the objects inside
+  it (dragging, resizing, nudging and reordering). Both persist in either
+  look, and a Thetis `.dat` round-trip carries them in fields 20 and 25.
+- Container Settings saves and loads a single container as a Thetis `.dat`
+  file, mapping the container metadata, item groups, text overlays and LEDs
+  from Thetis's `ItemGroupSettings_2` dictionary. Imported text, fonts,
+  colours, LED conditions and `%QxG4.*` / `%Zjjg.*` variables come in
+  populated; `.nscontainer` remains the native format. Four ready-made Thetis
+  layouts ship in `Container Files` (`Main_Set`, `Palstar_HF-Auto`,
+  `WaveNode-good` and a WaveNode clean360 variant).
+- Imported helper containers are tagged **HF-Auto** or **WaveNode**
+  automatically and shown only while that helper is enabled, matching Thetis's
+  LinkedHFAuto and LinkedWaveNode. The old per-container link checkboxes in
+  Container Settings are gone; **Containers → Helpers** is the single switch.
+- The bundled **WaveNode** and **Palstar HF-Auto Controller** helpers are
+  checkable entries in **Containers → Helpers** (with a status-bar segment),
+  beside the other container selections. Ticking one installs/starts it and
+  shows its own container; unticking hides the container and disables its data
+  source but leaves the program running. Enabling also re-opens the helper's
+  MMIO listener; if its UDP port cannot be bound, the helper is switched off,
+  its container hides, and the failure is shown as a toast and in the
+  persistent **Helpers: fault** status flag. Each helper gets a **separate**
+  container
+  imported from its Thetis layout, and the HF-Auto container carries Thetis's
+  **TF (Tuner Follow)** switch. Both install into the per-user folder only when
+  enabled; status, **Remove installed files** and **Reset helper containers**
+  stay on the **Setup → General → Options** page. The WaveNode helper is
+  rebuilt as a static Release, so it no longer needs Visual Studio's debug
+  runtime. Enabling either creates its MMIO source: `Zjjg.*` from WaveNode's
+  UDP XML on 9388 (commands out on 9389) and `QxG4.*` from HF-Auto's UDP JSON
+  on 12050.
+- **WaveNode face follows Thetis.** The pixel-layout importer now rebuilds
+  each group on the same running natural top as Thetis, so the two cross
+  meters, centre readings and temperature bars land in their saved places
+  instead of stretching or clipping. The two captions are renamed
+  **Amp-In / Amp-Out** and centred under their meters; the **Mod-1 / Mod-2**
+  temperature bars sit side by side with their own labels. Text overlays and
+  CMeter bars are fitted as one piece and keep their titles.
+- **WaveNode macro buttons.** The macro bank now imports the Thetis captions
+  and actions: **Amp-On**, **Rdy**, **Hi-Pwr**, **Pwr-On**, **SWR Reset** and
+  **SWR Protect**. Clicks send the stored MMIO messages through the endpoint's
+  send queue (`A1=1`, `SWRPROTECT=0`, `SWRRESET`, ...), and the helper's
+  returned state updates the button caption and the `SWR PROTECT ON/OFF`
+  reading.
+- **WaveNode MMIO XML fix.** XML leaf names no longer include the root
+  element. `<LP100A><dcvolts>` is stored as `Zjjg.dcvolts`, matching Thetis's
+  `%Zjjg.dcvolts%` bindings, instead of the unusable
+  `Zjjg.LP100A.dcvolts`.
+- **WaveNode dark cross meters.** The Thetis `_darkMode` flag now paints the
+  crosses with a dark face and warm (yellow) scale and value ink instead of
+  the light face; the item editor also offers a **Dark mode** checkbox for
+  cross meters.
+- **Resizable helper windows and previews.** HF-Auto no longer uses
+  auto-height or Thetis's minimise-to-content flag, so it resizes like any
+  meter window; its rows are anchored to the top and centred left-to-right.
+  HF-Auto has a 320x160 minimum and WaveNode 600x250, so neither can be
+  shrunk into overlapping text. Legacy container previews now use the live
+  content aspect, the document's exact item rectangles, and a readable
+  minimum aspect (HF-Auto 0.50, WaveNode 0.39), and they clear stack metadata
+  so rows keep their own slots.
+- The Thetis start/exit scripts sit in the same **Setup → General → Options**
+  page ("Start and exit scripts"), with the Denkovi relay command-line tool
+  bundled and seeded per user. Both scripts are opt-in: nothing is copied or
+  run until **Run at NereusSDR start/exit** is ticked, and **Remove installed
+  scripts** deletes the per-user copy. The start script runs hidden as early
+  as possible; auto-connect waits for it plus the configured delay, and a
+  failed launch is retried every 3 s for 60 s while the SDR finishes booting
+  before the failure is reported.
+- The Windows package ships the helper folders, `SDR Scripts\Denkovi`,
+  `SDR Scripts\jre` (Eclipse Temurin), the Visual C++ x64 runtime,
+  `thetis-dat-bridge.exe` and the ready-made container files, so an installed
+  machine needs neither Java nor the VC++ redistributable installed
+  separately. `setup-denkovi-jre.ps1` is the one-time tree setup that fetches
+  the JRE; normal builds and the MSI reuse it.
 
 ## [2026.11.0] - 2026-11-01
 

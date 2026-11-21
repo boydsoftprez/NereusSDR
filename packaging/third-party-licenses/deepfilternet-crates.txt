@@ -1331,7 +1331,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ========================================================================
-bitflags 2.5.0
+bitflags 2.13.2
 Licence: MIT OR Apache-2.0
 Source: crates.io
 
@@ -3398,7 +3398,7 @@ Apache License, version 2.0
    END OF TERMS AND CONDITIONS
 
 ========================================================================
-libc 0.2.189
+libc 0.2.191
 Licence: MIT OR Apache-2.0
 Source: crates.io
 

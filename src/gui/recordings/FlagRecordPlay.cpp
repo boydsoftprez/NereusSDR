@@ -92,7 +92,7 @@ enum class Glyph { Dot, Ring, Triangle, Square };
 QColor disabledInk()
 {
     QColor ink = QColor::fromString(QLatin1String(kIdleInk));
-    ink.setAlphaF(kDisabledInkAlpha);
+    ink.setAlphaF(static_cast<float>(kDisabledInkAlpha));
     return ink;
 }
 
@@ -447,18 +447,6 @@ QString FlagRecordPlay::latestRecordingId() const
     return recent.isEmpty() ? QString() : recent.first().id;
 }
 
-QString FlagRecordPlay::lengthText(qint64 ms)
-{
-    const qint64 seconds = std::max<qint64>(0, ms) / 1000;
-    const qint64 h = seconds / 3600;
-    const qint64 m = (seconds / 60) % 60;
-    const qint64 s = seconds % 60;
-    if (h > 0) {
-        return QStringLiteral("%1:%2:%3").arg(h).arg(m, 2, 10, QLatin1Char('0')).arg(s, 2, 10, QLatin1Char('0'));
-    }
-    return QStringLiteral("%1:%2").arg(m).arg(s, 2, 10, QLatin1Char('0'));
-}
-
 QString FlagRecordPlay::recordLabelText() const
 {
     switch (m_recordLook) {
@@ -675,7 +663,7 @@ void FlagRecordPlay::applyRecordLook()
         sheet = rimmedSheet(kRecordRed);
         QColor red = QColor::fromString(QLatin1String(kRecordRed));
         if (!m_blinkOn) {
-            red.setAlphaF(0.35);
+            red.setAlphaF(0.35f);
         }
         icon = glyphIcon(Glyph::Dot, red);
         b->setAccessibleName(QStringLiteral("Stop recording"));

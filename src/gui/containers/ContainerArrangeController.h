@@ -19,6 +19,14 @@ struct ArrangeResult {
     bool ok = false;
     QString error;
 };
+// One block of a legacy canvas gesture: where it ended and the record that
+// carries the same geometry. A move group reports all of its blocks so the
+// gesture commits once.
+struct LegacyItemRect {
+    QString entryId;
+    QRectF rect;
+    QString record;
+};
 class ContainerArrangeController : public QObject
 {
     Q_OBJECT
@@ -40,6 +48,24 @@ class ContainerArrangeController : public QObject
     // changed it (ContentConfigNotifier). A setting, not the arrangement:
     // a locked container accepts it.
     ArrangeResult setEntryConfig(const QString& entryId, const QJsonObject& config);
+    ArrangeResult setEntryCanvasRect(const QString& entryId, const QRectF& canvasRect);
+    // One atomic write for a dragged legacy item: its normalized rect and the
+    // serialized legacy record that the legacy renderer actually reads.
+    ArrangeResult setLegacyItem(const QString& entryId, const QRectF& canvasRect,
+                                const QString& legacyRecord);
+    // The same for a whole gesture: every block a move group carried, written
+    // in one commit (one settings save, one reconcile).
+    ArrangeResult setLegacyItems(const QVector<LegacyItemRect>& items);
+    // The position a block had before it was first moved. Recorded on the
+    // first drag (the entry keeps it), so "reset" can put it back.
+    ArrangeResult resetEntryPosition(const QString& entryId);
+    ArrangeResult resetContainerPositions(const QString& containerId);
+    // Make where the blocks are now the position a future reset returns to.
+    ArrangeResult rememberContainerPositions(const QString& containerId);
+    // Free-canvas movement link: while linked, dragging either entry moves both
+    // by the same offset, keeping their own geometry. Stored in the entries'
+    // extensions so it survives restarts. Entries keep their own bindings.
+    ArrangeResult setMoveLink(const QString& entryId, const QString& withEntryId, bool linked);
     ArrangeResult removeContainer(const QString& containerId);
     ArrangeResult duplicateEntry(const QString& entryId, const QString& destinationId,
                                  int insertionIndex);

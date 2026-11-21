@@ -173,7 +173,7 @@ static NNIO nnio_parse (const unsigned char* raw, size_t nbytes,
 			f->ent[i].dims[d] = (int)nnio_u32 (e + 48 + 4 * d);
 			if (d < (int)ndim)
 			{
-				if (f->ent[i].dims[d] < 1)
+				if (f->ent[i].dims[d] < 1 || numel > INT_MAX / f->ent[i].dims[d])
 				{
 					dprintf ("nnio: tensor '%s' has bad dim[%d]\n", f->ent[i].name, d);
 					goto fail;
@@ -208,6 +208,11 @@ static NNIO nnio_parse (const unsigned char* raw, size_t nbytes,
 					f->ent[i].name);
 				goto fail;
 			}
+		}
+		if (numel > (unsigned long long)(INT_MAX / (int)sizeof (double)) - total)
+		{
+			dprintf ("nnio: %s is too large\n", what);
+			goto fail;
 		}
 		if (total > (unsigned long long)INT_MAX - numel ||
 			total + numel > (unsigned long long)SIZE_MAX / sizeof(double)) goto fail;

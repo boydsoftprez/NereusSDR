@@ -529,7 +529,7 @@ int MeterItem::mmioVariableCount(const QString& typeId)
         //case MeterType.CPDR: break;
         {QStringLiteral("meter.cfc"), 2},          // MeterType.CFC
         {QStringLiteral("meter.ananMulti"), 7},    // MeterType.ANANMM
-        {QStringLiteral("meter.crossNeedle"), 2},  // MeterType.CROSS
+        {QStringLiteral("meter.crossNeedle"), 3},  // FWD, SWR, REF for the WaveNode faces
         {QStringLiteral("meter.vfoDisplay"), 0},   // MeterType.VFO_DISPLAY
         {QStringLiteral("meter.clock"), 0},        // MeterType.CLOCK
         {QStringLiteral("meter.spacer"), 0},       // MeterType.SPACER

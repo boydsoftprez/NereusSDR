@@ -283,7 +283,7 @@ void HotKeyBindings::setPin(const QString& id, QChar letter)
         return;
     }
     if (letter.isNull()) {
-        if (m_pins.remove(id) > 0) {
+        if (m_pins.remove(id)) {
             emit bindingsChanged();
         }
         return;

@@ -157,10 +157,6 @@
 //   2026-10-26 - Task 36: the VFO display's frequency requests name their
 //                 slice and go to MainWindow directly (no relay here).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
-//   2026-11-16 - A drag claims Escape (ShortcutOverride), so the hot keys
-//                 leave it to cancel the drag. Recording plan Task 13 fix
-//                 round. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
-//                 Claude Code.
 // =================================================================
 
 /*  ucMeter.cs
@@ -205,6 +201,7 @@ mw0lge@grange-lane.co.uk
 
 #include "ContainerWidget.h"
 #include "ContainerContentHost.h"
+#include "HfAutoControls.h"
 #include "gui/widgets/AppIcon.h"
 #include <QMenu>
 #include "gui/containers/OwnedMenu.h"
@@ -212,6 +209,7 @@ mw0lge@grange-lane.co.uk
 #include <QTimer>
 #include <QKeyEvent>
 #include "FloatingContainer.h"
+#include "core/AppSettings.h"
 #include "core/BoardCapabilities.h"
 #include "core/LogCategories.h"
 #include "gui/meters/MeterWidget.h"
@@ -244,6 +242,7 @@ mw0lge@grange-lane.co.uk
 #include <QPainter>
 #include <QResizeEvent>
 #include <QScopedValueRollback>
+#include <QSignalBlocker>
 #include <QScreen>
 #include <algorithm>
 
@@ -482,6 +481,11 @@ void ContainerWidget::buildUI()
     }
     new QVBoxLayout(m_contentHolder);
     m_contentHolder->layout()->setContentsMargins(0, 0, 0, 0);
+    // HF-Auto's MMIO control strip sits above the imported meter face; it is
+    // hidden for every other container and for non-HF-Auto helper kinds.
+    m_hfAutoControls = new HfAutoControls(m_contentHolder);
+    m_hfAutoControls->hide();
+    m_contentHolder->layout()->addWidget(m_hfAutoControls);
     mainLayout->addWidget(m_contentHolder, 1);
 
     // Resize grip (bottom-right, hidden until hover)
@@ -823,10 +827,6 @@ void ContainerWidget::setPopOutShell(bool shell)
     updateTitleBar();
     // Workspace preview: a popped-out object's window has its own resize rule.
     updateChrome();
-    // Only a container that asked for a clear background pays for the restyle.
-    if (m_clearFloatingBackground) {
-        applyFloatingClear();
-    }
 }
 void ContainerWidget::setHeaderMode(HeaderMode mode)
 {
@@ -974,9 +974,6 @@ void ContainerWidget::setContent(QWidget* widget)
             child->installEventFilter(this);
         }
         layout->addWidget(m_content);
-        if (m_clearFloatingBackground) {
-            applyFloatingClear();
-        }
     }
     emit contentChanged(m_content);
 }
@@ -1021,13 +1018,6 @@ void ContainerWidget::updateTitle()
 
 void ContainerWidget::setupBorder()
 {
-    if (floatingClearActive()) {
-        // The window around the meter is clear. The meter paints itself.
-        setAttribute(Qt::WA_StyledBackground, true);
-        setAutoFillBackground(false);
-        setStyleSheet(QStringLiteral("ContainerWidget { background: transparent; border: none; }"));
-        return;
-    }
     // Thetis ucMeter.cs:640-643, extended with highlight outline
     // (Phase 3G-6). When m_highlighted the accent outline overrides the
     // normal border regardless of m_border, so the user always sees
@@ -1087,7 +1077,7 @@ void ContainerWidget::setDockMode(DockMode mode)
     // Never below what the content needs either (JJ, 2026-10-08).
     setMinimumWidth(qMax(kMinContainerWidth, m_contentMinimumWidth));
 
-    if (m_groupHeader && !m_clearFloatingBackground) {
+    if (m_groupHeader) {
         // Workspace preview: a free or floating container covers whatever
         // lies beneath it (VFO flags, the spectrum) with the opaque panel
         // surface over its whole rect, the plate's rounded corners included.
@@ -1097,8 +1087,6 @@ void ContainerWidget::setDockMode(DockMode mode)
         surface.setColor(QPalette::Window, contentBackground(QColor::fromRgba(kLegacyContentBackground)));
         setPalette(surface);
         setAutoFillBackground(covers);
-    } else if (m_clearFloatingBackground) {
-        applyFloatingClear();
     }
 
     if (changed) {
@@ -1209,84 +1197,34 @@ void ContainerWidget::setNotes(const QString& notes)
     emit notesChanged(m_notes);
 }
 
+// The HF-Auto container no longer carries a TF switch in its header. The
+// main console TF button and the Options checkbox own that setting. Clear
+// any button a previously loaded workspace may have created.
+void ContainerWidget::setHelperKind(const QString& kind)
+{
+    m_helperKind = kind;
+    if (m_hfAutoControls) {
+        m_hfAutoControls->setVisible(kind == QLatin1String("helper.hfauto"));
+        updateGeometry();
+    }
+    if (m_btnFollow) {
+        m_btnFollow->deleteLater();
+        m_btnFollow = nullptr;
+    }
+    if (m_groupHeader) { m_groupHeader->setTunerFollowVisible(false); }
+}
+
 void ContainerWidget::setBackgroundColor(const QColor& color)
 {
     if(!color.isValid() || m_backgroundColor==color) {return;}
     m_backgroundColor=color;
     publishUserBackground();
-    applyContentBackground();
-}
-
-void ContainerWidget::setClearFloatingBackground(bool clear)
-{
-    // The usual load leaves this off. Restyling every container here made
-    // workspace restore slower, so an unchanged off state does nothing.
-    if (m_clearFloatingBackground == clear) {
-        if (clear) {
-            applyFloatingClear();
-        }
-        return;
-    }
-    m_clearFloatingBackground = clear;
-    applyFloatingClear();
-}
-
-bool ContainerWidget::floatingClearActive() const
-{
-    return m_clearFloatingBackground;
-}
-
-void ContainerWidget::applyContentBackground()
-{
-    if (!m_contentHolder) {
-        return;
-    }
-    if (floatingClearActive()) {
-        m_contentHolder->setAutoFillBackground(false);
-        // Scoped to this holder. An unscoped rule would paint every child,
-        // including the S-Meter's right-click menu, the same way.
-        m_contentHolder->setObjectName(QStringLiteral("containerContentHolder"));
-        m_contentHolder->setStyleSheet(QStringLiteral(
-            "QWidget#containerContentHolder { background: transparent; }"));
-        return;
-    }
-    if (m_groupHeader && m_backgroundColor.rgba() == kLegacyContentBackground) {
+    if (m_groupHeader && color.rgba() == kLegacyContentBackground) {
         // Workspace preview: the default background is the glass plate.
-        m_contentHolder->setObjectName(QStringLiteral("containerContentHolder"));
-        m_contentHolder->setStyleSheet(QStringLiteral(
-            "QWidget#containerContentHolder { background: transparent; }"));
+        m_contentHolder->setStyleSheet(QStringLiteral("background: transparent;"));
         return;
     }
-    m_contentHolder->setObjectName(QStringLiteral("containerContentHolder"));
-    m_contentHolder->setStyleSheet(QStringLiteral(
-        "QWidget#containerContentHolder { background: %1; }").arg(m_backgroundColor.name(QColor::HexArgb)));
-}
-
-void ContainerWidget::applyFloatingClear()
-{
-    const bool clear = floatingClearActive();
-    if (auto* form = qobject_cast<FloatingContainer*>(window())) {
-        // Only a floating window can show the desktop. A docked container
-        // clears its own plate and leaves the main window opaque.
-        form->setClearBackground(clear && (isFloating() || m_popOutShell));
-    }
-    if (m_groupHeader) {
-        // A floating container normally covers what is under it. A clear
-        // background does not.
-        const bool covers = m_dockMode != DockMode::PanelDocked && !clear;
-        QPalette surface = palette();
-        surface.setColor(QPalette::Window, clear ? Qt::transparent
-                                                 : contentBackground(QColor::fromRgba(kLegacyContentBackground)));
-        setPalette(surface);
-        setAutoFillBackground(covers);
-    } else if (clear) {
-        setAutoFillBackground(false);
-    }
-    applyContentBackground();
-    setupBorder();
-    if (auto* host = qobject_cast<ContainerContentHost*>(m_content)) {
-        host->setClearBackground(clear);
-    }
+    m_contentHolder->setStyleSheet(QStringLiteral("background: %1;").arg(color.name(QColor::HexArgb)));
 }
 
 // Before the content holder's stylesheet changes, so the meters it
@@ -1328,7 +1266,9 @@ bool ContainerWidget::sizingHeightNow() const
 int ContainerWidget::naturalHeight() const
 {
     const auto* host = qobject_cast<const ContainerContentHost*>(m_content);
-    return (host ? host->preferredContentHeight() : 0) + headerExtent();
+    const int controlsHeight = (m_hfAutoControls && !m_hfAutoControls->isHidden())
+        ? m_hfAutoControls->sizeHint().height() : 0;
+    return (host ? host->preferredContentHeight() : 0) + headerExtent() + controlsHeight;
 }
 
 void ContainerWidget::setTitleBarVisible(bool visible)
@@ -1483,13 +1423,7 @@ void ContainerWidget::leaveEvent(QEvent* event)
 bool ContainerWidget::eventFilter(QObject* watched, QEvent* event)
 {
     // Workspace preview: Escape cancels a drag or an edge drag; nothing of
-    // it is kept. While one runs Escape is claimed, so no window-wide key
-    // takes it first (KeyboardRouter asks with ShortcutOverride).
-    if (m_groupHeader && (m_edgePressed || m_dragging) && event->type() == QEvent::ShortcutOverride
-        && static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape) {
-        event->accept();
-        return true;
-    }
+    // it is kept.
     if (m_groupHeader && (m_edgePressed || m_dragging) && event->type() == QEvent::KeyPress
         && static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape) {
         if (m_edgePressed) {
@@ -2147,6 +2081,7 @@ QString ContainerWidget::serialize() const
     p << (m_hiddenByMacro ? QStringLiteral("true") : QStringLiteral("false")); // 22
     p << dockModeToString(m_dockMode);                                      // 23 (NereusSDR extension)
     p << (m_titleBarVisible ? QStringLiteral("true") : QStringLiteral("false")); // 24 (Phase 3G-6)
+    p << (m_lockItemPositions ? QStringLiteral("true") : QStringLiteral("false")); // 25 (Thetis LockItemPositions)
     return p.join(QLatin1Char('|'));
 }
 
@@ -2225,6 +2160,11 @@ bool ContainerWidget::deserialize(const QString& data)
     // Field 24: Phase 3G-6 title-bar visibility toggle
     if (p.size() > 24) {
         setTitleBarVisible(p[24].toLower() == QStringLiteral("true"));
+    }
+
+    // Field 25: Thetis ucMeter.LockItemPositions
+    if (p.size() > 25) {
+        setLockItemPositions(p[25].toLower() == QStringLiteral("true"));
     }
 
     qCDebug(lcContainer) << "Deserialized:" << m_id << "rx:" << m_rxSource

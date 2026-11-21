@@ -123,6 +123,7 @@
 
 #include <QDialog>
 #include <QPointer>
+class QTimer;
 #include <QHash>
 #include <array>
 
@@ -159,6 +160,15 @@ class TxEqDialog : public QDialog {
     Q_OBJECT
 
 public:
+    // The two layouts, each persisted as its range only. Every band is
+    // rebuilt from the range by the proportional rescale.
+    struct FollowSnapshot {
+        bool valid{false};
+        bool legacy{false};
+        double low{0.0};
+        double high{0.0};
+    };
+
     explicit TxEqDialog(RadioModel* radio, QWidget* parent = nullptr);
     ~TxEqDialog() override;
 
@@ -213,6 +223,15 @@ private slots:
     void onParametricLogScaleToggled(bool on);
     void onParametricUseQFactorsToggled(bool on);
     void onParametricLiveUpdateToggled(bool on);
+    void applyFilterEdgesFromModel();
+    void applyLegacyFollowEdges(int lowHz, int highHz);
+    void updateFollowEnabled();
+    void captureFollowSnapshot();
+    void restoreFollowSnapshot();
+    FollowSnapshot currentSnapshot() const;
+    void applySnapshot(const FollowSnapshot& snapshot);
+    void storeSnapshot(const QString& key, const FollowSnapshot& snapshot);
+    FollowSnapshot loadSnapshot(const QString& key) const;
     void onParametricFreqSpinChanged(int hz);
     void onParametricGainSpinChanged(double db);
     void onParametricQSpinChanged(double q);
@@ -330,8 +349,27 @@ private:
     QCheckBox*      m_paraLogScaleChk     = nullptr;
     QCheckBox*      m_paraUseQFactorsChk  = nullptr;
     QCheckBox*      m_paraLiveUpdateChk   = nullptr;
+    QCheckBox*      m_followFilterChk     = nullptr;
+    QWidget*        m_rangeRow            = nullptr;
+    QTimer*         m_followFilterTimer   = nullptr;
+    QTimer*         m_livePushTimer       = nullptr;
+    // The two layouts, each persisted as its range only: Follow-off and
+    // Follow-on. Every band is rebuilt from the range by the proportional
+    // rescale, so no per-band data needs storing.
+    FollowSnapshot m_manualSnapshot;   // last Follow-off layout
+    FollowSnapshot m_followSnapshot;   // last Follow-on layout
+    // False until the profile has actually hydrated this dialog. Nothing is
+    // captured, rescaled or written before then, so an unloaded curve can
+    // never be saved over the real one (the OC-matrix failure mode).
+    bool m_eqSynced{false};
     QDoubleSpinBox* m_paraLowSpin         = nullptr;
     QDoubleSpinBox* m_paraHighSpin        = nullptr;
+    QDoubleSpinBox* m_paraGainMaxSpin     = nullptr;
+    QCheckBox*      m_spectrumChk          = nullptr;
+    QSpinBox*       m_spectrumFloorSpin   = nullptr;
+    QLabel*         m_audioFloorLabel     = nullptr;
+    QTimer*         m_spectrumTimer        = nullptr;
+    QDoubleSpinBox* m_paraGainMinSpin     = nullptr;
     QRadioButton*   m_paraBands5Radio     = nullptr;
     QRadioButton*   m_paraBands10Radio    = nullptr;
     QRadioButton*   m_paraBands18Radio    = nullptr;

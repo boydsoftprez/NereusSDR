@@ -149,6 +149,9 @@ private:
     // The fixed tune power spin box is live only for "Use Fixed Drive" and
     // only while the settings gate is open.
     void applyFixedTuneSpinGate();
+    // P-TU carrier fit note: window, duty, ramp and whether the pulse fits.
+    // From Thetis setup.cs updateTunePulseInfo (window >= duty + 2*ramp).
+    void updatePulseTuneInfo();
     void buildPowerGroup();         // H.4: Max Power slider + ATT-on-TX + Force-ATT
     void buildTuneGroup();          // Issue #175 Task 8: grpPATune (Tune source + meter + fixed-mode pwr)
     void buildSwrProtectionGroup();
@@ -209,6 +212,13 @@ private:
     QButtonGroup*    m_tuneDriveButtons{nullptr};
     QComboBox*       m_comboTxTunMeter{nullptr};
     QDoubleSpinBox*  m_fixedTunePwrSpin{nullptr};
+
+    // Pulsed tune (P-TU) carrier: rate, duty and ramp, plus the fit note.
+    // From Thetis setup grpPulsedTune (nudPulsedTune_window/_percent/_ramp).
+    QSpinBox*        m_pulseRateSpin{nullptr};
+    QSpinBox*        m_pulseDutySpin{nullptr};
+    QSpinBox*        m_pulseRampSpin{nullptr};
+    QLabel*          m_pulseInfoLabel{nullptr};
 
     // Section: SWR Protection (Task 9)
     // grpSWRProtectionControl per setup.designer.cs:5793-5924 [v2.10.3.13]

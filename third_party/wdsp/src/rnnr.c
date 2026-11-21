@@ -201,7 +201,7 @@ void SetRXARNNRRun (int channel, int run)
 	{
 		EnterCriticalSection (&ch[channel].csDSP);
 		a->run = run;
-		RXAbp1Check (channel); // NR3 + NR4 support [original inline comment from rnnr.c:169]
+		RXAbp1Update (channel); // NR3 + NR4 support [original inline comment from rnnr.c:169]
 		RXAbp1Set (channel);
 		LeaveCriticalSection (&ch[channel].csDSP);
 	}

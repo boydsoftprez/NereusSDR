@@ -66,10 +66,6 @@
 //   2026-10-08: Rotor control plan Task 4b: the `rotor` tool, offered when
 //               a rotor is set up on the Core (Inputs' rotorConfigured). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
-//   2026-11-16: Recording plan Task 17: the `recordings` tool, offered when
-//               the Core runs the recordings service (Inputs'
-//               recordingService). J.J. Boyd (KG4VCF), AI-assisted via
-//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/BoardCapabilities.h"
@@ -143,10 +139,6 @@ public:
         /// control v1, "Tools catalogue"). Without one it is listed, not
         /// offered.
         bool rotorConfigured = false;
-        /// Recording plan Task 17: the Core runs the recordings service
-        /// (RadioModel::recordingService(), a model that runs the radio),
-        /// so the Recordings tool is offered.
-        bool recordingService = false;
         /// iPhone app plan Task 23 (R-IOS-09): the Opus profiles the
         /// catalogue's `audio.opusProfiles` lists, the station's measured
         /// table (kOpusMeasuredProfiles) unless a test removes one.

@@ -9,10 +9,6 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-11-16: m_voiceKeyerApplet and showVoiceKeyerPanel() (recording plan Task 12).
-//                J.J. Boyd (KG4VCF), AI-assisted implementation via Anthropic Claude Code.
-//   2026-11-15: m_recordingsApplet and openRecordingsWindow() (recording plan Task 7).
-//                J.J. Boyd (KG4VCF), AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-05: applyDisplayPillFps(), windowPaintFps(), applyWindowPaintFps():
 //               each window on a Core keeps its own paint rate. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -323,6 +319,7 @@
 
 #include "gui/widgets/CpuRowCycler.h"
 #include "models/Band.h"
+#include "models/FrequencyMemoryStore.h"
 #include <array>
 #include <chrono>
 #include <functional>
@@ -330,6 +327,7 @@
 #include <optional>
 #include <map>
 #include <utility>
+#include <QDateTime>
 #include <QMainWindow>
 #include <QLabel>
 #include <QAction>
@@ -365,6 +363,7 @@ class QSlider;
 class QSplitter;
 class QMenu;
 class QDialog;
+class QPushButton;
 
 namespace NereusSDR {
 
@@ -1113,6 +1112,11 @@ private slots:
 
     void onConnectionStateChanged();
 
+    /// Refresh the Anvelina PRO3 24-bit badge in the STATION block from the
+    /// radio's reported HwRev. Also called when discovery reports the radio,
+    /// so a saved/manual entry that connected before the reply still lights.
+    void updateStationBitDepthBadge();
+
     /// Open the radio list / scan panel.
     ///
     /// Remote-daemon R2 Task 20: this is the single choke point for ELEVEN
@@ -1253,6 +1257,11 @@ private slots:
     // Lazy-constructs on first invocation; subsequent calls show + raise the
     // existing instance so geometry persists across opens.
     void openPureSignalDialog();
+    // Recordings (imported feature): the list window, with a recording to
+    // select (empty for none).
+    void openRecordingsWindow(const QString& recordingId = QString());
+    PsForm* ensurePsForm();
+    void restoreAmpViewOnStartup();
     // Phase 3J-2 H1: open the modeless Spot Hub / FreeDV Reporter dialogs
     // (Tools menu). Same lazy-construction pattern as openPureSignalDialog;
     // both dialogs are single-instance for the lifetime of MainWindow.
@@ -1485,8 +1494,31 @@ private:
     void buildUI();
     void buildMenuBar();
     void buildStatusBar();
+    // Frequency memories: save/recall a named snapshot of the active slice.
+    void rebuildMemoryMenu();
+    void saveCurrentMemory();
+    void updateMemoryDialog();
+    void updateMemoryFromCurrent(const QString& id);
+    void recallMemory(const QString& id);
+    void manageMemories();
+    FrequencyMemory memoryFromCurrent() const;
+    bool applyMemory(const FrequencyMemory& memory);
+    QString memoryLabel(const FrequencyMemory& memory) const;
+    // Mirrors HelperApps in the Helpers menu and the status-bar segment.
+    void updateHelperStatusButton();
     void applyDarkTheme();
     void tryAutoReconnect();
+    // Thetis AutoPowerOnNow's retry window: the radio may still be booting
+    // after the start script switched its relay. A failed startup connect is
+    // retried every 3 s for 60 s, quietly, instead of showing the failure at
+    // once.
+    void scheduleAutoConnectRetry();
+    void reportAutoConnectFailure(const QString& mac, bool timeout);
+    // Startup readiness: while waiting for the saved radio to answer
+    // discovery, one short probe per tick keeps asking without building a
+    // connection (and its audio chain) that would be torn down again.
+    void pollStartupDiscovery();
+    void finishStartupDiscoveryWait();
     void wireSliceToSpectrum();
 
     /// R1 Task 4 fix round 1 (reviewer Finding 2): the one place that sets
@@ -1946,6 +1978,44 @@ private:
     // transmit gate in a remote session (R-R3-21, R-R3-25).
     QAction* m_actTestAntennaToast{nullptr};
     QAction* m_actTestTxBoundReRoute{nullptr};
+    // Helpers menu (WaveNode / HF-Auto) and the status-bar segment that
+    // shows which optional helpers are on. Both follow HelperApps.
+    QAction* m_actHelperWaveNode{nullptr};
+    QAction* m_actHelperHfAuto{nullptr};
+    QPushButton* m_helperStatusButton{nullptr};
+    QWidget* m_voiceKeyerWindow{nullptr};   // port step 4: voice keyer window
+    // The last helper/MMIO failure, shown in the status flag until the
+    // helper is enabled again.
+    QString m_helperFaultText;
+    // HF-Auto is owned by the MMIO helper: Nereus sends Tuner Follow and the
+    // TX frequency to its command socket instead of binding the CAT port.
+    void applyTunerFollow();
+    void sendHfAutoFrequency();
+    void sendHfAutoStartupFrequency();
+    void syncHfAutoFollowFromHelper();
+    bool m_tunerFollowCatEnabled{false};
+    bool m_tunerFollowCatWasEnabled{false};
+    int m_tunerFollowObserverId{-1};
+    QTimer* m_hfAutoFollowTimer{nullptr};
+    qint64 m_hfAutoLastFrequency{-1};
+    // The frequency captured when the helper started. With TF off only this
+    // one value seeds the tuner; a later memory change never replaces it.
+    qint64 m_hfAutoStartupSeedHz{0};
+    int m_hfAutoStartupSeedSends{0};
+    // TF is sent only when it changes (the helper logs every command).
+    bool m_hfAutoFollowSentValid{false};
+    bool m_hfAutoFollowSent{false};
+    QDateTime m_hfAutoHandshakeUntil;
+    // A startup recheck window: the helper's command socket can bind after
+    // the first TF datagram, so for a short time the saved TF state wins over
+    // the helper's report and is re-sent until it takes.
+    QDateTime m_hfAutoFollowVerifyUntil;
+    bool m_hfFollowSampleValid{false};
+    bool m_hfFollowSample{false};
+    // Retained for the startup-read bookkeeping in older settings; the MMIO
+    // path sends the starting frequency directly and never opens a listener.
+    bool m_hfAutoStartupReadDone{false};
+    bool m_hfAutoStartupReadActive{false};
 
     // Phase 3J-2 H1: Tools > Spot Hub... and Tools > FreeDV Reporter...
     // modeless singleton dialogs. Lazy-constructed on first
@@ -2202,6 +2272,26 @@ private:
     // Task 17: auto-reconnect guard — prevents the background attempt from
     // interfering with a subsequent user-initiated Start Discovery.
     bool m_autoReconnectInProgress{false};
+    // Startup connect retry (Thetis AutoPowerOnNow): active only for the
+    // launch attempt, bounded to 60 s, one retry in flight at a time.
+    bool m_startupAutoConnect{false};
+    // Startup waits for the saved radio to answer discovery instead of
+    // opening a full connection while it is silent (see tryAutoReconnect).
+    bool m_autoConnectWaitingForRadio{false};
+    QString m_autoConnectProbeAddress;   // saved IP, display string
+    QString m_autoConnectProbeMac;       // saved MAC (empty/ MANUAL: for a manual address)
+    QString m_autoConnectProbeTarget;    // saved entry key, for the failure report
+    quint16 m_autoConnectProbePort{1024};
+    QTimer* m_autoConnectDiscoveryTimer{nullptr};
+    // True only after this window has held a connection at least once. The
+    // radio name is restored from the saved entry before the first attempt,
+    // so it cannot stand for "was connected" (the disconnect auto-open used
+    // to fire on the very first failed launch because of it).
+    bool m_hasBeenConnected{false};
+    bool m_autoConnectRetryPending{false};
+    QDateTime m_autoConnectRetryUntil;
+    QString m_autoConnectRetryMac;
+    bool m_autoConnectRetryTimeout{false};
 
     // Set true at the top of closeEvent (and aboutToQuit). Gates the
     // "auto-open ConnectionPanel on Disconnect" slot — without this,
@@ -2580,14 +2670,6 @@ private:
     class TunerApplet*      m_tunerApplet{nullptr};
     class RotorApplet*      m_rotorApplet{nullptr};
     class RoundtableApplet* m_roundtableApplet{nullptr};  // Roundtable plan Task 13
-    class RecordingsPanel*  m_recordingsApplet{nullptr};  // Recording plan Task 7
-    // Recording plan Task 7: All recordings... on a flag or in the panel,
-    // with the recording to select (empty for none).
-    void openRecordingsWindow(const QString& recordingId);
-    class VoiceKeyerApplet* m_voiceKeyerApplet{nullptr};  // Recording plan Task 12
-    // Recording plan Task 12: VOICE's panel link (n 0) or an empty message
-    // (n 1 to 8): shows the Voice keyer applet, Record lit for message n.
-    void showVoiceKeyerPanel(int n);
     bool m_roundtableRefreshPending{false};               // latest trailing sample
     QTimer* m_roundtableRefreshTimer{nullptr};
     QHash<QString, QString> m_roundtableRoomStructures;
@@ -2605,6 +2687,10 @@ private:
 
     // Phase 3P-III Task 14: RF-Kit RF2K-S applet.
     class Rf2ksApplet*      m_rfKitApplet{nullptr};
+
+    // Recordings applet (imported feature): the latest recordings, quick to
+    // listen to; its All recordings... opens the Recordings window.
+    class RecordingsPanel*  m_recordingsApplet{nullptr};
 
     // Phase 23: TCI server + applets.
     // m_tciServer is nullptr in non-WebSocket builds (HAVE_WEBSOCKETS not defined).
@@ -2705,6 +2791,10 @@ private:
     // Phase 3O Sub-Phase 10 Task 10c: host strip for the menu bar +
     // MasterOutputWidget. Owned by QMainWindow via setMenuWidget().
     TitleBar* m_titleBar{nullptr};
+
+    // Frequency memories (operator-level; persisted in AppSettings).
+    FrequencyMemoryStore m_memoryStore;
+    QMenu* m_memoriesMenu{nullptr};
 
     // Phase 3P-II Phase 4 Task 97 / R-R3-47: the power-cap alert count this
     // window has already shown (the Core de-bounces; see onPowerCapAlertChanged).

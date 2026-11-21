@@ -151,6 +151,12 @@ public:
     void setHeightRatio(float r) { m_heightRatio = r; }
     float heightRatio() const { return m_heightRatio; }
 
+    // Caption height as a fraction of the button cell height.  0.40 is the
+    // long-standing default; the editor offers 10-100 %.
+    void setTextScale(float s) { m_textScale = s; m_textScaleExplicit = true; }
+    float textScale() const { return m_textScale; }
+    bool hasExplicitTextScale() const { return m_textScaleExplicit; }
+
     // Button count
     int buttonCount() const { return m_buttonCount; }
 
@@ -296,6 +302,8 @@ private:
     float m_margin{0.0f};
     float m_cornerRadius{3.0f};
     float m_heightRatio{1.0f};
+    float m_textScale{0.40f};       // caption height / cell height
+    bool  m_textScaleExplicit{false};
     uint32_t m_visibleBits{0xFFFFFFFF};
     bool m_fadeOnRx{false};
     bool m_fadeOnTx{false};

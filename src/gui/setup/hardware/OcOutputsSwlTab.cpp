@@ -210,7 +210,10 @@ void OcOutputsSwlTab::buildMatrixGrid(QGroupBox* group, bool tx)
             // Captures band/pin/tx by value for the lambda lifetime.
             connect(cb, &QCheckBox::toggled, this,
                     [this, band, pin, tx](bool checked) {
-                        if (m_syncing) { return; }
+                        if (m_syncing || !m_ocMatrix
+                            || !m_ocMatrix->isLoaded()) {
+                            return;
+                        }
                         if (m_ocMatrix) {
                             m_ocMatrix->setPin(band, pin, tx, checked);
                         }

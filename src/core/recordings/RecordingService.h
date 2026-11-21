@@ -538,6 +538,11 @@ private:
     QList<RecordingVolume> dsrVolumes() const;
     void applyDsr();
     void startDsr(const QString& path, qint64 limitBytes);
+    // Imported feature fix: tell the recorder every receiver's centre and
+    // rate it can see now. The recorder may start before the radio's streams
+    // exist, and a lane with no centre would shift the past by the whole RF
+    // frequency (noise). Idempotent.
+    void syncDsrStreams();
     void stopDsr();
     void checkDsrDisk();
     void updateDsrDiskTimer();
@@ -649,6 +654,10 @@ private:
     mutable std::atomic<int> m_pullsInFlight{0};
     quint64 m_nextPlayToken = 1;
     QTimer* m_quietTimer = nullptr;
+    // Imported feature fix: while the recorder runs, keep handing it every
+    // receiver's centre and rate. The recorder can start before the radio's
+    // streams exist, and a lane with no centre records zeros.
+    QTimer* m_dsrSyncTimer = nullptr;
     // Set while a caller that tells the playback's change itself ends what
     // is on the air, so endOnAir does not tell it first.
     bool m_quietOnAirEnd = false;

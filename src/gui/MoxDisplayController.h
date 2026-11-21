@@ -107,6 +107,12 @@ public:
     void setKeyed(bool keyed, int txSliceId);
     bool isKeyed() const { return m_keyed; }
 
+    /// TX audio check (TX/N): show the transmit panadapter/waterfall while
+    /// the radio stays unkeyed. The RF/frequency view is the same as a real
+    /// MOX; the transmit state and meters are not.
+    void setTxAudioCheckDisplay(bool on, int txSliceId);
+    bool isTxAudioCheckDisplay() const { return m_txAudioCheckDisplay; }
+
     /// Window-local presentation preference, seeded from the existing saved
     /// Show Two-tone Measurements key and current/late coordinator state.
     /// Two-tone truth comes from the local/remote PureSignal session facade.
@@ -206,6 +212,7 @@ private:
     std::function<int(const QString&)> m_panBand;
 
     bool m_keyed{false};
+    bool m_txAudioCheckDisplay{false};
     // Parity Task 31: the window's DUP setting; what the pan did last
     // (displayDuplex() when it was applied); whether the transmit view runs.
     bool m_wantDuplex{false};

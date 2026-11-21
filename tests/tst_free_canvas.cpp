@@ -160,13 +160,13 @@ private slots:
         // Disabled, never hidden (2026-10-16): unavailable, it is grayed in place.
         registry.setAvailable("applet:rx",false);QVERIFY(!native->isHidden());QVERIFY(!native->isEnabled());QCOMPARE(registry.singletonView("applet:rx"),borrowed.data());
         registry.setAvailable("applet:rx",true);QVERIFY(!native->isHidden());QVERIFY(native->isEnabled());QCOMPARE(poller.targetCountForTest(),2);
-        auto locked=store.snapshot();locked.containers[0].locked=true;QCOMPARE(manager.commitWorkspace(locked,locked.revision).status,CommitStatus::Saved);
+        auto locked=store.snapshot();locked.containers[0].lockItemPositions=true;QCOMPARE(manager.commitWorkspace(locked,locked.revision).status,CommitStatus::Saved);
         const auto lockedSaved=store.snapshot();gesture(grip,{20,20});QCOMPARE(store.snapshot(),lockedSaved);
         QCOMPARE(host->captureDocument().contents[0].freeCanvasRect(),lockedSaved.containers[0].contents[0].freeCanvasRect());
         QCOMPARE(host->captureDocument().contents[0].canvasRect,a.canvasRect);
         const QString capture=qEnvironmentVariable("CANVAS_CAPTURE_DIR");
         if(!capture.isEmpty()) {QVERIFY(QDir().mkpath(capture));QVERIFY(root.grab().save(capture+"/committed-mixed-native.png"));}
-        auto unlocked=store.snapshot();unlocked.containers[0].locked=false;QCOMPARE(manager.commitWorkspace(unlocked,unlocked.revision).status,CommitStatus::Saved);
+        auto unlocked=store.snapshot();unlocked.containers[0].lockItemPositions=false;QCOMPARE(manager.commitWorkspace(unlocked,unlocked.revision).status,CommitStatus::Saved);
         const auto appletRect=store.snapshot().containers[0].contents[2].freeCanvasRect();ContainerArrangeController arrange(store,&manager);
         QVERIFY(arrange.popOut(applet.id).ok);QCOMPARE(registry.singletonView("applet:rx"),borrowed.data());QCOMPARE(poller.targetCountForTest(),2);
         QVERIFY(arrange.returnEntry(applet.id).ok);QCOMPARE(registry.singletonView("applet:rx"),borrowed.data());QCOMPARE(poller.targetCountForTest(),2);
@@ -224,10 +224,11 @@ private slots:
         add("meter.clock");add("applet:rx");const auto draft=dialog.editSession()->draft();QCOMPARE(draft.containers[0].layout,ContentLayout::FreeCanvas);QCOMPARE(draft.containers[0].contents[0],a);QCOMPARE(draft.containers[0].contents[1],opaque);
         QCOMPARE(draft.containers[0].contents.size(),4);QVERIFY(draft.containers[0].contents[2].freeCanvasRect());QVERIFY(draft.containers[0].contents[3].freeCanvasRect());
         auto* contents=dialog.findChild<QListWidget*>("containerDraftContents");contents->setCurrentRow(0);
-        QCheckBox* lock=nullptr;for(auto* box:dialog.findChildren<QCheckBox*>()) {if(box->text()=="Lock") {lock=box;break;}}QVERIFY(lock);lock->setChecked(true);
+        QCheckBox* lock=nullptr;QCheckBox* lockItems=nullptr;for(auto* box:dialog.findChildren<QCheckBox*>()) {if(box->text()=="Lock") {lock=box;}if(box->text()=="Lock items") {lockItems=box;}}QVERIFY(lock);QVERIFY(lockItems);lock->setChecked(true);
         auto locked=dialog.editSession()->draft();auto* seed=dialog.findChild<QPushButton*>("seedFreeCanvas");QVERIFY(!seed->isEnabled());seed->click();
+        lockItems->setChecked(true);
         auto* numeric=dialog.findChild<QDoubleSpinBox*>("canvasX");QVERIFY(numeric && !numeric->isEnabled());numeric->setValue(400);QCOMPARE(dialog.editSession()->draft(),locked);
-        lock->setChecked(false);QVERIFY(seed->isEnabled());seed->click();const auto seeded=dialog.editSession()->draft();QCOMPARE(seeded.containers[0].layout,ContentLayout::FreeCanvas);QCOMPARE(seeded.containers[0].contents[1],opaque);
+        lock->setChecked(false);lockItems->setChecked(false);QVERIFY(seed->isEnabled());seed->click();const auto seeded=dialog.editSession()->draft();QCOMPARE(seeded.containers[0].layout,ContentLayout::FreeCanvas);QCOMPARE(seeded.containers[0].contents[1],opaque);
         QVERIFY(seeded.containers[0].contents[0].freeCanvasRect()->x()>=0);QCOMPARE(seeded.containers[0].contents[0].canvasRect,a.canvasRect);
         QCOMPARE(dialog.applyDraft().status,CommitStatus::Saved);ContainerWorkspaceStore reloaded(settings);QVERIFY(reloaded.load().ok);QCOMPARE(reloaded.snapshot(),store.snapshot());QCOMPARE(reloaded.snapshot().containers[0].contents[1],opaque);dialog.reject();
     }

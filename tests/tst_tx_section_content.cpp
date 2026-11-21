@@ -34,8 +34,6 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-11-16 - The keying row has a VOICE part (recording plan Task 12).
-//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - A row's parts show, hide and order from the entry config.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - The property editor does not call a row unsupported.
@@ -923,9 +921,9 @@ private slots:
         registerTxSectionContent(registry, &applet);
 
         const QVector<ContentProperty> properties = registry.declaredProperties(QStringLiteral("tx.keying"));
-        // The slice indicators keep their key and their place; TUNE, MOX,
-        // VOICE (recording plan Task 12) and the order follow.
-        QCOMPARE(properties.size(), 5);
+        // The slice indicators keep their key and their place; TUNE and MOX
+        // and the order follow.
+        QCOMPARE(properties.size(), 4);
         QCOMPARE(properties.at(0).key, QStringLiteral("hideSliceIndicators"));
         QCOMPARE(properties.at(0).label, QStringLiteral("Hide slice indicators"));
 
@@ -1307,18 +1305,18 @@ private slots:
         down->click();
         QCOMPARE(edited.count(), 1);
         QCOMPARE(qvariant_cast<ContentEntry>(edited.last().at(0)).config.value(QStringLiteral("order")),
-                 QJsonValue(QJsonArray{"mox", "tune", "voice", "sliceIndicators"}));
+                 QJsonValue(QJsonArray{"mox", "tune", "sliceIndicators"}));
         QCOMPARE(list->item(0)->text(), QStringLiteral("MOX button"));
         QCOMPARE(list->currentRow(), 1);
 
         // The slice indicators move above the whole line.
-        list->setCurrentRow(3);
+        list->setCurrentRow(2);
         up->click();
         QCOMPARE(qvariant_cast<ContentEntry>(edited.last().at(0)).config.value(QStringLiteral("order")),
-                 QJsonValue(QJsonArray{"sliceIndicators", "mox", "tune", "voice"}));
+                 QJsonValue(QJsonArray{"sliceIndicators", "mox", "tune"}));
         down->click();
         QCOMPARE(qvariant_cast<ContentEntry>(edited.last().at(0)).config.value(QStringLiteral("order")),
-                 QJsonValue(QJsonArray{"mox", "tune", "voice", "sliceIndicators"}));
+                 QJsonValue(QJsonArray{"mox", "tune", "sliceIndicators"}));
         list->setCurrentRow(0);
         down->click();
         QVERIFY(!qvariant_cast<ContentEntry>(edited.last().at(0)).config.contains(QStringLiteral("order")));

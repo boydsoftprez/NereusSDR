@@ -708,6 +708,20 @@ void AppSettings::load()
     m_preservedCorruptFilePath.clear();
     m_recoveredFromBackup      = false;
 
+    // First run after a fresh install: seed the operator's workspace from the
+    // copy shipped beside the executable (packaging\windows puts it in
+    // "defaults"). An existing settings file is never touched.
+    if (!QFileInfo::exists(m_filePath)) {
+        const QString seed = QCoreApplication::applicationDirPath()
+            + QStringLiteral("/defaults/NereusSDR.settings");
+        if (QFileInfo::exists(seed)) {
+            QDir().mkpath(QFileInfo(m_filePath).absolutePath());
+            if (QFile::copy(seed, m_filePath)) {
+                qInfo() << "Seeded settings from" << seed;
+            }
+        }
+    }
+
     const QString bakPath = m_filePath + QStringLiteral(".bak");
 
     // Try the main settings file first.
@@ -1523,6 +1537,8 @@ void AppSettings::saveRadio(const RadioInfo& info, bool pinToMac, bool autoConne
     setValue(prefix + QStringLiteral("firmwareVersion"), QString::number(info.firmwareVersion));
     setValue(prefix + QStringLiteral("firmwareBetaVersion"),
              QString::number(info.firmwareBetaVersion));
+    setValue(prefix + QStringLiteral("hardwareRevision"),
+             QString::number(info.hardwareRevision));
     // Only a real report replaces the saved one: an edit of the entry or a
     // hand-typed address has no reply to read it from.
     if (info.reportedReceivers > 0) {
@@ -1654,6 +1670,10 @@ std::optional<SavedRadio> AppSettings::savedRadio(const QString& macKey) const
     // Absent in a radio saved before 2026-10-12: none reported.
     sr.info.firmwareBetaVersion = value(prefix + QStringLiteral("firmwareBetaVersion"),
                                         QStringLiteral("0")).toInt();
+    // Absent in a radio saved before the Anvelina bit-depth indicator.
+    sr.info.hardwareRevision = static_cast<quint8>(
+        value(prefix + QStringLiteral("hardwareRevision"),
+              QStringLiteral("0")).toUInt());
     // Absent in a radio saved before 2026-11-06: none reported.
     sr.info.reportedReceivers = value(prefix + QStringLiteral("reportedReceivers"),
                                       QStringLiteral("0")).toInt();

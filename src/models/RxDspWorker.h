@@ -51,13 +51,6 @@
 //   2026-10-25 - streamSlicesForTest, a read-only test seam for the slices
 //                 a stream is fanned out to. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Claude Code.
-//   2026-11-16 - Rewind sound (recording plan Task 22): setSliceReplay, the
-//                 one switch on the receive path. A rewound slice's
-//                 demodulator takes its block from the Digital Spectrum
-//                 Recorder's replay instead of the stream's I/Q; every other
-//                 slice and the stream itself are unchanged.
-//                 NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
-//                 Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -277,16 +270,6 @@ public:
     DsrReplay* sliceReplay(int sliceIdx) const;
 
 #ifdef NEREUS_BUILD_TESTS
-    // Every block a slice's demodulator is handed in the stream fan-out
-    // (the stream's I/Q, or its replay while rewound), before the
-    // demodulator runs. Set before the first batch.
-    using SliceInputHookForTest =
-        void (*)(int sliceIdx, const float* i, const float* q, int samples);
-    void setSliceInputHookForTest(SliceInputHookForTest hook)
-    {
-        m_sliceInputHookForTest = hook;
-    }
-
     // Test-only: sleep this long at the start of every processed (not
     // skipped) batch, to simulate a DSP chain slower than real time.
     void setProcessingDelayUsForTest(int microseconds)
@@ -714,6 +697,7 @@ private:
     // returns true, or returns false when the slice is live (no replay, or
     // its replay has reached the newest second kept). DSP thread only.
     bool takeReplayBlock(int sliceIdx, int inSize);
+    // The observation point for a slice's input; a test seam, no-op here.
     void noteSliceInput(int sliceIdx, const float* i, const float* q, int samples);
     std::array<std::atomic<DsrReplay*>, kMaxReplaySlices> m_sliceReplays{};
     // How many slices have a replay; 0 skips the switch in one load.
@@ -724,9 +708,6 @@ private:
     // the scratch below.
     QVector<float> m_replayI;
     QVector<float> m_replayQ;
-#ifdef NEREUS_BUILD_TESTS
-    SliceInputHookForTest m_sliceInputHookForTest{nullptr};
-#endif
 
     // Reusable interleaved stereo scratch handed to AudioEngine::rxBlockReady.
     // Sized to outSize*2 on first use and reused in-place per batch so the

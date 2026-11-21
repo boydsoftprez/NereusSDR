@@ -3558,18 +3558,91 @@ void RxChannel::setFilterHigh(int highHz)
 void RxChannel::setEqEnabled(bool enabled)
 {
     m_eqEnabled = enabled;
+#ifdef HAVE_WDSP
+    // From Thetis wdsp/eq.c:656-661 - SetRXAEQRun is csDSP-protected and safe
+    // from the main thread while audio runs.
+    runOrdered([=, this]() { SetRXAEQRun(m_channelId, enabled ? 1 : 0); });
+#endif
 }
 
 void RxChannel::setEqPreamp(int preampDb)
 {
+    if (m_eqPreampDb == preampDb) { return; }
     m_eqPreampDb = preampDb;
+    std::array<int, 11> eq{};
+    eq[0] = m_eqPreampDb;
+    for (int i = 0; i < 10; ++i) { eq[static_cast<std::size_t>(i) + 1] = m_eqBandsDb[i]; }
+    setEqGraph10(eq);
 }
 
 void RxChannel::setEqBand(int bandIndex, int gainDb)
 {
-    if (bandIndex >= 0 && bandIndex < 10) {
-        m_eqBandsDb[bandIndex] = gainDb;
+    if (bandIndex < 0 || bandIndex >= 10) { return; }
+    if (m_eqBandsDb[bandIndex] == gainDb) { return; }
+    m_eqBandsDb[bandIndex] = gainDb;
+    std::array<int, 11> eq{};
+    eq[0] = m_eqPreampDb;
+    for (int i = 0; i < 10; ++i) { eq[static_cast<std::size_t>(i) + 1] = m_eqBandsDb[i]; }
+    setEqGraph10(eq);
+}
+
+void RxChannel::setEqGraph10(const std::array<int, 11>& preampPlusBands)
+{
+    m_eqPreampDb = preampPlusBands[0];
+    for (int i = 0; i < 10; ++i) {
+        m_eqBandsDb[i] = preampPlusBands[static_cast<std::size_t>(i) + 1];
     }
+#ifdef HAVE_WDSP
+    // From Thetis wdsp/eq.c:785-813 - SetRXAGrphEQ10(channel, rxeq); the
+    // array is [preamp, 10 bands] and it reallocates the impulse, so it runs
+    // on the ordered main-thread lane like the TX EQ push.
+    std::array<int, 11> eq = preampPlusBands;
+    runOrdered([this, eq]() {
+        SetRXAGrphEQ10(m_channelId, const_cast<int*>(eq.data()));
+    });
+#endif
+}
+
+void RxChannel::setEqProfile(const std::vector<double>& F, const std::vector<double>& G)
+{
+    if (F.size() < 2 || F.size() != G.size()) { return; }
+    std::vector<double> f = F;
+    std::vector<double> g = G;
+#ifdef HAVE_WDSP
+    // From Thetis wdsp/eq.c:706-721 - SetRXAEQProfile(channel, nfreqs, F, G);
+    // F/G hold nfreqs+1 entries (F[0] pad, G[0] preamp).
+    runOrdered([this, f = std::move(f), g = std::move(g)]() mutable {
+        SetRXAEQProfile(m_channelId, static_cast<int>(f.size()) - 1, f.data(), g.data());
+    });
+#endif
+}
+
+void RxChannel::readSiphonSamples(std::vector<float>& out, int count)
+{
+    out.assign(static_cast<std::size_t>(std::max(0, count)), 0.0f);
+    if (count <= 0) { return; }
+#ifdef HAVE_WDSP
+    // siphon.c:190 - lock-protected copy of the tap's ring; no DSP mutation.
+    RXAGetaSipF(m_channelId, out.data(), count);
+#endif
+}
+
+void RxChannel::setEqCtfmode(int mode)
+{
+#ifdef HAVE_WDSP
+    runOrdered([=, this]() { SetRXAEQCtfmode(m_channelId, mode); });
+#else
+    Q_UNUSED(mode);
+#endif
+}
+
+void RxChannel::setEqWintype(int wintype)
+{
+#ifdef HAVE_WDSP
+    runOrdered([=, this]() { SetRXAEQWintype(m_channelId, wintype); });
+#else
+    Q_UNUSED(wintype);
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -3728,9 +3801,13 @@ void RxChannel::applyState(const RxChannelState& s)
 
     // EQ
     setEqEnabled(s.eqEnabled);
-    setEqPreamp(s.eqPreampDb);
-    for (int i = 0; i < 10; ++i) {
-        setEqBand(i, s.eqBandsDb[i]);
+    {
+        std::array<int, 11> eq{};
+        eq[0] = s.eqPreampDb;
+        for (int i = 0; i < 10; ++i) {
+            eq[static_cast<std::size_t>(i) + 1] = s.eqBandsDb[i];
+        }
+        setEqGraph10(eq);
     }
 
     // Squelch

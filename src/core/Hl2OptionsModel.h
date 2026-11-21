@@ -161,6 +161,7 @@ signals:
 
 private:
     QString m_mac;
+    mutable bool m_loaded{false};
 
     // Defaults match mi0bot designer values (chk*.Checked = false by default
     // for all 8 checkboxes; spinbox defaults from setup.designer.cs above).

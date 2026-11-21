@@ -1532,6 +1532,70 @@ void TxChannel::setTuneTone(bool on, double freqHz, double magnitude)
 }
 
 // ---------------------------------------------------------------------------
+// setPulseTuneTone()
+//
+// Thetis's Tune Check (TC) carrier: the single TUNE tone through gen1's
+// pulse generator (mode 6) instead of the steady sine (mode 0), so the
+// carrier is keyed in short bursts (10 Hz, 25 % duty, 9 ms ramp by default).
+//
+// From Thetis console.cs:30361-30386 [v2.10.3.15] SetupTunePulse:
+//   radio.GetDSPTX(0).TXPostGenRun = 0;                       // turn off
+//   ... TXPostGenPulseToneFreq = ±cw_pitch;                  // by sideband
+//   radio.GetDSPTX(0).TXPostGenMode = 6;                      // pulse
+//   radio.GetDSPTX(0).TXPostGenPulseIQOut = true;
+//   radio.GetDSPTX(0).TXPostGenPulseMag = MAX_TONE_MAG;
+//   radio.GetDSPTX(0).TXPostGenPulseFreq = _tune_pulse_count; // 10 per second
+//   radio.GetDSPTX(0).TXPostGenPulseDutyCycle = _tune_pulse_duty;   // 0.25
+//   radio.GetDSPTX(0).TXPostGenPulseTransition = _tune_pulse_ramp / 1000.0f;
+//   radio.GetDSPTX(0).TXPostGenRun = 1;
+//
+// The TXA mode and bandpass are configured as setTuneTone() does, so the
+// tone sits in the sideband the caller's signed freqHz selects.
+// ---------------------------------------------------------------------------
+void TxChannel::setPulseTuneTone(bool on, double freqHz, int pulsesPerSecond,
+                                 double dutyCycle, double transitionSec,
+                                 double magnitude)
+{
+#ifdef HAVE_WDSP
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runOrdered([this, on, freqHz, pulsesPerSecond, dutyCycle, transitionSec,
+                magnitude]() {
+        if (!txaOpenLive()) {
+            return;
+        }
+        if (on) {
+            const bool isLsb = (freqHz < 0.0);
+            SetTXAMode(m_channelId, isLsb ? 0 /*TXA_LSB*/ : 1 /*TXA_USB*/);
+            if (isLsb) {
+                SetTXABandpassFreqs(m_channelId, -2850.0, -150.0);
+            } else {
+                SetTXABandpassFreqs(m_channelId, +150.0, +2850.0);
+            }
+        }
+
+        SetTXAPostGenRun(m_channelId, 0);                       // turn off
+        SetTXAPostGenPulseToneFreq(m_channelId, freqHz);
+        SetTXAPostGenMode(m_channelId, 6);                      // pulse
+        SetTXAPostGenPulseIQout(m_channelId, 1);
+        SetTXAPostGenPulseMag(m_channelId, magnitude);
+        SetTXAPostGenPulseFreq(m_channelId, double(pulsesPerSecond));
+        SetTXAPostGenPulseDutyCycle(m_channelId, dutyCycle);
+        SetTXAPostGenPulseTransition(m_channelId, transitionSec);
+        SetTXAPostGenRun(m_channelId, on ? 1 : 0);
+    });
+#else
+    Q_UNUSED(on);
+    Q_UNUSED(freqHz);
+    Q_UNUSED(pulsesPerSecond);
+    Q_UNUSED(dutyCycle);
+    Q_UNUSED(transitionSec);
+    Q_UNUSED(magnitude);
+#endif
+}
+
+// ---------------------------------------------------------------------------
 // setRunning()
 //
 // Activate or deactivate the WDSP TXA channel.
@@ -3908,58 +3972,55 @@ void TxChannel::driveOneTxBlockFromInterleaved(const double* interleavedIn)
     // m_running flips true via MoxController::txReady → setRunning(true)
     // and the radio-write resumes normally on the next pump cycle.
     //
-    // The MON-path siphon (sip1OutputReady) below is also skipped — MON
-    // audio is post-SSB-modulator output that we don't want to monitor
-    // until the operator is actually transmitting.
-    const bool shouldWriteRx = actualRunning;
-    if (!shouldWriteRx) {
-        return;
-    }
+    // The MON-path siphon (sip1OutputReady) below now runs for the whole
+    // pumped chain as well: the TX audio check needs the processed audio
+    // for MON and for the transmit panadapter while no RF is sent.
+    if (actualRunning) {
+        // Convert m_out (interleaved double) → m_outInterleavedFloat for
+        // sendTxIq, which still uses the float* SPSC ring layout.
+        // Without HAVE_WDSP, m_out stays all-zeros (silence stream) — keeps
+        // the ring warm in stub builds.
+        //
+        // NOTE on xtxgain: Thetis cmaster.cs:1118-1122 [v2.10.3.13]
+        // CMSetTXOutputLevelRun sets `run = false` unconditionally (the
+        // commented-out original logic referenced PennyLanePresent which is
+        // legacy hardware not present on modern radios).  Therefore Thetis's
+        // xtxgain (ChannelMaster/txgain.c:66-77) takes the memcpy(out, in)
+        // branch and Igain/Qgain are NOT applied to the I/Q stream.  Only the
+        // CmdHighPriority drive_level byte (= int(255 * audio_volume * 1.02))
+        // attenuates output power.  Matching that behaviour here: pass-through
+        // double → float, no IQ scaling.
+        for (int i = 0; i < outN; ++i) {
+            m_outInterleavedFloat[static_cast<size_t>(2 * i + 0)] =
+                static_cast<float>(m_out[static_cast<size_t>(2 * i + 0)]);
+            m_outInterleavedFloat[static_cast<size_t>(2 * i + 1)] =
+                static_cast<float>(m_out[static_cast<size_t>(2 * i + 1)]);
+        }
 
-    // Convert m_out (interleaved double) → m_outInterleavedFloat for
-    // sendTxIq, which still uses the float* SPSC ring layout.
-    // Without HAVE_WDSP, m_out stays all-zeros (silence stream) — keeps
-    // the ring warm in stub builds.
-    //
-    // NOTE on xtxgain: Thetis cmaster.cs:1118-1122 [v2.10.3.13]
-    // CMSetTXOutputLevelRun sets `run = false` unconditionally (the
-    // commented-out original logic referenced PennyLanePresent which is
-    // legacy hardware not present on modern radios).  Therefore Thetis's
-    // xtxgain (ChannelMaster/txgain.c:66-77) takes the memcpy(out, in)
-    // branch and Igain/Qgain are NOT applied to the I/Q stream.  Only the
-    // CmdHighPriority drive_level byte (= int(255 * audio_volume * 1.02))
-    // attenuates output power.  Matching that behaviour here: pass-through
-    // double → float, no IQ scaling.
-    for (int i = 0; i < outN; ++i) {
-        m_outInterleavedFloat[static_cast<size_t>(2 * i + 0)] =
-            static_cast<float>(m_out[static_cast<size_t>(2 * i + 0)]);
-        m_outInterleavedFloat[static_cast<size_t>(2 * i + 1)] =
-            static_cast<float>(m_out[static_cast<size_t>(2 * i + 1)]);
-    }
-
-    // Push to connection's SPSC ring (producer side).
-    // sendTxIq(iq, n): n = number of complex samples; buffer has 2*n floats.
-    //
-    // Task 33 (R-IOS-03): the RF gate is checked again inside the sender
-    // section closeRfGate waits for, so once closeRfGate returns no block
-    // reaches the connection, even one whose fexchange0 began before it.
-    m_txIqSendersInFlight.fetch_add(1, std::memory_order_seq_cst);
-    if (!m_running.load(std::memory_order_seq_cst)) {
+        // Push to connection's SPSC ring (producer side).
+        // sendTxIq(iq, n): n = number of complex samples; buffer has 2*n floats.
+        //
+        // Task 33 (R-IOS-03): the RF gate is checked again inside the sender
+        // section closeRfGate waits for, so once closeRfGate returns no block
+        // reaches the connection, even one whose fexchange0 began before it.
+        m_txIqSendersInFlight.fetch_add(1, std::memory_order_seq_cst);
+        if (!m_running.load(std::memory_order_seq_cst)) {
+            m_txIqSendersInFlight.fetch_sub(1, std::memory_order_seq_cst);
+            return;
+        }
+        // Remote transmit hold then cut: a held key still sends every block,
+        // all zeros, so the radio stays keyed and its stream keeps its cadence
+        // while no RF goes out. The AM monitor tap below gets the same block.
+        if (m_rfHoldMask.load(std::memory_order_seq_cst) != 0u) {
+            std::fill_n(m_outInterleavedFloat.begin(), static_cast<std::size_t>(2 * outN), 0.0f);
+        }
+        m_connection->sendTxIq(m_outInterleavedFloat.data(), outN);
         m_txIqSendersInFlight.fetch_sub(1, std::memory_order_seq_cst);
-        return;
-    }
-    // Remote transmit hold then cut: a held key still sends every block,
-    // all zeros, so the radio stays keyed and its stream keeps its cadence
-    // while no RF goes out. The AM monitor tap below gets the same block.
-    if (m_rfHoldMask.load(std::memory_order_seq_cst) != 0u) {
-        std::fill_n(m_outInterleavedFloat.begin(), static_cast<std::size_t>(2 * outN), 0.0f);
-    }
-    m_connection->sendTxIq(m_outInterleavedFloat.data(), outN);
-    m_txIqSendersInFlight.fetch_sub(1, std::memory_order_seq_cst);
 
-    // AM Mod Monitor tap (NereusSDR-original): same block the radio gets.
-    if (auto* tap = m_amModTap.load(std::memory_order_acquire)) {
-        tap->pushIq(m_outInterleavedFloat.data(), outN);
+        // AM Mod Monitor tap (NereusSDR-original): same block the radio gets.
+        if (auto* tap = m_amModTap.load(std::memory_order_acquire)) {
+            tap->pushIq(m_outInterleavedFloat.data(), outN);
+        }
     }
     if (auto* tap = m_ssbModTap.load(std::memory_order_acquire)) {
         tap->pushIq(m_outInterleavedFloat.data(), outN);
@@ -4765,6 +4826,16 @@ void TxChannel::setTxEqProfile(const std::vector<double>& F, const std::vector<d
     // Accepted arguments after validation, channel guard and WDSP boundary.
     m_lastEqProfile = {std::vector<double>(F.begin() + 1, F.end()), G};
     ++m_eqProfileApplyCount;
+#endif
+}
+
+void TxChannel::readSiphonSamples(std::vector<float>& out, int count)
+{
+    out.assign(static_cast<std::size_t>(std::max(0, count)), 0.0f);
+    if (count <= 0) { return; }
+#ifdef HAVE_WDSP
+    // siphon.c:82 - lock-protected copy; no transmit-path mutation.
+    TXAGetaSipF(m_channelId, out.data(), count);
 #endif
 }
 

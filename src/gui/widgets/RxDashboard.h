@@ -149,6 +149,8 @@ private:
     StatusBadge* m_filterBadge{nullptr};
     StatusBadge* m_agcBadge{nullptr};
     StatusBadge* m_nrBadge{nullptr};
+    QLabel*      m_nnrPremiumTag{nullptr};
+    QLabel*      m_dspLoadTag{nullptr};
     StatusBadge* m_nbBadge{nullptr};
     StatusBadge* m_apfBadge{nullptr};
     StatusBadge* m_sqlBadge{nullptr};

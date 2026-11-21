@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 J.J. Boyd (KG4VCF)
 // no-port-check: NereusSDR-original.
@@ -115,7 +116,18 @@ public:
     /// the Core runs on this computer.
     static QString keptReasonText(const QJsonObject& kept, int quietMinutes, bool coreHere);
     /// "1:23", or "1:02:03" past an hour.
-    static QString lengthText(qint64 ms);
+    static QString lengthText(qint64 ms)
+    {
+        const qint64 seconds = std::max<qint64>(0, ms) / 1000;
+        const qint64 h = seconds / 3600;
+        const qint64 m = (seconds / 60) % 60;
+        const qint64 s = seconds % 60;
+        if (h > 0) {
+            return QStringLiteral("%1:%2:%3")
+                .arg(h).arg(m, 2, 10, QLatin1Char('0')).arg(s, 2, 10, QLatin1Char('0'));
+        }
+        return QStringLiteral("%1:%2").arg(m).arg(s, 2, 10, QLatin1Char('0'));
+    }
 
     // ---- Test seams.
     QLabel* recordLabelForTest() const { return m_recordLabel.data(); }

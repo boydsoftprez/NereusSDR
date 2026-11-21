@@ -14,6 +14,7 @@
 #include "gui/CoreTargetStore.h"
 #include "gui/GuiSessionCoordinator.h"
 
+#include <QDateTime>
 #include <QMap>
 #include <QPointer>
 #include <QTimer>
@@ -119,8 +120,15 @@ private:
     quint64 m_selectorConnectRequest = 0;
     quint64 m_executingConnectRequest = 0;
     QMetaObject::Connection m_selectorDismissal;
+    // True when Connections was opened while a session was already
+    // connected. A later Connected transition then leaves it open; opened
+    // while disconnected, it dismisses when the connection succeeds.
+    bool m_selectorOpenedWhileConnected = false;
     bool m_storeLoaded = false;
     bool m_shuttingDown = false;
+    // Startup auto-connect failures before this time do not open the
+    // Connections window; the connection state text reports them.
+    QDateTime m_selectorAutoOpenBlockedUntil;
     QTimer m_negativeExpiryTimer;
     std::shared_ptr<const ClientDeviceIdentity> m_existingDeviceIdentity;
     std::unique_ptr<CoreSettingsHost> m_coreSettings;

@@ -70,8 +70,6 @@ const QList<Entry>& all()
          QStringLiteral("Phone/CW applet FM page")},
         {F::RfkitTune, QStringLiteral("rfkit-tune"),
          QStringLiteral("RF-Kit applet TUNE and BYPASS")},
-        {F::MacroButtons, QStringLiteral("macro-buttons"),
-         QStringLiteral("The container macro buttons")},
         {F::DisplayAveraging, QStringLiteral("display-averaging"),
          QStringLiteral("Display averaging from a container: the container AVG button")},
         {F::TwoReceiverLayout, QStringLiteral("two-receiver-layout"),
@@ -182,7 +180,8 @@ bool isBuilt(UnbuiltFeature feature)
     // CW transmit (R-CW-46): CWX is built, as CAT is; its entry stays so the
     // gate sites and the surface checks keep their names.
     if (feature == UnbuiltFeature::Cat || feature == UnbuiltFeature::Cwx || feature == UnbuiltFeature::ContainerFilterDisplay
-        || feature == UnbuiltFeature::ContainerClickBox) {
+        || feature == UnbuiltFeature::ContainerClickBox
+        || feature == UnbuiltFeature::MacroButtons) {
         return true;
     }
     return builtForTest().contains(static_cast<int>(feature));

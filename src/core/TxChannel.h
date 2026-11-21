@@ -818,6 +818,24 @@ public:
                      double freqHz   = 0.0,
                      double magnitude = kMaxToneMag);
 
+    /// Pulsed TUNE carrier (Thetis "Tune Check" / TC), WDSP gen1 mode 6.
+    ///
+    /// Keys the same single tone as setTuneTone() but in the pulse generator
+    /// (10 Hz, 25 % duty, 9 ms ramp by default), so tune power arrives in
+    /// short bursts rather than a continuous carrier.
+    /// From Thetis console.cs:30361-30386 [v2.10.3.15] SetupTunePulse:
+    ///   TXPostGenMode = 6; TXPostGenPulseFreq = _tune_pulse_count (10);
+    ///   TXPostGenPulseDutyCycle = 0.25; TXPostGenPulseTransition = 0.009;
+    ///   TXPostGenPulseIQOut = true; TXPostGenPulseMag = MAX_TONE_MAG;
+    ///   TXPostGenRun = 1.
+    /// Same scope as setTuneTone(): gen1 PostGen only.
+    void setPulseTuneTone(bool on,
+                          double freqHz = 0.0,
+                          int pulsesPerSecond = 10,
+                          double dutyCycle = 0.25,
+                          double transitionSec = 0.009,
+                          double magnitude = kMaxToneMag);
+
     // ── TX I/Q production loop (3M-1a G.1) ──────────────────────────────────
     //
     // Attach or detach the RadioConnection that receives TX I/Q output from
@@ -1867,6 +1885,10 @@ public:
     /// wdsp/eq.c:780-806 (SetTXAEQProfile).
     void setTxEqProfile(const std::vector<double>& F, const std::vector<double>& G,
                         const std::vector<double>& Q);
+
+    /// Copy the last `count` samples of the TX audio tap (after the EQ and the
+    /// transmit chain's shaping, before the DAC) into `out`. Read-only.
+    void readSiphonSamples(std::vector<float>& out, int count);
 
     /// TX EQ — filter coefficient count.
     ///

@@ -3,6 +3,7 @@
 #include "gui/StyleConstants.h"
 #include "gui/applets/AccessoryReadouts.h"
 #include "gui/instruments/BarInstrument.h"
+#include "gui/widgets/LimitSlider.h"
 #include "core/ControlRanges.h"
 #include "core/HpsdrModel.h"
 #include "models/MainPowerMeter.h"
@@ -149,11 +150,13 @@ QLabel* tuneLabel = nullptr;
 // ── 3. RF Power slider row ───────────────────────────────────────────────
 // Label fixedWidth 62, value fixedWidth 22  (AetherSDR TxApplet.cpp:87–104)
 {
-    auto* rfSlider = new QSlider(Qt::Horizontal, this);
+    auto* rfSlider = new NereusSDR::LimitSlider(Qt::Horizontal, this);
     rfSlider->setRange(0, 100);
     rfSlider->setValue(100);
     rfSlider->setAccessibleName(QStringLiteral("RF power"));
     rfSlider->setObjectName(QStringLiteral("TxRfPowerSlider"));
+    connect(rfSlider, &NereusSDR::LimitSlider::limitChanged, this,
+            [this](int value) { emit rfPowerLimitChanged(sliderToPercent(value)); });
 
     auto* rfValue = new QLabel(QStringLiteral("100"), this);
     rfValue->setFixedWidth(22);
@@ -163,6 +166,12 @@ QLabel* tuneLabel = nullptr;
 
     m_rfPowerSlider = rfSlider;
     m_rfPowerValue  = rfValue;
+    // The range's top value, shown after the current reading ("100W").
+    m_rfPowerMax = new QLabel(QString(), this);
+    m_rfPowerMax->setFixedWidth(34);
+    m_rfPowerMax->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_rfPowerMax->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: 9px; }").arg(Style::kTitleText));
 
     auto* row = new QHBoxLayout;
     row->setSpacing(4);
@@ -181,6 +190,25 @@ QLabel* tuneLabel = nullptr;
     // every time the active SKU changes.  No initial setToolTip here.
     row->addWidget(rfSlider, 1);
     row->addWidget(rfValue);
+    row->addWidget(m_rfPowerMax);
+
+    // Live limit callout: while right-dragging, the reading cell shows the
+    // limit in this row's units ("Lim 40W"), and the slider's cursor tooltip
+    // says the same. Releasing restores the drive reading.
+    rfSlider->setLimitTextFormatter(
+        [this](int value) { return limitText(value, /*tune=*/false); });
+    connect(rfSlider, &NereusSDR::LimitSlider::limitChanged, this,
+            [this](int value) {
+        m_rfLimitLabelActive = true;
+        m_rfPowerValue->setFixedWidth(58);
+        m_rfPowerValue->setText(
+            QStringLiteral("Lim %1").arg(limitText(value, false)));
+    });
+    connect(rfSlider, &NereusSDR::LimitSlider::limitDragFinished, this,
+            [this] {
+        m_rfLimitLabelActive = false;
+        updatePowerSliderLabels();
+    });
 
     vbox->addLayout(row);
 }
@@ -188,10 +216,12 @@ QLabel* tuneLabel = nullptr;
 // ── 4. Tune Power slider row ─────────────────────────────────────────────
 // Label fixedWidth 62, value fixedWidth 22  (AetherSDR TxApplet.cpp:107–128)
 {
-    auto* tunSlider = new QSlider(Qt::Horizontal, this);
+    auto* tunSlider = new NereusSDR::LimitSlider(Qt::Horizontal, this);
     tunSlider->setRange(0, 100);
     tunSlider->setValue(10);
     tunSlider->setAccessibleName(QStringLiteral("Tune power"));
+    connect(tunSlider, &NereusSDR::LimitSlider::limitChanged, this,
+            [this](int value) { emit tunePowerLimitChanged(sliderToPercent(value)); });
 
     auto* tunValue = new QLabel(QStringLiteral("10"), this);
     tunValue->setFixedWidth(22);
@@ -201,6 +231,11 @@ QLabel* tuneLabel = nullptr;
 
     m_tunePwrSlider = tunSlider;
     m_tunePwrValue  = tunValue;
+    m_tunePwrMax = new QLabel(QString(), this);
+    m_tunePwrMax->setFixedWidth(34);
+    m_tunePwrMax->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_tunePwrMax->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: 9px; }").arg(Style::kTitleText));
 
     auto* row = new QHBoxLayout;
     row->setSpacing(4);
@@ -220,6 +255,22 @@ QLabel* tuneLabel = nullptr;
     // here.
     row->addWidget(tunSlider, 1);
     row->addWidget(tunValue);
+    row->addWidget(m_tunePwrMax);
+
+    tunSlider->setLimitTextFormatter(
+        [this](int value) { return limitText(value, /*tune=*/true); });
+    connect(tunSlider, &NereusSDR::LimitSlider::limitChanged, this,
+            [this](int value) {
+        m_tuneLimitLabelActive = true;
+        m_tunePwrValue->setFixedWidth(58);
+        m_tunePwrValue->setText(
+            QStringLiteral("Lim %1").arg(limitText(value, true)));
+    });
+    connect(tunSlider, &NereusSDR::LimitSlider::limitDragFinished, this,
+            [this] {
+        m_tuneLimitLabelActive = false;
+        updatePowerSliderLabels();
+    });
 
     vbox->addLayout(row);
 }
@@ -311,6 +362,18 @@ void TxPowerSection::rescalePowerSlidersForModel(HPSDRModel model)
     const QSignalBlocker rfBlock(m_rfPowerSlider);
     const QSignalBlocker tunBlock(m_tunePwrSlider);
 
+    if (m_paMaxWatts > 0) {
+        // PA Gain "Use Max": the rows are real watts, 0..Max W.
+        m_rfPowerSlider->setRange(0, m_paMaxWatts);
+        m_rfPowerSlider->setSingleStep(1);
+        m_rfPowerSlider->setPageStep(qMax(1, m_paMaxWatts / 10));
+        m_tunePwrSlider->setRange(0, m_paMaxWatts);
+        m_tunePwrSlider->setSingleStep(1);
+        m_tunePwrSlider->setPageStep(qMax(1, m_paMaxWatts / 10));
+        updatePowerSliderLabels();
+        return;
+    }
+
     m_rfPowerSlider->setRange(0, rfPowerSliderMaxFor(model));
     m_rfPowerSlider->setSingleStep(rfPowerSliderStepFor(model));
     m_rfPowerSlider->setPageStep(rfPowerSliderStepFor(model));
@@ -349,6 +412,77 @@ void TxPowerSection::rescalePowerSlidersForModel(HPSDRModel model)
 //
 // MI0BOT: HL2 has only 15 output power levels
 // [original inline comment from mi0bot console.cs:29245]
+void TxPowerSection::setPaMaxWatts(int watts)
+{
+    watts = qMax(0, watts);
+    if (watts == m_paMaxWatts) { return; }
+    m_paMaxWatts = watts;
+    // Widen the reading cells so "1500W" fits.
+    const int valueWidth = watts > 0 ? 40 : 22;
+    if (m_rfPowerValue) { m_rfPowerValue->setFixedWidth(valueWidth); }
+    if (m_tunePwrValue) { m_tunePwrValue->setFixedWidth(valueWidth); }
+    rescalePowerSlidersForModel(m_powerSliderModel);
+}
+
+void TxPowerSection::setPowerLimitsPercent(int rfPercent, int tunePercent)
+{
+    if (auto* rf = qobject_cast<NereusSDR::LimitSlider*>(m_rfPowerSlider)) {
+        rf->setLimitValue(percentToSlider(rfPercent));
+    }
+    if (auto* tune = qobject_cast<NereusSDR::LimitSlider*>(m_tunePwrSlider)) {
+        tune->setLimitValue(percentToSlider(tunePercent));
+    }
+    updatePowerSliderLabels();
+}
+
+void TxPowerSection::setRfLimitPercent(int percent)
+{
+    if (auto* rf = qobject_cast<NereusSDR::LimitSlider*>(m_rfPowerSlider)) {
+        rf->setLimitValue(percentToSlider(percent));
+    }
+    updatePowerSliderLabels();
+}
+
+void TxPowerSection::setTuneLimitPercent(int percent)
+{
+    if (auto* tune = qobject_cast<NereusSDR::LimitSlider*>(m_tunePwrSlider)) {
+        tune->setLimitValue(percentToSlider(percent));
+    }
+    updatePowerSliderLabels();
+}
+
+void TxPowerSection::setPowerLimitEnabled(bool enabled)
+{
+    if (auto* rf = qobject_cast<NereusSDR::LimitSlider*>(m_rfPowerSlider)) {
+        rf->setLimitEnabled(enabled);
+    }
+    updatePowerSliderLabels();
+}
+
+int TxPowerSection::sliderToPercent(int sliderValue) const
+{
+    if (m_paMaxWatts <= 0) { return sliderValue; }
+    return qBound(0, qRound(sliderValue * 100.0 / m_paMaxWatts), 100);
+}int TxPowerSection::percentToSlider(int percent) const
+{
+    if (m_paMaxWatts <= 0) { return percent; }
+    return qBound(0, qRound(percent * m_paMaxWatts / 100.0), m_paMaxWatts);
+}
+
+QString TxPowerSection::limitText(int sliderValue, bool tune) const
+{
+    // Under Use Max the slider is already in watts; otherwise show the value
+    // exactly as this SKU's drive label does (HL2 dB, integer elsewhere).
+    if (m_paMaxWatts > 0) {
+        return QStringLiteral("%1W").arg(sliderValue);
+    }
+    const int decimals = powerSliderShownDecimalsFor(m_powerSliderModel);
+    const double shown = tune
+        ? tuneSliderShownFor(m_powerSliderModel, sliderValue)
+        : rfPowerShownFor(m_powerSliderModel, sliderValue);
+    return QString::number(shown, 'f', decimals);
+}
+
 void TxPowerSection::updatePowerSliderLabels()
 {
     if (!m_rfPowerSlider || !m_tunePwrSlider
@@ -361,12 +495,63 @@ void TxPowerSection::updatePowerSliderLabels()
     const int        rfVal  = m_rfPowerSlider->value();
     const int        tunVal = m_tunePwrSlider->value();
 
+    // Thetis UpdateDriveLabel/UpdateTuneLabel: once the thumb is past the
+    // limit the label shows the LIMITED value in parentheses, not the
+    // requested one. The thumb itself stays where it is.
+    const auto* rfLimit =
+        qobject_cast<const NereusSDR::LimitSlider*>(m_rfPowerSlider);
+    const auto* tuneLimit =
+        qobject_cast<const NereusSDR::LimitSlider*>(m_tunePwrSlider);
+    const bool rfCapped = rfLimit && rfLimit->limitEnabled()
+                          && rfVal > rfLimit->limitValue();
+    const bool tuneCapped = tuneLimit && tuneLimit->limitEnabled()
+                            && tunVal > tuneLimit->limitValue();
+
+    // While a limit drag is showing "Lim 40W", leave that cell alone: the
+    // drag owns it until the release restores this reading.
+    const auto apply = [](QLabel* label, bool paused, const QString& text,
+                          int width) {
+        if (paused) { return; }
+        if (label->minimumWidth() != width) { label->setFixedWidth(width); }
+        label->setText(text);
+    };
+
+    if (m_paMaxWatts > 0) {
+        // The sliders are already in watts for this band.
+        apply(m_rfPowerValue, m_rfLimitLabelActive,
+              rfCapped ? QStringLiteral("(%1W)").arg(rfLimit->limitValue())
+                       : QString::number(rfVal) + QStringLiteral("W"),
+              rfCapped ? 42 : 40);
+        apply(m_tunePwrValue, m_tuneLimitLabelActive,
+              tuneCapped ? QStringLiteral("(%1W)").arg(tuneLimit->limitValue())
+                         : QString::number(tunVal) + QStringLiteral("W"),
+              tuneCapped ? 42 : 40);
+        if (m_rfPowerMax) { m_rfPowerMax->setText(QString::number(m_paMaxWatts) + QStringLiteral("W")); }
+        if (m_tunePwrMax) { m_tunePwrMax->setText(QString::number(m_paMaxWatts) + QStringLiteral("W")); }
+        return;
+    }
+    if (m_rfPowerMax) { m_rfPowerMax->clear(); }
+    if (m_tunePwrMax) { m_tunePwrMax->clear(); }
+
     // The shown values come from HpsdrModel.h (rfPowerShownFor,
     // tuneSliderShownFor: mi0bot's UpdateDriveLabel and UpdateTuneLabel),
     // which the Core's catalogue reads too.
     const int decimals = powerSliderShownDecimalsFor(model);
-    m_rfPowerValue->setText(QString::number(rfPowerShownFor(model, rfVal), 'f', decimals));
-    m_tunePwrValue->setText(QString::number(tuneSliderShownFor(model, tunVal), 'f', decimals));
+    const auto text = [decimals](double value) {
+        return QString::number(value, 'f', decimals);
+    };
+    apply(m_rfPowerValue, m_rfLimitLabelActive,
+          rfCapped
+              ? QStringLiteral("(%1)").arg(
+                    text(rfPowerShownFor(model, rfLimit->limitValue())))
+              : text(rfPowerShownFor(model, rfVal)),
+          rfCapped ? 42 : 22);
+    apply(m_tunePwrValue, m_tuneLimitLabelActive,
+          tuneCapped
+              ? QStringLiteral("(%1)").arg(
+                    text(tuneSliderShownFor(model, tuneLimit->limitValue())))
+              : text(tuneSliderShownFor(model, tunVal)),
+          tuneCapped ? 42 : 22);
 }
 
 } // namespace NereusSDR

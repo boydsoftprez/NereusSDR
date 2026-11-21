@@ -58,7 +58,7 @@ mw0lge@grange-lane.co.uk - Richard Samphire (c) 2026
 //
 // =============================================================================
 // Modification history (NereusSDR):
-//   2026-04-30 — Partial sync from Thetis v2.10.3.13 @ 501e3f5 for the
+//   2026-04-30 ΓÇö Partial sync from Thetis v2.10.3.13 @ 501e3f5 for the
 //                Qg/Qe parametric-EQ tail-mix updates required by the
 //                3M-3a-ii CFC port. No NereusSDR-original algorithmic
 //                changes; sync scope and line ranges recorded in
@@ -754,6 +754,11 @@ void SetTXACFCOMPprofile (int channel, int nfreqs, double* F, double* G,
 	CFCOMP a = txa[channel].cfcomp.p;
 	if (nfreqs < 1 || nfreqs > a->max_freqs || !F || !G || !E) return;
 	EnterCriticalSection (&ch[channel].csDSP);
+	if (nfreqs < 1 || nfreqs > a->max_freqs || F == 0 || G == 0 || E == 0)
+	{
+		LeaveCriticalSection (&ch[channel].csDSP);
+		return;
+	}
 	a->nfreqsG = nfreqs;
 	a->nfreqsE = nfreqs;
 	memcpy (a->Fg, F, a->nfreqsG * sizeof (double));
@@ -778,6 +783,11 @@ void SetTXACFCOMPGprofile(int channel, int nfreqs, double* F, double* G)
 	CFCOMP a = txa[channel].cfcomp.p;
 	if (nfreqs < 1 || nfreqs > a->max_freqs || !F || !G) return;
 	EnterCriticalSection(&ch[channel].csDSP);
+	if (nfreqs < 1 || nfreqs > a->max_freqs || F == 0 || G == 0)
+	{
+		LeaveCriticalSection (&ch[channel].csDSP);
+		return;
+	}
 	_aligned_free(a->Qg);
 	a->Qg = 0;
 	a->nfreqsG = nfreqs;
@@ -794,6 +804,11 @@ void SetTXACFCOMPEprofile(int channel, int nfreqs, double* F, double* E)
 	CFCOMP a = txa[channel].cfcomp.p;
 	if (nfreqs < 1 || nfreqs > a->max_freqs || !F || !E) return;
 	EnterCriticalSection(&ch[channel].csDSP);
+	if (nfreqs < 1 || nfreqs > a->max_freqs || F == 0 || E == 0)
+	{
+		LeaveCriticalSection (&ch[channel].csDSP);
+		return;
+	}
 	_aligned_free(a->Qe);
 	a->Qe = 0;
 	a->nfreqsE = nfreqs;

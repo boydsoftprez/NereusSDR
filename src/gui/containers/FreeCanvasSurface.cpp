@@ -32,9 +32,6 @@
 //                 placement, leaving the view 1 px off and the minimum with
 //                 it, differently each launch. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
-//   2026-11-16 - A gesture claims Escape (ShortcutOverride), so the hot keys
-//                 leave it to cancel the gesture. Recording plan Task 13 fix
-//                 round. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "FreeCanvasSurface.h"
 #include "WorkspaceHeader.h"
 #include "gui/styles/WorkspacePreview.h"
@@ -44,6 +41,8 @@
 #include <QMouseEvent>
 #include <QKeyEvent>
 #include <QContextMenuEvent>
+#include <QJsonValue>
+#include <QStringList>
 #include <QWindow>
 #include <QTimer>
 #include <algorithm>
@@ -87,7 +86,7 @@ void FreeCanvasSurface::clearViews() {
     m_leaves.clear();
 }
 void FreeCanvasSurface::project(const ContainerDocument& document,const QHash<QString,QPointer<QWidget>>& views) {
-    if(document.locked && !m_active.isEmpty()) {finishGesture(true);}
+    if(document.lockItemPositions && !m_active.isEmpty()) {finishGesture(true);}
     m_document=document;
     const auto ids=m_leaves.keys();
     for(const QString& id:ids) {
@@ -203,8 +202,8 @@ void FreeCanvasSurface::syncPresentation() {
             leaf.grip->move(rect.x()-kGripWidth,rect.y());leaf.corner->move(rect.x()+rect.width(),rect.y()+rect.height());
             leaf.grip->setVisible(visible);leaf.corner->setVisible(visible);
         }
-        leaf.grip->setCursor(m_document.locked?Qt::ArrowCursor:Qt::OpenHandCursor);
-        leaf.corner->setCursor(m_document.locked?Qt::ArrowCursor:Qt::SizeFDiagCursor);
+        leaf.grip->setCursor(m_document.lockItemPositions?Qt::ArrowCursor:Qt::OpenHandCursor);
+        leaf.corner->setCursor(m_document.lockItemPositions?Qt::ArrowCursor:Qt::SizeFDiagCursor);
         leaf.grip->raise();leaf.corner->raise();
     }
     m_extent=QSizeF(extent);setMinimumSize(extent);
@@ -251,16 +250,43 @@ void FreeCanvasSurface::mouseMoveEvent(QMouseEvent* event) {
 void FreeCanvasSurface::changeRect(const QString& id,const QRectF& rect) {
     if(!m_leaves.contains(id)) {return;}m_leaves[id].rect=rect;for(auto& entry:m_document.contents) {if(entry.id==id) {entry.setFreeCanvasRect(rect);break;}}placeViews();emit geometryEdited(id,rect);
 }
+QStringList FreeCanvasSurface::moveGroupFor(const QString& id) const {
+    QStringList group{id};
+    QString partner;
+    for(const auto& entry:m_document.contents) {
+        if(entry.id==id) {partner=entry.extensions.value(QStringLiteral("moveWith")).toString();break;}
+    }
+    if(!partner.isEmpty()) {group.append(partner);}
+    for(const auto& entry:m_document.contents) {
+        if(entry.id==id || group.contains(entry.id)) {continue;}
+        if(entry.extensions.value(QStringLiteral("moveWith")).toString()==id) {group.append(entry.id);}
+    }
+    return group;
+}
 void FreeCanvasSurface::finishGesture(bool cancel) {
     if(m_active.isEmpty()) {return;}
-    const QString id=m_active;const QRectF original=m_original;
     if(cancel) {
-        m_leaves[id].rect=original;
-        for(auto& entry:m_document.contents) {if(entry.id==id) {if(m_originalGeometryPresent) {entry.extensions["freeCanvasRect"]=m_originalGeometry;}else {entry.extensions.remove("freeCanvasRect");}break;}}
-        emit geometryRestored(id,m_originalGeometry,m_originalGeometryPresent);
+        for(const QString& gid:m_group) {
+            const QRectF original=m_groupOriginal.value(gid,logicalRect(gid));
+            if(m_leaves.contains(gid)) {m_leaves[gid].rect=original;}
+            for(auto& entry:m_document.contents) {
+                if(entry.id!=gid) {continue;}
+                if(m_groupGeometryPresent.value(gid)) {entry.extensions["freeCanvasRect"]=m_groupGeometry.value(gid);}
+                else {entry.extensions.remove("freeCanvasRect");}
+                break;
+            }
+            emit geometryRestored(gid,m_groupGeometry.value(gid),m_groupGeometryPresent.value(gid));
+        }
     }
     if(m_capture) {m_capture->releaseMouse();}m_capture=nullptr;m_active.clear();placeViews();updateReveal();
-    if(!cancel && logicalRect(id)!=original) {emit geometryCommitted(id,logicalRect(id),original);}
+    if(!cancel) {
+        const QStringList group=m_group.isEmpty()?QStringList{}:m_group;
+        for(const QString& gid:group) {
+            const QRectF original=m_groupOriginal.value(gid,logicalRect(gid));
+            if(logicalRect(gid)!=original) {emit geometryCommitted(gid,logicalRect(gid),original);}
+        }
+    }
+    m_group.clear();m_groupOriginal.clear();m_groupGeometry.clear();m_groupGeometryPresent.clear();
 }
 bool FreeCanvasSurface::eventFilter(QObject* watched,QEvent* event) {
     auto* handle=qobject_cast<QWidget*>(watched);if(!handle) {return false;}
@@ -280,11 +306,6 @@ bool FreeCanvasSurface::eventFilter(QObject* watched,QEvent* event) {
         emit entryContextMenuRequested(id,static_cast<QContextMenuEvent*>(event)->globalPos());return true;
     }
     if(event->type()==QEvent::FocusIn || event->type()==QEvent::Enter) {updateReveal(id);}
-    // A gesture under way claims Escape, so no window-wide key takes it first
-    // (KeyboardRouter asks with ShortcutOverride).
-    if(event->type()==QEvent::ShortcutOverride && static_cast<QKeyEvent*>(event)->key()==Qt::Key_Escape && !m_active.isEmpty()) {
-        event->accept();return true;
-    }
     if(event->type()==QEvent::KeyPress) {
         auto* key=static_cast<QKeyEvent*>(event);
         if(key->key()==Qt::Key_Escape && !m_active.isEmpty()) {finishGesture(true);return true;}
@@ -292,34 +313,54 @@ bool FreeCanvasSurface::eventFilter(QObject* watched,QEvent* event) {
         if(key->key()==Qt::Key_Left) {delta.setX(-step);}if(key->key()==Qt::Key_Right) {delta.setX(step);}
         if(key->key()==Qt::Key_Up) {delta.setY(-step);}if(key->key()==Qt::Key_Down) {delta.setY(step);}
         if(!delta.isNull()) {
-            if(m_document.locked) {return true;}
-            const QRectF original=logicalRect(id);QRectF rect=original;
-            if(handle->property("canvasResize").toBool()) {
-                const QSizeF minimum=m_leaves[id].view->property("freeCanvasMinimum").toSizeF().expandedTo(QSizeF(24,24));
-                rect.setSize(QSizeF(qMax(minimum.width(),rect.width()+delta.x()),qMax(minimum.height(),rect.height()+delta.y())));
-            } else {rect.translate(delta);}
-            changeRect(id,rect);emit geometryCommitted(id,rect,original);return true;
+            if(m_document.lockItemPositions) {return true;}
+            const bool resizing=handle->property("canvasResize").toBool();
+            for(const QString& gid:moveGroupFor(id)) {
+                const QRectF original=logicalRect(gid);QRectF rect=original;
+                if(resizing && gid==id) {
+                    const QSizeF minimum=m_leaves[id].view->property("freeCanvasMinimum").toSizeF().expandedTo(QSizeF(24,24));
+                    rect.setSize(QSizeF(qMax(minimum.width(),rect.width()+delta.x()),qMax(minimum.height(),rect.height()+delta.y())));
+                } else {rect.translate(delta);}
+                changeRect(gid,rect);emit geometryCommitted(gid,rect,original);
+            }
+            return true;
         }
     }
     if(event->type()==QEvent::MouseButtonPress) {
         auto* mouse=static_cast<QMouseEvent*>(event);
         if(mouse->button()==Qt::LeftButton) {
             selectEntry(id);emit entrySelected(id);
-            if(m_document.locked) {return true;}
+            if(m_document.lockItemPositions) {return true;}
             for(const auto& entry:m_document.contents) {if(entry.id==id) {m_originalGeometryPresent=entry.extensions.contains("freeCanvasRect");m_originalGeometry=entry.extensions.value("freeCanvasRect");break;}}
             m_active=id;m_resizing=handle->property("canvasResize").toBool();m_original=logicalRect(id);m_press=mouse->globalPosition();m_capture=handle;
+            // Movement link: capture the partner(s) at the press so the drag
+            // moves them by the same offset, keeping their own geometry.
+            m_group=moveGroupFor(id);m_groupOriginal.clear();m_groupGeometry.clear();m_groupGeometryPresent.clear();
+            for(const QString& gid:m_group) {
+                m_groupOriginal[gid]=(gid==id)?m_original:logicalRect(gid);
+                for(const auto& entry:m_document.contents) {
+                    if(entry.id!=gid) {continue;}
+                    m_groupGeometryPresent[gid]=entry.extensions.contains("freeCanvasRect");
+                    m_groupGeometry[gid]=entry.extensions.value("freeCanvasRect");
+                    break;
+                }
+            }
             // Consuming a child's press requires explicit capture: observed in
             // AetherSDR TitleBar.cpp:585-588 [@1e0718a], no upstream logic ported.
             handle->grabMouse();handle->setFocus();updateReveal();return true;
         }
     }
     if(event->type()==QEvent::MouseMove && m_active==id) {
-        auto* mouse=static_cast<QMouseEvent*>(event);const QPointF delta=mouse->globalPosition()-m_press;QRectF rect=m_original;
-        if(m_resizing) {
-            const QSizeF minimum=m_leaves[id].view->property("freeCanvasMinimum").toSizeF().expandedTo(QSizeF(24,24));
-            rect.setSize(QSizeF(qMax(minimum.width(),rect.width()+delta.x()),qMax(minimum.height(),rect.height()+delta.y())));
-        } else {rect.translate(delta);}
-        changeRect(id,rect);return true;
+        auto* mouse=static_cast<QMouseEvent*>(event);const QPointF delta=mouse->globalPosition()-m_press;
+        for(const QString& gid:(m_group.isEmpty()?QStringList{id}:m_group)) {
+            const QRectF original=m_groupOriginal.value(gid,logicalRect(gid));QRectF rect=original;
+            if(m_resizing && gid==id) {
+                const QSizeF minimum=m_leaves[id].view->property("freeCanvasMinimum").toSizeF().expandedTo(QSizeF(24,24));
+                rect.setSize(QSizeF(qMax(minimum.width(),rect.width()+delta.x()),qMax(minimum.height(),rect.height()+delta.y())));
+            } else {rect.translate(delta);}
+            changeRect(gid,rect);
+        }
+        return true;
     }
     if(event->type()==QEvent::MouseButtonRelease && m_active==id) {finishGesture(false);return true;}
     return QWidget::eventFilter(watched,event);

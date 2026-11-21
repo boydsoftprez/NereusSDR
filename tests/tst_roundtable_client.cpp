@@ -50,10 +50,6 @@
 //               sends nothing and stays out of the signal floor; an error
 //               on the brief connection fails its waiting web sign-ins.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
-//   2026-11-16: noReadingWhilePlayingThePast: a paused slice sends no
-//               readings and keeps its presence, and its floor starts again
-//               once it is live. J.J. Boyd (KG4VCF), AI-assisted via
-//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/AppSettings.h"
@@ -296,7 +292,6 @@ private slots:
     void unansweredOpensLiveOnlyAndSendsNothingAboutTheStation();
     void afterTheAnswerPresenceThenReadingsOnceASecond();
     void noReadingWhileKeyed();
-    void noReadingWhilePlayingThePast();
     void aClearedSlicesNoReadingSendsNothingAndLeavesTheFloor();
     void hiddenIsTheLastFrameBeforeTheClose();
     void archiveWhileUnansweredSendsOnlyHelloAndWeblink();
@@ -542,65 +537,6 @@ void TstRoundtableClient::noReadingWhileKeyed()
     QVERIFY(flush(c));
     QCOMPARE(c->types().count(QStringLiteral("reading")), 2);
     QCOMPARE(c->frames.last().value(QStringLiteral("dbm")).toDouble(), -111.0);
-    QVERIFY(c->allFramesValid);
-}
-
-// A slice playing the past (rewind sound) is paused: its meter reads the
-// past, so nothing it reads is sent, and presence stays where it was live
-// (the caller gives that frequency, so nothing in presence changes). Live
-// again, the floor starts again as on a retune: a signal 20 dB over the
-// old floor reads as not present until the warm-up is over.
-void TstRoundtableClient::noReadingWhilePlayingThePast()
-{
-    makeClient(true);
-    m_client->start();
-    FakeConnection* c = waitConnection(QStringLiteral("/v1/station"), 1);
-    QVERIFY(c != nullptr);
-    QVERIFY(waitFrames(c, 2));
-    m_client->pushMeter(0, -110.0, 1000);
-    tick(5000);
-    m_client->pushMeter(0, -110.0, 2000);
-    tick(5500);
-    m_client->pushMeter(0, -110.0, 3000);  // past the 10 s warm-up
-    tick(1100);
-    m_client->pushMeter(0, -90.0, 4000);
-    tick(1100);
-    QVERIFY(flush(c));
-    QCOMPARE(c->types().count(QStringLiteral("reading")), 4);
-    QCOMPARE(c->frames.last().value(QStringLiteral("present")).toBool(), true);
-
-    // Paused: a reading taken just before is not sent after it, and none
-    // while paused.
-    m_client->pushMeter(0, -95.0, 5000);
-    RoundtableSliceState paused = usbSlice();
-    paused.paused = true;
-    m_client->setSlices({paused});
-    for (int i = 0; i < 4; ++i) {
-        m_client->pushMeter(0, -60.0, 6000 + i * 1000);
-        tick(1100);
-    }
-    QVERIFY(flush(c));
-    QCOMPARE(c->types().count(QStringLiteral("reading")), 4);
-    // Every presence lists the slice where it was live, not keyed.
-    for (const QJsonObject& frame : std::as_const(c->frames)) {
-        if (typeOf(frame) != QStringLiteral("presence")) {
-            continue;
-        }
-        const QJsonObject slice = frame.value(QStringLiteral("slices")).toArray().first().toObject();
-        QCOMPARE(slice.value(QStringLiteral("hz")).toInteger(), usbSlice().hz);
-        QCOMPARE(slice.value(QStringLiteral("keyed")).toBool(), false);
-    }
-
-    // Live again: readings resume with the next new one, and the floor
-    // starts again.
-    m_client->setSlices({usbSlice()});
-    tick(1200);
-    m_client->pushMeter(0, -90.0, 20000);
-    tick(1100);
-    QVERIFY(flush(c));
-    QCOMPARE(c->types().count(QStringLiteral("reading")), 5);
-    QCOMPARE(c->frames.last().value(QStringLiteral("dbm")).toDouble(), -90.0);
-    QCOMPARE(c->frames.last().value(QStringLiteral("present")).toBool(), false);
     QVERIFY(c->allFramesValid);
 }
 

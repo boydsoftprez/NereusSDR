@@ -141,6 +141,27 @@ void RxDashboard::buildUi()
     hbox->addWidget(m_filterBadge);
     hbox->addWidget(m_agcBadge);
     hbox->addWidget(m_nrBadge);
+    // Small premium marker beside the NR badge, so the badge itself keeps
+    // reading NNR and the model is visible without a second badge.
+    m_nnrPremiumTag = new QLabel(QStringLiteral("P"), this);
+    m_nnrPremiumTag->setObjectName(QStringLiteral("RxNnrPremiumTag"));
+    m_nnrPremiumTag->setStyleSheet(QStringLiteral(
+        "QLabel { color: #6fdc6f; font-size: 10px; font-weight: bold;"
+        " background: transparent; }"));
+    m_nnrPremiumTag->setToolTip(tr("NNR premium model active"));
+    m_nnrPremiumTag->setVisible(false);
+    hbox->addWidget(m_nnrPremiumTag);
+
+    // Measured DSP load for this receiver while NNR is running, muted so it
+    // reads as a hint rather than a second badge.
+    m_dspLoadTag = new QLabel(this);
+    m_dspLoadTag->setObjectName(QStringLiteral("RxDspLoadTag"));
+    m_dspLoadTag->setStyleSheet(QStringLiteral(
+        "QLabel { color: #8090a0; font-size: 9px; background: transparent; }"));
+    m_dspLoadTag->setToolTip(tr(
+        "Share of real time this receiver's DSP worker spends in its blocks."));
+    m_dspLoadTag->setVisible(false);
+    hbox->addWidget(m_dspLoadTag);
     hbox->addWidget(m_nbBadge);
     hbox->addWidget(m_apfBadge);
     hbox->addWidget(m_sqlBadge);
@@ -309,6 +330,19 @@ void RxDashboard::bindSlice(SliceModel* slice)
             [this](AGCMode m) { onAgcChanged(static_cast<int>(m)); });
     connect(slice, &SliceModel::activeNrChanged,   this,
             [this](NrSlot s) { onNrChanged(static_cast<int>(s)); });
+    connect(slice, &SliceModel::nnrModelSlotChanged, this,
+            [this](int) { onNrChanged(static_cast<int>(m_slice ? m_slice->activeNr()
+                                                              : NrSlot::Off)); });
+    connect(slice, &SliceModel::nnrDspLoadPercentChanged, this, [this](int percent) {
+        if (!m_dspLoadTag) { return; }
+        // Any noise reduction that is running, not only NNR: the figure is the
+        // receiver's measured DSP load, so it means the same for NR1-NR4,
+        // DFNR and MNR.
+        const bool active = m_slice && m_slice->activeNr() != NrSlot::Off;
+        m_dspLoadTag->setText(active && percent >= 0 ? QStringLiteral("%1%").arg(percent)
+                                                     : QString());
+        m_dspLoadTag->setVisible(active && percent >= 0);
+    });
     connect(slice, &SliceModel::nnrLimitChanged,   this,
             &RxDashboard::onNnrLimitChanged);
     connect(slice, &SliceModel::nnrLoadWarningChanged, this,
@@ -408,6 +442,18 @@ void RxDashboard::onNrChanged(int nrSlot)
         ? QString::fromLatin1(kNrLabels[nrSlot])
         : QStringLiteral("NR");
     m_nrBadge->setLabel(name);
+    if (m_nnrPremiumTag) {
+        m_nnrPremiumTag->setVisible(nrSlot == static_cast<int>(NrSlot::NNR)
+                                    && m_slice && m_slice->nnrModelSlot() == 1);
+    }
+    if (m_dspLoadTag) {
+        // Any running noise reduction, not only NNR: it is the receiver's
+        // measured DSP load.
+        const bool active = nrSlot != static_cast<int>(NrSlot::Off) && m_slice;
+        const int percent = active ? m_slice->nnrDspLoadPercent() : -1;
+        m_dspLoadTag->setText(percent >= 0 ? QStringLiteral("%1%").arg(percent) : QString());
+        m_dspLoadTag->setVisible(active && percent >= 0);
+    }
     // The slice words the reason for this window: a remote window names
     // the Core computer, a local one this computer.
     const QString limitReason = nrSlot == static_cast<int>(NrSlot::NNR) && m_slice

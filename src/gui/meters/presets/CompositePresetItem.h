@@ -122,6 +122,12 @@ public:
     QSet<int> readingBindings() const override;
     void pushBindingValue(int,double) override;
     void setValue(double v) override { pushBindingValue(bindingId(),v); }
+    /// Hold: off-air, the TX power/reflected/SWR needles keep the last
+    /// transmitted reading instead of following the zeroed meter.
+    void setReadingHold(bool on) override;
+    bool readingHold() const { return m_readingHold; }
+    /// Replay the last transmitted power/reflected/SWR into the channels.
+    void applyHeldPowerValues();
     void setBindingUnavailable(int,const QString&) override;
     void setBindingSupport(int,BindingSupport) override;
     bool advanceMeter(qint64) override;
@@ -244,6 +250,13 @@ private:
     QString m_kind;
     QJsonObject m_config;
     bool m_tx=false,m_aboveS9=false,m_inert=false,m_presentationDirty=true,m_staticPresentationDirty=true;
+    bool m_readingHold=false;
+    /// Last transmitted value per power binding (100/101/102), kept while
+    /// Hold is off so enabling it off-air can restore the needles.
+    QHash<int,double> m_lastPowerReading;
+    // Per-channel last transmitted value for channels fed by the data source
+    // (MMIO): forward, SWR and reflected, so Hold replays all three.
+    QHash<int,double> m_lastMmioPower;
     int m_powerScale=100;
     // Runtime display values only; never serialized or sent to hardware.
     double m_displayPowerTop=0.0;

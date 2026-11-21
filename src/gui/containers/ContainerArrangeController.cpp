@@ -26,6 +26,8 @@
 #include <cmath>
 #include <QUuid>
 #include <QJsonDocument>
+#include <QJsonArray>
+#include <QElapsedTimer>
 #include <QLoggingCategory>
 #include <algorithm>
 Q_LOGGING_CATEGORY(lcArrange, "nereus.container.arrange")
@@ -314,6 +316,10 @@ ArrangeResult ContainerArrangeController::moveDraft(WorkspaceDocument& d, const 
     if (d.containers[source].locked || d.containers[target].locked) {
         return failure(tr("Arrangement is locked"));
     }
+    // Thetis's Lock items: reordering within a container is a position change.
+    if (source == target && d.containers[source].lockItemPositions) {
+        return failure(tr("Item positions are locked"));
+    }
     if (insertion < 0 || insertion > d.containers[target].contents.size()) {
         return failure(tr("Invalid insertion position"));
     }
@@ -334,7 +340,7 @@ ArrangeResult ContainerArrangeController::placeFreeCanvas(const QString& entryId
     auto document=m_store.snapshot();const auto [c,e]=locate(document,entryId);
     if(c<0 || document.containers[c].layout!=ContentLayout::FreeCanvas) {return failure(tr("The free Canvas placement is no longer available."));}
     auto& container=document.containers[c];auto& entry=container.contents[e];
-    if(container.locked) {return failure(tr("Arrangement is locked."));}
+    if(container.lockItemPositions) {return failure(tr("Item positions are locked."));}
     if(entry.freeCanvasRect().has_value() && entry.freeCanvasRect().value()!=original) {return failure(tr("The object placement changed during this gesture."));}
     if(!std::isfinite(rect.x()) || !std::isfinite(rect.y()) || !std::isfinite(rect.width()) || !std::isfinite(rect.height()) || rect.width()<0 || rect.height()<0) {return failure(tr("Invalid object geometry."));}
     entry.setFreeCanvasRect(rect);return commit(document);
@@ -476,6 +482,197 @@ ArrangeResult ContainerArrangeController::setEntryConfig(const QString& id, cons
     d.containers[source].contents[index].config = config;
     return commit(d);
 }
+ArrangeResult ContainerArrangeController::setEntryCanvasRect(const QString& id, const QRectF& rect)
+{
+    auto d = m_store.snapshot();
+    const auto [source, index] = locate(d, id);
+    if (source < 0) {
+        return failure(tr("Entry is unavailable"));
+    }
+    d.containers[source].contents[index].canvasRect = rect;
+    return commit(d);
+}
+
+namespace {
+// Where a block sat before it was first moved: the position "reset" returns
+// it to. Recorded once, on the first drag, and kept with the entry so it
+// survives restarts and a move between containers.
+constexpr auto kInitialRectKey = "_initialCanvasRect";
+
+QJsonArray rectArray(const QRectF& rect)
+{
+    return QJsonArray{rect.x(), rect.y(), rect.width(), rect.height()};
+}
+
+std::optional<QRectF> rectFromArray(const QJsonValue& value)
+{
+    const QJsonArray array = value.toArray();
+    if (array.size() != 4) { return std::nullopt; }
+    return QRectF(array.at(0).toDouble(), array.at(1).toDouble(),
+                  array.at(2).toDouble(), array.at(3).toDouble());
+}
+
+// The one mutation a legacy drag makes, shared by the single and grouped
+// forms so both produce exactly the same entry.
+void applyLegacyGeometry(ContentEntry& entry, const QRectF& canvasRect, const QString& legacyRecord,
+                         bool rememberInitial)
+{
+    if (rememberInitial && !entry.extensions.contains(QLatin1String(kInitialRectKey))
+        && !entry.canvasRect.isNull()) {
+        entry.extensions.insert(QLatin1String(kInitialRectKey), rectArray(entry.canvasRect));
+    }
+    entry.canvasRect = canvasRect;
+    entry.config.insert(QStringLiteral("legacyRecord"), legacyRecord);
+    // A composite/face keeps its own rectangle in the saved configuration,
+    // which the renderer applies as well. Leaving it stale would put the
+    // block back where it was when the surface is next built.
+    if (QJsonDocument::fromJson(legacyRecord.toUtf8()).isObject()
+        && entry.config.contains(QStringLiteral("properties"))) {
+        QJsonObject properties = entry.config.value(QStringLiteral("properties")).toObject();
+        if (properties.contains(QStringLiteral("x")) && properties.contains(QStringLiteral("w"))) {
+            properties[QStringLiteral("x")] = canvasRect.x();
+            properties[QStringLiteral("y")] = canvasRect.y();
+            properties[QStringLiteral("w")] = canvasRect.width();
+            properties[QStringLiteral("h")] = canvasRect.height();
+            entry.config[QStringLiteral("properties")] = properties;
+        }
+    }
+}
+} // namespace
+
+ArrangeResult ContainerArrangeController::setLegacyItem(const QString& id,
+                                                        const QRectF& canvasRect,
+                                                        const QString& legacyRecord)
+{
+    auto d = m_store.snapshot();
+    const auto [source, index] = locate(d, id);
+    if (source < 0) {
+        return failure(tr("Entry is unavailable"));
+    }
+    applyLegacyGeometry(d.containers[source].contents[index], canvasRect, legacyRecord, true);
+    QElapsedTimer clock; clock.start();
+    const ArrangeResult outcome = commit(d);
+    qCInfo(lcArrange) << "setLegacyItem" << id << canvasRect << (outcome.ok ? "ok" : "FAILED")
+                      << outcome.error << clock.elapsed() << "ms";
+    return outcome;
+}
+
+ArrangeResult ContainerArrangeController::setLegacyItems(const QVector<LegacyItemRect>& items)
+{
+    if (items.isEmpty()) { return {true, {}}; }
+    auto d = m_store.snapshot();
+    for (const auto& item : items) {
+        bool found = false;
+        for (auto& container : d.containers) {
+            for (auto& entry : container.contents) {
+                if (entry.id != item.entryId) { continue; }
+                applyLegacyGeometry(entry, item.rect, item.record, true);
+                found = true;
+                break;
+            }
+            if (found) { break; }
+        }
+        if (!found) { return failure(tr("Entry is unavailable")); }
+    }
+    QElapsedTimer clock; clock.start();
+    const ArrangeResult outcome = commit(d);
+    qCInfo(lcArrange) << "setLegacyItems" << items.size() << "blocks"
+                      << (outcome.ok ? "ok" : "FAILED") << outcome.error << clock.elapsed() << "ms";
+    return outcome;
+}
+
+ArrangeResult ContainerArrangeController::resetEntryPosition(const QString& id)
+{
+    auto d = m_store.snapshot();
+    const auto [source, index] = locate(d, id);
+    if (source < 0) { return failure(tr("Entry is unavailable")); }
+    auto& entry = d.containers[source].contents[index];
+    const auto rect = rectFromArray(entry.extensions.value(QLatin1String(kInitialRectKey)));
+    if (!rect) { return failure(tr("No initial position is remembered for this block")); }
+    applyLegacyGeometry(entry, *rect, entry.config.value(QStringLiteral("legacyRecord")).toString(), false);
+    return commit(d);
+}
+
+ArrangeResult ContainerArrangeController::resetContainerPositions(const QString& containerId)
+{
+    auto d = m_store.snapshot();
+    const int source = containerIndex(d, containerId);
+    if (source < 0) { return failure(tr("Container is unavailable")); }
+    int count = 0;
+    for (auto& entry : d.containers[source].contents) {
+        const auto rect = rectFromArray(entry.extensions.value(QLatin1String(kInitialRectKey)));
+        if (!rect) { continue; }
+        applyLegacyGeometry(entry, *rect, entry.config.value(QStringLiteral("legacyRecord")).toString(), false);
+        ++count;
+    }
+    if (count == 0) { return failure(tr("No block in this container has a remembered position")); }
+    return commit(d);
+}
+
+ArrangeResult ContainerArrangeController::rememberContainerPositions(const QString& containerId)
+{
+    auto d = m_store.snapshot();
+    const int source = containerIndex(d, containerId);
+    if (source < 0) { return failure(tr("Container is unavailable")); }
+    int count = 0;
+    for (auto& entry : d.containers[source].contents) {
+        if (entry.canvasRect.isNull()) { continue; }
+        entry.extensions.insert(QLatin1String(kInitialRectKey), rectArray(entry.canvasRect));
+        ++count;
+    }
+    if (count == 0) { return failure(tr("This container has no blocks to remember")); }
+    return commit(d);
+}
+
+ArrangeResult ContainerArrangeController::setMoveLink(const QString& id, const QString& withId,
+                                                      bool linked)
+{
+    auto d = m_store.snapshot();
+    const auto [source, index] = locate(d, id);
+    if (source < 0) {
+        return failure(tr("Entry is unavailable"));
+    }
+    auto& container = d.containers[source];
+    if (linked) {
+        const auto [otherSource, otherIndex] = locate(d, withId);
+        if (otherSource != source) {
+            return failure(tr("Both items must be in the same container"));
+        }
+        if (otherIndex == index) {
+            return failure(tr("Choose a different item"));
+        }
+        // A move group: several blocks move as one gesture (a cross meter and
+        // its readouts). Linking joins both blocks' groups into this one.
+        QString group = container.contents[index].extensions.value(QStringLiteral("moveGroup")).toString();
+        const QString otherGroup = container.contents[otherIndex].extensions.value(QStringLiteral("moveGroup")).toString();
+        if (group.isEmpty()) { group = otherGroup; }
+        if (group.isEmpty()) { group = QUuid::createUuid().toString(QUuid::WithoutBraces); }
+        if (!otherGroup.isEmpty() && otherGroup != group) {
+            for (auto& entry : container.contents) {
+                if (entry.extensions.value(QStringLiteral("moveGroup")).toString() == otherGroup) {
+                    entry.extensions[QStringLiteral("moveGroup")] = group;
+                }
+            }
+        }
+        container.contents[index].extensions[QStringLiteral("moveGroup")] = group;
+        container.contents[otherIndex].extensions[QStringLiteral("moveGroup")] = group;
+        // The older pairwise link is redundant once the group exists.
+        container.contents[index].extensions.remove(QStringLiteral("moveWith"));
+        container.contents[otherIndex].extensions.remove(QStringLiteral("moveWith"));
+    } else {
+        const auto [otherSource, otherIndex] = locate(d, withId);
+        if (otherSource == source && otherIndex >= 0 && otherIndex < container.contents.size()) {
+            container.contents[otherIndex].extensions.remove(QStringLiteral("moveGroup"));
+        }
+        for (auto& entry : container.contents) {
+            if (entry.extensions.value(QStringLiteral("moveWith")).toString() == id) {
+                entry.extensions.remove(QStringLiteral("moveWith"));
+            }
+        }
+    }
+    return commit(d);
+}
+
 ArrangeResult ContainerArrangeController::closeContainer(const QString& id)
 {
     auto d = m_store.snapshot();

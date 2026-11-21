@@ -6,8 +6,6 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-11-15: Recording plan Task 5: RecordingsFacade mirrored (read-only).
-//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05: Band stack plan Task 4: BandStackFacade mirrored (read-only).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-08-05  J.J. Boyd / KG4VCF  Remote daemon R2 Task 7: mirrored
@@ -178,9 +176,6 @@ const char* const kMirroredClasses[] = {
     // Band stack plan Task 4 (bandStackVersion 1): the Core's band stack,
     // read-only; the bandStack.* verbs change it.
     "NereusSDR::BandStackFacade",
-    // Recording plan Task 5 (recordingsVersion 1): the Core's recordings,
-    // read-only; the recordings.* verbs change them.
-    "NereusSDR::RecordingsFacade",
     // Rotor control plan Task 4b (remoteRotorControlVersion 1): the Core's
     // antenna rotor, read-only; the rotor commands change it.
     "NereusSDR::RotorLink::RotorModel",

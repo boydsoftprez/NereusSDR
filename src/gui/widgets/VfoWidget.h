@@ -109,13 +109,6 @@
 //                 source: https://github.com/ten9876/AetherSDR. J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via Anthropic
 //                 Claude Code.
-//   2026-11-15 - Recording plan Task 6: the side buttons run x, lock,
-//                 Record, Play, then the more button; Record and Play are
-//                 always shown, disabled with a reason until a recordings
-//                 controller (FlagRecordPlay) drives them; recordButton(),
-//                 playButton(), floatingButtonsBuilt() and
-//                 floatingButtonStyleSheet() for it. J.J. Boyd (KG4VCF),
-//                 with AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -410,6 +403,7 @@ warren@wpratt.com
 #include <QMenu>
 #include <QRegion>
 #include <QSet>
+#include <QTimer>
 
 #include <array>
 #include <limits>
@@ -691,8 +685,7 @@ public:
     // VFO flag crash lane: the floating lock button, and the slice this
     // flag is bound to, for the remote window's close-and-reopen case.
     QPushButton* lockButtonForTest() const { return m_lockBtn; }
-    // The ⋯ button at the bottom of the side buttons (overlay design D39;
-    // recording plan Task 6 moved it under Record and Play).
+    // The ⋯ button under the lock (overlay design D39).
     QPushButton* moreButtonForTest() const { return m_moreBtn; }
     SliceModel* sliceForTest() const { return m_slice.data(); }
     // R-R3-49: the floating record and play buttons, for the unbuilt
@@ -923,7 +916,7 @@ signals:
     // --- Mode tab signals (S1.8c) ---
     void quickModeRequested(int index);
 
-    // --- Record/play signals (recording plan Task 6: FlagRecordPlay acts on them) ---
+    // --- Record/play signals (S1.10 — NYI in Stage 1, wired to future recording subsystem) ---
     void recordToggled(bool recording);
     void playToggled(bool playing);
 
@@ -999,6 +992,9 @@ protected:
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
+    // While a digit is being wheel-tuned, follow the flag as the marker moves
+    // so the pointer stays on that digit.
+    void moveEvent(QMoveEvent* event) override;
     // Phase 3F Sub-Epic E Task 4: right-click pops the multi-pan context
     // menu (Make TX, Antenna >, Sample rate >, Diversity >, Filter policy,
     // Remove slice).
@@ -1338,6 +1334,13 @@ private:
     // True when pos (flag coordinates) lands on a ScrollableLabel.
     bool pressOnScrollableLabel(const QPoint& pos) const;
     WheelStepAccumulator m_wheelSteps;
+    // Per-digit wheel tuning keeps the pointer on the chosen place while the
+    // flag is repositioned by the pan. The timer ends the follow when the
+    // operator stops scrolling; moving to another digit also ends it.
+    void followWheelDigit();
+    QTimer m_wheelFollowTimer;
+    bool   m_wheelFollowActive{false};
+    qint64 m_wheelFollowPlace{0};
 
     // --- Task 14a: slice access ---
     QLabel*     m_accessLine{nullptr};

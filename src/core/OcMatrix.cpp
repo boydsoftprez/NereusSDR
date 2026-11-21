@@ -127,6 +127,7 @@ bool OcMatrix::pinEnabled(Band band, int pin, bool tx) const
 // From Thetis HPSDR/Penny.cs:117-132 [@501e3f5] setBandABitMask
 void OcMatrix::setPin(Band band, int pin, bool tx, bool enabled)
 {
+    if (!m_loaded) { return; }
     const int b = int(band);
     if (b < 0 || b >= kBandCount || pin < 0 || pin >= kPinCount) { return; }
     {
@@ -134,6 +135,12 @@ void OcMatrix::setPin(Band band, int pin, bool tx, bool enabled)
         auto& slot = m_pins[b][pin][tx ? 1 : 0];
         if (slot == enabled) { return; }
         slot = enabled;
+    }
+    if (enabled) {
+        // Any real pin makes the matrix a live pattern again; a later
+        // all-zero save is only permitted after an explicit Reset.
+        AppSettings::instance().remove(
+            persistenceKey() + QStringLiteral("/userCleared"));
     }
     // Issue #191: persist immediately. The HF / SWL OC tab toggle handlers
     // call setPin() directly and don't follow up with save(); without this,
@@ -178,34 +185,24 @@ quint8 OcMatrix::maskFor(Band band, bool tx, bool tune, bool twoTone) const
 // From Thetis HPSDR/Penny.cs:262-296 [v2.10.3.15] adjustForRX
 // From Thetis-Enhanced (EU2AV) HPSDR/Penny.cs:262-296 [@567a7ec]
 //
-// NereusSDR keeps no RXPinPA array. Every Thetis RXPinPA[group, pin] starts
-// false and NereusSDR has no control that sets one:
-//   From Thetis HPSDR/Penny.cs:59-61 [v2.10.3.15]
-//   From Thetis-Enhanced (EU2AV) HPSDR/Penny.cs:59-61 [@567a7ec]
-//     TXPinAction[group, pin] = TXPinActions.MOX_TUNE_TWOTONE;
-//     TXPinPA[group, pin] = false;
-//     RXPinPA[group, pin] = false;
-// so bConisderPA is always false here and every pin keeps its bit: the
-// bits come back unchanged. Thetis's group lookup (getGroup, SplitPins,
-// VFOBTX) chooses which group's PA flag to read; with one flag value for
-// every group it is reduced away, and no NereusSDR band falls outside the
-// three groups ("some issue finding band, skip" cannot happen).
+// A pin whose RXPinPA flag is set only closes while xPA is on:
+//   From Thetis HPSDR/Penny.cs:277-282 [v2.10.3.15]
+//     bool bConisderPA = RXPinPA[group, nPin];
+//     int nBit = !bConisderPA || (bConisderPA && pa) ? 1 : 0;
+// Thetis's group lookup (getGroup, SplitPins, VFOBTX) chooses which group's
+// PA flag to read; NereusSDR tracks one flag per pin, reduced away, and no
+// NereusSDR band falls outside the three groups ("some issue finding band,
+// skip" cannot happen).
 // Reduced lines' comments:
 //   [original inline comment from Penny.cs:271] // need to find the group that is VFOA/VFOB
 //   [original inline comment from Penny.cs:285] // some issue finding band, skip
-quint8 OcMatrix::adjustForRx(quint8 bits)
+quint8 OcMatrix::adjustForRx(quint8 bits) const
 {
-    // [original Thetis declaration: bool[,] RXPinPA, reduced to its default]
-    constexpr bool kConsiderPa = false;  // From Thetis HPSDR/Penny.cs:61 [v2.10.3.15]
-                                         // From Thetis-Enhanced (EU2AV) HPSDR/Penny.cs:61 [@567a7ec]
-    constexpr bool kPa = false;          // pa only matters when a pin considers it
     int mask = 0;
 
     for (int nPin = 0; nPin < kPinCount; nPin++) {
-        bool bConisderPA = kConsiderPa; // are we considering the PA state for this pin?
-                                        // PA state is an override button on the front end console
-
-        int nBit = !bConisderPA || (bConisderPA && kPa) ? 1 : 0;
+        const bool bConisderPA = m_rxPinPa[nPin];
+        const int nBit = !bConisderPA || m_extPaEnabled ? 1 : 0;
 
         mask |= nBit << nPin;
     }
@@ -217,28 +214,25 @@ quint8 OcMatrix::adjustForRx(quint8 bits)
 // From Thetis-Enhanced (EU2AV) HPSDR/Penny.cs:297-360 [@567a7ec]
 //
 // One action per pin (NereusSDR collapses Thetis's [group, pin] array; see
-// m_pinActions), and TXPinPA reduced to its false default as in adjustForRx
-// (Penny.cs:60 [v2.10.3.15]; Thetis-Enhanced (EU2AV) Penny.cs:60
-// [@567a7ec]), so the action alone decides each bit. The group lookup is
-// reduced as in adjustForRx; its comments:
+// m_pinActions), and the TXPinPA flag decides whether the action closes the
+// pin at all:
+//   From Thetis HPSDR/Penny.cs:319-324 [v2.10.3.15]
+//     bool bConisderPA = TXPinPA[group, nPin];
+//     if (!bConisderPA || (bConisderPA && pa))
+// The group lookup is reduced as in adjustForRx; its comments:
 //   [original inline comment from Penny.cs:306] // need to find the group that is VFOA/VFOB
 //   [original inline comment from Penny.cs:320] // some issue finding band, skip
 quint8 OcMatrix::adjustForTxAction(quint8 bits, bool tx, bool tune, bool twoTone) const
 {
-    // [original Thetis declaration: bool[,] TXPinPA, reduced to its default]
-    constexpr bool kConsiderPa = false;  // From Thetis HPSDR/Penny.cs:60 [v2.10.3.15]
-                                         // From Thetis-Enhanced (EU2AV) HPSDR/Penny.cs:60 [@567a7ec]
-    constexpr bool kPa = false;          // pa only matters when a pin considers it
     int mask = 0;
 
     for (int nPin = 0; nPin < kPinCount; nPin++) {
         const TXPinAction action = m_pinActions[nPin];
-        bool bConisderPA = kConsiderPa; // are we considering the PA state for this pin?
-                                        // PA state is an override button on the front end console
+        const bool bConisderPA = m_txPinPa[nPin]; // does this pin follow xPA?
 
         int nBit = 0;
 
-        if (!bConisderPA || (bConisderPA && kPa)) {
+        if (!bConisderPA || m_extPaEnabled) {
             switch (action) {
             case TXPinAction::Mox: // tx only
                 nBit = tx && !tune && !twoTone ? 1 : 0;
@@ -287,6 +281,7 @@ OcMatrix::TXPinAction OcMatrix::pinAction(int pin) const
 // From Thetis HPSDR/Penny.cs:94-100 [@501e3f5] setTXPinAction
 void OcMatrix::setPinAction(int pin, TXPinAction action)
 {
+    if (!m_loaded) { return; }
     if (pin < 0 || pin >= kPinCount) { return; }
     {
         QWriteLocker locker(&m_lock);
@@ -300,9 +295,116 @@ void OcMatrix::setPinAction(int pin, TXPinAction action)
     emit changed();
 }
 
+namespace {
+
+// OC state is keyed by the identity that reaches the radio: the MAC from
+// discovery, or MANUAL:ip:port for a hand-added entry. The same radio can
+// arrive under either, and a MAC can arrive with different separators or
+// letter case. Compare the two without separators so a spelling change is
+// not mistaken for a different radio (which used to reload an empty matrix
+// and then save it over the real pattern).
+QString normalisedOcIdentity(QString identity)
+{
+    identity = identity.trimmed();
+    if (identity.startsWith(QLatin1String("MANUAL"), Qt::CaseInsensitive)) {
+        // Addresses are not MACs; keep the dots so two hosts cannot collide.
+        return identity.toUpper();
+    }
+    identity.remove(QLatin1Char(':'));
+    identity.remove(QLatin1Char('-'));
+    identity.remove(QLatin1Char('_'));
+    identity.remove(QLatin1Char('.'));
+    return identity.toUpper();
+}
+
+} // namespace
+
 void OcMatrix::setMacAddress(const QString& mac)
 {
+    if (m_mac == mac) {
+        return;
+    }
+    // Same radio, different spelling: keep the spelling already used for
+    // this radio's saved keys so saves cannot fork into a second block.
+    if (!m_mac.isEmpty()
+        && normalisedOcIdentity(m_mac) == normalisedOcIdentity(mac)) {
+        return;
+    }
     m_mac = mac;
+    m_loaded = false;
+}
+
+// ── External PA (xPA) ──────────────────────────────────────────────────────
+// From Thetis HPSDR/Penny.cs:60-91 [v2.10.3.15] TXPinPA / RXPinPA /
+// setTXPinPA; Thetis stores one flag per band group, NereusSDR one per pin.
+bool OcMatrix::txPinPa(int pin) const
+{
+    if (pin < 0 || pin >= kPinCount) { return false; }
+    QReadLocker locker(&m_lock);
+    return m_txPinPa[pin];
+}
+
+void OcMatrix::setTxPinPa(int pin, bool on)
+{
+    if (!m_loaded) { return; }
+    if (pin < 0 || pin >= kPinCount) { return; }
+    {
+        QWriteLocker locker(&m_lock);
+        if (m_txPinPa[pin] == on) { return; }
+        m_txPinPa[pin] = on;
+    }
+    save();
+    emit changed();
+}
+
+bool OcMatrix::rxPinPa(int pin) const
+{
+    if (pin < 0 || pin >= kPinCount) { return false; }
+    QReadLocker locker(&m_lock);
+    return m_rxPinPa[pin];
+}
+
+void OcMatrix::setRxPinPa(int pin, bool on)
+{
+    if (!m_loaded) { return; }
+    if (pin < 0 || pin >= kPinCount) { return; }
+    {
+        QWriteLocker locker(&m_lock);
+        if (m_rxPinPa[pin] == on) { return; }
+        m_rxPinPa[pin] = on;
+    }
+    save();
+    emit changed();
+}
+
+bool OcMatrix::extPaEnabled() const
+{
+    QReadLocker locker(&m_lock);
+    return m_extPaEnabled;
+}
+
+// From Thetis console.cs:46667-46690 [v2.10.3.15]
+// chkExternalPA_CheckedChanged: stores the button and re-pushes the OC bits
+// (Penny.UpdateExtCtrl) so a PA-flagged pin opens or closes at once.
+void OcMatrix::setExtPaEnabled(bool on)
+{
+    {
+        QWriteLocker locker(&m_lock);
+        if (m_extPaEnabled == on) { return; }
+        m_extPaEnabled = on;
+    }
+    save();
+    emit extPaEnabledChanged(on);
+    emit changed();
+}
+
+bool OcMatrix::anyPinPa() const
+{
+    QReadLocker locker(&m_lock);
+    for (int pin = 0; pin < kPinCount; ++pin) {
+        if (m_txPinPa[pin] || m_rxPinPa[pin]) { return true; }
+    }
+    return false;
 }
 
 QString OcMatrix::persistenceKey() const
@@ -343,8 +445,91 @@ void OcMatrix::load()
     if (m_mac.isEmpty()) { return; }
     auto& s = AppSettings::instance();
     const QString base = persistenceKey();
+    const bool hadLoaded = m_loaded;
+    const bool userCleared =
+        s.value(base + QStringLiteral("/userCleared"), QStringLiteral("False"))
+            .toString() == QStringLiteral("True");
 
+    // A station can be reached under its MAC (discovery) or a MANUAL:IP:PORT
+    // placeholder (a saved manual entry), and the identity can differ between
+    // sessions. When this identity has no matrix saved, adopt the only other
+    // identity that has one (one radio) instead of starting empty and later
+    // saving the empty matrix over the real pattern.
+    QString readBase = base;
+    bool adopt = false;
+    bool baseHasData = false;
+    QStringList otherBases;
+    const QStringList all = s.allKeys();
+    for (const QString& key : all) {
+        if (!key.startsWith(QStringLiteral("hardware/")) || !key.contains(QStringLiteral("/oc/"))) {
+            continue;
+        }
+        const QString owner = key.section(QLatin1Char('/'), 1, 1);
+        const QString candidate = QStringLiteral("hardware/%1/oc").arg(owner);
+        if (candidate == base) {
+            baseHasData = true;
+        } else if (!otherBases.contains(candidate)) {
+            otherBases.append(candidate);
+        }
+    }
+
+    // How many pins a candidate block actually has set. A block that exists
+    // but holds only defaults is not a pattern worth adopting.
+    const auto truePinCount = [&s](const QString& candidate) {
+        int count = 0;
+        for (int b = 0; b < kBandCount; ++b) {
+            const QString bandSlug = bandKeyName(Band(b));
+            for (int pin = 0; pin < kPinCount; ++pin) {
+                for (int tx = 0; tx < 2; ++tx) {
+                    const QString key = QStringLiteral("%1/%2/%3/pin%4")
+                                            .arg(candidate,
+                                                 tx ? QStringLiteral("tx")
+                                                    : QStringLiteral("rx"),
+                                                 bandSlug)
+                                            .arg(pin + 1);
+                    if (s.value(key, QStringLiteral("False")).toString()
+                        == QStringLiteral("True")) {
+                        ++count;
+                    }
+                }
+            }
+        }
+        return count;
+    };
+
+    if ((!baseHasData || truePinCount(base) == 0) && !userCleared) {
+        QString bestBase;
+        int bestCount = 0;
+        for (const QString& candidate : otherBases) {
+            const int count = truePinCount(candidate);
+            if (count > bestCount) {
+                bestBase = candidate;
+                bestCount = count;
+            }
+        }
+        const QString owner = bestBase.section(QLatin1Char('/'), 1, 1);
+        const bool sameRadio = !bestBase.isEmpty()
+            && normalisedOcIdentity(owner) == normalisedOcIdentity(m_mac);
+        if (sameRadio || (otherBases.size() == 1 && bestCount > 0)) {
+            readBase = bestBase;
+            adopt = true;
+        } else if (hadLoaded && bestCount > 0) {
+            // The identity spelling changed while this session already held
+            // the pattern: keep the pattern and write it under the new name.
+            readBase = bestBase;
+            adopt = true;
+        }
+    }
+
+    const bool haveSource = baseHasData || adopt;
+
+    bool extPaBefore = false;
     {
+        QReadLocker locker(&m_lock);
+        extPaBefore = m_extPaEnabled;
+    }
+
+    if (haveSource) {
         QWriteLocker locker(&m_lock);
 
         // Hydrate per-band per-pin bits (RX and TX)
@@ -353,8 +538,8 @@ void OcMatrix::load()
         for (int b = 0; b < kBandCount; ++b) {
             const QString bandSlug = bandKeyName(Band(b));
             for (int pin = 0; pin < kPinCount; ++pin) {
-                const QString rxKey = QStringLiteral("%1/rx/%2/pin%3").arg(base, bandSlug).arg(pin + 1);
-                const QString txKey = QStringLiteral("%1/tx/%2/pin%3").arg(base, bandSlug).arg(pin + 1);
+                const QString rxKey = QStringLiteral("%1/rx/%2/pin%3").arg(readBase, bandSlug).arg(pin + 1);
+                const QString txKey = QStringLiteral("%1/tx/%2/pin%3").arg(readBase, bandSlug).arg(pin + 1);
                 m_pins[b][pin][0] = s.value(rxKey, QStringLiteral("False")).toString() == QStringLiteral("True");
                 m_pins[b][pin][1] = s.value(txKey, QStringLiteral("False")).toString() == QStringLiteral("True");
             }
@@ -363,23 +548,69 @@ void OcMatrix::load()
         // Hydrate per-pin TX actions
         // Key scheme: hardware/<mac>/oc/actions/pin<n>/action
         for (int pin = 0; pin < kPinCount; ++pin) {
-            const QString k = QStringLiteral("%1/actions/pin%2/action").arg(base).arg(pin + 1);
+            const QString k = QStringLiteral("%1/actions/pin%2/action").arg(readBase).arg(pin + 1);
             const QString defaultSlug = actionSlug(TXPinAction::MoxTuneTwoTone);
             const QString slug = s.value(k, defaultSlug).toString();
             m_pinActions[pin] = actionFromSlug(slug);
         }
+
+        // Hydrate the external-PA (xPA) per-pin flags and the button state.
+        for (int pin = 0; pin < kPinCount; ++pin) {
+            const QString txKey = QStringLiteral("%1/extPa/txPin%2").arg(readBase).arg(pin + 1);
+            const QString rxKey = QStringLiteral("%1/extPa/rxPin%2").arg(readBase).arg(pin + 1);
+            m_txPinPa[pin] = s.value(txKey, QStringLiteral("False")).toString() == QStringLiteral("True");
+            m_rxPinPa[pin] = s.value(rxKey, QStringLiteral("False")).toString() == QStringLiteral("True");
+        }
+        m_extPaEnabled =
+            s.value(QStringLiteral("%1/extPa/enabled").arg(readBase),
+                    QStringLiteral("False")).toString() == QStringLiteral("True");
     }
 
-    emit changed();
-}
+    // Loaded means "safe to save". An identity with no pattern of its own,
+    // and no single unambiguous pattern to adopt, must not be marked loaded:
+    // a later save would write defaults over a real matrix. A radio with no
+    // OC keys anywhere at all is a fresh radio, where defaults are correct.
+    const bool freshRadio = !baseHasData && otherBases.isEmpty();
+    m_loaded = haveSource || freshRadio || hadLoaded;
 
+    if (m_extPaEnabled != extPaBefore) {
+        emit extPaEnabledChanged(m_extPaEnabled);
+    }
+    emit changed();
+
+    // Adopted from the other identity: write it under this one so the next
+    // session starts from the same pattern whatever identity it resolves.
+    if (adopt) {
+        save();
+    }
+}
 void OcMatrix::save()
 {
     if (m_mac.isEmpty()) { return; }
+    // Never write an unloaded matrix: before load(), every cell reads as its
+    // default (all false), and saving that erased the operator's pattern when
+    // the radio identity changed between sessions (MAC vs MANUAL:IP:PORT).
+    if (!m_loaded) { return; }
     auto& s = AppSettings::instance();
     const QString base = persistenceKey();
+    const bool userCleared =
+        s.value(base + QStringLiteral("/userCleared"), QStringLiteral("False"))
+            .toString() == QStringLiteral("True");
 
     QReadLocker locker(&m_lock);
+
+    // Never persist an all-zero pin matrix unless the operator cleared it
+    // deliberately (resetDefaults, or unchecking the last pin). This is the
+    // last line of defence against an unloaded or identity-mismatched
+    // matrix wiping the saved pattern.
+    int truePins = 0;
+    for (int b = 0; b < kBandCount; ++b) {
+        for (int pin = 0; pin < kPinCount; ++pin) {
+            if (m_pins[b][pin][0]) { ++truePins; }
+            if (m_pins[b][pin][1]) { ++truePins; }
+        }
+    }
+    const bool writePins = truePins > 0 || userCleared;
 
     // R-R3-46: write only the keys whose saved value differs, reading them
     // with load()'s own defaults, so an unchanged cell reads back the same
@@ -393,13 +624,15 @@ void OcMatrix::save()
     };
     const QString kTrue = QStringLiteral("True");
     const QString kFalse = QStringLiteral("False");
-    for (int b = 0; b < kBandCount; ++b) {
-        const QString bandSlug = bandKeyName(Band(b));
-        for (int pin = 0; pin < kPinCount; ++pin) {
-            const QString rxKey = QStringLiteral("%1/rx/%2/pin%3").arg(base, bandSlug).arg(pin + 1);
-            const QString txKey = QStringLiteral("%1/tx/%2/pin%3").arg(base, bandSlug).arg(pin + 1);
-            store(rxKey, m_pins[b][pin][0] ? kTrue : kFalse, kFalse);
-            store(txKey, m_pins[b][pin][1] ? kTrue : kFalse, kFalse);
+    if (writePins) {
+        for (int b = 0; b < kBandCount; ++b) {
+            const QString bandSlug = bandKeyName(Band(b));
+            for (int pin = 0; pin < kPinCount; ++pin) {
+                const QString rxKey = QStringLiteral("%1/rx/%2/pin%3").arg(base, bandSlug).arg(pin + 1);
+                const QString txKey = QStringLiteral("%1/tx/%2/pin%3").arg(base, bandSlug).arg(pin + 1);
+                store(rxKey, m_pins[b][pin][0] ? kTrue : kFalse, kFalse);
+                store(txKey, m_pins[b][pin][1] ? kTrue : kFalse, kFalse);
+            }
         }
     }
 
@@ -408,12 +641,23 @@ void OcMatrix::save()
         const QString k = QStringLiteral("%1/actions/pin%2/action").arg(base).arg(pin + 1);
         store(k, actionSlug(m_pinActions[pin]), defaultSlug);
     }
+
+    // External PA (xPA): the per-pin PA flags and the button state, per radio.
+    for (int pin = 0; pin < kPinCount; ++pin) {
+        const QString txKey = QStringLiteral("%1/extPa/txPin%2").arg(base).arg(pin + 1);
+        const QString rxKey = QStringLiteral("%1/extPa/rxPin%2").arg(base).arg(pin + 1);
+        store(txKey, m_txPinPa[pin] ? kTrue : kFalse, kFalse);
+        store(rxKey, m_rxPinPa[pin] ? kTrue : kFalse, kFalse);
+    }
+    store(QStringLiteral("%1/extPa/enabled").arg(base),
+          m_extPaEnabled ? kTrue : kFalse, kFalse);
 }
 
 // Thetis Penny.cs:53-63 init: pins all 0; actions all MOX_TUNE_TWOTONE
 // From Thetis HPSDR/Penny.cs:55-65 [@501e3f5]
 void OcMatrix::resetDefaults()
 {
+    bool extPaWas = false;
     {
         QWriteLocker locker(&m_lock);
         for (auto& band : m_pins) {
@@ -422,10 +666,19 @@ void OcMatrix::resetDefaults()
             }
         }
         m_pinActions.fill(TXPinAction::MoxTuneTwoTone);
+        m_txPinPa.fill(false);
+        m_rxPinPa.fill(false);
+        extPaWas = m_extPaEnabled;
+        m_extPaEnabled = false;
     }
     // Issue #191: persist immediately. Reset OC defaults button calls
-    // resetDefaults() with no follow-up save().
+    // resetDefaults() with no follow-up save(). Mark this as a deliberate
+    // clear so the all-zero matrix is allowed to persist and later loads do
+    // not adopt another identity's pattern back again.
+    AppSettings::instance().setValue(
+        persistenceKey() + QStringLiteral("/userCleared"), QStringLiteral("True"));
     save();
+    if (extPaWas) { emit extPaEnabledChanged(false); }
     emit changed();
 }
 

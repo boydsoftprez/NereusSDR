@@ -361,50 +361,56 @@ OcOutputsHfTab::OcOutputsHfTab(RadioModel* model, OcMatrix* ocMatrix,
             bottomRow->addWidget(bcdGroup, 1);
         }
 
-        // ── External PA control ──────────────────────────────────────────────
-        // Source: Thetis setup.designer.cs grpExtPAControlHF [@501e3f5]
+        // ── External PA control (xPA) ───────────────────────────────────────
+        // Source: Thetis setup.designer.cs grpExtPAControlHF and setup.cs:
+        // 21835-21865 (chkPin1TXPAHF ... chkPin7TXPAHF, chkPin1RXPAHF ...):
+        // a pin whose PA box is ticked only closes while the console xPA
+        // button is on (Penny.cs:277-282 and 319-324 [v2.10.3.15]).
+        // NereusSDR keeps one row of TX and one of RX boxes (Thetis repeats
+        // them per band group; NereusSDR has one flag per pin, like the pin
+        // actions).
         {
-            auto* paGroup = new QGroupBox(tr("External PA control"), this);
+            auto* paGroup = new QGroupBox(tr("External PA (xPA)"), this);
             paGroup->setObjectName(QStringLiteral("ocExternalPaGroup"));
-            // R-R3-49: saved but not applied; hidden until it is.
-            UnbuiltFeatures::hideUnlessBuilt(paGroup, UnbuiltFeature::OcExtras);
             auto* paLayout = new QVBoxLayout(paGroup);
+            paLayout->setSpacing(2);
 
-            auto* modelRow = new QHBoxLayout();
-            modelRow->addWidget(new QLabel(tr("PA model:"), paGroup));
-            m_extPaModel = new QComboBox(paGroup);
-            applyComboStyle(m_extPaModel);
-            m_extPaModel->setMinimumWidth(120);
-            m_extPaModel->setMaximumWidth(160);
-            m_extPaModel->addItem(tr("None"));
-            // Future entries (Phase H) will populate from a PA registry
-            modelRow->addWidget(m_extPaModel);
-            paLayout->addLayout(modelRow);
+            auto* note = new QLabel(tr(
+                "A pin with <b>TX PA</b> ticked closes only while the console "
+                "xPA button is on. <b>RX PA</b> does the same for receive."),
+                paGroup);
+            note->setWordWrap(true);
+            m_xpaNote = note;
+            paLayout->addWidget(note);
 
-            auto* delayRow = new QHBoxLayout();
-            delayRow->addWidget(new QLabel(tr("Bias delay (ms):"), paGroup));
-            m_biasDelayMs = new QSpinBox(paGroup);
-            m_biasDelayMs->setRange(0, 100);
-            m_biasDelayMs->setValue(5);
-            m_biasDelayMs->setSuffix(tr(" ms"));
-            delayRow->addWidget(m_biasDelayMs);
-            paLayout->addLayout(delayRow);
+            auto makePinRow = [&](const QString& label, bool tx,
+                                  std::array<QCheckBox*, kPinCount>& checks) {
+                auto* row = new QHBoxLayout();
+                row->setSpacing(4);
+                row->addWidget(new QLabel(label, paGroup));
+                for (int pin = 0; pin < kPinCount; ++pin) {
+                    auto* cb = new QCheckBox(QString::number(pin + 1), paGroup);
+                    cb->setToolTip(tr("Pin %1 follows xPA on %2")
+                                       .arg(pin + 1)
+                                       .arg(tx ? tr("transmit") : tr("receive")));
+                    connect(cb, &QCheckBox::toggled, this, [this, pin, tx](bool on) {
+                        if (m_syncing || !m_ocMatrix) { return; }
+                        if (tx) {
+                            m_ocMatrix->setTxPinPa(pin, on);
+                        } else {
+                            m_ocMatrix->setRxPinPa(pin, on);
+                        }
+                    });
+                    checks[pin] = cb;
+                    row->addWidget(cb);
+                }
+                row->addStretch();
+                paLayout->addLayout(row);
+            };
+            makePinRow(tr("TX PA:"), true, m_txPinPaChecks);
+            makePinRow(tr("RX PA:"), false, m_rxPinPaChecks);
 
             paLayout->addStretch();
-
-            // Wire PA controls → AppSettings
-            connect(m_extPaModel, QOverload<int>::of(&QComboBox::currentIndexChanged),
-                    this, [this](int idx) {
-                        if (m_syncing) { return; }
-                        AppSettings::instance().setValue(
-                            QStringLiteral("hardware/oc/extPa/model"), idx);
-                    });
-            connect(m_biasDelayMs, QOverload<int>::of(&QSpinBox::valueChanged),
-                    this, [this](int v) {
-                        if (m_syncing) { return; }
-                        AppSettings::instance().setValue(
-                            QStringLiteral("hardware/oc/extPa/biasDelayMs"), v);
-                    });
 
             bottomRow->addWidget(paGroup, 1);
             m_transmitWidgets.append(paGroup);
@@ -577,7 +583,10 @@ void OcOutputsHfTab::buildMatrixGrid(QGroupBox* group, bool tx)
             // Capture band/pin/tx for the lambda (by value)
             connect(cb, &QCheckBox::toggled, this,
                     [this, band, pin, tx](bool checked) {
-                        if (m_syncing) { return; }
+                        if (m_syncing || !m_ocMatrix
+                            || !m_ocMatrix->isLoaded()) {
+                            return;
+                        }
                         if (m_ocMatrix) {
                             m_ocMatrix->setPin(band, pin, tx, checked);
                         }
@@ -626,6 +635,16 @@ void OcOutputsHfTab::syncFromMatrix()
             if (m_actionChecks[pin][a]) {
                 m_actionChecks[pin][a]->setChecked(a == activeAction);
             }
+        }
+    }
+
+    // Sync the external-PA (xPA) "consider PA" rows.
+    for (int pin = 0; pin < kPinCount; ++pin) {
+        if (m_txPinPaChecks[pin]) {
+            m_txPinPaChecks[pin]->setChecked(m_ocMatrix->txPinPa(pin));
+        }
+        if (m_rxPinPaChecks[pin]) {
+            m_rxPinPaChecks[pin]->setChecked(m_ocMatrix->rxPinPa(pin));
         }
     }
 

@@ -37,6 +37,7 @@ private:
     QDoubleSpinBox* m_spinMargin{nullptr};
     QDoubleSpinBox* m_spinCornerRadius{nullptr};
     QDoubleSpinBox* m_spinHeightRatio{nullptr};
+    QDoubleSpinBox* m_spinTextScale{nullptr};
 
     // FadeOnRx / FadeOnTx
     QCheckBox*      m_chkFadeOnRx{nullptr};

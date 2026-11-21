@@ -23,11 +23,6 @@
 //   2026-10-01: TX mic thread (JJ approved): setMicPacketSink, the
 //               microphone line on a thread of its own. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
-//   2026-11-10: setPlaybackPacketSink, received audio other than the
-//               microphone line on a thread of its own ("NereusPlaybackRx").
-//               Brian Sutton (W4KZO), AI-assisted via xAI Grok.
-//   2026-11-15: the 2026-11-10 entry names its author, Brian Sutton (W4KZO).
-//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-01: TX diagnostics lane, review round: MicLineTimingWatch, the
 //               microphone line's own "media RTP timing" warning, which
 //               takes a long idle gap as the line starting again. J.J. Boyd
@@ -175,7 +170,6 @@ public:
     bool sendMicRtp(const QByteArray& packet) override;
     bool sendTx(const QByteArray& message) override;
     bool setMicPacketSink(MicPacketSink sink) override;
-    bool setPlaybackPacketSink(PlaybackPacketSink sink) override;
     bool setTxReceiptHook(TxReceiptHook hook) override;
 
     bool isReady() const override;

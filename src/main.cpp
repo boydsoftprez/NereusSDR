@@ -1,6 +1,8 @@
 #include "gui/GuiConnectionController.h"
 #include "gui/hotkeys/devices/DeviceInput.h"
 #include "gui/GuiApplication.h"
+#include "gui/HelperApps.h"
+#include "gui/ScriptRunner.h"
 #include "gui/styles/AppTheme.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "core/AppSettings.h"
@@ -14,6 +16,7 @@
 #include "core/audio/MacMicMode.h"
 #include "core/audio/RealtimeAudioPriority.h"
 #include "core/RadioConnection.h"
+#include "core/platform/HybridCpu.h"
 #include "core/mmio/ExternalVariableEngine.h"
 #include "core/station/StationHandover.h"
 
@@ -72,6 +75,7 @@ static QString extractProfileFromArgv(int argc, char* argv[])
 
 int main(int argc, char* argv[])
 {
+
     // Hand the build stamp to the core accessor before anything can build a
     // window title from it. Empty on release artifacts, in which case the
     // title stays exactly as it was.
@@ -344,6 +348,20 @@ int main(int argc, char* argv[])
     // src/core/CoreInit.h for the full contract and its idempotency guard.
     NereusSDR::CoreInit::initialize(activeProfile);
 
+    // Thetis's "P-cores only" option: keep this process, including the
+    // audio callback threads a driver creates inside it, on the performance
+    // cores of an Intel hybrid CPU. No effect on CPUs without a P/E split.
+    if (NereusSDR::AppSettings::instance()
+            .value(QStringLiteral("GeneralPcoresOnly"), QStringLiteral("False"))
+            .toString() == QStringLiteral("True")) {
+        QString pcoreMessage;
+        if (NereusSDR::applyPerformanceCoresOnly(&pcoreMessage)) {
+            qInfo() << "Intel P-Core enable:" << pcoreMessage;
+        } else {
+            qWarning() << "Intel P-Core enable:" << pcoreMessage;
+        }
+    }
+
     // Written here because the log opens only once the profile is owned.
     if (!ownership.takeoverNote().isEmpty()) {
         qCWarning(NereusSDR::lcApp).noquote() << ownership.takeoverNote();
@@ -426,6 +444,33 @@ int main(int argc, char* argv[])
         NereusSDR::requestMicrophonePermission();
         connections.start(request);
 #endif
+        // Optionally enable the helper inputs. WaveNode USB is an independent
+        // application: Nereus only creates its UDP listener, never installs or
+        // starts it. The Palstar HF-Auto frontend is still seeded and started.
+        {
+            QString helperError;
+            // Helpers and scripts are installed per user only when selected.
+            auto& service = NereusSDR::HelperApps::instance();
+            auto& settings = NereusSDR::AppSettings::instance();
+            if (settings.value(QStringLiteral("Helpers/WaveNodeEnabled"), false).toBool()) {
+                if (!service.start(NereusSDR::HelperApps::Helper::WaveNode, &helperError)) {
+                    qWarning() << "WaveNode start:" << helperError;
+                }
+            }
+            if (settings.value(QStringLiteral("Helpers/HfAutoEnabled"), false).toBool()) {
+                if (!service.start(NereusSDR::HelperApps::Helper::HfAuto, &helperError)) {
+                    qWarning() << "HF-Auto start:" << helperError;
+                }
+            }
+
+            // The start script runs only when selected. ScriptRunner seeds the
+            // per-user copy on that first selected run.
+            NereusSDR::ScriptRunner::instance().runStartScript();
+            QObject::connect(&app, &QCoreApplication::aboutToQuit, [] {
+                NereusSDR::ScriptRunner::instance().runStopScript();
+            });
+        }
+
         rc = app.exec();
         background = connections.sessions()->backgroundServiceOptions();
         connections.shutdown();

@@ -69,7 +69,7 @@
 #include <QVariant>
 
 QT_BEGIN_NAMESPACE
-class QMetaObject;
+struct QMetaObject;
 class QObject;
 QT_END_NAMESPACE
 

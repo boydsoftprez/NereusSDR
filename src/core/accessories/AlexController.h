@@ -354,6 +354,9 @@ public:
     bool rxOutOnTx() const;
     bool ext1OutOnTx() const;
     bool ext2OutOnTx() const;
+    // WD5Y-style auto link: while true, Ext2 on TX follows the external PA
+    // (xPA) switch - on with xPA, off without. Persisted per radio.
+    bool autoRxBypass() const;
     bool rxOutOverride() const;
     bool useTxAntForRx() const;
     bool xvtrActive() const;
@@ -393,6 +396,7 @@ public slots:
     void setRxOutOnTx(bool on);
     void setExt1OutOnTx(bool on);
     void setExt2OutOnTx(bool on);
+    void setAutoRxBypass(bool on);
     void setRxOutOverride(bool on);
     void setUseTxAntForRx(bool on);
     void setXvtrActive(bool on);
@@ -405,6 +409,7 @@ public:
 
 signals:
     void bpfStateChanged(int adc, const AlexController::AlexAdcState& state);
+    void autoRxBypassChanged(bool on);
     /// setLowPassHold changed `adc`'s lowPassReason or lowPassSlice.
     void lowPassHoldChanged(int adc);
     /// R-R3-46 / R-R3-21: setBpfMode changed `adc`'s operator policy. Fires
@@ -448,6 +453,7 @@ private:
     bool m_rxOutOnTx     {false};
     bool m_ext1OutOnTx   {false};
     bool m_ext2OutOnTx   {false};
+    bool m_autoRxBypass  {false};   // Ext2 on TX follows xPA
     bool m_rxOutOverride {false};
     bool m_useTxAntForRx {false};
     bool m_xvtrActive    {false};
@@ -463,6 +469,10 @@ private:
     std::array<std::array<Band, 5>, 2> m_slicesPerAdc;
 
     QString m_mac;
+    // True once load() has hydrated this state for m_mac; save()
+    // refuses to write before that (a save on an unloaded block
+    // overwrote the stored pattern with defaults).
+    bool m_loaded{false};
 
     QString persistenceKey() const;  // "hardware/<mac>/alex/antenna"
     static int clampAnt(int v) { return v < 1 ? 1 : (v > 3 ? 3 : v); }

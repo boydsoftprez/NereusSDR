@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Build DeepFilterNet3 libdf library for Windows x64.
 
@@ -16,7 +16,11 @@
     .\setup-deepfilter.ps1
 #>
 
-$ErrorActionPreference = "Stop"
+# Native tools (rustup/cargo/git) write progress to stderr.  Windows
+# PowerShell 5 turns that into a terminating error under "Stop", even when the
+# tool succeeded.  The explicit throw and $LASTEXITCODE checks below still
+# fail the script when a step really fails.
+$ErrorActionPreference = "Continue"
 
 $DfnrCommit = "d375b2d8309e0935d165700c91da9de862a99c31"
 $DfnrRepo   = "https://github.com/Rikorose/DeepFilterNet.git"

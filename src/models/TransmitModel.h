@@ -628,7 +628,7 @@ public:
     /// ptbPWR.LimitEnabled; on by default).  The two-tone test turns it off
     /// around its FIXED drive source and back on at the stop.
     bool powerSliderLimitEnabled() const noexcept { return m_powerSliderLimitEnabled; }
-    void setPowerSliderLimitEnabled(bool enabled) noexcept { m_powerSliderLimitEnabled = enabled; }
+    void setPowerSliderLimitEnabled(bool enabled);
     /// The tune slider's current limit (ptbTune.LimitValue).
     int  tunePowerLimit() const noexcept { return m_tunePowerLimit; }
     void setTunePowerLimit(int watts);
@@ -1370,6 +1370,9 @@ public:
                                     NOTIFY voxHangTimeMsChanged)
     Q_PROPERTY(bool  monEnabled     READ monEnabled     WRITE setMonEnabled
                                     NOTIFY monEnabledChanged)
+    Q_PROPERTY(bool  txAudioCheckEnabled READ txAudioCheckEnabled
+                                    WRITE setTxAudioCheckEnabled
+                                    NOTIFY txAudioCheckEnabledChanged)
     Q_PROPERTY(float monitorVolume  READ monitorVolume  WRITE setMonitorVolume
                                     NOTIFY monitorVolumeChanged)
     Q_PROPERTY(bool  txLevelerOn    READ txLevelerOn    WRITE setTxLevelerOn
@@ -1691,6 +1694,13 @@ public:
     /// AppSettings persistence arrives in Phase L.2 (this property persists,
     /// unlike monEnabled).
     float monitorVolume() const noexcept { return m_monitorVolume; }
+
+    // TX audio check without MOX/PTT (Thetis chkTXAudioCheck / TXAudioCheckNoMox).
+    // Runs the transmitter DSP chain locally and leaves the radio unkeyed, so
+    // the operator can hear EQ / CFC / leveler / ALC while adjusting them.
+    // MON stays off until the operator turns it on. Persisted as the global
+    // TxAudioCheckNoMox setting, like the Setup checkbox it mirrors.
+    bool txAudioCheckEnabled() const noexcept { return m_txAudioCheckEnabled; }
 
     // MON volume range constants.
     // Normalized volume scalar [0.0f, 1.0f].
@@ -2170,6 +2180,13 @@ public:
     /// TXPostGenMode=7 (pulsed) + setupTwoTonePulse() profile setters;
     /// when false, TXPostGenMode=1 (continuous).
     bool twoTonePulsed() const noexcept { return m_twoTonePulsed; }
+
+    /// Pulsed tune (Thetis "Tune Check" / P-TU) carrier parameters:
+    /// pulses per second, duty cycle percent and ramp in milliseconds.
+    /// Thetis console.cs:30041-30046 [v2.10.3.15] defaults 10 Hz / 25 % / 9 ms.
+    int  pulseTuneRateHz()  const noexcept { return m_pulseTuneRateHz; }
+    int  pulseTuneDutyPct() const noexcept { return m_pulseTuneDutyPct; }
+    int  pulseTuneRampMs()  const noexcept { return m_pulseTuneRampMs; }
 
     /// Power-source selection for the two-tone test (Phase 3M-1c B.3).
     /// Default DriveSlider matches Thetis console.cs:46553 [v2.10.3.13]:
@@ -2765,6 +2782,8 @@ public slots:
     // ── MON setters (3M-1b C.5) ──────────────────────────────────────────────
     void setMonEnabled(bool on);
     void setMonitorVolume(float volume);
+    // TX audio check without MOX/PTT (mirrors Thetis's TX/N console button).
+    void setTxAudioCheckEnabled(bool on);
 
     // ── VOX setters (3M-1b C.3) ────────────────────────────────────────────
     void setVoxEnabled(bool on);
@@ -2835,6 +2854,12 @@ public slots:
     void setTwoToneInvert(bool on);
     void setTwoTonePulsed(bool on);
 
+    // Pulsed tune (P-TU) carrier parameters. Ranges: rate 1-50 Hz,
+    // duty 5-95 %, ramp 0-50 ms. Saved per radio under hardware/<mac>/tx/.
+    void setPulseTuneRateHz(int hz);
+    void setPulseTuneDutyPct(int pct);
+    void setPulseTuneRampMs(int ms);
+
     // ── Two-tone drive-power source (3M-1c B.3) ───────────────────────────
     void setTwoToneDrivePowerSource(DrivePowerSource source);
 
@@ -2842,6 +2867,14 @@ signals:
     void moxChanged(bool mox);
     void tuneChanged(bool tune);
     void powerChanged(int power);
+    /// The two-tone test bypasses the PWR slider limit around its fixed
+    /// drive source (Thetis PWRSliderLimitEnabled). The trackbar hides its
+    /// red bar and its constrained reading while this is false.
+    void powerSliderLimitEnabledChanged(bool enabled);
+    /// The live trackbar limits changed (band change, or the PA calibration
+    /// lifting them for a measurement). The red bars follow these.
+    void powerLimitChanged(int percent);
+    void tuneLimitChanged(int percent);
     void micGainChanged(float gain);
     void pureSigChanged(bool enabled);
     /// Emitted when swrProtectFactor changes.  Source: mi0bot
@@ -2934,6 +2967,11 @@ signals:
     // ── MON signals (3M-1b C.5) ──────────────────────────────────────────────
     void monEnabledChanged(bool on);
     void monitorVolumeChanged(float volume);
+    void txAudioCheckEnabledChanged(bool on);
+    // The receive equalizer is switched off while TX/N runs the local chain,
+    // and restored to its previous state afterwards. Consumers (the RX EQ
+    // implementation when it lands) follow this single switch.
+    void rxEqualizerEnabledChanged(bool enabled);
 
     // ── VOX signals (3M-1b C.3) ────────────────────────────────────────────
     void voxEnabledChanged(bool on);
@@ -3015,6 +3053,9 @@ signals:
     void twoToneFreq2DelayChanged(int ms);
     void twoToneInvertChanged(bool on);
     void twoTonePulsedChanged(bool on);
+
+    // Pulsed tune (P-TU) carrier parameters changed (any of the three).
+    void pulseTuneParamsChanged();
 
     // ── Two-tone drive-power source signal (3M-1c B.3) ─────────────────────
     void twoToneDrivePowerSourceChanged(NereusSDR::DrivePowerSource source);
@@ -3243,6 +3284,12 @@ private:
     // (plan §0 row 9).  m_monitorVolume persists (Phase L.2).
     bool  m_monEnabled     = false;  // audio.cs:406: mon = false
     float m_monitorVolume  = 0.5f;   // matches Thetis audio.cs:417 literal coefficient
+    // TX audio check without keying the radio (Thetis TXAudioCheckNoMox).
+    bool  m_txAudioCheckEnabled = false;
+    // TX/N saved the receive equalizer's on state so it can be restored when
+    // the check ends. The state lives under Audio/RxEqEnabled (shared with
+    // the RX EQ implementation when it is added).
+    bool  m_rxEqSavedByTxAudioCheck = false;
 
     // ── VOX properties (3M-1b C.3) ──────────────────────────────────────
     // From Thetis audio.cs:167-202 [v2.10.3.13].
@@ -3372,6 +3419,12 @@ private:
     int    m_twoToneFreq2Delay =     0;   // matches Thetis Designer
     bool   m_twoToneInvert     =  true;   // setup.Designer.cs:61963 [v2.10.3.13]
     bool   m_twoTonePulsed     = false;   // setup.Designer.cs:61643-61653 (default)
+
+    // Pulsed tune (P-TU) carrier: 10 Hz, 25 % duty, 9 ms ramp, as Thetis
+    // console.cs:30041-30046 [v2.10.3.15].
+    int    m_pulseTuneRateHz   = 10;
+    int    m_pulseTuneDutyPct  = 25;
+    int    m_pulseTuneRampMs   = 9;
 
     // ── Two-tone drive-power source (3M-1c B.3) ──────────────────────────
     // Default DriveSlider per Thetis console.cs:46553 [v2.10.3.13]:

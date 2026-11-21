@@ -152,6 +152,14 @@ private:
     RadioInfo    m_probedInfo;
     bool         m_probedInfoFromProbe{false};
 
+    // The entry being edited (setEditTarget). It carries the board the radio
+    // reported, which the form cannot ask for; keeping it stops an edit made
+    // with Model = Auto-detect from falling back to the Hermes Lite 2 default
+    // and losing the board the radio actually runs.
+    HPSDRHW      m_editBoardType{HPSDRHW::Unknown};
+    quint8       m_editHardwareRevision{0};
+    int          m_editReportedReceivers{0};
+
     // Flag set when user chose "Save offline" instead of probing
     bool         m_savedOffline{false};
 };

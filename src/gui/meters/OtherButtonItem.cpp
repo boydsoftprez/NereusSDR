@@ -198,11 +198,16 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "OtherButtonItem.h"
+#include "MeterWidget.h"
 
 #include "OtherButtonCatalog.h"
 #include "core/LogCategories.h"
+#include "core/mmio/ExternalVariableEngine.h"
+#include "core/mmio/MmioEndpoint.h"
 #include "gui/containers/ContainerContentRegistry.h"
 
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 
 #include <QMouseEvent>
@@ -363,6 +368,10 @@ OtherButtonItem::OtherButtonItem(QObject* parent)
     applyAllSlots();
 
     connect(this, &ButtonBoxItem::buttonClicked, this, &OtherButtonItem::onButtonClicked);
+    // Macro buttons that mirror an external variable (the WaveNode Hold
+    // checkbox) follow it, so the panel button and the helper never disagree.
+    connect(&ExternalVariableEngine::instance(), &ExternalVariableEngine::dataReceived,
+            this, &OtherButtonItem::onExternalData, Qt::UniqueConnection);
     m_configNotifier = new ContentConfigNotifier(this);
 }
 
@@ -378,7 +387,15 @@ QString OtherButtonItem::labelFor(int id) const
     const int old = OtherButtonCatalog::buttonIdToLegacy(static_cast<ButtonId>(id));
     if (old >= 0 && old < kCoreLabelCount) { return QString::fromLatin1(kCoreLabels[old]); }
     if (isMacroId(id)) {
-        return QStringLiteral("M%1").arg(id - static_cast<int>(ButtonId::Macro0));
+        const int macro = id - static_cast<int>(ButtonId::Macro0);
+        if (macro >= 0 && macro < m_macroSettings.size()) {
+            const MacroSettings& settings = m_macroSettings[macro];
+            const QString text = settings.onState
+                ? (settings.onText.isEmpty() ? settings.offText : settings.onText)
+                : (settings.offText.isEmpty() ? settings.onText : settings.offText);
+            if (!text.isEmpty()) { return text; }
+        }
+        return QStringLiteral("M%1").arg(macro);
     }
     // Ruling D2: Thetis's "LockA" names VFO A; NereusSDR locks the
     // container's slice, so the button reads "Lock".
@@ -642,6 +659,100 @@ OtherButtonItem::MacroSettings& OtherButtonItem::macroSettings(int macroIndex)
     return m_macroSettings[macroIndex];
 }
 
+void OtherButtonItem::runMacro(int macroIndex)
+{
+    if (macroIndex < 0 || macroIndex >= m_macroSettings.size()) { return; }
+    MacroSettings& settings = m_macroSettings[macroIndex];
+    bool nextState = settings.onState;
+    switch (settings.type) {
+    case MacroType::On:  nextState = true; break;
+    case MacroType::Off: nextState = false; break;
+    case MacroType::Toggle:
+    case MacroType::Led:
+    case MacroType::ContainerVis:
+    case MacroType::Cat:
+    case MacroType::MeterHold: nextState = !settings.onState; break;
+    }
+    settings.onState = nextState;
+
+    // Hold: keep the power/reflected/SWR peaks on this surface while off-air
+    // (the helper has no hold command).
+    if (settings.type == MacroType::MeterHold) {
+        for (QObject* owner = parent(); owner; owner = owner->parent()) {
+            if (auto* meter = qobject_cast<MeterWidget*>(owner)) {
+                meter->setReadingHold(nextState);
+                break;
+            }
+        }
+    }
+
+    // Thetis macro buttons send their on/off text to a four-character MMIO
+    // source. WaveNode's helper reads those commands on its UDP command port
+    // (SWRRESET, SWRPROTECT=1, A1=1, ...).
+    if (settings.sendViaMmio && !settings.mmioFourChar.isEmpty()) {        const QString message = nextState
+            ? (settings.mmioMessageOn.isEmpty() ? settings.mmioMessageOff : settings.mmioMessageOn)
+            : (settings.mmioMessageOff.isEmpty() ? settings.mmioMessageOn : settings.mmioMessageOff);
+        if (!message.isEmpty()) {
+            ExternalVariableEngine& engine = ExternalVariableEngine::instance();
+            if (MmioEndpoint* endpoint = engine.endpointByFourChar(settings.mmioFourChar)) {
+                // The engine both queues the text and asks the worker to
+                // flush it. Queueing on the endpoint alone left the message
+                // waiting until the next worker start.
+                engine.enqueueOutbound(endpoint->guid(), message);
+            }
+        }
+    }
+    refreshMacroLabels();
+}
+
+void OtherButtonItem::onExternalData(const QUuid& guid)
+{
+    ExternalVariableEngine& engine = ExternalVariableEngine::instance();
+    MmioEndpoint* endpoint = engine.endpoint(guid);
+    if (!endpoint) { return; }
+
+    bool changed = false;
+    for (int i = 0; i < m_macroSettings.size(); ++i) {
+        MacroSettings& settings = m_macroSettings[i];
+        if (settings.stateVariable.isEmpty() || settings.mmioFourChar.isEmpty()) { continue; }
+        if (engine.endpointByFourChar(settings.mmioFourChar) != endpoint) { continue; }
+
+        const QVariant value = endpoint->valueForName(settings.stateVariable);
+        if (!value.isValid()) { continue; }
+
+        const QString text = value.toString().trimmed();
+        bool on = false;
+        if (text.compare(QLatin1String("true"), Qt::CaseInsensitive) == 0
+            || text.compare(QLatin1String("on"), Qt::CaseInsensitive) == 0) {
+            on = true;
+        } else if (text.compare(QLatin1String("false"), Qt::CaseInsensitive) == 0
+                   || text.compare(QLatin1String("off"), Qt::CaseInsensitive) == 0) {
+            on = false;
+        } else {
+            on = value.toDouble() >= 0.5;
+        }
+
+        if (settings.onState != on) {
+            settings.onState = on;
+            changed = true;
+        }
+    }
+    if (changed) { refreshMacroLabels(); }
+}
+
+void OtherButtonItem::refreshMacroLabels()
+{
+    for (int slot = 0; slot < m_map.size(); ++slot) {
+        const int id = m_map[slot];
+        if (!isMacroId(id)) { continue; }
+        const int macro = id - static_cast<int>(ButtonId::Macro0);
+        if (macro < 0 || macro >= m_macroSettings.size()) { continue; }
+        m_buttons[slot].text = labelFor(id);
+        m_buttons[slot].on = m_macroSettings[macro].onState;
+    }
+    invalidateShownLayout();
+}
+
 void OtherButtonItem::onButtonClicked(int index, Qt::MouseButton btn)
 {
     if (btn != Qt::LeftButton) { return; }
@@ -651,7 +762,9 @@ void OtherButtonItem::onButtonClicked(int index, Qt::MouseButton btn)
     // From Thetis MeterManager.cs:9404-9407 [v2.10.3.15]
     if (!isValidId(mapped)) { return; }
     if (isMacroId(mapped)) {
-        emit macroTriggered(mapped - static_cast<int>(ButtonId::Macro0));
+        const int macro = mapped - static_cast<int>(ButtonId::Macro0);
+        runMacro(macro);
+        emit macroTriggered(macro);
     } else {
         emit otherButtonClicked(mapped);
     }
@@ -796,6 +909,34 @@ QString OtherButtonItem::serialize() const
         for (const short id : m_map) { ids.append(QString::number(id)); }
         out += ids.join(QLatin1Char(','));
     }
+    // The macro definitions follow the map as one self-contained field.
+    // They carry Thetis's captions and the MMIO message each button sends.
+    QJsonArray macros;
+    for (int i = 0; i < m_macroSettings.size(); ++i) {
+        const MacroSettings& settings = m_macroSettings[i];
+        if (settings.type == MacroType::Off && settings.onText.isEmpty()
+            && settings.offText.isEmpty()) {
+            continue;
+        }
+        macros.append(QJsonObject{
+            {QStringLiteral("i"), i},
+            {QStringLiteral("t"), static_cast<int>(settings.type)},
+            {QStringLiteral("on"), settings.onText},
+            {QStringLiteral("off"), settings.offText},
+            {QStringLiteral("cat"), settings.catCommand},
+            {QStringLiteral("vis"), settings.containerVisibleId},
+            {QStringLiteral("send"), settings.sendViaMmio},
+            {QStringLiteral("four"), settings.mmioFourChar},
+            {QStringLiteral("onMsg"), settings.mmioMessageOn},
+            {QStringLiteral("offMsg"), settings.mmioMessageOff},
+            {QStringLiteral("var"), settings.stateVariable},
+            {QStringLiteral("state"), settings.onState},
+        });
+    }
+    if (!macros.isEmpty()) {
+        const QByteArray json = QJsonDocument(macros).toJson(QJsonDocument::Compact);
+        out += QStringLiteral("|MACROS:") + QString::fromLatin1(json.toBase64());
+    }
     return out;
 }
 
@@ -848,6 +989,39 @@ bool OtherButtonItem::deserialize(const QString& data)
         setVisibleBits(parts[8].toUInt() & ~power);
     }
     deserializeGridStyle(parts, 9);
+
+    // Macro definitions saved after the map (see serialize()).
+    for (const QString& part : parts) {
+        if (!part.startsWith(QStringLiteral("MACROS:"))) { continue; }
+        const QByteArray json =
+            QByteArray::fromBase64(part.mid(QStringLiteral("MACROS:").size()).toLatin1());
+        const QJsonArray macros = QJsonDocument::fromJson(json).array();
+        for (const QJsonValue& value : macros) {
+            const QJsonObject object = value.toObject();
+            const int index = object.value(QStringLiteral("i")).toInt(-1);
+            if (index < 0 || index >= m_macroSettings.size()) { continue; }
+            MacroSettings& settings = m_macroSettings[index];
+            settings.type = static_cast<MacroType>(
+                qBound(0, object.value(QStringLiteral("t")).toInt(2), 6));
+            settings.onText = object.value(QStringLiteral("on")).toString();
+            settings.offText = object.value(QStringLiteral("off")).toString();
+            settings.catCommand = object.value(QStringLiteral("cat")).toString();
+            settings.containerVisibleId = object.value(QStringLiteral("vis")).toInt(-1);
+            settings.sendViaMmio = object.value(QStringLiteral("send")).toBool();
+            settings.mmioFourChar = object.value(QStringLiteral("four")).toString();
+            settings.mmioMessageOn = object.value(QStringLiteral("onMsg")).toString();
+            settings.mmioMessageOff = object.value(QStringLiteral("offMsg")).toString();
+            settings.stateVariable = object.value(QStringLiteral("var")).toString();
+            settings.onState = object.value(QStringLiteral("state")).toBool();
+        }
+        break;
+    }
+    // A Hold button starts released: the surface it freezes is only held for
+    // the session in which the operator pressed it.
+    for (auto& settings : m_macroSettings) {
+        if (settings.type == MacroType::MeterHold) { settings.onState = false; }
+    }
+    refreshMacroLabels();
     return true;
 }
 

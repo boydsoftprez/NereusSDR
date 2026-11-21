@@ -64,12 +64,6 @@
 //                 stream binding reaches this worker inside the geometry
 //                 barrier, and the guard is a safety net. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Claude Code.
-//   2026-11-16 - Rewind sound (recording plan Task 22): the one switch on
-//                 the receive path. In the stream fan-out a rewound slice's
-//                 demodulator takes its block from its replay
-//                 (takeReplayBlock) instead of the stream's I/Q, and never
-//                 spends the stream's blanker pass. NereusSDR-original.
-//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1406,18 +1400,14 @@ bool RxDspWorker::takeReplayBlock(int sliceIdx, int inSize)
     return fed;
 }
 
+// The observation point for a slice's input (the stream's I/Q or its
+// replay). A test build's hook lands here; this build has none.
 void RxDspWorker::noteSliceInput(int sliceIdx, const float* i, const float* q, int samples)
 {
-#ifdef NEREUS_BUILD_TESTS
-    if (m_sliceInputHookForTest) {
-        m_sliceInputHookForTest(sliceIdx, i, q, samples);
-    }
-#else
     Q_UNUSED(sliceIdx);
     Q_UNUSED(i);
     Q_UNUSED(q);
     Q_UNUSED(samples);
-#endif
 }
 
 bool RxDspWorker::processSliceChunk(int sliceIdx, float* inI, float* inQ,

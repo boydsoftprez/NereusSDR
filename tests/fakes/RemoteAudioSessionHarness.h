@@ -45,16 +45,6 @@
 // Core is transmitting.
 //
 // Modification history (NereusSDR):
-//   2026-11-15: a forge that returns an empty object holds that real
-//               context back and stays armed for the next one, so a test
-//               can wait for the Core's first enabled answer before forging
-//               (hosted Linux CI: under load the Core may first answer
-//               MediaNotReady itself). J.J. Boyd (KG4VCF), AI-assisted via
-//               Anthropic Claude Code.
-//   2026-11-15: mediaStage() also names how many real audio contexts the
-//               forge held back and how many it forged, so a failed wait
-//               shows whether the hold-back fired. J.J. Boyd (KG4VCF),
-//               AI-assisted via Anthropic Claude Code.
 //   2026-10-27: Expose the client link for synchronous outbound test
 //               observation. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-27: forgeReplacesFirstContext: the forged first audio context
@@ -140,9 +130,7 @@ namespace NereusSDR::Test {
 // production test hook. With a hello minor set on both ends, a current Core
 // and a current GUI each believe the other speaks that minor. A one-shot
 // forge puts a forged copy of the next audio context on the wire just
-// ahead of the real one. A forge that returns an empty object passes on that
-// context: the real one is held back, nothing goes on the wire, and the forge
-// waits for the next audio context.
+// ahead of the real one.
 class RewritingTransport final : public LoopbackTransport {
 public:
     using Forge = std::function<QJsonObject(const QJsonObject& real)>;
@@ -209,15 +197,9 @@ public:
             if (forgeNextAudioContext && message.kind == SessionMessageKind::MediaControl
                 && message.mediaPayload.value(QStringLiteral("op"))
                     == QLatin1String("audio-context")) {
-                Forge forge = std::exchange(forgeNextAudioContext, {});
                 SessionMessage forged = message;
-                forged.mediaPayload = forge(message.mediaPayload);
-                if (forged.mediaPayload.isEmpty()) {
-                    // Not this one: held back, and the forge waits for the next.
-                    forgeNextAudioContext = std::move(forge);
-                    ++heldBackContexts;
-                    return;
-                }
+                forged.mediaPayload = std::exchange(forgeNextAudioContext, {})(
+                    message.mediaPayload);
                 ++forgedContexts;
                 LoopbackTransport::sendText(SessionMessages::encode(forged));
                 // The forged copy stands for the real one, which is not sent.
@@ -229,8 +211,6 @@ public:
 
     int rewrittenHellos = 0;
     int forgedContexts = 0;
-    // Real audio contexts a forge passed on and held back (an empty forge).
-    int heldBackContexts = 0;
     int hiddenAudioProfiles = 0;
     Forge forgeNextAudioContext;
     // The forged copy goes on the wire in place of the real context.
@@ -460,8 +440,7 @@ struct RemoteAudioSessionHarness {
     // How far the media connection got, for the message of a wait on it
     // that ran out: control handshake, the Core's media, the window's media
     // peer (started once the Core's description arrived), bytes over it,
-    // the audio status and the last accepted audio context, then how many
-    // real audio contexts the forge held back and how many it forged.
+    // the audio status and the last accepted audio context.
     QByteArray mediaStage(const RemoteMediaController& media) const
     {
         const auto yesNo = [](bool value) {
@@ -484,15 +463,12 @@ struct RemoteAudioSessionHarness {
         return QStringLiteral(
                    "media connection stage: handshake complete %1; Core media %2; "
                    "window media %3; media peer started %4; RTP bytes received %5, "
-                   "sent %6; audio status %7; accepted audio context %8; "
-                   "audio contexts held back %9, forged %10")
+                   "sent %6; audio status %7; accepted audio context %8")
             .arg(yesNo(client.isHandshakeComplete()), yesNo(server.mediaAvailable()),
                  yesNo(client.mediaAvailable()), yesNo(traffic.has_value()))
             .arg(traffic ? traffic->traffic.receivedRtpBytes : 0)
             .arg(traffic ? traffic->traffic.submittedRtpBytes : 0)
             .arg(QString::fromLatin1(state.get()), context)
-            .arg(stationLink ? stationLink->heldBackContexts : 0)
-            .arg(stationLink ? stationLink->forgedContexts : 0)
             .toUtf8();
     }
 

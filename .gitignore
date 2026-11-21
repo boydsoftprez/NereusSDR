@@ -19,8 +19,7 @@ Testing/CTestTestfile.cmake
 # DeepFilterNet3 pre-built libs (built by setup-deepfilter.sh, not checked in)
 third_party/deepfilter/lib/
 third_party/deepfilter/models/*.tar.gz
-
-# LAME for the Windows MSVC release, staged from MSYS2 by release.yml
-# ("Stage LAME"), not checked in.
-third_party/lame/
 .aether-sha
+# Build-generated artifacts that are not part of the source tree.
+third_party/fftw3/lib/*.exp
+tools/thetis-dat-bridge/*.exe

@@ -97,6 +97,7 @@ constexpr auto kPhaseZoom = "ampview/phaseZoom";
 constexpr auto kLowRes = "ampview/lowRes";
 constexpr auto kOnTop = "ampview/onTop";
 constexpr auto kGeometry = "ampview/geometry";
+constexpr auto kOpen = "ampview/open";
 constexpr qint64 kStaleAfterMs = 2000;
 
 bool preference(const char* key, bool fallback)
@@ -349,6 +350,20 @@ void AmpViewWindow::persistGeometry() const
         QLatin1String(kGeometry), QString::fromLatin1(saveGeometry().toBase64()));
 }
 
+bool AmpViewWindow::shouldReopen()
+{
+    return AppSettings::instance().value(QLatin1String(kOpen), false).toBool();
+}
+
+void AmpViewWindow::persistForExit()
+{
+    m_exitPersisted = true;
+    persistGeometry();
+    // Use the operator's intent, not isVisible(): Qt hides child windows as
+    // the main window tears down, before this runs.
+    AppSettings::instance().setValue(QLatin1String(kOpen), m_userOpen);
+}
+
 void AmpViewWindow::setStayOnTopFromParent(bool on)
 {
     if (m_chkStayOnTop->isChecked() != on) {
@@ -512,6 +527,12 @@ void AmpViewWindow::updateReadout()
 void AmpViewWindow::closeEvent(QCloseEvent* event)
 {
     persistGeometry(); // AmpView.cs:465-468 Common.SaveForm
+    // A close during Nereus shutdown (from the parent's teardown) must not
+    // erase the "was open at exit" flag saved by persistForExit().
+    if (!m_exitPersisted) {
+        m_userOpen = false;
+        AppSettings::instance().setValue(QLatin1String(kOpen), false);
+    }
     setSubscribed(false);
     event->ignore();
     hide();
@@ -530,6 +551,8 @@ void AmpViewWindow::showEvent(QShowEvent* event)
 {
     applyPresentationStyle();
     QDialog::showEvent(event);
+    m_userOpen = true;
+    AppSettings::instance().setValue(QLatin1String(kOpen), true);
     repairOffscreenPosition();
     setSubscribed(true);
     if (m_presentationTimer) {

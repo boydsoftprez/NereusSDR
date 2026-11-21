@@ -547,7 +547,7 @@ void BarInstrument::paintOne(QPainter& p, const QRectF& area,
     // dann zu sehen ist, wenn der Verlauf noch weit davor endet.
     if (d.threshold.has_value()) {
         QColor dg = Instrument::danger();
-        dg.setAlphaF(0.85);
+        dg.setAlphaF(0.85f);
         p.setPen(QPen(dg, 1.0));
         p.drawLine(spine.crossAt(d.fraction(d.threshold.value()), 3.0, 3.0));
     }

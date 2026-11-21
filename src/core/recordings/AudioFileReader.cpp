@@ -34,7 +34,16 @@
 #define MINIMP3_IMPLEMENTATION
 #define MINIMP3_FLOAT_OUTPUT
 #define MINIMP3_NO_STDIO
+// The vendored decoder is not our code: keep its size_t/int conversions out
+// of our warning-free build.
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4267)
+#endif
 #include <minimp3_ex.h>
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 
 namespace NereusSDR {
 

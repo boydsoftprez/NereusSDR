@@ -33,8 +33,7 @@ Q_DECLARE_LOGGING_CATEGORY(lcTci)
 Q_DECLARE_LOGGING_CATEGORY(lcSpots)
 Q_DECLARE_LOGGING_CATEGORY(lcHotKeys)
 Q_DECLARE_LOGGING_CATEGORY(lcHotKeyDevice)
-// Contact recordings, voice keyer messages and the Digital Spectrum Recorder
-// on the Core: files, encoders, the recordings worker.
+// Recordings, voice keyer messages and the Digital Spectrum Recorder.
 Q_DECLARE_LOGGING_CATEGORY(lcRecordings)
 
 // Runtime-manageable logging category metadata.

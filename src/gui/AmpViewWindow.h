@@ -110,6 +110,13 @@ public:
                            QWidget* parent = nullptr);
     ~AmpViewWindow() override;
 
+    /// True when AmpView was visible at the last Nereus exit.
+    static bool shouldReopen();
+
+    /// Save geometry and the current visibility before Nereus shuts down.
+    /// Unlike closeEvent(), this does not mark the window as user-closed.
+    void persistForExit();
+
     // AmpView.cs:501-519 [v2.10.3.13] FixOnTop behavior.
     void setStayOnTopFromParent(bool on);
 
@@ -140,6 +147,8 @@ private:
     void applyPresentationStyle();
 
     QPointer<PureSignalSessionFacade> m_facade;
+    bool m_exitPersisted{false};
+    bool m_userOpen{false};
     AmpViewChart* m_chart{nullptr};
     QLabel* m_displayStatus{nullptr};
     QLabel* m_cursorReadout{nullptr};

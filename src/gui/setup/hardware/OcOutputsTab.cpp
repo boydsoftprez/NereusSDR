@@ -199,9 +199,21 @@ OcOutputsTab::OcOutputsTab(RadioModel* model, QWidget* parent)
 void OcOutputsTab::populate(const RadioInfo& info, const BoardCapabilities& caps)
 {
     // Route the MAC address into OcMatrix so per-MAC AppSettings keys are
-    // scoped correctly, then reload.
+    // scoped correctly, then reload. A connected radio's identity wins over
+    // the entry Setup was handed: a hand-added MANUAL entry carries no MAC,
+    // and switching the matrix to that empty identity used to drop the
+    // loaded pattern and then save the empty one.
     if (m_ocMatrix) {
-        m_ocMatrix->setMacAddress(info.macAddress);
+        QString identity = info.macAddress;
+        if (m_model != nullptr) {
+            const QString connected = m_model->currentRadioMac();
+            if (!connected.isEmpty()) {
+                identity = connected;
+            }
+        }
+        if (!identity.isEmpty()) {
+            m_ocMatrix->setMacAddress(identity);
+        }
         m_ocMatrix->load();  // fires OcMatrix::changed() → HF tab re-syncs
     }
 

@@ -1,4 +1,4 @@
-// no-port-check: NereusSDR-original content catalog and lossless meter adapter.
+﻿// no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
 //   2026-11-06 - A factory widget can report its own free canvas hint and
 //                 minimum, and a type can name a new entry's rect size
@@ -74,12 +74,6 @@
 //   2026-10-25 - makeEntry applies MeterItem::applyNewItemDefaults() to new
 //                 items. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
-//   2026-11-15 - The Recordings applet (applet:recordings), placed hidden,
-//                 recording plan Task 7. J.J. Boyd (KG4VCF), AI-assisted via
-//                 Anthropic Claude Code.
-//   2026-11-16 - The Voice keyer applet (applet:voice_keyer), placed hidden,
-//                 recording plan Task 12. J.J. Boyd (KG4VCF), AI-assisted via
-//                 Anthropic Claude Code.
 //   2026-10-24 - The Roundtable applet (applet:roundtable), Roundtable plan
 //                 Task 13, by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
@@ -101,11 +95,11 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Per-instance QWidget factories for the workspace preview
 //                 by J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
-//   2026-10-03 — Canonical independent control creation shortcuts by
+//   2026-10-03 â€” Canonical independent control creation shortcuts by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
-//   2026-10-03 — Plain preview and unavailable explanations by J.J. Boyd (KG4VCF),
+//   2026-10-03 â€” Plain preview and unavailable explanations by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
-//   2026-10-02 — Mixed container ownership, persistence and source routing by
+//   2026-10-02 â€” Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
 //                 AI-assisted via xAI Grok.
@@ -158,6 +152,7 @@
 #include "gui/meters/AntennaButtonItem.h"
 #include "gui/meters/TuneStepButtonItem.h"
 #include "gui/meters/OtherButtonItem.h"
+#include "gui/meters/ButtonBoxItem.h"
 #include "gui/meters/VoiceRecordPlayItem.h"
 #include "gui/meters/VfoDisplayItem.h"
 #include "gui/meters/ClockItem.h"
@@ -296,14 +291,13 @@ void ContainerContentRegistry::placeFirstLaunchApplet(QVector<ContentEntry>& con
 
 // CW transmit (R-CW-44): the CWX applet is placed hidden until asked for
 // (Tools > CWX, the status-bar CWX label, CAT ZZKO), as its registration
-// says. The SSB Mod Monitor, the Recordings panel and the Voice keyer start
-// off and are one click away in the panels list. Every other applet keeps its first-launch state.
+// says. The SSB Mod Monitor starts off and is one click away in the panels
+// list. Every other applet keeps its first-launch state.
 ContentEntry ContainerContentRegistry::firstLaunchEntry(ContentEntry entry)
 {
     if (entry.typeId == QLatin1String("applet:cwx")
         || entry.typeId == QLatin1String("applet:ssb_mod_monitor")
-        || entry.typeId == QLatin1String("applet:recordings")
-        || entry.typeId == QLatin1String("applet:voice_keyer")) {
+        || entry.typeId == QLatin1String("applet:recordings")) {
         entry.visible = false;
     }
     return entry;
@@ -315,7 +309,7 @@ QString ContainerContentRegistry::appletTypeForVisibilityId(const QString& id)
         {"Rx","rx"},{"Display","Display"},{"Tx","TX"},{"PhoneCw","PHCW"},
         {"Rade","RADE"},{"Vax","vax"},{"PureSignal","pure_signal"},
         {"ModMon","mod_monitor"},{"SsbModMon","ssb_mod_monitor"},{"Tci","tci"},{"ClientChain","tci_clients"},
-        {"Cat","cat"},{"Cwx","cwx"},{"Amp","amp"},{"Tuner","tuner"},{"Rotor","rotor"},{"Roundtable","roundtable"},{"Recordings","recordings"},{"VoiceKeyer","voice_keyer"},{"RfKit","RfKit"},
+        {"Cat","cat"},{"Cwx","cwx"},{"Amp","amp"},{"Tuner","tuner"},{"Rotor","rotor"},{"Roundtable","roundtable"},{"Recordings","recordings"},{"RfKit","RfKit"},
         {"SMeter","s_meter"}};
     return aliases.contains(id) ? QStringLiteral("applet:") + aliases.value(id) : QString();
 }
@@ -339,10 +333,10 @@ void ContainerContentRegistry::attachSingleton(const QString& typeId, QWidget* w
             m_originalParents.remove(widget); m_nativeSizes.remove(widget);
             if (m_attachedIdentities.value(typeId) != widget) { return; }
             m_singletons.remove(typeId); m_attachedIdentities.remove(typeId);
-            ++m_generation; emit runtimeChanged();
+            ++m_generation; notifyRuntimeChanged();
         });
     }
-    ++m_generation; emit runtimeChanged();
+    ++m_generation; notifyRuntimeChanged();
 }
 QWidget* ContainerContentRegistry::singletonView(const QString& typeId) const { return m_singletons.value(typeId); }
 QSize ContainerContentRegistry::singletonCanvasMinimum(const QString& typeId) const {return m_nativeSizes.value(singletonView(typeId)).editMinimum.expandedTo(QSize(24,24));}
@@ -376,8 +370,31 @@ void ContainerContentRegistry::setAvailable(const QString& typeId, bool availabl
     const QString value = available ? QString() : (reason.isEmpty() ? QStringLiteral("This capability is unavailable") : reason);
     if (m_unavailable.value(typeId) == value) { return; }
     if (available) { m_unavailable.remove(typeId); } else { m_unavailable[typeId] = value; }
-    ++m_generation; emit runtimeChanged();
+    ++m_generation; notifyRuntimeChanged();
 }
+void ContainerContentRegistry::beginBatch()
+{
+    ++m_batchDepth;
+}
+
+void ContainerContentRegistry::endBatch()
+{
+    if (m_batchDepth <= 0) { return; }
+    if (--m_batchDepth > 0) { return; }
+    if (!m_batchPending) { return; }
+    m_batchPending = false;
+    emit runtimeChanged();
+}
+
+void ContainerContentRegistry::notifyRuntimeChanged()
+{
+    if (m_batchDepth > 0) {
+        m_batchPending = true;
+        return;
+    }
+    emit runtimeChanged();
+}
+
 bool ContainerContentRegistry::isAvailable(const QString& typeId) const
 {
     for (const auto& d : descriptors()) { if (d.typeId == catalogType(typeId)) { return d.available; } }
@@ -510,7 +527,6 @@ QVector<ContentDescriptor> ContainerContentRegistry::descriptors() const {
     add(QStringLiteral("applet:rotor"), QStringLiteral("Rotor"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:roundtable"), QStringLiteral("Roundtable"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:recordings"), QStringLiteral("Recordings"), ContentGroup::Panels, true);
-    add(QStringLiteral("applet:voice_keyer"), QStringLiteral("Voice keyer"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:RfKit"), QStringLiteral("RF-Kit RF2K-S"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:s_meter"), QStringLiteral("S-Meter"), ContentGroup::Panels, true);
     for (auto& descriptor : result) {
@@ -656,6 +672,12 @@ MeterItem* ContainerContentRegistry::createMeterItem(const ContentEntry& entry, 
     if (entry.context.contains(QLatin1String(ContentFade::kFadeOnRxKey))) { item->setFadeOnRx(entry.context.value(QLatin1String(ContentFade::kFadeOnRxKey)).toBool()); }
     if (entry.context.contains(QLatin1String(ContentFade::kFadeOnTxKey))) { item->setFadeOnTx(entry.context.value(QLatin1String(ContentFade::kFadeOnTxKey)).toBool()); }
     if (entry.context.contains(QStringLiteral("displayGroup"))) { item->setDisplayGroup(entry.context.value(QStringLiteral("displayGroup")).toInt()); }
+    // Button grids: caption height as a fraction of the cell (default 40 %).
+    if (entry.context.contains(QStringLiteral("buttonTextScale"))) {
+        if (auto* box = qobject_cast<ButtonBoxItem*>(item.get())) {
+            box->setTextScale(static_cast<float>(entry.context.value(QStringLiteral("buttonTextScale")).toDouble(0.40)));
+        }
+    }
     // Colours the user picked (ItemColourLook::kUserColoursKey): no key (an
     // item with no picks, or saved before picks were recorded) leaves none.
     if (entry.context.contains(QLatin1String(ItemColourLook::kUserColoursKey))) {
@@ -696,14 +718,14 @@ void ContainerContentRegistry::registerWidgetFactory(const QString& typeId, cons
     if (!m_widgetFactories.contains(typeId)) { m_widgetFactoryOrder.append(typeId); }
     m_widgetFactories.insert(typeId, {stored, std::move(factory), properties, {}});
     ++m_generation;
-    emit runtimeChanged();
+    notifyRuntimeChanged();
 }
 void ContainerContentRegistry::unregisterWidgetFactory(const QString& typeId)
 {
     if (!m_widgetFactories.remove(typeId)) { return; }
     m_widgetFactoryOrder.removeAll(typeId);
     ++m_generation;
-    emit runtimeChanged();
+    notifyRuntimeChanged();
 }
 bool ContainerContentRegistry::hasWidgetFactory(const QString& typeId) const { return m_widgetFactories.contains(typeId); }
 QVector<ContentProperty> ContainerContentRegistry::declaredProperties(const QString& typeId) const
@@ -852,6 +874,11 @@ ContentEntry ContainerContentRegistry::captureMeterItem(const MeterItem& item, c
         entry.context.insert(QLatin1String(ContentFade::kFadeOnTxKey),item.fadeOnTx());
     }
     entry.context.insert(QStringLiteral("displayGroup"),item.displayGroup());
+    // Written only once the caption size was set in the editor, so an
+    // untouched grid saves exactly as before.
+    if (auto* box = qobject_cast<const ButtonBoxItem*>(&item); box && box->hasExplicitTextScale()) {
+        entry.context.insert(QStringLiteral("buttonTextScale"), box->textScale());
+    }
     // Written only while the item holds a picked colour, so an item with
     // none saves exactly as before.
     const QStringList picked=item.userColourFields();

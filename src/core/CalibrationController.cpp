@@ -447,6 +447,7 @@ void CalibrationController::setMacAddress(const QString& mac)
 void CalibrationController::load()
 {
     if (m_mac.isEmpty()) { return; }
+    m_loaded = true;
 
     auto& s = AppSettings::instance();
     const QString base = QStringLiteral("hardware/%1/cal/").arg(m_mac);
@@ -533,6 +534,7 @@ void CalibrationController::loadTransmitCalibration()
 void CalibrationController::save()
 {
     if (m_mac.isEmpty()) { return; }
+    if (!m_loaded) { return; }
 
     auto& s = AppSettings::instance();
     const QString base = QStringLiteral("hardware/%1/cal/").arg(m_mac);

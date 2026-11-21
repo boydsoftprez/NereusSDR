@@ -229,12 +229,6 @@
 //               from Longpath) frees each once, so a parent that dies
 //               while its menu is open no longer frees it twice. With
 //               AI-assisted transformation via Claude Code.
-//   2026-11-15 - Recording plan Task 6: the side buttons run x, lock,
-//                 Record, Play, then the more button at the bottom. Record
-//                 and Play are no longer hidden as unbuilt (UnbuiltFeatures):
-//                 they show on every flag, disabled with the reason until
-//                 FlagRecordPlay drives them. J.J. Boyd (KG4VCF), with
-//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -481,6 +475,7 @@ warren@wpratt.com
 */
 
 #include "VfoWidget.h"
+#include "models/recordings/RecordingsAccess.h"
 #include "gui/ScopedChildWidget.h"
 #include "gui/widgets/AppIcon.h"
 #include "gui/TuneStepLabel.h"
@@ -488,6 +483,7 @@ warren@wpratt.com
 #include "NnrControls.h"
 #include "VaxChannelSelector.h"
 #include "gui/AntennaPopupBuilder.h"
+#include "gui/UnbuiltFeatures.h"
 #include "gui/OperatorReasonText.h"
 #include "gui/QtCocoaAccessibleTableCache.h"
 #include "core/BoardCapabilities.h"
@@ -501,7 +497,6 @@ warren@wpratt.com
 #include "gui/widgets/AntennaPickerMenu.h"
 #include "models/FilterPresetStore.h"
 #include "models/RadioModel.h"
-#include "models/recordings/RecordingsAccess.h"
 #include "core/RadeV2Feature.h"
 #include "core/dsp/DspAssetService.h"
 #include "models/SliceModel.h"
@@ -512,6 +507,7 @@ warren@wpratt.com
 #include <QAccessible>
 #include <QAccessibleWidget>
 #include <QApplication>
+#include <QCursor>
 #include <QCoreApplication>
 #include <QEvent>
 #include <QGuiApplication>
@@ -537,6 +533,136 @@ warren@wpratt.com
 namespace NereusSDR {
 
 namespace {
+
+// Frequency readout with per-digit wheel tuning, as Thetis allows: the
+// digit under the pointer is highlighted, and a wheel notch moves that
+// digit's place (1 Hz, 10 Hz, ... 10 MHz) instead of the current tune step.
+// Dots and the label's padding are not digits; the wheel there keeps the
+// normal step tuning.
+class FrequencyDigitsLabel : public QLabel
+{
+public:
+    explicit FrequencyDigitsLabel(QWidget* parent = nullptr) : QLabel(parent)
+    {
+        setMouseTracking(true);
+    }
+
+    void setHoveredDigit(int index)
+    {
+        if (index == m_hoverDigit) { return; }
+        m_hoverDigit = index;
+        update();
+    }
+
+    // Text index of the digit under `pos`, or -1 for a separator or blank.
+    int digitAt(const QPoint& pos) const
+    {
+        const QString value = text();
+        if (value.isEmpty()) { return -1; }
+        const QFontMetrics fm = fontMetrics();
+        const int cell = cellWidth();
+        const int left = textLeft();
+        const int right = left + cell * value.size();
+        const int top = (height() - fm.height()) / 2;
+        if (pos.x() < left || pos.x() >= right
+            || pos.y() < top || pos.y() > top + fm.height()) {
+            return -1;
+        }
+        const int index = (pos.x() - left) / cell;
+        if (index < 0 || index >= value.size()) { return -1; }
+        if (!value.at(index).isDigit()) { return -1; }
+        return index;
+    }
+
+    QRect digitRect(int index) const
+    {
+        const QString value = text();
+        if (index < 0 || index >= value.size()) { return {}; }
+        const QFontMetrics fm = fontMetrics();
+        const int cell = cellWidth();
+        const int top = (height() - fm.height()) / 2;
+        return QRect(textLeft() + index * cell, top, cell, fm.height());
+    }
+
+    // Hz value of one step at this digit: 1 for the rightmost digit, 10 for
+    // the next, and so on, ignoring the separators.
+    static qint64 placeForDigit(const QString& value, int index)
+    {
+        int digitsRight = 0;
+        for (int i = index + 1; i < value.size(); ++i) {
+            if (value.at(i).isDigit()) { ++digitsRight; }
+        }
+        static constexpr qint64 kPlaces[] = {
+            1LL, 10LL, 100LL, 1000LL, 10000LL, 100000LL, 1000000LL,
+            10000000LL, 100000000LL
+        };
+        return kPlaces[std::clamp(digitsRight, 0, 8)];
+    }
+
+    void noteHoverPosition(const QPoint& pos)
+    {
+        m_lastMousePos = pos;
+        setHoveredDigit(digitAt(pos));
+    }
+
+    void clearHover()
+    {
+        m_lastMousePos = QPoint(-1, -1);
+        setHoveredDigit(-1);
+    }
+
+    // Keep the highlight on the digit under the pointer after a carry changes
+    // the text width (9.999.999 -> 10.000.000, for example).
+    void refreshHover()
+    {
+        if (m_lastMousePos.x() < 0) { return; }
+        setHoveredDigit(digitAt(m_lastMousePos));
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+
+        // The box and the text are drawn here from one geometry, so the
+        // highlight cannot drift away from the glyph it names.
+        painter.setPen(QPen(QColor(255, 255, 255, 50), 1));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawRoundedRect(rect().adjusted(0, 0, -1, -1), 3, 3);
+
+        if (m_hoverDigit >= 0) {
+            const QRect cell = digitRect(m_hoverDigit).adjusted(0, 1, 0, -1);
+            painter.setPen(QPen(QColor(0, 229, 255, 190), 1));
+            painter.setBrush(QColor(0, 229, 255, 45));
+            painter.drawRoundedRect(cell, 3, 3);
+        }
+
+        const int cell = cellWidth();
+        painter.setFont(font());
+        painter.setPen(QColor(0, 229, 255));
+        painter.drawText(QRect(textLeft(), 0, cell * text().size(), height()),
+                         Qt::AlignLeft | Qt::AlignVCenter, text());
+    }
+
+private:
+    static constexpr int kTextInset = 5;   // 1 px border + 4 px padding
+
+    int cellWidth() const
+    {
+        const int cell = fontMetrics().horizontalAdvance(QLatin1Char('0'));
+        return cell > 0 ? cell : 1;
+    }
+
+    int textLeft() const
+    {
+        return width() - kTextInset - cellWidth() * text().size();
+    }
+
+    int m_hoverDigit{-1};
+    QPoint m_lastMousePos{-1, -1};
+};
+
 
 // The Roundtable line (design 11.2; board.html .rt-fline): a dark strip
 // with the state glyph, the text, and @N in cyan or a chevron at the end.
@@ -984,10 +1110,16 @@ VfoWidget::VfoWidget(QWidget* parent)
     // SpectrumWidget, is left out of the pass (JJ, 2026-10-11).
     setProperty(WorkspacePreview::kThemedIslandProperty, true);
 
+    m_wheelFollowTimer.setSingleShot(true);
+    m_wheelFollowTimer.setInterval(300);
+    connect(&m_wheelFollowTimer, &QTimer::timeout, this, [this] {
+        m_wheelFollowActive = false;
+    });
+
     buildUI();
 }
 
-// Floating buttons (m_closeBtn/m_lockBtn/m_recBtn/m_playBtn/m_moreBtn) are parented to
+// Floating buttons (m_closeBtn/m_lockBtn/m_moreBtn/m_recBtn/m_playBtn) are parented to
 // parentWidget() (SpectrumWidget), i.e. they are SIBLINGS of VfoWidget in
 // SpectrumWidget's children list. Qt's parent chain already owns them — do
 // NOT explicitly delete here. Explicit deletes caused issue #113: Qt's
@@ -1002,7 +1134,7 @@ VfoWidget::~VfoWidget() = default;
 // still alive keeps the ordering ours, so it cannot reproduce issue #113.
 void VfoWidget::destroyFloatingButtons()
 {
-    for (QPushButton** btn : {&m_closeBtn, &m_lockBtn, &m_recBtn, &m_playBtn, &m_moreBtn}) {
+    for (QPushButton** btn : {&m_closeBtn, &m_lockBtn, &m_moreBtn, &m_recBtn, &m_playBtn}) {
         if (*btn) {
             delete *btn;
             *btn = nullptr;
@@ -1260,15 +1392,18 @@ void VfoWidget::buildFrequencyRow()
     m_freqStack = new QStackedWidget(this);
     m_freqStack->setFixedHeight(30);
 
-    // Display label
-    m_freqLabel = new QLabel(this);
+    // Display label: the font is set here rather than in the stylesheet so
+    // the per-digit hit testing measures the same glyphs the label paints.
+    m_freqLabel = new FrequencyDigitsLabel(this);
     m_freqLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    m_freqLabel->setStyleSheet(
-        QStringLiteral("color: #00e5ff; font-size: 24px; font-weight: bold;"
-                        "font-family: 'Consolas', 'Menlo', monospace;"
-                        "background: transparent;"
-                        "border: 1px solid rgba(255,255,255,50);"
-                        "border-radius: 3px; padding: 0 4px;"));
+    QFont freqFont;
+    freqFont.setFamilies({QStringLiteral("Consolas"), QStringLiteral("Menlo"),
+                          QStringLiteral("monospace")});
+    freqFont.setStyleHint(QFont::Monospace);
+    freqFont.setPixelSize(24);
+    freqFont.setBold(true);
+    m_freqLabel->setFont(freqFont);
+    m_freqLabel->setStyleSheet(QString());
     updateFreqLabel();
     m_freqStack->addWidget(m_freqLabel);
 
@@ -3975,8 +4110,6 @@ void VfoWidget::positionFloatingButtons()
     // is fine on Slice A too.
     const bool closeShown = (m_sliceIndex != 0) || isListening();
 
-    // Recording plan Task 6 (design section 3, flag order): x, lock,
-    // Record, Play, then the more button at the bottom.
     bool raisedAny = false;
     QPushButton* btns[] = {m_closeBtn, m_lockBtn, m_recBtn, m_playBtn, m_moreBtn};
     for (QPushButton* btn : btns) {
@@ -4016,7 +4149,7 @@ void VfoWidget::positionFloatingButtons()
 // body also ends up above its own buttons.
 void VfoWidget::raiseAboveSiblings()
 {
-    QPushButton* btns[] = {m_closeBtn, m_lockBtn, m_recBtn, m_playBtn, m_moreBtn};
+    QPushButton* btns[] = {m_closeBtn, m_lockBtn, m_moreBtn, m_recBtn, m_playBtn};
     for (QPushButton* btn : btns) {
         if (btn) {
             btn->raise();
@@ -4089,7 +4222,7 @@ void VfoWidget::hideEvent(QHideEvent* event)
     endFlagDrag();
     m_dragArmed = false;
     m_releaseAction = ReleaseAction::None;
-    for (QPushButton* button : {m_closeBtn, m_lockBtn, m_recBtn, m_playBtn, m_moreBtn}) {
+    for (QPushButton* button : {m_closeBtn, m_lockBtn, m_moreBtn, m_recBtn, m_playBtn}) {
         if (button) {
             button->hide();
         }
@@ -4256,6 +4389,56 @@ QRect VfoWidget::collapsedTxBadgeRect() const
 // kept hidden and what it should be is recorded for the expand.
 bool VfoWidget::eventFilter(QObject* watched, QEvent* event)
 {
+    if (watched == m_freqLabel) {
+        auto* digits = static_cast<FrequencyDigitsLabel*>(m_freqLabel);
+        if (event->type() == QEvent::MouseMove) {
+            auto* move = static_cast<QMouseEvent*>(event);
+            const QPoint pos = move->position().toPoint();
+            digits->noteHoverPosition(pos);
+            if (m_wheelFollowActive) {
+                const int index = digits->digitAt(pos);
+                const qint64 place = index >= 0
+                    ? FrequencyDigitsLabel::placeForDigit(digits->text(), index) : 0;
+                if (place != m_wheelFollowPlace) {
+                    m_wheelFollowActive = false;
+                    m_wheelFollowTimer.stop();
+                }
+            }
+            return false;   // the flag's own drag handling still sees it
+        }
+        if (event->type() == QEvent::Leave) {
+            digits->clearHover();
+            return false;
+        }
+        if (event->type() == QEvent::Wheel) {
+            auto* wheel = static_cast<QWheelEvent*>(event);
+            const int digit = digits->digitAt(wheel->position().toPoint());
+            if (digit < 0) {
+                // A separator or the padding: the normal step tuning below.
+                return false;
+            }
+            wheel->accept();
+            if (!m_locked && !isListening()) {
+                const int steps = m_wheelSteps.stepsFor(*wheel);
+                if (steps != 0) {
+                    const qint64 place =
+                        FrequencyDigitsLabel::placeForDigit(digits->text(), digit);
+                    double newFreq = std::round(m_frequency + double(steps) * double(place));
+                    newFreq = std::clamp(newFreq, 100000.0, 61440000.0);
+                    if (newFreq != m_frequency) {
+                        m_frequency = newFreq;
+                        updateFreqLabel();
+                        emit frequencyChanged(newFreq);
+                        m_wheelFollowActive = true;
+                        m_wheelFollowPlace = place;
+                        m_wheelFollowTimer.start();
+                        followWheelDigit();
+                    }
+                }
+            }
+            return true;   // the digit owns this wheel event
+        }
+    }
     if (m_collapsed && !m_applyingCollapse) {
         auto* child = qobject_cast<QWidget*>(watched);
         if (child && child->parentWidget() == this && !child->isWindow()) {
@@ -4321,8 +4504,8 @@ QRegion VfoWidget::occupiedRegion() const
     }
     region += geometry();
     for (QWidget* w : {static_cast<QWidget*>(m_closeBtn), static_cast<QWidget*>(m_lockBtn),
-                       static_cast<QWidget*>(m_recBtn), static_cast<QWidget*>(m_playBtn),
                        static_cast<QWidget*>(m_moreBtn),
+                       static_cast<QWidget*>(m_recBtn), static_cast<QWidget*>(m_playBtn),
                        static_cast<QWidget*>(m_collapsedFreqLabel.data())}) {
         if (w && w->isVisibleTo(parent)) {
             region += w->geometry();
@@ -4564,6 +4747,42 @@ void VfoWidget::wheelEvent(QWheelEvent* event)
         m_frequency = newFreq;
         updateFreqLabel();
         emit frequencyChanged(newFreq);
+    }
+}
+
+// Keep the pointer on the digit being wheel-tuned. Tuning moves the slice
+// marker, and the flag follows it; the operator's hand is not moving, so the
+// pointer is warped back to the same place value after the move.
+void VfoWidget::followWheelDigit()
+{
+    if (!m_wheelFollowActive || m_freqLabel == nullptr || !m_freqLabel->isVisible()) {
+        return;
+    }
+    auto* digits = static_cast<FrequencyDigitsLabel*>(m_freqLabel);
+    const QString value = digits->text();
+    int index = -1;
+    for (int i = value.size() - 1; i >= 0; --i) {
+        if (value.at(i).isDigit()
+            && FrequencyDigitsLabel::placeForDigit(value, i) == m_wheelFollowPlace) {
+            index = i;
+            break;
+        }
+    }
+    if (index < 0) { return; }
+    const QRect cell = digits->digitRect(index);
+    if (!cell.isValid()) { return; }
+    const QPoint target = digits->mapToGlobal(cell.center());
+    if (QCursor::pos() != target) {
+        QCursor::setPos(target);
+    }
+    digits->noteHoverPosition(digits->mapFromGlobal(target));
+}
+
+void VfoWidget::moveEvent(QMoveEvent* event)
+{
+    QWidget::moveEvent(event);
+    if (m_wheelFollowActive) {
+        followWheelDigit();
     }
 }
 
@@ -4878,6 +5097,10 @@ void VfoWidget::updateFreqLabel()
         .arg(intPart)
         .arg(khz, 3, 10, QLatin1Char('0'))
         .arg(hz, 3, 10, QLatin1Char('0')));
+
+    // The digit under the pointer may have moved after a carry changed the
+    // text width; keep the highlight on what is under the cursor.
+    static_cast<FrequencyDigitsLabel*>(m_freqLabel)->refreshHover();
 
     // Also update filter width display
     // (will be properly synced from setFilter)

@@ -51,6 +51,7 @@ warren@pratt.one
 
 #include <math.h>
 #include <float.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -58,6 +59,7 @@ warren@pratt.one
 #ifndef _WIN32
 #include "linux_port.h"
 #endif
+#include "wdsp_align.h"
 
 #ifndef NAN
 #  define NAN (0.0/0.0)
@@ -814,11 +816,13 @@ static NS_Spline *read_spline(FILE *f, double *cksum)
     char key[64];
     int total_pts = 0;
 
-    if (fscanf(f, "%63s %d", key, &s->n_branches) != 2) goto err;
-    if (strcmp(key, "n_branches") != 0 || s->n_branches < 1 ||
-        s->n_branches > CORRECTION_MAX_BRANCHES) goto err;
+    int n_branches;
+    if (fscanf(f, "%63s %d", key, &n_branches) != 2) goto err;
+    if (strcmp(key, "n_branches") != 0 || n_branches < 1 ||
+        n_branches > NS_MAX_BRANCHES) goto err;
+    s->n_branches = n_branches;
     *cksum += s->n_branches;
-    s->branches = (NS_Branch*)ns_calloc(s->n_branches, sizeof(NS_Branch));
+    s->branches = (NS_Branch*)ns_calloc((size_t)s->n_branches, sizeof(NS_Branch));
 
     for (int b = 0; b < s->n_branches; b++) {
         NS_Branch *br = &s->branches[b];
@@ -835,6 +839,9 @@ static NS_Spline *read_spline(FILE *f, double *cksum)
             goto err;
         total_pts += br->n_pts;
         if (total_pts > CORRECTION_MAX_SPLINE_POINTS) goto err;
+        if (br->n_pts < 0 ||
+            (size_t)br->n_pts > SIZE_MAX / sizeof(double) ||
+            (br->n_pts > 0 && (size_t)(br->n_pts - 1) > SIZE_MAX / sizeof(NS_Seg))) goto err;
         *cksum += br->n_pts + br->t_mid;
 
         if (br->n_pts == 0) {
@@ -983,7 +990,7 @@ double get_mag_correction_ema(const CurveEMA *e, double x, double *prev_y)
     return ema_interp(e, x);
 }
 
-double get_phase_correction_ema(const CurveEMA* e, double x, double* prev_y)
+double get_phase_correction_ema(const CurveEMA *e, double x, double *prev_y)
 {
     (void)prev_y;
     if (!e) return 0.0;

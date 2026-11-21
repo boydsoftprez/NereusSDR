@@ -519,7 +519,7 @@ protected:
         const QColor accent = role("accent");
         if (bands) {
             QColor band = accent;
-            band.setAlphaF(EdgeDockArea::kTargetBandAlpha);
+            band.setAlphaF(static_cast<float>(EdgeDockArea::kTargetBandAlpha));
             for (DockEdge edge : kEdges) {
                 painter.fillRect(m_area->targetBandRect(edge), band);
             }
@@ -527,7 +527,7 @@ protected:
         if (preview && previewRect.isValid()) {
             painter.setRenderHint(QPainter::Antialiasing);
             QColor fill = accent;
-            fill.setAlphaF(EdgeDockArea::kPreviewFillAlpha);
+            fill.setAlphaF(static_cast<float>(EdgeDockArea::kPreviewFillAlpha));
             QPainterPath path;
             path.addRoundedRect(QRectF(previewRect).adjusted(0.5, 0.5, -0.5, -0.5),
                                 EdgeDockArea::kPreviewRadiusPx, EdgeDockArea::kPreviewRadiusPx);

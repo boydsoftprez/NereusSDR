@@ -335,7 +335,7 @@ QJsonObject SpotSourceHost::spotRecordFields(const SpotData& spot, const DxccCol
     const qint64 hz = static_cast<qint64>(std::llround(mhz * 1.0e6));
     const QDateTime when = spot.timestamp.isValid()
         ? spot.timestamp
-        : QDateTime::fromMSecsSinceEpoch(spot.addedMs, Qt::UTC);
+        : QDateTime::fromMSecsSinceEpoch(spot.addedMs, QTimeZone::UTC);
     QString colour;
     int priority = 0;
     if (dxcc != nullptr && dxcc->isEnabled() && !spot.callsign.isEmpty() && mhz > 0.0) {

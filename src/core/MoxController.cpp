@@ -2312,6 +2312,9 @@ TxRefusal MoxController::transmitBlockRefusal() const
         refusal.text = m_rxOnlyReason;
         return refusal;
     }
+    if (m_txAudioCheck) {
+        return TxRefusals::txAudioCheck();
+    }
     if (m_txInhibited) {
         TxRefusal refusal = TxRefusals::txInhibited();
         if (!m_txInhibitReason.isEmpty()) {
@@ -2332,6 +2335,9 @@ QString MoxController::transmitBlockReason() const
     }
     if (m_rxOnly) {
         return m_rxOnlyReason;
+    }
+    if (m_txAudioCheck) {
+        return TxRefusals::txAudioCheck().text;
     }
     if (m_txInhibited) {
         if (!m_txInhibitReason.isEmpty()) {
@@ -2364,6 +2370,21 @@ void MoxController::setTxInhibited(bool on, const QString& reason)
     }
     // RADE end-of-over callsigns: a block ends a running tail at once too.
     // G-05: and the send ring's wait.
+    if (on) {
+        abortEndOfOverTail();
+        abortSendRingWait();
+    }
+}
+
+void MoxController::setTxAudioCheck(bool on)
+{
+    if (on == m_txAudioCheck) { return; }
+    const QString before = transmitBlockReason();
+    m_txAudioCheck = on;
+    emitTransmitBlockIfChanged(before);
+    if (on && m_mox) {
+        setMox(false);
+    }
     if (on) {
         abortEndOfOverTail();
         abortSendRingWait();

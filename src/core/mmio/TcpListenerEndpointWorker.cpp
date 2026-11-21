@@ -109,9 +109,12 @@ void TcpListenerEndpointWorker::start()
     const quint16 port = m_endpoint->port();
 
     if (!m_server->listen(bindAddr, port)) {
+        const QString reason = QStringLiteral("TCP port %1 could not be opened: %2")
+                                   .arg(port).arg(m_server->errorString());
         qCWarning(lcMmio) << "TcpListenerEndpointWorker: failed to bind"
                           << bindAddr.toString() << ":" << port
                           << "—" << m_server->errorString();
+        emit errorOccurred(reason);
         setState(State::Error);
         return;
     }

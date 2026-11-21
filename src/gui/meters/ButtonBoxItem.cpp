@@ -105,6 +105,7 @@ mw0lge@grange-lane.co.uk
 #include <QMouseEvent>
 #include <QtMath>
 #include <QVariant>
+#include <algorithm>
 #include <cmath>
 
 namespace NereusSDR {
@@ -307,15 +308,21 @@ QRectF ButtonBoxItem::buttonRect(int index, const QRectF& area) const
     const float cellH = stackGrid
         ? static_cast<float>(area.height() * (1.0f - pad) / rows) : singleControl
         ? static_cast<float>(area.height() * (1.0f - pad)) : cellW * m_heightRatio;
+    // The vertical margin scales with the cell, not with the whole grid.
+    // A wide box (four amplifier buttons in a short row) otherwise spends
+    // almost the whole cell height on the left/right margin and leaves a
+    // few-pixel-tall button whose caption is clipped.
+    const float marginRef = stackGrid ? area.height() / rows
+        : singleControl ? area.height() : cellW;
     const float bw = cellW - (m_margin + m_borderWidth) * area.width();
-    const float bh = cellH - (m_margin + m_borderWidth) * (stackGrid ? area.height()/rows : singleControl ? area.height() : area.width());
+    const float bh = cellH - (m_margin + m_borderWidth) * marginRef;
 
     const float xOff = area.x() + (pad / 2.0f) * area.width();
     const float yOff = area.y() + (pad / 2.0f) * area.height();
 
     return QRectF(
         xOff + col * cellW + (m_margin * area.width() / 2.0f),
-        yOff + row * cellH + (m_margin * (stackGrid ? area.height()/rows : singleControl ? area.height() : area.width()) / 2.0f),
+        yOff + row * cellH + (m_margin * marginRef / 2.0f),
         bw, bh
     );
 }
@@ -400,7 +407,8 @@ void ButtonBoxItem::paintButton(QPainter& p, int index, const QRectF& rect)
             textCol.setAlpha(kPlaceholderAlpha);
         }
         QFont font = WorkspacePreview::readableFont(p.font(), p.device());
-        font.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(8, static_cast<int>(rect.height() * 0.4))));
+        const float textScale = std::clamp(m_textScale, 0.10f, 1.00f);
+        font.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(8, static_cast<int>(rect.height() * textScale))));
         font.setBold(true);
         font=fitObjectText(font,font.pixelSize(),btn.text,rect,false,Qt::TextSingleLine,p.device());
         p.setFont(font);

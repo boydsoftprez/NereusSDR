@@ -135,11 +135,8 @@ LOCAL_AUDIO_ALLOWLIST = {
     # and the check itself, whose cable lists and Rescan now follow this
     # computer's device catalogue (R-AUD-03, R-AUD-06);
     # and this computer's MON output choice, which a remote window sends the
-    # Core as the transmit monitor's route (R-IOS-13, parity Task 32);
-    # and the voice keyer's recording of this computer's microphone (the
-    # engine's clip tap), live in a remote window as in a local one
-    # (recording plan Task 12).
-    "src/gui/MainWindow.cpp": 8,
+    # Core as the transmit monitor's route (R-IOS-13, parity Task 32).
+    "src/gui/MainWindow.cpp": 7,
     # The TX applet's MON output pair (Speakers / Phones): this computer's
     # monitor routing, a window-scope setting, live in a remote window as
     # in a local one (R-R3-49, parity Task 2).

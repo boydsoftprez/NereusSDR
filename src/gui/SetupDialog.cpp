@@ -8,12 +8,6 @@
 // behaviour rules consulted while implementing visibility wiring.
 //
 // Modification history (NereusSDR):
-//   2026-11-16 - Cores > Digital Spectrum Recorder (DsrSetupPage, Core
-//                scope), before Recordings, recording plan Task 26.
-//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
-//   2026-11-15 - Cores > Recordings (RecordingsSetupPage, Core scope),
-//                recording plan Task 8. J.J. Boyd (KG4VCF), AI-assisted via
-//                Anthropic Claude Code.
 //   2026-10-24 - General > Filters (GeneralFiltersPage, Core scope), Thetis's
 //                tpFilters tab with its "Limit filter edges to sidebands"
 //                box. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
@@ -248,9 +242,9 @@
 #include "setup/HardwarePage.h"
 #include "setup/ThisCorePage.h"
 #include "setup/CoresSetupPage.h"
-#include "setup/CoreAudioSetupPage.h"
-#include "setup/DsrSetupPage.h"
 #include "setup/RecordingsSetupPage.h"
+#include "setup/DsrSetupPage.h"
+#include "setup/CoreAudioSetupPage.h"
 #include "gui/RemoteMediaController.h"
 #include "gui/RemoteTelemetryController.h"
 #include "setup/HardwareDdcRoutingPage.h"
@@ -361,6 +355,12 @@ Q_LOGGING_CATEGORY(lcSetupTiming, "nereus.setup.timing")
 SetupDialog::SetupDialog(RadioModel* model, QWidget* parent)
     : QDialog(parent), m_model(model)
 {
+    // Closing Setup commits the edits that have already gone into the model:
+    // the PA profile (Max W / Use Max / trim) and the per-band trackbar
+    // limits are written as they change, but their file write is timed. Flush
+    // it here so closing Settings cannot leave the last edit behind.
+    connect(this, &QDialog::finished, this,
+            [] { AppSettings::instance().flushTimedSave(); });
     m_dspReceiverSelection = new DspReceiverSelection(this);
     m_transmitPermitted = model && model->ownsLocalDsp();
     m_transmitSettingsPermitted = m_transmitPermitted;
@@ -1881,25 +1881,18 @@ void SetupDialog::buildTree()
         return page;
     });
 
-    // Recording plan Task 26: the Core's Digital Spectrum Recorder (spec 3
-    // "Recorder Setup", 6.7), before Recordings as the spec places it.
-    // Core: every device shares it and this window stores none of it.
-    registerPage(cores, "Digital Spectrum Recorder", SetupScope::Core, [this]() -> QWidget* {
-        auto* page = new DsrSetupPage(m_model ? m_model->recordings() : nullptr);
-        connect(page, &DsrSetupPage::recordingsWindowRequested,
-                this, &SetupDialog::recordingsWindowRequested);
-        return page;
-    });
-
-    // Recording plan Task 8: the Core's recording settings (spec 6.5),
-    // through the model's recordings access. Core: every device shares
-    // them and this window stores none of them.
-    registerPage(cores, "Recordings", SetupScope::Core, [this]() -> QWidget* {
-        auto* page = new RecordingsSetupPage(m_model ? m_model->recordings() : nullptr);
-        connect(page, &RecordingsSetupPage::recordingsWindowRequested,
-                this, &SetupDialog::recordingsWindowRequested);
-        return page;
-    });
+    // Recording settings (imported feature): what the Core keeps, where, and
+    // for how long. Recording settings... on every flag opens this page.
+    if (m_model != nullptr && m_model->recordings() != nullptr) {
+        registerPage(cores, "Recordings", SetupScope::Core, [this]() -> QWidget* {
+            return new RecordingsSetupPage(m_model->recordings());
+        });
+        // The Digital Spectrum Recorder (off by default in a desktop window
+        // that runs its own radio): its own page, so it can be turned on.
+        registerPage(cores, "Digital Spectrum Recorder", SetupScope::Core, [this]() -> QWidget* {
+            return new DsrSetupPage(m_model->recordings());
+        });
+    }
 
     // ── Hardware ─────────────────────────────────────────────────────────────
     QTreeWidgetItem* hardware = addCategory("Hardware");

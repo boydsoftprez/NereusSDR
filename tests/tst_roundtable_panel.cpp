@@ -4,8 +4,6 @@
 //
 // =================================================================
 // tests/tst_roundtable_panel.cpp  (NereusSDR)
-//   2026-11-16: appletPausesWhileTheSlicePlaysThePast. J.J. Boyd (KG4VCF),
-//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 //
 // RoundtablePanel (Roundtable design 11.1, 11.2 Panel) over a window's
@@ -2275,60 +2273,6 @@ private slots:
         panel->setTuneAllowed(true);
         QVERIFY(tuneHere->isEnabled());
         panel->backToSlice();
-    }
-
-    // A slice playing the past (the recordings document lists it under
-    // dsr.rewound): the panel says Roundtable is paused, keeps the room's
-    // table, and the note goes once the slice is live. Another slice
-    // playing the past does not pause this one.
-    void appletPausesWhileTheSlicePlaysThePast()
-    {
-        Posed p;
-        p.state.applyStationValue("sliceRooms", QStringLiteral("{\"0\":\"%1\"}").arg(kRoom));
-        p.model.applyRoom(talkingRoom());
-        RadioModel radio;
-        radio.addSlice();
-        radio.setActiveSlice(0);
-        SliceModel* slice = radio.activeSlice();
-        QVERIFY(slice != nullptr);
-        slice->setDspMode(DSPMode::USB);
-        slice->setFrequency(7185000.0);
-        RoundtableApplet applet(&radio, &p.model, nullptr);
-        applet.resize(340, 900);
-        applet.show();
-        settle();
-        RoundtablePanel* panel = applet.panel();
-        auto* note = child<QLabel>(panel, QStringLiteral("roundtablePausedNote"));
-        QVERIFY(!note->isVisible());
-        QVERIFY(!panel->pausedForPast());
-
-        const auto rewound = [](int sliceId) {
-            return QJsonObject{{QStringLiteral("dsr"),
-                                QJsonObject{{QStringLiteral("rewound"),
-                                             QJsonArray{QJsonObject{{QStringLiteral("slice"), sliceId},
-                                                                    {QStringLiteral("frequencyHz"), 7190000},
-                                                                    {QStringLiteral("liveFrequencyHz"), 7185000}}}}}}};
-        };
-        applet.notePastDocument(rewound(slice->sliceIndex()));
-        settle();
-        QVERIFY(panel->pausedForPast());
-        QVERIFY(note->isVisible());
-        QCOMPARE(note->text(), QStringLiteral("Paused while you listen to the past."));
-        // The room's table keeps showing.
-        QCOMPARE(panel->roomId(), kRoom);
-        QVERIFY(child<QWidget>(panel, QStringLiteral("roundtableReadings"))->isVisible());
-
-        applet.notePastDocument(rewound(slice->sliceIndex() + 1));
-        settle();
-        QVERIFY(!panel->pausedForPast());
-        QVERIFY(!note->isVisible());
-
-        applet.notePastDocument(rewound(slice->sliceIndex()));
-        QVERIFY(panel->pausedForPast());
-        applet.notePastDocument(QJsonObject{});
-        settle();
-        QVERIFY(!panel->pausedForPast());
-        QVERIFY(!note->isVisible());
     }
 
     void appletArchiveOpensTheSignInLink()

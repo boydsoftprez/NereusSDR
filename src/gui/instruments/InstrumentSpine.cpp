@@ -194,9 +194,9 @@ QPainterPath ArcSpine::fillArea(qreal f) const
 QBrush ArcSpine::fadeBrush(const QColor& c) const
 {
     QRadialGradient g(m_c, m_r - m_w / 2.0 - unit() * kSectorGapOfUnit);
-    QColor c0 = c; c0.setAlphaF(0.0);
-    QColor c1 = c; c1.setAlphaF(0.10);
-    QColor c2 = c; c2.setAlphaF(0.26);
+    QColor c0 = c; c0.setAlphaF(0.0f);
+    QColor c1 = c; c1.setAlphaF(0.10f);
+    QColor c2 = c; c2.setAlphaF(0.26f);
     g.setColorAt(0.18, c0);
     g.setColorAt(0.72, c1);
     g.setColorAt(1.00, c2);
@@ -297,8 +297,8 @@ QPainterPath LinearSpine::fillArea(qreal f) const
 QBrush LinearSpine::fadeBrush(const QColor& c) const
 {
     QLinearGradient g(m_r.topLeft(), m_r.topRight());
-    QColor c0 = c; c0.setAlphaF(0.05);
-    QColor c1 = c; c1.setAlphaF(0.34);
+    QColor c0 = c; c0.setAlphaF(0.05f);
+    QColor c1 = c; c1.setAlphaF(0.34f);
     g.setColorAt(0.0, c0);
     g.setColorAt(1.0, c1);
     return QBrush(g);

@@ -33,6 +33,11 @@ public:
     // stale board name.
     void setHardwareLine(const QString& model, const QString& firmware);
     QString hardwareLine() const noexcept { return m_hardwareLine; }
+    // The small Anvelina bit-depth chip beside the radio name: "24-bit" in
+    // green when the PRO3 hardware revision says the 24-bit path is active,
+    // "16-bit" in grey for the legacy path. An empty text hides it.
+    void setBitDepthBadge(const QString& text, bool active, const QString& tooltip = {});
+    QString bitDepthText() const { return m_bitDepthText; }
     void setConnectionLines(const QString& controls, const QString& audio);
     QSize sizeHint() const override;
 
@@ -47,11 +52,14 @@ protected:
 private:
     void applyStyle();
     void updateElision();
+    void updateMinimumWidth();
 
     QString  m_radioName;
     QLabel*  m_label{nullptr};
     QString  m_hardwareLine;
     QLabel*  m_hardwareLabel{nullptr};
+    QString  m_bitDepthText;
+    QLabel*  m_bitDepthLabel{nullptr};
     bool m_corePresentation = false;
     QString m_audioLine;
     QLabel* m_audioLabel{nullptr};

@@ -80,6 +80,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPushButton>
+#include <QSignalBlocker>
 
 namespace NereusSDR {
 
@@ -484,6 +485,16 @@ WorkspaceGroupHeader::WorkspaceGroupHeader(QWidget* parent) : QWidget(parent)
 
     row->addStretch(1);
 
+    // HF-Auto's TF (Tuner Follow) switch, left of the eye. Hidden on every
+    // other container; the owner shows it for the HF-Auto container.
+    m_tf = makeButton(QStringLiteral("TF"), 26, kGroupButtonHeight,
+                      tr("Tuner Follow: let HF-Auto track the operating frequency"), this);
+    m_tf->setObjectName(QStringLiteral("workspaceTunerFollow"));
+    m_tf->setCheckable(true);
+    connect(m_tf, &QPushButton::toggled, this, &WorkspaceGroupHeader::tunerFollowToggled);
+    row->addWidget(m_tf);
+    m_tf->hide();
+
     // The eye, left of Pop out, at the size of the glyph buttons. It shows
     // the saved choice: a click asks for the other one and the owner sets
     // the button from what was saved.
@@ -545,6 +556,11 @@ void WorkspaceGroupHeader::applyStyle()
         css += QStringLiteral("QWidget#workspaceGroupHeader { border-bottom: 1px solid %1; }")
                    .arg(Workspace::role("accent", Workspace::kAccent));
     }
+    css += QStringLiteral(
+               "QPushButton#workspaceTunerFollow { font-weight: bold; }"
+               "QPushButton#workspaceTunerFollow:checked { background: %1; color: %2; }")
+               .arg(Workspace::role("accent", Workspace::kAccent),
+                    Workspace::role("window", "#101820"));
     setStyleSheet(css);
 }
 
@@ -592,6 +608,17 @@ void WorkspaceGroupHeader::setKeepShown(bool keepShown)
     m_keepShown->update();
 }
 bool WorkspaceGroupHeader::keepShown() const { return m_keepShown->isChecked(); }
+
+void WorkspaceGroupHeader::setTunerFollowVisible(bool visible)
+{
+    m_tf->setVisible(visible);
+}
+void WorkspaceGroupHeader::setTunerFollow(bool on)
+{
+    const QSignalBlocker block(m_tf);
+    m_tf->setChecked(on);
+}
+bool WorkspaceGroupHeader::tunerFollow() const { return m_tf->isChecked(); }
 
 // ---- WorkspaceEntryHeader ---------------------------------------------------
 

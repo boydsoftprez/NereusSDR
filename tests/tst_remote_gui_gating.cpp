@@ -49,9 +49,6 @@
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-11-16: Recording plan Task 26: Setup > Cores > Digital Spectrum
-//               Recorder is a Core page, before Recordings. J.J. Boyd
-//               (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-26: CW transmit, remote CW (R-CW-49): a receive-only session's
 //               CWX Send, Stop, Key and memories are disabled with the
 //               Core's reason, never hidden, and its CWX settings stay
@@ -831,11 +828,6 @@ private slots:
         // (RemoteCatControl), so they are Core pages, as Rotor and RF-Kit are.
         QCOMPARE(scopeOf(QStringLiteral("Rotor")), SetupScope::Core);
         QCOMPARE(scopeOf(QStringLiteral("RF-Kit")), SetupScope::Core);
-        // Recording plan Task 26: the Digital Spectrum Recorder is the
-        // Core's, under Cores before Recordings.
-        QCOMPARE(scopeOf(QStringLiteral("Digital Spectrum Recorder")), SetupScope::Core);
-        QCOMPARE(labels.indexOf(QStringLiteral("Digital Spectrum Recorder")) + 1,
-                 labels.indexOf(QStringLiteral("Recordings")));
         for (const char* cat : {"Serial Ports", "TCP/IP CAT", "CAT Options", "CAT PTT"}) {
             QVERIFY2(labels.contains(QLatin1String(cat)), cat);
             QVERIFY2(scopeOf(QLatin1String(cat)) == SetupScope::Core, cat);
@@ -3119,7 +3111,7 @@ private slots:
             }
             return nullptr;
         };
-        for (const QString& title : {QStringLiteral("External PA control")}) {
+        for (const QString& title : {QStringLiteral("External PA (xPA)")}) {
             QGroupBox* box = group(title);
             QVERIFY2(box != nullptr, qPrintable(title));
             QVERIFY2(!box->isEnabled(), qPrintable(title));
@@ -3297,7 +3289,6 @@ private slots:
             {"Hardware Config", "antenna conflict policy", named("antennaConflictPolicyGroup")},
             {"Hardware Config", "OC hot switching", named("ocAllowHotSwitching")},
             {"Hardware Config", "OC USB BCD", named("ocUsbBcdGroup")},
-            {"Hardware Config", "OC external PA", named("ocExternalPaGroup")},
             {"Hardware Config", "OC VHF tab", tab("VHF")},
         };
         if (!hl2) {

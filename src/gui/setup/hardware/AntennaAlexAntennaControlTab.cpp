@@ -743,6 +743,9 @@ void AntennaAlexAntennaControlTab::buildTxBypassStrip(QVBoxLayout* outerLayout)
     m_chkRxOutOnTx     = new QCheckBox(tr("RX Bypass on TX"), frame);
     m_chkExt1OutOnTx   = new QCheckBox(tr("Ext 1 on TX"), frame);
     m_chkExt2OutOnTx   = new QCheckBox(tr("Ext 2 on TX"), frame);
+    // WD5Y: "Rx Bypass on Tx Auto" - links Ext 2 on TX to the external PA
+    // switch (xPA on -> Ext 2 on TX; xPA off -> off).
+    m_chkAutoBypass    = new QCheckBox(tr("Rx Bypass on Tx Auto"), frame);
     // From Thetis setup.designer.cs:5733-5745 [v2.10.3.15]
     // From Thetis-Enhanced (EU2AV) setup.designer.cs:5734-5746 [@567a7ec]
     //   this.chkBPF2Gnd.Text = "Gnd BPF2 on Tx";
@@ -764,6 +767,7 @@ void AntennaAlexAntennaControlTab::buildTxBypassStrip(QVBoxLayout* outerLayout)
     m_chkRxOutOnTx->setProperty("nereusSetupId", "hardware.antennaAlex.rxOutOnTx");
     m_chkExt1OutOnTx->setProperty("nereusSetupId", "hardware.antennaAlex.ext1OutOnTx");
     m_chkExt2OutOnTx->setProperty("nereusSetupId", "hardware.antennaAlex.ext2OutOnTx");
+    m_chkAutoBypass->setProperty("nereusSetupId", "hardware.antennaAlex.autoRxBypass");
     m_chkBpf2GndOnTx->setObjectName(QStringLiteral("alexBpf2GndOnTx"));
     m_chkBpf2GndOnTx->setProperty("nereusSetupId", "hardware.antennaAlex.bpf2GndOnTx");
     m_chkBpf2GndOnTx->setToolTip(tr("Ground BPF2 input on Tx"));
@@ -782,12 +786,14 @@ void AntennaAlexAntennaControlTab::buildTxBypassStrip(QVBoxLayout* outerLayout)
     m_chkRxOutOnTx->setChecked(rxOutOnTxNow());
     m_chkExt1OutOnTx->setChecked(ext1OutOnTxNow());
     m_chkExt2OutOnTx->setChecked(ext2OutOnTxNow());
+    m_chkAutoBypass->setChecked(autoRxBypassNow());
     m_chkRxOutOverride->setChecked(rxOutOverrideNow());
     m_chkUseTxAntForRx->setChecked(useTxAntForRxNow());
 
     row->addWidget(m_chkRxOutOnTx);
     row->addWidget(m_chkExt1OutOnTx);
     row->addWidget(m_chkExt2OutOnTx);
+    row->addWidget(m_chkAutoBypass);
     row->addWidget(m_chkBpf2GndOnTx);
     row->addWidget(m_chkRxOutOverride);
     row->addWidget(m_chkUseTxAntForRx);
@@ -842,6 +848,10 @@ void AntennaAlexAntennaControlTab::buildTxBypassStrip(QVBoxLayout* outerLayout)
             m_remoteAlex->setExt2OutOnTx(on);
             syncTxRelaysFromSource();
         });
+        connect(m_chkAutoBypass, &QCheckBox::toggled, this, [this](bool on) {
+            m_remoteAlex->setAutoRxBypass(on);
+            syncTxRelaysFromSource();
+        });
         connect(m_chkRxOutOverride, &QCheckBox::toggled, this, [this](bool on) {
             m_remoteAlex->setRxOutOverride(on);
             syncTxRelaysFromSource();
@@ -855,6 +865,7 @@ void AntennaAlexAntennaControlTab::buildTxBypassStrip(QVBoxLayout* outerLayout)
         follow(&AlexAntennaFacade::rxOutOnTxChanged, m_chkRxOutOnTx);
         follow(&AlexAntennaFacade::ext1OutOnTxChanged, m_chkExt1OutOnTx);
         follow(&AlexAntennaFacade::ext2OutOnTxChanged, m_chkExt2OutOnTx);
+        follow(&AlexAntennaFacade::autoRxBypassChanged, m_chkAutoBypass);
         follow(&AlexAntennaFacade::rxOutOverrideChanged, m_chkRxOutOverride);
         follow(&AlexAntennaFacade::useTxAntennaForRxChanged, m_chkUseTxAntForRx);
         return;
@@ -864,6 +875,7 @@ void AntennaAlexAntennaControlTab::buildTxBypassStrip(QVBoxLayout* outerLayout)
     connect(m_chkRxOutOnTx,     &QCheckBox::toggled, m_alex, &AlexController::setRxOutOnTx);
     connect(m_chkExt1OutOnTx,   &QCheckBox::toggled, m_alex, &AlexController::setExt1OutOnTx);
     connect(m_chkExt2OutOnTx,   &QCheckBox::toggled, m_alex, &AlexController::setExt2OutOnTx);
+    connect(m_chkAutoBypass,    &QCheckBox::toggled, m_alex, &AlexController::setAutoRxBypass);
     connect(m_chkRxOutOverride, &QCheckBox::toggled, m_alex, &AlexController::setRxOutOverride);
     connect(m_chkUseTxAntForRx, &QCheckBox::toggled, m_alex, &AlexController::setUseTxAntForRx);
 
@@ -873,6 +885,9 @@ void AntennaAlexAntennaControlTab::buildTxBypassStrip(QVBoxLayout* outerLayout)
     });
     connect(m_alex, &AlexController::ext1OutOnTxChanged, this, [this](bool on) {
         QSignalBlocker b(m_chkExt1OutOnTx); m_chkExt1OutOnTx->setChecked(on);
+    });
+    connect(m_alex, &AlexController::autoRxBypassChanged, this, [this](bool on) {
+        QSignalBlocker b(m_chkAutoBypass); m_chkAutoBypass->setChecked(on);
     });
     connect(m_alex, &AlexController::ext2OutOnTxChanged, this, [this](bool on) {
         QSignalBlocker b(m_chkExt2OutOnTx); m_chkExt2OutOnTx->setChecked(on);
@@ -1040,6 +1055,11 @@ bool AntennaAlexAntennaControlTab::ext1OutOnTxNow() const
     return m_remoteAlex ? m_remoteAlex->ext1OutOnTx() : m_alex->ext1OutOnTx();
 }
 
+bool AntennaAlexAntennaControlTab::autoRxBypassNow() const
+{
+    return m_remoteAlex ? m_remoteAlex->autoRxBypass() : m_alex->autoRxBypass();
+}
+
 bool AntennaAlexAntennaControlTab::ext2OutOnTxNow() const
 {
     return m_remoteAlex ? m_remoteAlex->ext2OutOnTx() : m_alex->ext2OutOnTx();
@@ -1074,6 +1094,7 @@ void AntennaAlexAntennaControlTab::syncTxRelaysFromSource()
     show(m_chkRxOutOnTx, rxOutOnTxNow());
     show(m_chkExt1OutOnTx, ext1OutOnTxNow());
     show(m_chkExt2OutOnTx, ext2OutOnTxNow());
+    show(m_chkAutoBypass, autoRxBypassNow());
     show(m_chkRxOutOverride, rxOutOverrideNow());
 }
 
@@ -1114,7 +1135,7 @@ void AntennaAlexAntennaControlTab::applyTransmitEditAvailability()
     const QString txReason = m_remoteAlex->txAntennasUnavailableReason().isEmpty()
         ? fallback : m_remoteAlex->txAntennasUnavailableReason();
     for (QWidget* w : std::initializer_list<QWidget*>{
-             m_txGridGroup, m_blockTxFrame, m_chkExt1OutOnTx, m_chkExt2OutOnTx,
+             m_txGridGroup, m_blockTxFrame, m_chkExt1OutOnTx, m_chkExt2OutOnTx, m_chkAutoBypass,
              m_chkRxOutOverride}) {
         HardwareTransmitGate::apply(w, txAntennas, txReason);
     }

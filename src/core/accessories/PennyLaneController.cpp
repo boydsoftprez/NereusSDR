@@ -140,7 +140,13 @@ void PennyLaneController::setExtCtrlEnabled(bool on)
     emit extCtrlEnabledChanged(on);
 }
 
-void PennyLaneController::setMacAddress(const QString& mac) { m_mac = mac; }
+void PennyLaneController::setMacAddress(const QString& mac)
+{
+    if (m_mac != mac) {
+        m_mac = mac;
+        m_loaded = false;
+    }
+}
 
 QString PennyLaneController::persistenceKey() const
 {
@@ -150,6 +156,7 @@ QString PennyLaneController::persistenceKey() const
 void PennyLaneController::load()
 {
     if (m_mac.isEmpty()) { return; }
+    m_loaded = true;
     auto& s = AppSettings::instance();
     const QString base = persistenceKey();
     const QString key = QStringLiteral("%1/extCtrlEnabled").arg(base);
@@ -165,6 +172,7 @@ void PennyLaneController::load()
 void PennyLaneController::save()
 {
     if (m_mac.isEmpty()) { return; }
+    if (!m_loaded) { return; }
     auto& s = AppSettings::instance();
     const QString base = persistenceKey();
     s.setValue(QStringLiteral("%1/extCtrlEnabled").arg(base), m_extCtrlEnabled ? QStringLiteral("True") : QStringLiteral("False"));

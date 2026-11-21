@@ -40,6 +40,70 @@ constexpr int kChunk = 2048;
 constexpr int kOutSlack = 4096;
 // How fast the level falls back between peaks, per poll.
 constexpr float kLevelFall = 0.6f;
+// A recorded message on the air should be as loud as speech, but the clip is
+// taken from the microphone before the transmit preamp, so a quiet microphone
+// gives a whisper on the air. Every finished clip is brought up to this peak
+// once, here, and then keeps that level whatever the panel gain does.
+constexpr float kClipTargetPeak = 0.5f;    // about -6 dBFS
+constexpr float kClipMinPeak = 0.001f;     // below this it is room noise: leave it
+constexpr float kClipMaxGain = 63.0f;      // never more than about +36 dB
+
+// Scales a finished clip's 16-bit PCM in place (the format this recorder
+// writes: 48 kHz mono, canonical WAV). Returns false only if the file cannot
+// be read or its layout is not what the writer made.
+bool normalizeClipFile(const QString& path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadWrite)) {
+        return false;
+    }
+    QByteArray all = file.readAll();
+    if (all.size() < 44 || all.mid(0, 4) != "RIFF" || all.mid(8, 4) != "WAVE") {
+        return false;
+    }
+    qint64 dataOffset = -1;
+    qint64 dataLength = 0;
+    int pos = 12;
+    while (pos + 8 <= all.size()) {
+        const QByteArray id = all.mid(pos, 4);
+        const uchar* lenBytes = reinterpret_cast<const uchar*>(all.constData() + pos + 4);
+        const quint32 length = quint32(lenBytes[0]) | (quint32(lenBytes[1]) << 8)
+                             | (quint32(lenBytes[2]) << 16) | (quint32(lenBytes[3]) << 24);
+        if (id == "data") {
+            dataOffset = pos + 8;
+            dataLength = length;
+            break;
+        }
+        pos += 8 + int(length) + int(length & 1u);
+    }
+    if (dataOffset < 0 || dataLength < 2 || dataOffset + dataLength > all.size()) {
+        return false;
+    }
+    auto* samples = reinterpret_cast<qint16*>(all.data() + dataOffset);
+    const qint64 count = dataLength / 2;
+    int peak = 0;
+    for (qint64 i = 0; i < count; ++i) {
+        const int value = std::abs(int(samples[i]));
+        if (value > peak) {
+            peak = value;
+        }
+    }
+    const float peakLevel = float(peak) / 32768.0f;
+    if (peakLevel < kClipMinPeak || peakLevel >= kClipTargetPeak) {
+        return true;
+    }
+    const float gain = std::min(kClipMaxGain, kClipTargetPeak / peakLevel);
+    for (qint64 i = 0; i < count; ++i) {
+        const long value = std::lround(float(samples[i]) * gain);
+        samples[i] = qint16(std::clamp<long>(value, -32768, 32767));
+    }
+    if (!file.seek(dataOffset) || file.write(all.constData() + dataOffset, dataLength) != dataLength) {
+        return false;
+    }
+    qInfo(lcRecordings) << "voice message clip brought up:" << peakLevel << "->" << kClipTargetPeak
+                        << "gain" << gain;
+    return true;
+}
 
 class EngineClipSource final : public MicClipSource {
 public:
@@ -234,6 +298,9 @@ void LocalMicClipRecorder::finish()
         QFile::remove(m_path);
         emit failed(nothingHeardReason());
         return;
+    }
+    if (!normalizeClipFile(m_path)) {
+        qCWarning(lcRecordings) << "a voice message clip could not be levelled at" << m_path;
     }
     emit finished(m_path, elapsedMs());
 }

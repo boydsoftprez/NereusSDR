@@ -164,6 +164,8 @@ private:
     QString unavailableReason() const;
     QString nameForImport(int n, const QString& path) const;
     qint64 now() const;
+    void restoreListenState();   // Listen: unmute slices, drop the boost
+    void hideEvent(QHideEvent* event) override;
 
     QPointer<RecordingsAccess> m_access;
     QList<QMetaObject::Connection> m_accessConnections;
@@ -173,6 +175,11 @@ private:
     QString m_permittedReason;
     bool m_takeOffered = false;
     bool m_awaitingAnswer = false;
+
+    // Listen: the receivers are muted while the message plays, then restored.
+    QHash<int, bool> m_listenMuteSaved;
+    bool m_listenMuting = false;
+    qint64 m_listenStartedAtMs = 0;
 
     bool m_armed = false;
     int m_armedFor = 0;

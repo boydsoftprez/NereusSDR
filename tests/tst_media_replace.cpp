@@ -31,14 +31,6 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-11-15: the playback tap's sink holds the tap weakly, so the tap
-//               and its sink no longer keep each other alive. J.J. Boyd
-//               (KG4VCF), AI-assisted via Anthropic Claude Code.
-//   2026-11-15: a late packet from the old connection is handed over on the
-//               playback sink as well as rtpReceived(), and the new
-//               connection's packets are read where the speaker gets them
-//               (ReadinessGateTransport's playback tap). J.J. Boyd (KG4VCF),
-//               AI-assisted via Anthropic Claude Code.
 //   2026-11-05: the silence rules around a speaker fault and an unmute;
 //               giveTheWindowASpeaker; DisplayedSessionHarness. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -132,7 +124,6 @@
 #include <functional>
 #include <map>
 #include <memory>
-#include <mutex>
 
 #include "fakes/RecordingRtpSink.h"
 #include "core/AppSettings.h"
@@ -370,63 +361,6 @@ public:
     {
         return m_inner->setMicPacketSink(std::move(sink));
     }
-    bool setPlaybackPacketSink(PlaybackPacketSink sink) override
-    {
-        // 2026-11-15: the speaker's packets reach the window on the
-        // transport's playback thread and never on rtpReceived(); the tap
-        // records each one there and can hand the window a packet as if
-        // this connection had just received it.
-        if (!sink) {
-            {
-                const std::lock_guard<std::mutex> lock(m_tap->mutex);
-                m_tap->sink = {};
-            }
-            return m_inner->setPlaybackPacketSink({});
-        }
-        // The tap holds this sink, so the sink holds the tap only weakly.
-        const std::weak_ptr<PlaybackTap> weakTap = m_tap;
-        PlaybackPacketSink tapped = [weakTap, sink](const QByteArray& packet, qint64 heldUs) {
-            if (const std::shared_ptr<PlaybackTap> tap = weakTap.lock()) {
-                const std::lock_guard<std::mutex> lock(tap->mutex);
-                if (tap->packets.size() >= PlaybackTap::kMaxPackets) {
-                    tap->packets.removeFirst();
-                }
-                tap->packets.append(packet);
-            }
-            sink(packet, heldUs);
-        };
-        {
-            const std::lock_guard<std::mutex> lock(m_tap->mutex);
-            m_tap->sink = tapped;
-        }
-        return m_inner->setPlaybackPacketSink(std::move(tapped));
-    }
-    // The packets the playback sink was given since the last clear.
-    QList<QByteArray> playbackPackets() const
-    {
-        const std::lock_guard<std::mutex> lock(m_tap->mutex);
-        return m_tap->packets;
-    }
-    void clearPlaybackPackets()
-    {
-        const std::lock_guard<std::mutex> lock(m_tap->mutex);
-        m_tap->packets.clear();
-    }
-    // Gives `packet` to the installed playback sink on the caller's thread,
-    // as the playback thread would. False with no sink installed.
-    bool injectPlayback(const QByteArray& packet)
-    {
-        PlaybackPacketSink sink;
-        {
-            const std::lock_guard<std::mutex> lock(m_tap->mutex);
-            sink = m_tap->sink;
-        }
-        if (!sink) {
-            return false;
-        }
-        sink(packet, 0);
-        return true;
-    }
     bool setTxReceiptHook(TxReceiptHook hook) override
     {
         return m_inner->setTxReceiptHook(std::move(hook));
@@ -449,14 +383,7 @@ public:
     bool notReady = false;
 
 private:
-    struct PlaybackTap {
-        static constexpr qsizetype kMaxPackets = 256;
-        std::mutex mutex;
-        QList<QByteArray> packets;
-        PlaybackPacketSink sink;
-    };
     LibDataChannelMediaTransport* m_inner;
-    std::shared_ptr<PlaybackTap> m_tap = std::make_shared<PlaybackTap>();
 };
 
 // How long a test waits after the request it expects, so that a late one
@@ -2788,15 +2715,7 @@ private slots:
     void lateOldRtpAfterPromotionNeverReachesTheJitterQueue()
     {
         Test::RemoteAudioSessionHarness h;
-        // 2026-11-15: the speaker's packets arrive on each transport's
-        // playback sink, not rtpReceived(), so the links tap that path.
-        QList<QPointer<ReadinessGateTransport>> links;
-        RemoteMediaController media(&h.client, &h.remote, nullptr, nullptr,
-            [&links](QObject* parent) -> IMediaTransport* {
-                auto* link = new ReadinessGateTransport(parent);
-                links.append(link);
-                return link;
-            });
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
         DaemonMediaController daemon(&h.server, &h.station);
         QTimer source;
         source.setInterval(10);
@@ -2811,8 +2730,6 @@ private slots:
                                       == RemoteAudioStatus::State::Playing,
                                   h.mediaStage(media).constData(),
                                   h.kMediaConnectionWaitMs);
-        QCOMPARE(links.size(), 1);
-        const QPointer<ReadinessGateTransport> oldLink = links.constFirst();
         MediaPeer* const old = media.findChild<MediaPeer*>();
         QVERIFY(old);
         QPointer<MediaPeer> retired(old);
@@ -2823,14 +2740,14 @@ private slots:
             if (peer != old) { next = peer; break; }
         }
         QVERIFY(next);
+        QSignalSpy nextRtp(next, &MediaPeer::rtpReceived);
         QTRY_VERIFY_WITH_TIMEOUT(!media.replacingConnection(), 20000);
-        QCOMPARE(links.size(), 2);
-        const QPointer<ReadinessGateTransport> nextLink = links.constLast();
-        QVERIFY(oldLink && nextLink);
-        nextLink->clearPlaybackPackets();
+        nextRtp.clear();
+        QTRY_VERIFY_WITH_TIMEOUT(!nextRtp.isEmpty(), 5000);
         QByteArray late;
         QTRY_VERIFY_WITH_TIMEOUT([&] {
-            for (const QByteArray& packet : nextLink->playbackPackets()) {
+            for (const auto& call : nextRtp) {
+                const QByteArray packet = call.at(0).toByteArray();
                 if (packet.size() >= 12 && ssrcOf(packet) == next->audioSsrc()) {
                     late = packet;
                     return true;
@@ -2841,17 +2758,10 @@ private slots:
         QTest::qWait(120); // any held new-path packet has entered the filter
         QVERIFY(late.size() >= 12);
         qToBigEndian<quint32>(oldSsrc, late.data() + 8);
-        // On the old connection's playback sink, as its playback thread
-        // would hand it over: held for the window, then filtered there.
         const quint64 filteredBefore = media.duplicateAudioDropped();
         const quint64 jitterBefore = media.audioTelemetry().duplicatePackets;
-        QVERIFY(oldLink->injectPlayback(late));
-        QTRY_COMPARE_WITH_TIMEOUT(media.duplicateAudioDropped(), filteredBefore + 1, 1000);
-        QTest::qWait(80);
-        QCOMPARE(media.audioTelemetry().duplicatePackets, jitterBefore);
-        // And on the owner's path (rtpReceived), filtered at once.
         emit old->rtpReceived(late);
-        QCOMPARE(media.duplicateAudioDropped(), filteredBefore + 2);
+        QCOMPARE(media.duplicateAudioDropped(), filteredBefore + 1);
         QTest::qWait(80);
         QCOMPARE(media.audioTelemetry().duplicatePackets, jitterBefore);
         QTRY_VERIFY_WITH_TIMEOUT(retired.isNull(),

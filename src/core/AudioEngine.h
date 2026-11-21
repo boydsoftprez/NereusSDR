@@ -21,16 +21,6 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-11-16: The microphone clip tap (recording plan Task 12):
-//               setTxMicClipTap / drainTxMicClipTap, a copy of what
-//               pullTxMic hands the transmitter, for recording a voice
-//               keyer message on this computer. J.J. Boyd (KG4VCF),
-//               AI-assisted via Anthropic Claude Code.
-//   2026-11-15: Recording player (spec 6.1, 6.3): a playback slot in the
-//               mixer for the local output and for each owner mix, and
-//               setOwnerMixPlayback, the owner mix's route to its own;
-//               setPlaybackFeed, which each drain tops the slots up from.
-//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-27: Add approved remote CW hold/activity integration for
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-17 : makeBus() sets a stream event sink before the open;
@@ -449,8 +439,6 @@ enum class RemotePlaybackRefusal : int { None = 0, Unavailable = 1, Format = 2 }
 // beside the MON button. Independent of the receivers' own routes: MON is
 // how you sound on air, and it goes where you want to hear it.
 enum class TxMonitorOutput : int { Speakers = 0, Headphones = 1 };
-
-class RecordingPlaybackFeed;
 
 class MasterMixAudioTap {
 public:
@@ -925,6 +913,20 @@ public:
     void setTxInputConfig(const AudioDeviceConfig& cfg);
     AudioDeviceConfig txInputConfig() const;
 
+    // Fast startup: hold the first device enumeration while the main window
+    // is being built (ASIO enumeration can block for several seconds), then
+    // run it once the window is up. resumeDeviceEnumeration() opens the
+    // catalogue and the outputs exactly as the deferred call would have.
+    void deferDeviceEnumeration(bool defer);
+    void resumeDeviceEnumeration();
+    // True while the first enumeration is waiting for the event loop (the
+    // startup deferral); the window shows a status line meanwhile.
+    bool deviceEnumerationDeferred() const { return m_deferDeviceEnumeration; }
+    // Set before the first AudioEngine is constructed (the app entry): that
+    // engine defers its first enumeration to the event loop, so the window
+    // paints before the slow ASIO/PortAudio scan.
+    static void deferStartupEnumeration();
+
     // R-R3-36: PC microphone capture runs in the supervised helper process.
     // captureStatus() is the supervisor's last published status;
     // acquireCaptureDemand() returns one unit of demand (the first active
@@ -1075,23 +1077,31 @@ public:
     /// Any thread; the audio thread reads it at the next drain.
     void setOwnerMixMonitor(int slot, MasterMixer::OwnerMonitor monitor);
     MasterMixer::OwnerMonitor ownerMixMonitor(int slot) const;
-    /// Recording player (spec 6.1, 6.3): the mixer's playback slots. The
-    /// local output's speakers sum carries kLocalPlaybackSlotId; an owner
-    /// mix's speakers sum carries ownerPlaybackSlotId(slot) while
-    /// setOwnerMixPlayback(slot, true) (off after acquire and release).
-    /// Each is in no other sum. Any thread; the audio thread reads it at
-    /// the next drain.
-    static constexpr int kLocalPlaybackSlotId = -3;
-    static constexpr int ownerPlaybackSlotId(int ownerMixSlot) { return -4 - ownerMixSlot; }
-    void setOwnerMixPlayback(int slot, bool on);
-    bool ownerMixPlayback(int slot) const;
-    /// Where each drain pulls playback from (RecordingService), topping
-    /// every playback slot it sums up to the drain so the slot's ring never
-    /// drops in normal play. nullptr: none. Control thread; returns once no
-    /// drain is inside the feed it replaced.
-    void setPlaybackFeed(RecordingPlaybackFeed* feed);
     /// Owner mixes taken now; diagnostics and leak checks.
     int ownerMixCount() const;
+
+    // Recording playback (imported feature). The local output's speakers sum
+    // carries kLocalPlaybackSlotId; each owner mix carries its own slot.
+    // setPlaybackFeed is how each drain tops those slots up.
+    static constexpr int kLocalPlaybackSlotId = -3;
+    static constexpr int ownerPlaybackSlotId(int ownerMixSlot) { return -4 - ownerMixSlot; }
+    void setPlaybackFeed(class RecordingPlaybackFeed* feed);
+    // Imported feature: the local playback slot's gain (voice-keyer Listen).
+    // Clips are levelled when recorded, so this is normally 1.0 (unity).
+    void setLocalPlaybackGain(float gain)
+    {
+        m_masterMix.setSliceGain(kLocalPlaybackSlotId, gain, 0.0f);
+    }
+
+    // Recording plan Task 12 (imported feature): a copy of the microphone
+    // audio as it reaches the transmitter, for a voice-keyer message. One
+    // reader at a time, on the owner thread: turning it on empties the ring,
+    // drainTxMicClipTap takes what waits, txMicClipTapRateHz is its rate.
+    static constexpr int kTxMicClipTapFloats = 1 << 16;   // about 1.4 s at 48 kHz
+    void setTxMicClipTap(bool on);
+    bool txMicClipTapOn() const { return m_txMicClipTapOn.load(std::memory_order_acquire); }
+    int drainTxMicClipTap(float* dst, int n);
+    int txMicClipTapRateHz() const { return m_txMicClipTapRateHz.load(std::memory_order_acquire); }
 
     // Slice control plan Task 6: listening. An owner mix (or the local
     // output, for the station device) hears a slice it does not control
@@ -1296,6 +1306,11 @@ public:
     // drain loop.
     void rxBlockReady(int sliceId, const float* samples, int frames);
 
+    /// The peak (linear, 0..1) of the slice's most recent receive block:
+    /// after WDSP's RX EQ, before AF, volume and mute. 0 with no block or an
+    /// out-of-range id. Written on the audio thread, read from any thread.
+    float sliceRxPeak(int sliceId) const;
+
     /// TX-monitor block consumer. Called via Qt::DirectConnection from
     /// TxChannel::sip1OutputReady on the transmit thread (TxWorkerThread).
     /// When monitor is enabled, converts the mono block from the transmit
@@ -1375,19 +1390,6 @@ public:
     // Plan: 3M-1b E.1 (initial introduction); 3M-1c TX pump architecture
     // redesign (removal of accumulator side effects).
     int pullTxMic(float* dst, int n);
-
-    // Recording plan Task 12: the microphone clip tap. While it is on,
-    // pullTxMic also copies each block it returns (the microphone before
-    // any processing or gain) into a lock-free ring, and returns as
-    // before: the tap takes nothing from the transmitter. Copies that do
-    // not fit are dropped. One reader at a time, on the owner thread:
-    // turning it on empties the ring, drainTxMicClipTap takes what waits,
-    // txMicClipTapRateHz is the rate of what it holds.
-    static constexpr int kTxMicClipTapFloats = 1 << 16;   // about 1.4 s at 48 kHz
-    void setTxMicClipTap(bool on);
-    bool txMicClipTapOn() const { return m_txMicClipTapOn.load(std::memory_order_acquire); }
-    int drainTxMicClipTap(float* dst, int n);
-    int txMicClipTapRateHz() const { return m_txMicClipTapRateHz.load(std::memory_order_acquire); }
 
     // Pull VAX-TX audio samples from the VAX TX shared-memory bus.
     //
@@ -1718,6 +1720,9 @@ signals:
     /// resetAudioSettings, stop). A container's VAX button and Setup >
     /// Audio > VAX's channel card follow it at once.
     void vaxBusOpenChanged(int channel);
+    // The deferred first device enumeration finished (or was not deferred):
+    // the window clears its "Initialising audio devices…" line.
+    void deviceEnumerationFinished();
 
     // (Phase 3M-1c D.1 added a micBlockReady(const float*, int) signal
     //  that fired on every kMicBlockFrames=720-sample accumulator block.
@@ -1885,6 +1890,10 @@ private:
     // Slice control plan Task 6: 64 bits, the AF level's float in the high
     // half.
     std::array<std::atomic<quint64>, kMaxSliceAudioViews> m_sliceAudioViews{};
+
+    // Post-EQ receive peak per slice: the loudest sample of the most recent
+    // block. Written on the audio thread, read by the RX EQ level badge.
+    std::array<std::atomic<float>, kMaxSliceAudioViews> m_sliceRxPeak{};
 
     // Sub-Phase 12 Task 12.2 — live-reconfig safety mutex for the speakers
     // bus. setSpeakersConfig() acquires this during tear-down + rebuild.
@@ -2176,8 +2185,6 @@ private:
         MixTapGate headphones;
         // Task 32: MasterMixer::OwnerMonitor, as an int for the atomic.
         std::atomic<int> monitor{0};
-        // Recording player: this owner's playback slot reaches its speakers.
-        std::atomic<bool> playback{false};
         // Slice control plan Task 6: the slices this owner listens to, and
         // its level for each (0 when muted).
         std::atomic<quint32> listenMask{0};
@@ -2277,7 +2284,8 @@ private:
     // micSource=PC via setMicSourceLocked, and the resulting
     // micSourceChanged emit lands here as true.
     std::atomic<bool> m_micSourceWantsPc{false};
-    // Recording plan Task 12: the microphone clip tap (setTxMicClipTap).
+
+    // Recording plan Task 12 (imported feature): the microphone clip tap.
     SpscFloatRing m_txMicClipTap{kTxMicClipTapFloats};
     std::atomic<bool> m_txMicClipTapOn{false};
     std::atomic<int> m_txMicClipTapRateHz{48000};
@@ -2334,8 +2342,8 @@ private:
     std::array<float, kTxMonitorPumpFrames> m_txMonitorPumpMono{};
     std::array<float, kTxMonitorPumpFrames * 2> m_txMonitorPumpStereo{};
 
-    // Recording player: the playback feed and its gate (setPlaybackFeed),
-    // and the DSP thread's scratch for one pull.
+    // Recording player (imported feature): the playback feed and its gate
+    // (setPlaybackFeed), and the DSP thread's scratch for one pull.
     void feedPlaybackSlot(int slotId, int frames);
     std::atomic<RecordingPlaybackFeed*> m_playbackFeed{nullptr};
     std::atomic<unsigned> m_playbackFeedCalls{0};
@@ -2376,6 +2384,8 @@ private:
     // part of it (it starts on first need).  In a test run makeBus supplies
     // only the test's fake devices (R-R3-21).
     bool m_deviceLayerReady{false};
+    // Fast startup: the first device enumeration waits until the window is up.
+    bool m_deferDeviceEnumeration{false};
     bool m_running{false};
     // High-water mark of slice ids registered with MasterMixer: ids
     // [0, m_preregisteredSlices) have an entry. Startup-only invariant per

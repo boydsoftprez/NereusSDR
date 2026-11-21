@@ -262,6 +262,8 @@ private:
     QLineEdit* m_search = nullptr;
     QTableWidget* m_table = nullptr;
     QPushButton* m_play = nullptr;
+    QPushButton* m_record = nullptr;   // port step 2: direct REC (slice 0)
+    bool m_recordOn = false;
     QPushButton* m_rename = nullptr;
     QPushButton* m_soundOnly = nullptr;
     QPushButton* m_copy = nullptr;

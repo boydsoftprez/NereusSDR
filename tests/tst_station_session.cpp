@@ -7086,16 +7086,8 @@ void TstStationSession::receiveOnlyCoreRefusesTransmitHardwareKeys()
     // were, and nothing is reloaded.
     AppSettings& settings = AppSettings::instance();
     settings.clearHardwareValues(kHardwareMac);
-    const QStringList globalKeys{QStringLiteral("hardware/oc/extPa/model"),
-                                 QStringLiteral("hardware/oc/extPa/biasDelayMs")};
-    for (const QString& key : globalKeys) {
-        settings.remove(key);
-    }
-    const auto cleanSettings = qScopeGuard([&settings, globalKeys] {
+    const auto cleanSettings = qScopeGuard([&settings] {
         settings.clearHardwareValues(kHardwareMac);
-        for (const QString& key : globalKeys) {
-            settings.remove(key);
-        }
     });
     HardwareSession s;
     joinHardwareWindow(s, settings, this, m_securityDir.path());
@@ -7140,9 +7132,8 @@ void TstStationSession::receiveOnlyCoreRefusesTransmitHardwareKeys()
         {hw(QStringLiteral("tx/UserDigOut")), QStringLiteral("15")},
         {hw(QStringLiteral("powerByBand/40m")), QStringLiteral("100")},
         {hw(QStringLiteral("tunePowerByBand/40m")), QStringLiteral("100")},
-        {hw(QStringLiteral("ocOutputs/hardware/oc/extPa/model")), QStringLiteral("2")},
-        {QStringLiteral("hardware/oc/extPa/model"), QStringLiteral("2")},
-        {QStringLiteral("hardware/oc/extPa/biasDelayMs"), QStringLiteral("50")},
+        {hw(QStringLiteral("oc/extPa/txPin1")), QStringLiteral("True")},
+        {hw(QStringLiteral("oc/extPa/rxPin1")), QStringLiteral("True")},
         // Follow-up item 4. The three transmit high-pass switches are taken
         // from a window at radioHardwareVersion 7 since parity Task 14, and
         // the Alex-1 low-pass rows at version 10 (tst_remote_hl2_io,
@@ -7174,6 +7165,9 @@ void TstStationSession::receiveOnlyCoreRefusesTransmitHardwareKeys()
     QVERIFY2(reloads.isEmpty(), qPrintable(reloads.join(QLatin1Char(','))));
     QVERIFY(!oc.pinEnabled(Band::Band40m, 2, /*tx=*/true));
     QCOMPARE(oc.pinAction(0), action1);
+    QVERIFY(!oc.extPaEnabled());
+    QVERIFY(!oc.txPinPa(0));
+    QVERIFY(!oc.rxPinPa(0));
     QCOMPARE(cal.txDisplayOffsetDb(), txDisplay);
     QCOMPARE(cal.paCurrentSensitivity(), paSens);
     QCOMPARE(cal.paCurrentOffset(), paOffset);

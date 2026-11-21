@@ -452,8 +452,86 @@ void CompositePresetItem::configureDynamics() {
     m_samples.clear(); m_lastFrame=-1; m_lastHistorySample=-1;
     m_samples2.clear(); m_lastHistorySample2=-1;
 }
-QSet<int> CompositePresetItem::readingBindings() const { QSet<int> result; for(int i=0;i<m_channels.size();++i) { if(readsOwnSource(i)) { continue; } const int id=i==0 ? bindingId() : m_channels[i].binding; if(id>=0) { result.insert(id); } } return result; }
+QSet<int> CompositePresetItem::readingBindings() const { QSet<int> result; for(int i=0;i<m_channels.size();++i) { if(readsOwnSource(i)) { continue; } if(i==0 && hasMmioBinding()) { continue; } if(i>0 && channelFromMmio(i)) { continue; } const int id=i==0 ? bindingId() : m_channels[i].binding; if(id>=0) { result.insert(id); } } return result; }
+void CompositePresetItem::applyHeldPowerValues()
+{
+    bool restored = false;
+    for (int i = 0; i < m_channels.size(); ++i) {
+        const int binding = i == 0 ? bindingId() : m_channels[i].binding;
+        if (binding != MeterBinding::TxPower
+            && binding != MeterBinding::TxReversePower
+            && binding != MeterBinding::TxSwr) {
+            continue;
+        }
+        // A channel fed by the data source (MMIO) keeps its own last
+        // transmitted value; the radio-binding cache never saw it.  Replaying
+        // a missing radio value here used to zero the reflected needle.
+        bool haveValue = false;
+        double value = 0.0;
+        const bool fromMmio = hasMmioBinding() && (i == 0 || channelFromMmio(i));
+        if (fromMmio) {
+            const auto held = m_lastMmioPower.constFind(i);
+            if (held != m_lastMmioPower.constEnd()) { value = *held; haveValue = true; }
+        }
+        if (!haveValue) {
+            const auto cached = m_lastPowerReading.constFind(binding);
+            if (cached != m_lastPowerReading.constEnd()) {
+                value = *cached;
+                haveValue = true;
+            } else if (binding == MeterBinding::TxSwr) {
+                // A face that never saw SWR still reads 1.0 rather than 0.
+                value = 1.0;
+                haveValue = true;
+            }
+        }
+        if (!haveValue) { continue; }
+        setBindingUnavailable(binding, QString());
+        setBindingSupport(binding, BindingSupport::Supported);
+        m_channels[i].dynamics.push(value, true);
+        if (i == 0) { m_value = value; }
+        restored = true;
+    }
+    if (restored) { markPresentationDirty(true); }
+}
+
+void CompositePresetItem::setReadingHold(bool on)
+{
+    if (on == m_readingHold) { return; }
+    m_readingHold = on;
+    if (!on) { return; }
+    // Enabling Hold off-air: the live readings have already gone to zero, so
+    // restore the last transmitted power/reflected/SWR into the channels.
+    applyHeldPowerValues();
+}
+
 void CompositePresetItem::pushBindingValue(int binding,double reading) {
+    // Keep the last transmitted power/reflected/SWR even while Hold is off,
+    // so switching Hold on after unkey can bring the needles back. Cache only
+    // while transmitting: 0 W reflected and 1.0 SWR are valid TX readings and
+    // must be kept, while the off-air zeros must not replace them.
+    if (transmitting() && std::isfinite(reading)
+        && (binding == MeterBinding::TxPower
+            || binding == MeterBinding::TxReversePower
+            || binding == MeterBinding::TxSwr)) {
+        m_lastPowerReading.insert(binding, reading);
+        // The face's own data source (MMIO) does not pass through the radio
+        // binding cache above; keep its channel 0 value for Hold too.  The
+        // largest sample survives the unkey decay.
+        if (hasMmioBinding() && binding == bindingId()) {
+            const auto existing = m_lastMmioPower.constFind(0);
+            if (existing == m_lastMmioPower.constEnd() || reading > *existing) {
+                m_lastMmioPower.insert(0, reading);
+            }
+        }
+    }
+    // Hold: off-air, the TX power / reflected / SWR needles keep the last
+    // transmitted reading. Other bindings (signal, temps) stay live.
+    if (m_readingHold
+        && (binding == MeterBinding::TxPower
+            || binding == MeterBinding::TxReversePower
+            || binding == MeterBinding::TxSwr)) {
+        return;
+    }
     const bool available=bindingSupport(binding)!=BindingSupport::Unsupported && bindingUnavailableReason(binding).isEmpty() && std::isfinite(reading) && (hasMmioBinding() || !isNoMeterReading(reading));
     for(int i=0;i<m_channels.size();++i) {
         if(channelFromMmio(i) || readsOwnSource(i)) { continue; }
@@ -509,7 +587,7 @@ bool CompositePresetItem::advanceMeter(qint64 now) {
     }
     const bool clock=m_clock && (m_lastFrame<0 || now/250!=m_lastFrame/250); m_lastFrame=now; const bool dirty=m_presentationDirty; m_presentationDirty=false; return changed || clock || dirty;
 }
-void CompositePresetItem::resetForTxTransition(bool tx) { m_tx=tx; configureDynamics(); if(m_face==Face::Anan) { markPresentationDirty(true); } if(m_vfo) { m_vfo->setTransmitting(tx); } if(m_bands) { m_bands->setTransmitting(tx); m_modes->setTransmitting(tx); } }
+void CompositePresetItem::resetForTxTransition(bool tx) { m_tx=tx; if (tx) { m_lastMmioPower.clear(); } configureDynamics(); if(m_face==Face::Anan) { markPresentationDirty(true); } if(m_vfo) { m_vfo->setTransmitting(tx); } if(m_bands) { m_bands->setTransmitting(tx); m_modes->setTransmitting(tx); } if (!tx && m_readingHold) { applyHeldPowerValues(); } }
 void CompositePresetItem::resetRxSource()
 {
     if (hasMmioBinding()) { return; }
@@ -549,6 +627,20 @@ void CompositePresetItem::setSecondaryValue(int index,double value) {
     if(i<1) { return; }
     const int binding=m_channels[i].binding;
     const bool hadReading=m_channels[i].dynamics.hasReading();
+    // Keep each data-source channel's last transmitted value.  Hold replays it
+    // after unkey, so SWR and reflected stay at the TX reading like power.
+    // Keep the largest sample: the forward power collapses at unkey and the
+    // helper's computed reflected power follows it to zero in the same poll,
+    // so "last sample" would freeze the decay instead of the transmission.
+    if (transmitting() && std::isfinite(value)) {
+        const auto existing = m_lastMmioPower.constFind(i);
+        if (existing == m_lastMmioPower.constEnd() || value > *existing) {
+            m_lastMmioPower.insert(i, value);
+        }
+    } else if (m_readingHold) {
+        const auto held = m_lastMmioPower.constFind(i);
+        if (held != m_lastMmioPower.constEnd()) { value = *held; }
+    }
     m_channels[i].dynamics.push(value,std::isfinite(value));
     if(m_face==Face::Anan && bindingSupport(binding)!=BindingSupport::Supported && hadReading!=m_channels[i].dynamics.hasReading()) { markPresentationDirty(true); }
 }
@@ -870,6 +962,9 @@ QStringList CompositePresetItem::editableChannelFields(int channel) const {
     if(m_face==Face::Eye) { fields.append({"historyMs","showHistory","historyColor"}); }
     if(m_face==Face::PowerSwr || m_face==Face::Anan || m_face==Face::Cross) { fields.append({"name","units","visible"}); }
     if(m_face==Face::Anan || m_face==Face::Cross) { fields.append({"shadow","offsetX","offsetY","radiusX","radiusY","lengthFactor","strokeWidth","onlyWhenRx","onlyWhenTx","displayGroup"}); }
+    // A face may map a second needle onto its arc with its own scale (the
+    // WaveNode cross meters show SWR there) and skip the power normalisation.
+    if(m_face==Face::Anan || m_face==Face::Cross) { fields.append({"normalisePower","calibration","showScaleLabels","showNeedle"}); }
     return fields;
 }
 QStringList CompositePresetItem::editableFields() const {
@@ -884,7 +979,7 @@ QStringList CompositePresetItem::editableFields() const {
     if(m_face==Face::PowerSwr || m_face==Face::Anan || m_face==Face::Cross) { fields.append({"powerLimitW","peakHoldColor"}); }
     if(m_face==Face::PowerSwr || m_face==Face::Anan) { fields.append("peakValueColor"); }
     if(m_face==Face::Anan || m_face==Face::Cross) { fields.append({"powerScaleColor","subNeedleColor","shadow"}); }
-    if(m_face==Face::Anan) { fields.append("darkMode"); }
+    if(m_face==Face::Anan || m_face==Face::Cross) { fields.append("darkMode"); }
     if(m_face==Face::Eye) { fields.append({"eyeScale","bezelScale","bezelImage"}); }
     if(m_face==Face::History) { fields.append({"historyCapacity","historyMs","minValue","maxValue","autoScale","units","trace2Context"}); }
     if(m_clock) { fields.append({"clockMode","showDate","show24Hour","thetisFormat","clockTimeColor","clockDateColor","clockTitleColor"}); }
@@ -987,7 +1082,17 @@ bool CompositePresetItem::applyConfiguration(const QJsonObject& requested) {
         if(!follow && !source.contains("sliceId") && !source.contains("rxSource")) { return false; }
         if(source.contains("sessionId") && !source["sessionId"].isString()) { return false; }
     }
-    const QJsonArray channels=next["channels"].toArray(); if(channels.size()!=m_channels.size()) { return false; }
+    const QJsonArray channels=next["channels"].toArray();
+    if(channels.size()!=m_channels.size()) {
+        // A cross meter may carry a third, readout-only source (reflected
+        // power beside the forward and SWR needles). It has no needle.
+        if(m_face==Face::Cross && channels.size()==m_channels.size()+1 && !m_channels.isEmpty()) {
+            Channel extra=m_channels.last();
+            extra.config[QStringLiteral("showNeedle")]=false;
+            extra.config[QStringLiteral("visible")]=true;
+            m_channels.append(extra);
+        } else { return false; }
+    }
     QVector<QJsonObject> checked;
     for(int i=0;i<channels.size();++i) {
         if(!channels[i].isObject()) { return false; } QJsonObject c=m_channels[i].config; const auto supplied=channels[i].toObject(); const QStringList editableChannel=editableChannelFields(i);
@@ -1020,7 +1125,21 @@ bool CompositePresetItem::applyConfiguration(const QJsonObject& requested) {
         for(int i=0;i<checked.size();++i) { if(!primaryNeedle(i)) { checked[i]["color"]=QColor(edit["subNeedleColor"].toString()).name(QColor::HexArgb); } }
     }
     m_config=next; setRect(next["x"].toDouble(),next["y"].toDouble(),next["w"].toDouble(),next["h"].toDouble()); setBindingId(next["bindingId"].toInt());
-    for(int i=0;i<checked.size();++i) { m_channels[i].config=checked[i]; if(i==0) { m_channels[i].config["bindingId"]=bindingId(); } m_channels[i].binding=i==0?bindingId():checked[i]["bindingId"].toInt(); m_channels[i].name=checked[i]["name"].toString(); m_channels[i].units=checked[i]["units"].toString(); }
+    for(int i=0;i<checked.size();++i) { m_channels[i].config=checked[i]; if(i==0) { m_channels[i].config["bindingId"]=bindingId(); } m_channels[i].binding=i==0?bindingId():checked[i]["bindingId"].toInt(); m_channels[i].name=checked[i]["name"].toString(); m_channels[i].units=checked[i]["units"].toString();
+        // A face may map a value onto the arc with its own scale (the
+        // WaveNode cross meters show SWR on the second needle). The map is
+        // optional; without it the face's built-in calibration is kept.
+        if(checked[i].contains(QStringLiteral("calibration"))) {
+            const QJsonObject knots=checked[i].value(QStringLiteral("calibration")).toObject();
+            QMap<double,QPointF> map;
+            for(auto knot=knots.begin();knot!=knots.end();++knot) {
+                bool ok=false; const double key=knot.key().toDouble(&ok);
+                const QJsonArray point=knot.value().toArray();
+                if(ok && point.size()==2 && point[0].isDouble() && point[1].isDouble()) { map.insert(key,QPointF(point[0].toDouble(),point[1].toDouble())); }
+            }
+            if(map.size()>=2) { m_channels[i].calibration=map; }
+        }
+    }
     for(MeterItem* child:internalItems()) { const QString key=child==m_vfo?"vfo":child==m_bands?"bands":child==m_modes?"modes":"clock"; if(next.contains(key)) { child->deserialize(next[key].toString()); } }
 
     if(m_vfo) { m_vfo->setFrequencyColour(QColor(next["vfoFrequencyColor"].toString())); m_vfo->setModeColour(QColor(next["vfoModeColor"].toString())); m_vfo->setFilterColour(QColor(next["vfoFilterColor"].toString())); m_vfo->setBandColour(QColor(next["vfoBandColor"].toString())); }
@@ -1133,6 +1252,7 @@ void CompositePresetItem::paintNeedles(QPainter& p,const QRectF& outer,bool back
     if(background) {
         for(int i=0;i<m_channels.size();++i) {
             if(!channelVisible(i)) {continue;}
+            if(!m_channels[i].config.value(QStringLiteral("showNeedle")).toBool(true)) {continue;}
             const Channel& channel=m_channels[i];QPainterPath arc;bool first=true;
             const QPointF pivot=needlePivot(i,r);
             for(auto it=channel.calibration.cbegin();it!=channel.calibration.cend();++it) {
@@ -1151,6 +1271,7 @@ void CompositePresetItem::paintNeedles(QPainter& p,const QRectF& outer,bool back
     const QRectF body(outer.left(),outer.top()+25*scale,outer.width(),outer.height()-69*scale);
     for(int i=0;i<m_channels.size();++i) {
         if(!channelVisible(i)) { continue; } const Channel& channel=m_channels[i]; const QJsonObject& c=channel.config;
+        if(!c.value(QStringLiteral("showNeedle")).toBool(true)) { continue; }
         const QPointF pivot=needlePivot(i,r); const double stroke=c["strokeWidth"].toDouble()*std::hypot(r.width(),r.height())/450;
         if(background) {
             if(hasLegalMarker(i)) {
@@ -1161,6 +1282,10 @@ void CompositePresetItem::paintNeedles(QPainter& p,const QRectF& outer,bool back
             }
             // From Thetis MeterManager.cs:28016 [v2.10.3.15] — power scale ink.
             const QColor scaleInk=c["normalisePower"].toBool()?optionalColor("powerScaleColor",lookColor(m_config,"lowColor")):lookColor(m_config,"lowColor");
+            // A secondary scale (SWR on a cross meter) is inked with its own
+            // needle colour so the two number sets are told apart.
+            const QColor labelInk=c["normalisePower"].toBool()?scaleInk:lookColor(c,"color");
+            const bool showLabels=c.value(QStringLiteral("showScaleLabels")).toBool(true);
             QPainterPath arc; int n=0;
             for(auto it=channel.calibration.begin();it!=channel.calibration.end();++it,++n) {
                 const double raw=c["normalisePower"].toBool()?it.key()*powerBasisForChannel(i)/100.0:it.key()-(m_aboveS9 && (channel.binding==MeterBinding::SignalPeak || channel.binding==MeterBinding::SignalAvg)?20:0);
@@ -1168,10 +1293,10 @@ void CompositePresetItem::paintNeedles(QPainter& p,const QRectF& outer,bool back
                 const QPointF direction=(tip-pivot)/std::hypot(tip.x()-pivot.x(),tip.y()-pivot.y());
                 p.setPen(QPen(scaleInk,1.5)); p.drawLine(tip,tip-direction*(7*scale));
                 // Sparse labels keep all supported minimum sizes readable.
-                if(n==0 || n==channel.calibration.size()-1 || (channel.calibration.size()>3 && (i==0 && m_face==Face::Anan ? it.key()==-73 : c["normalisePower"].toBool() ? it.key()==50 : n==channel.calibration.size()/2))) {
-                    const QPointF label=tip+direction*((m_face==Face::Anan && i==4 ? -20 : 13)*scale);
+                if(showLabels && (n==0 || n==channel.calibration.size()-1 || (channel.units.isEmpty() && std::abs(raw*2.0-std::round(raw*2.0))<0.01) || (channel.calibration.size()>3 && (i==0 && m_face==Face::Anan ? it.key()==-73 : c["normalisePower"].toBool() ? it.key()==50 : (!channel.units.isEmpty() && n==channel.calibration.size()/2))))) {
+                    const QPointF label=tip+direction*((m_face==Face::Anan && i==4 ? -20 : (m_face==Face::Cross && i>0 ? -13 : 13))*scale);
                     QRectF box(label.x()-25*scale,label.y()-10*scale,50*scale,20*scale);
-                    const QString value=QString::number(raw,'g',4);
+                    const QString value=(!c["normalisePower"].toBool()&&channel.units.isEmpty())?QString::number(raw,'f',1):QString::number(raw,'g',4);
                     const QFont finalFont=fitObjectText(p.font(),size,value,box,false,Qt::TextSingleLine,p.device());
                     const QFontMetricsF metrics(finalFont,p.device());
                     const QRectF ink=metrics.tightBoundingRect(value);
@@ -1193,14 +1318,14 @@ void CompositePresetItem::paintNeedles(QPainter& p,const QRectF& outer,bool back
                         }
                     }
                     labelRegions.append(region(box));
-                    p.setFont(finalFont);p.drawText(box,Qt::AlignCenter,value);
+                    p.setFont(finalFont);p.setPen(labelInk);p.drawText(box,Qt::AlignCenter,value);
                 }
             }
-            p.setPen(QPen(scaleInk,1.5)); p.drawPath(arc);
+            p.setPen(QPen(labelInk,1.5)); p.drawPath(arc);
             p.setPen(QPen(lookColor(m_config,"lowColor"),1.5));
             const double y=outer.bottom()-44*scale-(m_face==Face::Anan && i==1 ? 16*scale : 0)
                 + (WorkspacePreview::enabled() ? 2*scale : 0);
-            if(m_config["showReadout"].toBool()) { drawObjectText(p,QRectF(outer.left()+outer.width()*i/m_channels.size()+4*scale,y,outer.width()/m_channels.size()-8*scale,18*scale),channel.name+" ("+channel.units+")",size); }
+            if(m_config["showReadout"].toBool()) { const QString capt=channel.units.isEmpty()?channel.name:channel.name+" ("+channel.units+")"; drawObjectText(p,QRectF(outer.left()+outer.width()*i/m_channels.size()+4*scale,y,outer.width()/m_channels.size()-8*scale,18*scale),capt,size); }
             continue;
         }
         if(!channel.dynamics.hasReading()) { continue; }
@@ -1222,12 +1347,45 @@ void CompositePresetItem::paintNeedles(QPainter& p,const QRectF& outer,bool back
         p.restore();
     }
     if(!background && m_config["showReadout"].toBool()) {
+        // Small power readings (a well-matched reflected line is a few
+        // milliwatts) would read 0.0 W at one decimal, so show watts below
+        // 1 W in milliwatts instead. The cell is narrow, so the line is kept
+        // short: a compact channel name, units once, peak without units.
+        const auto readoutName=[](const QString& name) {
+            if(name.compare(QLatin1String("Reflected"),Qt::CaseInsensitive)==0) { return QStringLiteral("REF"); }
+            return name;
+        };
+        const auto readoutNumber=[](const Channel& c,double v,bool withUnits) {
+            const bool mw=c.units==QLatin1String("W") && std::abs(v)<1.0;
+            const bool swr=c.name.compare(QLatin1String("SWR"),Qt::CaseInsensitive)==0;
+            QString text=(mw||swr)?QString::number(mw?v*1000.0:v,'f',2):QString::number(v,'f',1);
+            if(withUnits&&!swr) { text+=mw?QStringLiteral("mW"):(QLatin1Char(' ')+c.units); }
+            return text;
+        };
         QStringList readings;
-        for(int i=0;i<m_channels.size();++i) { if(channelVisible(i)) { const auto& c=m_channels[i]; readings.append(c.name+": "+(c.dynamics.hasReading()?QString::number(c.dynamics.value(),'f',1)+" "+c.units:QStringLiteral("--"))+(m_config["showPeakValue"].toBool()&&c.dynamics.hasReading()?QStringLiteral(" [%1]").arg(c.dynamics.maxHistory(),0,'f',1):QString())); } }
+        for(int i=0;i<m_channels.size();++i) {
+            if(!channelVisible(i)) { continue; }
+            const auto& c=m_channels[i];
+            const bool has=c.dynamics.hasReading();
+            QString text=readoutName(c.name)+QLatin1Char(' ');
+            text+=has?readoutNumber(c,c.dynamics.value(),true):QStringLiteral("--");
+            // The small-value peak would double the line length and clip in
+            // the narrow cell; the live value is the useful one there.
+            if(m_config["showPeakValue"].toBool()&&has&&!text.startsWith(QLatin1String("REF "))) { text+=QStringLiteral(" [")+readoutNumber(c,c.dynamics.maxHistory(),false)+QLatin1Char(']'); }
+            readings.append(text);
+        }
         p.setFont(font);
-        p.fillRect(QRectF(outer.left(),outer.bottom()-26*scale,outer.width(),26*scale),lookColor(m_config,"backdropColor")); p.setPen(lookColor(m_config,"lowColor"));
+        // Stack the readings instead of splitting the width: the cross meter
+        // cells are narrow, and "REF 6.1mW" needs the whole width.
+        const int lines=qMax(1,readings.size());
+        const double strip=(lines>1?qMax(44.0,19.0*lines):26.0)*scale;
+        const double lineHeight=strip/lines;
+        // Lift the readout off the very bottom edge: the pivot and the
+        // "Amp-In/Amp-Out" captions need that space.
+        const double stripTop=outer.bottom()-strip-12*scale;
+        p.fillRect(QRectF(outer.left(),stripTop,outer.width(),strip),lookColor(m_config,"backdropColor")); p.setPen(lookColor(m_config,"lowColor"));
         for(int i=0;i<readings.size();++i) {
-            drawObjectText(p,QRectF(outer.left()+outer.width()*i/readings.size()+4*scale,outer.bottom()-26*scale,outer.width()/readings.size()-8*scale,24*scale),readings[i],size*14/18);
+            drawObjectText(p,QRectF(outer.left()+4*scale,stripTop+i*lineHeight,outer.width()-8*scale,lineHeight),readings[i],size*16/18);
         }
     }
     if(background && m_face==Face::Anan && m_tx) { p.setPen(lookColor(m_config,"lowColor")); p.drawText(QRectF(outer.right()-100,outer.top()+2,96,22),Qt::AlignCenter,QStringList{"","Power/SWR","Compression","ALC group","Amps"}.value(m_config["displayGroup"].toInt())+" ▾"); }
@@ -1653,7 +1811,13 @@ void CompositePresetItem::paintForLayer(QPainter& p,int width,int height,Layer l
     const double signalPeakHeight=contentHeight*peakWeight/totalWeight;
     const double signalSubHeight=contentHeight*subWeight/totalWeight;
     if(layer==Layer::Background) {
-        const QColor backdrop=lookColor(m_config,"backdropColor");
+        QColor backdrop=lookColor(m_config,"backdropColor");
+        // The cross meter's Dark mode swaps a light face for the dark one;
+        // a face the user already made dark is kept as it is.
+        if(m_face==Face::Cross && m_config.value(QStringLiteral("darkMode")).toBool(false)
+           && backdrop.lightnessF()>.5) {
+            backdrop=QColor(27,27,27,backdrop.alpha());
+        }
         p.fillRect(r,m_face==Face::Anan && backdrop==QColor("#fff1eee2")?QColor(8,14,20):backdrop);
         if(m_face==Face::Anan || m_face==Face::Cross) { paintNeedles(p,r,true); }
         else if(m_config["showTitle"].toBool() && !m_vfo && !m_clock && m_face!=Face::PowerSwr) {

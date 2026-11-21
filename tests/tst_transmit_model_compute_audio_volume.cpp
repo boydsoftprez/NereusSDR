@@ -479,6 +479,51 @@ private slots:
                  qPrintable(QStringLiteral("expected 0.19764 got %1")
                                 .arg(withAdjust, 0, 'f', 6)));
     }
+
+    // =========================================================================
+    // §Use Max (2026-11-16): the drive slider is a percentage of the band's
+    // Max W, so 80% of a 50 W band must compute as 40 W.  The nine trim cells
+    // stay indexed by the percentage (the 80% cell is the one at slider 80).
+    // =========================================================================
+    void useMax_scales_drive_percent_to_band_watts() {
+        TransmitModel t;
+        PaProfile capped(QStringLiteral("Default - ANVELINAPRO3"),
+                         HPSDRModel::ANVELINAPRO3, true);
+        capped.setGainForBand(Band::Band80m, 50.3f);
+        capped.setMaxPower(Band::Band80m, 50.0f);
+        capped.setMaxPowerUse(Band::Band80m, true);
+
+        PaProfile plain = capped;
+        plain.setMaxPowerUse(Band::Band80m, false);
+
+        const double at80Pct = t.computeAudioVolume(capped, Band::Band80m, 80);
+        const double at40W   = t.computeAudioVolume(plain,  Band::Band80m, 40);
+        QVERIFY2(std::abs(at80Pct - at40W) < 1e-9,
+                 qPrintable(QStringLiteral("80%% of 50 W must equal 40 W: "
+                                           "%1 vs %2")
+                                .arg(at80Pct, 0, 'f', 9)
+                                .arg(at40W, 0, 'f', 9)));
+
+        // The 80% cell trims slider 80; the 10% cell must not move it.
+        capped.setAdjust(Band::Band80m, 7, 1.0f);
+        const double trimmed = t.computeAudioVolume(capped, Band::Band80m, 80);
+        QVERIFY2(trimmed > at80Pct,
+                 qPrintable(QStringLiteral("80%% cell did not raise the drive: "
+                                           "%1 vs %2")
+                                .arg(trimmed, 0, 'f', 9)
+                                .arg(at80Pct, 0, 'f', 9)));
+
+        capped.setAdjust(Band::Band80m, 7, 0.0f);
+        capped.setAdjust(Band::Band80m, 0, 1.0f);
+        const double other = t.computeAudioVolume(capped, Band::Band80m, 80);
+        QVERIFY(std::abs(other - at80Pct) < 1e-9);
+
+        // Use Max with no usable ceiling falls back to the 0..100 scale.
+        PaProfile zeroMax = capped;
+        zeroMax.setMaxPower(Band::Band80m, 0.0f);
+        zeroMax.setAdjust(Band::Band80m, 0, 0.0f);
+        QCOMPARE(t.computeAudioVolume(zeroMax, Band::Band80m, 40), at40W);
+    }
 };
 
 QTEST_MAIN(TstTransmitModelComputeAudioVolume)

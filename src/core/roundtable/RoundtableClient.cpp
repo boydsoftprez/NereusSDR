@@ -31,9 +31,6 @@
 //   2026-10-26: the reading range is RoundtableWire::kMinDbm and kMaxDbm,
 //               shared with the desktop panel. J.J. Boyd (KG4VCF),
 //               AI-assisted via Claude Code.
-//   2026-11-16: a paused slice (playing the past) sends no readings, and
-//               its floor starts again when it is live. J.J. Boyd (KG4VCF),
-//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <utility>
@@ -249,14 +246,8 @@ void RoundtableClient::setSlices(const QList<RoundtableSliceState>& slices)
         if (previous != m_slices.cend() && (previous->hz != slice.hz || previous->mode != slice.mode)) {
             m_meters[slice.id].floor.retune(now);
         }
-        // Live again after playing the past: the floor starts again, as on
-        // a retune.
-        if (previous != m_slices.cend() && previous->paused && !slice.paused) {
-            m_meters[slice.id].floor.retune(now);
-        }
-        // A reading taken before the key goes down, or before the slice
-        // plays the past, is never sent after it.
-        if (slice.keyed || slice.paused) {
+        // A reading taken before the key goes down is never sent after it.
+        if (slice.keyed) {
             const auto meter = m_meters.find(slice.id);
             if (meter != m_meters.end()) {
                 meter->sentStampNs = meter->stampNs;
@@ -281,9 +272,8 @@ void RoundtableClient::pushMeter(int sliceId, double dbm, qint64 meterReadingNs)
 {
     const auto slice = std::find_if(m_slices.cbegin(), m_slices.cend(),
                                     [sliceId](const RoundtableSliceState& s) { return s.id == sliceId; });
-    // No reading while keyed (6.5), none for a slice not listed, and none
-    // while it plays the past (that meter reads the past, not the air).
-    if (slice == m_slices.cend() || slice->keyed || slice->paused) {
+    // No reading while keyed (6.5), and none for a slice not listed.
+    if (slice == m_slices.cend() || slice->keyed) {
         return;
     }
     Meter& meter = m_meters[sliceId];
@@ -1109,7 +1099,7 @@ void RoundtableClient::sendReadingsIfDue(qint64 now)
         // A slice the server's latest presence lists, not keyed there or
         // now (5.3.3 refuses the others).
         const auto sent = m_sentSlices.constFind(slice.id);
-        if (sent == m_sentSlices.constEnd() || sent.value() || slice.keyed || slice.paused) {
+        if (sent == m_sentSlices.constEnd() || sent.value() || slice.keyed) {
             continue;
         }
         const auto found = m_meters.find(slice.id);

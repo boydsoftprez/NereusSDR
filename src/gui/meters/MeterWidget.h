@@ -104,19 +104,12 @@ mw0lge@grange-lane.co.uk
 #include <QHash>
 #include <QImage>
 #include <QVector>
+#include <QPair>
 #include <QPointer>
+#include <QElapsedTimer>
 #include <functional>
 
-// Intel macOS meters stay on QPainter. Each QRhiWidget is its own Metal
-// swapchain, and Qt's beginFrame waits for every other swapchain before
-// the waterfall can present. A screen full of meter swapchains held the
-// row clock. The spectrum remains the one Metal surface. Apple silicon
-// keeps GPU meters.
-#if defined(NEREUS_GPU_SPECTRUM) && !(defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64))
-#define NEREUS_METER_GPU 1
-#endif
-
-#ifdef NEREUS_METER_GPU
+#ifdef NEREUS_GPU_SPECTRUM
 #include <QRhiWidget>
 #include <rhi/qrhi.h>
 using MeterBaseClass = QRhiWidget;
@@ -143,8 +136,17 @@ public:
     // Replace live items while retaining inert legacy siblings and source order.
     void replaceItems(const QVector<MeterItem*>& items);
     QVector<MeterItem*> items() const { return m_items; }
+    // Legacy-canvas editing: while enabled, a drag on an item moves it (and
+    // its linked partner) in normalized canvas space and reports the result.
+    void setLegacyEditEnabled(bool on);
+    bool legacyEditEnabled() const { return m_legacyEdit; }
 
     void updateMeterValue(int bindingId, double value);
+    // Hold: keep the last readings while no signal is present (the next
+    // transmission updates them). Values that mean "no reading" are dropped
+    // while it is on; real readings pass through.
+    void setReadingHold(bool on);
+    bool readingHold() const { return m_readingHold; }
     // The latest value of each binding this meter has received (data out
     // sends them).
     QHash<int, double> lastBindingValues() const { return m_lastBindingValue; }
@@ -162,7 +164,7 @@ public:
     void setMonotonicClockForTest(std::function<qint64()> clock) { m_monotonicClock = std::move(clock); }
     // The fade veils drawItems and the GPU overlay draw.
     void drawFadeVeilsForTest(QPainter& p) const { drawFadeVeils(p); }
-#ifdef NEREUS_METER_GPU
+#ifdef NEREUS_GPU_SPECTRUM
     void clearReadingLayerDirtyFlagsForTest() { m_bgDirty = m_overlayStaticDirty = m_overlayDynamicDirty = false; }
     bool backgroundDirtyForTest() const { return m_bgDirty; }
     bool overlayStaticDirtyForTest() const { return m_overlayStaticDirty; }
@@ -268,6 +270,8 @@ public:
     void inferStackFromGeometry();
 
 signals:
+    void legacyGeometryEdited(const QString& entryId, const QRectF& rect, const QString& record);
+    void legacyContextMenuRequested(const QString& entryId, const QPoint& globalPosition);
     // Emitted while derived members still exist; QWidget::destroyed may run
     // later while a QPointer still appears live on some Qt backends.
     void aboutToDestroy();
@@ -279,7 +283,7 @@ signals:
     void displayVisibilityChanged();
 
 protected:
-#ifdef NEREUS_METER_GPU
+#ifdef NEREUS_GPU_SPECTRUM
     void initialize(QRhiCommandBuffer* cb) override;
     void render(QRhiCommandBuffer* cb) override;
     void releaseResources() override;
@@ -289,6 +293,7 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
+    void contextMenuEvent(QContextMenuEvent* event) override;
     void leaveEvent(QEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
@@ -308,6 +313,27 @@ private:
     // The item last under the pointer: keys go to it, and it hears that
     // the pointer left when the pointer moves off it or leaves the meter.
     QPointer<MeterItem> m_hoverItem;
+    // Legacy-canvas drag state (see setLegacyEditEnabled).
+    bool m_legacyEdit{false};
+    // Hold: see setReadingHold. A property of the surface, not an item, so
+    // the power/reflected/SWR faces hold together.
+    bool m_readingHold{false};
+    bool m_legacyDragging{false};
+    QPointer<MeterItem> m_legacyDragItem;
+    QPointF m_legacyDragStart;
+    QRectF m_legacyStartRect;
+    // Members moving with the grabbed block: a move group (legacyMoveGroup)
+    // or a single linked partner (legacyMovePartner, older workspaces).
+    QVector<QPair<QPointer<MeterItem>, QRectF>> m_legacyDragGroup;
+    // Ctrl+click cycles the blocks that overlap at the pointer, so a small
+    // overlay lying on a larger block can be picked on the face. The cycle
+    // restarts when the pointer moves away from where it last cycled.
+    QPointer<MeterItem> m_legacyCycleLast;
+    QPointF m_legacyCyclePos;
+    // Drag repaints are throttled: a cross-meter canvas takes tens of
+    // milliseconds to paint, and repainting it for every mouse move starved
+    // the rest of the GUI (the panadapter stopped updating until the release).
+    QElapsedTimer m_legacyPaintClock;
     struct LegacyRecord { QString raw; QPointer<MeterItem> item; };
     QVector<LegacyRecord> m_legacyRecords;
 
@@ -331,21 +357,9 @@ private:
     bool m_explicitPowerScale{false};
     std::optional<MeterItem::MeterUnit> m_unitMode;
     void invalidateReadingLayers(bool staticLayers = false);
-#ifndef NEREUS_METER_GPU
-    // Readings repaint on the next event-loop turn so they do not join
-    // the waterfall's window sync.
-    void scheduleReadingRepaint();
-    bool m_readingRepaintQueued{false};
-#endif
 
-#ifdef NEREUS_METER_GPU
+#ifdef NEREUS_GPU_SPECTRUM
     bool m_rhiInitialized{false};
-
-    // Intel macOS draws this meter at logical pixels. Each meter is its own
-    // offscreen Metal frame on the GUI thread, in the same window sync that
-    // places waterfall rows.
-    void applyMeterColorBufferSize();
-    qreal meterColorBufferRatio() const;
 
     void initBackgroundPipeline();
     void initGeometryPipeline();

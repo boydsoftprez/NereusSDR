@@ -495,6 +495,7 @@ void AlexController::setAntennasTo1(bool force)
 bool AlexController::rxOutOnTx() const       { return m_rxOutOnTx; }
 bool AlexController::ext1OutOnTx() const     { return m_ext1OutOnTx; }
 bool AlexController::ext2OutOnTx() const     { return m_ext2OutOnTx; }
+bool AlexController::autoRxBypass() const    { return m_autoRxBypass; }
 bool AlexController::rxOutOverride() const   { return m_rxOutOverride; }
 bool AlexController::useTxAntForRx() const   { return m_useTxAntForRx; }
 bool AlexController::xvtrActive() const      { return m_xvtrActive; }
@@ -521,6 +522,14 @@ void AlexController::setExt1OutOnTx(bool on)
         if (m_ext2OutOnTx) { m_ext2OutOnTx = false; emit ext2OutOnTxChanged(false); }
     }
     emit ext1OutOnTxChanged(on);
+}
+
+void AlexController::setAutoRxBypass(bool on)
+{
+    if (m_autoRxBypass == on) { return; }
+    m_autoRxBypass = on;
+    save();
+    emit autoRxBypassChanged(on);
 }
 
 void AlexController::setExt2OutOnTx(bool on)
@@ -559,7 +568,13 @@ void AlexController::setXvtrActive(bool on)
     emit xvtrActiveChanged(on);
 }
 
-void AlexController::setMacAddress(const QString& mac) { m_mac = mac; }
+void AlexController::setMacAddress(const QString& mac)
+{
+    if (m_mac != mac) {
+        m_mac = mac;
+        m_loaded = false;
+    }
+}
 
 QString AlexController::persistenceKey() const
 {
@@ -569,6 +584,7 @@ QString AlexController::persistenceKey() const
 void AlexController::load()
 {
     if (m_mac.isEmpty()) { return; }
+    m_loaded = true;
     auto& s = AppSettings::instance();
     const QString base = persistenceKey();
     for (int b = 0; b < kBandCount; ++b) {
@@ -585,6 +601,7 @@ void AlexController::load()
     m_rxOutOnTx     = (s.value(QStringLiteral("%1/rxOutOnTx").arg(base),     QStringLiteral("False")).toString() == QStringLiteral("True"));
     m_ext1OutOnTx   = (s.value(QStringLiteral("%1/ext1OutOnTx").arg(base),   QStringLiteral("False")).toString() == QStringLiteral("True"));
     m_ext2OutOnTx   = (s.value(QStringLiteral("%1/ext2OutOnTx").arg(base),   QStringLiteral("False")).toString() == QStringLiteral("True"));
+    m_autoRxBypass  = (s.value(QStringLiteral("%1/autoRxBypass").arg(base),  QStringLiteral("False")).toString() == QStringLiteral("True"));
     m_rxOutOverride = (s.value(QStringLiteral("%1/rxOutOverride").arg(base), QStringLiteral("False")).toString() == QStringLiteral("True"));
     m_useTxAntForRx = (s.value(QStringLiteral("%1/useTxAntForRx").arg(base), QStringLiteral("False")).toString() == QStringLiteral("True"));
     // Phase 3F: per-ADC BPF mode restore
@@ -606,6 +623,7 @@ void AlexController::load()
 void AlexController::save()
 {
     if (m_mac.isEmpty()) { return; }
+    if (!m_loaded) { return; }
     auto& s = AppSettings::instance();
     const QString base = persistenceKey();
     for (int b = 0; b < kBandCount; ++b) {
@@ -619,6 +637,7 @@ void AlexController::save()
     s.setValue(QStringLiteral("%1/rxOutOnTx").arg(base),     m_rxOutOnTx     ? QStringLiteral("True") : QStringLiteral("False"));
     s.setValue(QStringLiteral("%1/ext1OutOnTx").arg(base),   m_ext1OutOnTx   ? QStringLiteral("True") : QStringLiteral("False"));
     s.setValue(QStringLiteral("%1/ext2OutOnTx").arg(base),   m_ext2OutOnTx   ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(QStringLiteral("%1/autoRxBypass").arg(base),  m_autoRxBypass  ? QStringLiteral("True") : QStringLiteral("False"));
     s.setValue(QStringLiteral("%1/rxOutOverride").arg(base), m_rxOutOverride ? QStringLiteral("True") : QStringLiteral("False"));
     s.setValue(QStringLiteral("%1/useTxAntForRx").arg(base), m_useTxAntForRx ? QStringLiteral("True") : QStringLiteral("False"));
     // Phase 3F: per-ADC BPF mode persistence

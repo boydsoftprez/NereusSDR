@@ -4,10 +4,6 @@
 // no-port-check: NereusSDR-original. See DaemonMediaController.h.
 //
 // Modification history (NereusSDR):
-//   2026-11-15: Recording player (spec 6.1, 6.3): acquireOwnerMix routes the
-//               owner mix's playback slot to its speakers and binds the
-//               session's device to it in the recording service.
-//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-06: Wideband demand counts only for the device controlling the
 //               slice, and is recomputed when access to a slice changes and
 //               at the fall. A device with no control of a slice whose view
@@ -287,7 +283,6 @@
 #include "core/session/media/DaemonAudioSender.h"
 #include "core/session/media/MediaPeer.h"
 #include "core/AudioEngine.h"
-#include "core/recordings/RecordingService.h"
 #include "core/SliceOwnership.h"
 #include "models/RadioModel.h"
 #include "models/RadeWaveformModel.h"
@@ -2034,15 +2029,6 @@ void DaemonMediaController::acquireOwnerMix()
     refreshOwnerMixMask();
     // Parity Task 32: and the transmit monitor, if this device has one.
     refreshTxMonitor();
-    // Recording player (spec 6.3): this device's playback to its speakers.
-    m_radioModel->audioEngine()->setOwnerMixPlayback(m_ownerMix, true);
-    if (RecordingService* recordings = m_radioModel->recordingService(); recordings && m_server) {
-        m_playbackListener = QString::fromLatin1(m_server->mediaSessionDevice(m_epoch));
-        if (!m_playbackListener.isEmpty()) {
-            recordings->setListenerSpeakerSlot(m_playbackListener,
-                                               AudioEngine::ownerPlaybackSlotId(m_ownerMix));
-        }
-    }
 }
 
 void DaemonMediaController::releaseOwnerMix()
@@ -2052,13 +2038,6 @@ void DaemonMediaController::releaseOwnerMix()
     if (m_ownerMix < 0) {
         return;
     }
-    // Recording player: this device's playback no longer has these speakers.
-    if (!m_playbackListener.isEmpty() && m_radioModel) {
-        if (RecordingService* recordings = m_radioModel->recordingService()) {
-            recordings->setListenerSpeakerSlot(m_playbackListener, MasterMixer::kNoPlaybackSlot);
-        }
-    }
-    m_playbackListener.clear();
     // The senders' taps on it are gone already (their captures stopped);
     // release waits for any callback still running.
     if (m_radioModel && m_radioModel->audioEngine()) {

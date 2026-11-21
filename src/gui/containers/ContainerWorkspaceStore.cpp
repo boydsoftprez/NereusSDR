@@ -20,9 +20,11 @@
 #include "LegacyContainerImporter.h"
 #include <QJsonDocument>
 #include "core/AppSettings.h"
+#include "core/SettingsFileWriter.h"
 #include "core/LogCategories.h"
 #include "gui/styles/WorkspacePreview.h"
 #include <QScopedValueRollback>
+#include <QElapsedTimer>
 #include <limits>
 
 namespace NereusSDR {
@@ -41,6 +43,14 @@ ContainerWorkspaceStore::ContainerWorkspaceStore(AppSettings& settings, QObject*
     , m_workspaceKey(WorkspacePreview::enabled() ? kPreviewWorkspaceKey : kShippedWorkspaceKey)
     , m_backupKey(WorkspacePreview::enabled() ? kPreviewBackupKey : kShippedBackupKey)
 {
+    // Workspace commits write through the settings writer thread; a refused
+    // write must still be visible in the log.
+    if (auto* writer = m_settings.backgroundSaveNotifier()) {
+        connect(writer, &SettingsFileWriter::finished, this,
+                [](quint64, bool saved, const QString& error) {
+                    if (!saved) { qCWarning(lcContainer) << "Container workspace save failed:" << error; }
+                });
+    }
     load();
 }
 
@@ -94,6 +104,7 @@ WorkspaceDocument ContainerWorkspaceStore::snapshot() const
 
 CommitResult ContainerWorkspaceStore::commit(const WorkspaceDocument& document, quint64 expectedRevision)
 {
+    QElapsedTimer clock; clock.start();
     if (m_committing) {
         return refuse(CommitStatus::Conflict, m_document.revision, QStringLiteral("A workspace commit is in progress"));
     }
@@ -144,12 +155,10 @@ CommitResult ContainerWorkspaceStore::commit(const WorkspaceDocument& document, 
         }
     }
     const QByteArray encoded = ContainerDocumentCodec::encode(saved);
-    const QVariant oldWorkspace = m_settings.value(m_workspaceKey);
     const bool backupPresent = m_settings.contains(m_backupKey);
-    const QVariant oldBackup = m_settings.value(m_backupKey);
     QScopedValueRollback<bool> guard(m_committing, true);
 
-    // Backups and replacement are saved in the same atomic AppSettings commit.
+    // Backups and replacement are written in the same settings document.
     if (!backupPresent) {
         if (present) { m_settings.setValue(m_backupKey, QString::fromUtf8(raw)); }
         else if (m_document.extensions.contains(QStringLiteral("legacySettings"))) {
@@ -157,23 +166,13 @@ CommitResult ContainerWorkspaceStore::commit(const WorkspaceDocument& document, 
         }
     }
     m_settings.setValue(m_workspaceKey, QString::fromUtf8(encoded));
-    QString error;
-    if (!m_settings.save(&error)) {
-        // Restore only owned keys: changes to other preferences during this
-        // transaction belong to their writers and must survive a failed save.
-        if (present) {
-            m_settings.setValue(m_workspaceKey, oldWorkspace);
-        } else {
-            m_settings.remove(m_workspaceKey);
-        }
-        if (backupPresent) {
-            m_settings.setValue(m_backupKey, oldBackup);
-        } else {
-            m_settings.remove(m_backupKey);
-        }
-        qCWarning(lcContainer) << "Container workspace save failed:" << error;
-        return {CommitStatus::StorageError, m_document.revision, error};
-    }
+    // The values are in memory now; the file write (serializing and fsyncing
+    // the whole settings document, about 350 ms with a 4 MB workspace) goes
+    // to the settings writer thread. A legacy block drag must not stall the
+    // GUI and the audio for it. A failed write is reported by the notifier
+    // connected in the constructor; the values stay and the next save
+    // carries them again.
+    m_settings.saveInBackground();
     m_document = saved;
     m_loadedRaw = encoded;
     m_loadedPresent = true;
@@ -181,6 +180,8 @@ CommitResult ContainerWorkspaceStore::commit(const WorkspaceDocument& document, 
     guard.commit();
     setBlockedReason({});
     emit committed(m_document.revision);
+    qCInfo(lcContainer) << "workspace commit revision" << saved.revision
+                        << clock.elapsed() << "ms" << encoded.size() << "bytes";
     return {CommitStatus::Saved, saved.revision, {}};
 }
 } // namespace NereusSDR

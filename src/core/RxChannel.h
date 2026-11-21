@@ -306,6 +306,7 @@ warren@wpratt.com
 #include <QObject>
 
 #include <array>
+#include <vector>
 #include <atomic>
 #include <cstring>
 #include <functional>
@@ -998,6 +999,18 @@ public:
     void setEqEnabled(bool enabled);
     void setEqPreamp(int preampDb);
     void setEqBand(int bandIndex, int gainDb);
+    // Whole ten-band curve plus preamp in one WDSP push (SetRXAGrphEQ10).
+    // Layout: [0] = preamp dB, [1..10] = the ten fixed-band gains in dB.
+    void setEqGraph10(const std::array<int, 11>& preampPlusBands);
+    // Parametric curve: F/G hold nfreqs+1 entries, F[0] is WDSP's pad and
+    // G[0] the preamp (SetRXAEQProfile).
+    void setEqProfile(const std::vector<double>& F, const std::vector<double>& G);
+    /// Copy the last `count` samples of the RX audio tap (after the equalizer
+    /// and every NR/AGC stage, before the audio leaves the channel) into
+    /// `out`. Read-only; safe to poll from the UI for a live display.
+    void readSiphonSamples(std::vector<float>& out, int count);
+    void setEqCtfmode(int mode);
+    void setEqWintype(int wintype);
 
     // --- Squelch carry (single unified squelch for state round-trip) ---
     // Carry-only; per-mode squelch (SSQL/AMSQ/FMSQ) is still the primary API.

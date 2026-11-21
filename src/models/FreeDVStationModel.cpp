@@ -227,7 +227,7 @@ QDateTime utcFrom(const QJsonObject& fields, const char* key)
     }
     QDateTime when = QDateTime::fromString(text, Qt::ISODate);
     if (when.isValid() && when.timeSpec() == Qt::LocalTime) {
-        when.setTimeSpec(Qt::UTC);
+        when.setTimeZone(QTimeZone::UTC);
     }
     return when;
 }
@@ -395,7 +395,7 @@ void FreeDVStationModel::onStationUpdated(const QString& sid, const FreeDVStatio
 void FreeDVStationModel::onStationRemoved(const QString& sid)
 {
     m_messageChangedAtMs.remove(sid);
-    if (m_stations.remove(sid) > 0) {
+    if (m_stations.remove(sid)) {
         emit stationRemoved(sid);
     }
 }

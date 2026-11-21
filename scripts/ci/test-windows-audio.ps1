@@ -1,11 +1,5 @@
 # no-port-check: NereusSDR-original Windows CI runtime staging.
 # 2026-10-31 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
-# 2026-11-15 libmp3lame-0.dll added for MP3 recordings. J.J. Boyd (KG4VCF),
-# AI-assisted via Anthropic Claude Code.
-# 2026-11-16 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code: find
-# the OpenSSL DLLs by pattern, since MSYS2 moved from OpenSSL 3 to 4.
-# 2026-11-16 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
-# libmpg123-0.dll added, which MSYS2's libmp3lame-0.dll imports.
 # Git Bash adds Git's UCRT C++ runtime ahead of Qt's MinGW runtime. Keep
 # test dependencies explicit instead of inheriting unrelated runner DLLs.
 [CmdletBinding()]
@@ -20,30 +14,15 @@ foreach ($variable in @('QT_ROOT_DIR', 'IQTA_TOOLS', 'OPENSSL_ROOT_DIR')) {
     if (![Environment]::GetEnvironmentVariable($variable)) { throw "Missing provider root: $variable" }
 }
 New-Item -ItemType Directory -Path $runtime | Out-Null
-# The OpenSSL DLL names carry its major version (libcrypto-3-x64.dll for 3.x,
-# libcrypto-4-x64.dll for 4.x), and MSYS2 moves to new majors on its own
-# schedule. Take the single one that is installed, whatever its major.
-function Find-OpenSslDll([string]$stem) {
-    $bin = Join-Path $env:OPENSSL_ROOT_DIR 'bin'
-    $found = @(Get-ChildItem -LiteralPath $bin -File -Filter "$stem-*-x64.dll" |
-        Where-Object { $_.Name -match "^$stem-\d+-x64\.dll$" })
-    if ($found.Count -ne 1) {
-        throw "Expected one $stem-<major>-x64.dll in ${bin}, found $($found.Count): $($found.Name -join ', ')"
-    }
-    return $found[0].Name
-}
 $groups = @(
     @{ root=(Join-Path $env:QT_ROOT_DIR 'bin'); names=@(
         'Qt6Core.dll','Qt6Gui.dll','Qt6Multimedia.dll','Qt6Network.dll',
         'Qt6SerialPort.dll','Qt6Svg.dll','Qt6Test.dll','Qt6WebSockets.dll','Qt6Widgets.dll') },
     @{ root=(Join-Path $env:IQTA_TOOLS 'mingw1310_64/bin'); names=@(
         'libgcc_s_seh-1.dll','libstdc++-6.dll','libwinpthread-1.dll') },
-    # Copy only OpenSSL and LAME (the Core's MP3 encoder) with the
-    # libmpg123-0.dll that MSYS2's LAME imports, preserving Qt's
-    # matching compiler runtime. Do not prepend MSYS2/bin: its newer C++
-    # runtime is incompatible with Qt here.
-    @{ root=(Join-Path $env:OPENSSL_ROOT_DIR 'bin'); names=@(
-        (Find-OpenSslDll 'libcrypto'),(Find-OpenSslDll 'libssl'),'libmp3lame-0.dll','libmpg123-0.dll') },
+    # Copy only OpenSSL, preserving Qt's matching compiler runtime. Do not
+    # prepend MSYS2/bin: its newer C++ runtime is incompatible with Qt here.
+    @{ root=(Join-Path $env:OPENSSL_ROOT_DIR 'bin'); names=@('libcrypto-3-x64.dll','libssl-3-x64.dll') },
     @{ root=(Join-Path $root 'third_party/fftw3/bin'); names=@('libfftw3-3.dll','libfftw3f-3.dll') }
 )
 $manifest = foreach ($group in $groups) {
@@ -59,7 +38,7 @@ $manifest = foreach ($group in $groups) {
         [ordered]@{ name=$name; source=$source; destination=$destination; sha256=$digest }
     }
 }
-if (@($manifest).Count -ne 18) { throw 'Expected exactly eighteen controlled runtime DLLs' }
+if (@($manifest).Count -ne 16) { throw 'Expected exactly sixteen controlled runtime DLLs' }
 $env:PATH = "$runtime;$env:PATH"
 [ordered]@{ path=$env:PATH; providers=@($manifest) } | ConvertTo-Json -Depth 5 |
     Tee-Object -FilePath (Join-Path $build 'windows-audio-runtime-manifest.json')

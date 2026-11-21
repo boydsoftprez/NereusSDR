@@ -357,7 +357,7 @@ void generateTxString(const char *str, int strlength, float *syms, int symSize)
     convert_callsign_to_ota_string_(str, &tmp[kRadeTextCrcLength],
                                     strlength < kRadeTextMaxLength ? strlength : kRadeTextMaxLength);
 
-    int txt_length = strlen(&tmp[kRadeTextCrcLength]);
+    int txt_length = static_cast<int>(strlen(&tmp[kRadeTextCrcLength]));
     if (txt_length >= kRadeTextMaxLength)
     {
         txt_length = kRadeTextMaxLength;

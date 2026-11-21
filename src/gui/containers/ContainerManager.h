@@ -212,6 +212,13 @@ class NEREUS_GUI_EXPORT ContainerManager : public QObject {
     Q_OBJECT
 
 public:
+    // The Thetis item-mapping version stamped on a helper container when it
+    // is imported from its shipped .dat. A container carrying this version is
+    // never re-imported, so operator edits (and a layout loaded into the
+    // container from a file) survive restarts. ContainerSettingsDialog stamps
+    // it again when a container file is loaded into a helper container.
+    static constexpr int kHelperThetisLayoutVersion = 48;
+
     explicit ContainerManager(QWidget* dockParent, QSplitter* splitter,
                               QObject* parent = nullptr);
     ~ContainerManager() override;
@@ -311,6 +318,17 @@ public:
 
     // --- Container lifecycle ---
     ContainerWidget* createContainer(int rxSource, DockMode mode);
+    // Creates (or reveals) the dedicated container for a helper. When a
+    // Thetis .dat layout is supplied it is imported as that container (its
+    // graphics and items), otherwise a generic panel is placed. Each helper
+    // gets its own container, never a shared one.
+    QString ensureHelperContainer(const QString& typeId, const QString& title,
+                                  bool linkedHfAuto, bool linkedWaveNode,
+                                  const QString& thetisDatPath = {});
+    // Removes every helper container (the old combined panels and any imported
+    // ones) and re-imports the Thetis layouts for the helpers that are on.
+    // This is the "start over" action when a helper window cannot be removed.
+    void resetHelperContainers();
     void destroyContainer(const QString& id);
 
     // Create a new floating container that clones the user-editable
@@ -434,9 +452,9 @@ public:
     // hidden by a macro, shown on receive, or on transmit while
     // transmitting; its placement and geometry are kept). Returns true
     // when saved.
-    bool showHiddenContainer(const QString& id);
-    // Shows a hidden entry, and its container with it, where it was.
+    bool showHiddenContainer(const QString& id);    // Shows a hidden entry, and its container with it, where it was.
     bool showHiddenEntry(const QString& entryId);
+    void showHelperContainer(const QString& id);
     // The title an entry is shown with: its name, else its type's title.
     QString entryTitle(const ContentEntry& entry) const;
 
@@ -547,6 +565,8 @@ private:
     std::function<bool(int)> m_sliceAvailable;
     bool m_reconciling = false;
     bool m_transmitting = false;
+    bool m_hfHelperEnabled = false;
+    bool m_waveNodeHelperEnabled = false;
     // Hide when slice not open: the open slice ids, once any is reported.
     QSet<int> m_openSlices;
     bool m_sliceOpenKnown = false;
@@ -561,6 +581,13 @@ private:
     // disabled, hidden by a macro, or hidden on receive (on transmit while
     // transmitting). Containers > Hidden lists exactly these.
     bool hiddenByOwnFlags(const ContainerDocument& document) const;
+    bool helperHidden(const ContainerDocument& document) const;
+public:
+    // Thetis's container link flags: a container tagged HF-Auto or WaveNode
+    // is shown only while that helper's switch is on. Called at startup and
+    // whenever a helper switch changes.
+    void setHelperEnabled(bool hfAuto, bool waveNode);
+private:
     // Bench fix 2026-10-16: a showing floating window whose header cannot
     // be reached is put back at its remembered place when that is on a
     // screen, else where displacedWindowRect says. Display only; nothing

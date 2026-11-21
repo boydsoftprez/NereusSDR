@@ -356,15 +356,16 @@ public:
     /// not share slices has no other device to leave it to.
     virtual bool sliceControlledHere(int /*sliceId*/) const { return true; }
 
-    /// Recording plan Task 5 (recordingsVersion 1): the Core keeps this
-    /// window's recordings. 0 when this link did not negotiate it. `verb` is
-    /// one of the recordings.* verbs (or, Task 11, the voiceKeyer.* verbs) and `arguments` holds its arguments by
-    /// name; an `ids` array goes as the JSON text the verb takes. The answers
-    /// come back to the window's RemoteRecordingsAccess. The default refuses.
+    /// Recordings (imported feature): the Core keeps this window's
+    /// recordings. 0 when this link did not negotiate it. The default
+    /// disables remote recordings; local recordings are unaffected.
     virtual int recordingsVersion() const { return 0; }
     virtual CommandOutcome sendRecordingsCommand(const QString& /*verb*/,
                                                  const QJsonObject& /*arguments*/)
     { return { false, QStringLiteral("This Core needs an update for recordings.") }; }
+
+    /// The Core this window uses runs on this computer.
+    virtual bool coreIsOnThisComputer() const { return false; }
 
     /// Slice control plan Task 5 (sliceAccessVersion 1 at minor 11): the
     /// Core shares slices between devices with this window. Verbs
@@ -498,10 +499,6 @@ public:
     /// TCI here, so the window runs no TCI server of its own. Kept while the
     /// link is down (the Core keeps its server), false for another Core.
     virtual bool coreServesTciOnThisComputer() const { return false; }
-    /// Recording plan Task 5: the Core this window uses runs on this computer
-    /// (its address is one of this computer's own), whatever it offers. Kept
-    /// while the link is down.
-    virtual bool coreIsOnThisComputer() const { return false; }
     /// Rework part 2 (R-R3-48): whether the Core keeps a station TCI switch
     /// of its own yet (1), not yet (0: this window's switch seeds it), or
     /// its settings have not arrived on this link (-1).

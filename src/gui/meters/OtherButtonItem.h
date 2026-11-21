@@ -142,6 +142,7 @@ mw0lge@grange-lane.co.uk
 #include "gui/UnbuiltFeatures.h"
 
 #include <QPointF>
+#include <QUuid>
 #include <QVector>
 
 #include <optional>
@@ -203,7 +204,7 @@ public:
     // From Thetis ucOtherButtonsOptionsGrid.cs:524 [v2.10.3.15] (MACRO_BUTTONS_PERGROUP)
     static constexpr int kMacroCount = 31;
 
-    enum class MacroType { Off, On, Toggle, Led, ContainerVis, Cat };
+    enum class MacroType { Off, On, Toggle, Led, ContainerVis, Cat, MeterHold };
 
     struct MacroSettings {
         MacroType type{MacroType::Toggle};
@@ -211,6 +212,17 @@ public:
         QString offText;
         QString catCommand;
         int containerVisibleId{-1};
+        // Thetis's macro action: send a text message to a four-character
+        // MMIO endpoint (WaveNode's command port for the amplifier macros).
+        bool sendViaMmio{false};
+        QString mmioFourChar;
+        QString mmioMessageOn;
+        QString mmioMessageOff;
+        // The external variable (from the same four-character endpoint) whose
+        // value mirrors this button's state. Empty when the button is local.
+        QString stateVariable;
+        // Saved toggle/indicator state from the layout.
+        bool onState{false};
     };
 
     explicit OtherButtonItem(QObject* parent = nullptr);
@@ -302,6 +314,13 @@ private:
     // field 8's mask from the current visibility.
     void updateLegacyBits();
     QString labelFor(int id) const;
+    // Puts each macro button's on/off caption on its slot.
+    void refreshMacroLabels();
+    // Runs a macro button: state, caption and its MMIO message.
+    void runMacro(int macroIndex);
+    // Follows an external variable so a button can be changed from either
+    // side (the WaveNode helper's own Hold checkbox, for example).
+    void onExternalData(const QUuid& guid);
 
     QVector<qint32> m_groups;
     QVector<short> m_map;        // slot -> id

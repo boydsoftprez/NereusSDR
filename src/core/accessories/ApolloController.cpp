@@ -131,7 +131,13 @@ void ApolloController::setTunerEnabled(bool on)
     emit tunerEnabledChanged(on);
 }
 
-void ApolloController::setMacAddress(const QString& mac) { m_mac = mac; }
+void ApolloController::setMacAddress(const QString& mac)
+{
+    if (m_mac != mac) {
+        m_mac = mac;
+        m_loaded = false;
+    }
+}
 
 QString ApolloController::persistenceKey() const
 {
@@ -141,6 +147,7 @@ QString ApolloController::persistenceKey() const
 void ApolloController::load()
 {
     if (m_mac.isEmpty()) { return; }
+    m_loaded = true;
     auto& s = AppSettings::instance();
     const QString base = persistenceKey();
     m_present       = (s.value(QStringLiteral("%1/present").arg(base),       QStringLiteral("False")).toString() == QStringLiteral("True"));
@@ -154,6 +161,7 @@ void ApolloController::load()
 void ApolloController::save()
 {
     if (m_mac.isEmpty()) { return; }
+    if (!m_loaded) { return; }
     auto& s = AppSettings::instance();
     const QString base = persistenceKey();
     s.setValue(QStringLiteral("%1/present").arg(base),       m_present       ? QStringLiteral("True") : QStringLiteral("False"));

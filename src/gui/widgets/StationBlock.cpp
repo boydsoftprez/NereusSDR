@@ -30,7 +30,20 @@ StationBlock::StationBlock(QWidget* parent) : QWidget(parent)
     // name ("ANAN-G2E"), the name visibly hung to the left inside its own
     // box. Bench report, 2026-08-03.
     m_label->setAlignment(Qt::AlignCenter);
-    vbox->addWidget(m_label);
+
+    // The name row carries the radio name and, when the reported hardware
+    // says so, a small bit-depth chip ("24-bit" / "16-bit").
+    auto* nameRow = new QHBoxLayout();
+    nameRow->setContentsMargins(0, 0, 0, 0);
+    nameRow->setSpacing(5);
+    nameRow->addWidget(m_label, 0, Qt::AlignCenter);
+    m_bitDepthLabel = new QLabel(this);
+    m_bitDepthLabel->setObjectName(QStringLiteral("StationBlock_BitDepth"));
+    m_bitDepthLabel->setAlignment(Qt::AlignCenter);
+    m_bitDepthLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    m_bitDepthLabel->hide();
+    nameRow->addWidget(m_bitDepthLabel, 0, Qt::AlignCenter);
+    vbox->addLayout(nameRow);
 
     m_hardwareLabel = new QLabel(this);
     m_hardwareLabel->setAlignment(Qt::AlignCenter);
@@ -50,7 +63,11 @@ StationBlock::StationBlock(QWidget* parent) : QWidget(parent)
     m_audioLabel->hide();
     vbox->addWidget(m_audioLabel);
     for (QLabel* label : {m_label, m_hardwareLabel, m_audioLabel}) {
-        label->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        // Preferred, not Ignored: the text is elided to the block's width
+        // below, and Ignored let the layout shrink the label below that
+        // width. A centred QLabel then clips the first and last glyphs
+        // instead of showing the elision.
+        label->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
     }
     hbox->addLayout(vbox);
 
@@ -77,9 +94,11 @@ void StationBlock::setRadioName(const QString& name)
     m_radioName = name;
     if (name.isEmpty()) {
         setHardwareLine(QString(), QString());
+        setBitDepthBadge(QString(), false);
     }
     m_label->setText(name.isEmpty() ? QStringLiteral("Click to connect") : name);
     applyStyle();
+    updateMinimumWidth();
     updateElision();
 }
 
@@ -102,6 +121,31 @@ void StationBlock::setHardwareLine(const QString& model, const QString& firmware
     updateElision();
 }
 
+void StationBlock::setBitDepthBadge(const QString& text, bool active, const QString& tooltip)
+{
+    if (!m_bitDepthLabel) { return; }
+    m_bitDepthText = text;
+    if (text.isEmpty()) {
+        m_bitDepthLabel->hide();
+        m_bitDepthLabel->setToolTip(QString());
+        updateMinimumWidth();
+        updateElision();
+        updateGeometry();
+        return;
+    }
+    m_bitDepthLabel->setText(text);
+    m_bitDepthLabel->setToolTip(tooltip);
+    m_bitDepthLabel->setStyleSheet(active
+        ? QStringLiteral("QLabel { color: #6fdc6f; font-size: 10px; font-weight: bold;"
+                         " background: transparent; }")
+        : QStringLiteral("QLabel { color: #8090a0; font-size: 10px;"
+                         " background: transparent; }"));
+    m_bitDepthLabel->show();
+    updateMinimumWidth();
+    updateElision();
+    updateGeometry();
+}
+
 void StationBlock::setConnectionLines(const QString& controls, const QString& audio)
 {
     m_corePresentation = true; setMaximumWidth(320);
@@ -111,7 +155,12 @@ void StationBlock::setConnectionLines(const QString& controls, const QString& au
 }
 QSize StationBlock::sizeHint() const
 {
-    const int textWidth = std::max({m_label->fontMetrics().horizontalAdvance(m_radioName),
+    int nameWidth = m_label->fontMetrics().horizontalAdvance(m_radioName);
+    if (!m_bitDepthText.isEmpty() && m_bitDepthLabel) {
+        nameWidth += 5 + m_bitDepthLabel->fontMetrics()
+                              .horizontalAdvance(m_bitDepthText);
+    }
+    const int textWidth = std::max({nameWidth,
         m_hardwareLabel->fontMetrics().horizontalAdvance(m_hardwareLine),
         m_audioLabel->fontMetrics().horizontalAdvance(m_audioLine)});
     return {m_corePresentation ? std::clamp(textWidth + 20, 140, 320) : std::max(textWidth + 20, 140),
@@ -119,7 +168,16 @@ QSize StationBlock::sizeHint() const
 }
 void StationBlock::updateElision()
 {
-    const int available = std::max(0, width() - 20);
+    m_label->ensurePolished();
+    int available = std::max(0, width() - 20);
+    // The bit-depth chip shares the name row, so the name's elision budget
+    // must leave room for it. Without this the name and badge competed for
+    // the same pixels and the name looked chopped off.
+    if (!m_bitDepthText.isEmpty() && m_bitDepthLabel && m_bitDepthLabel->isVisible()) {
+        m_bitDepthLabel->ensurePolished();
+        available = std::max(0, available - 5 - m_bitDepthLabel->fontMetrics()
+                                                   .horizontalAdvance(m_bitDepthText));
+    }
     const auto set = [available](QLabel* label, const QString& text) {
         label->setText(label->fontMetrics().elidedText(text, Qt::ElideRight, available));
         label->setToolTip(text);
@@ -127,8 +185,40 @@ void StationBlock::updateElision()
     set(m_label, m_radioName.isEmpty() ? QStringLiteral("Click to connect") : m_radioName);
     set(m_hardwareLabel, m_hardwareLine); set(m_audioLabel, m_audioLine);
 }
+
+void StationBlock::updateMinimumWidth()
+{
+    // The style sheet sets the label fonts, but Qt applies it at polish
+    // time. Measuring before that reads the default font and under-sizes
+    // the block, which is what clipped "Anvelina PRO" beside its chip.
+    m_label->ensurePolished();
+    if (m_bitDepthLabel) {
+        m_bitDepthLabel->ensurePolished();
+    }
+    int minimum = 140;
+    if (isConnectedAppearance()) {
+        int needed = m_label->fontMetrics().horizontalAdvance(m_radioName);
+        if (!m_bitDepthText.isEmpty() && m_bitDepthLabel) {
+            needed += 5 + m_bitDepthLabel->fontMetrics()
+                              .horizontalAdvance(m_bitDepthText);
+        }
+        // Keep a little breathing room beside the chip; the old 140 px
+        // floor was measured for the name alone. Cap the floor so a very
+        // long operator name still elides rather than forcing the chrome
+        // bar wider than the window.
+        minimum = std::clamp(needed + 28, 180, 300);
+    }
+    setMinimumWidth(minimum);
+}
 void StationBlock::resizeEvent(QResizeEvent* event)
-{ QWidget::resizeEvent(event); updateElision(); }
+{
+    QWidget::resizeEvent(event);
+    // The style sheet's fonts are only final after the first polish, so
+    // recompute the floor here too; the connect-time measurement can be
+    // early. setMinimumWidth is a no-op when unchanged.
+    updateMinimumWidth();
+    updateElision();
+}
 
 void StationBlock::mousePressEvent(QMouseEvent* event)
 {

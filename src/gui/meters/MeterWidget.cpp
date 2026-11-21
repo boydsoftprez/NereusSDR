@@ -7,12 +7,6 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-11-09 - On Intel macOS meters paint with QPainter. Each GPU meter
-//                 was its own Metal swapchain, and Qt waits on every other
-//                 swapchain before the spectrum presents a waterfall row.
-//   2026-11-09 - On Intel macOS each meter color buffer is logical pixels.
-//                 Device-pixel meter frames were waiting on Metal inside the
-//                 window repaint that also places waterfall rows.
 //   2026-10-26 - Fix wave round 2: a click box added to the widget again is
 //                 connected once (it stepped twice after a host rebuild).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -193,7 +187,6 @@ mw0lge@grange-lane.co.uk
 #include "presets/BarPresetItem.h"
 #include "presets/CompositePresetItem.h"
 
-#include <QElapsedTimer>
 #include <QHelpEvent>
 #include <QPainter>
 #include <QPaintEvent>
@@ -206,7 +199,7 @@ mw0lge@grange-lane.co.uk
 #include <QStringList>
 #include <chrono>
 
-#ifdef NEREUS_METER_GPU
+#ifdef NEREUS_GPU_SPECTRUM
 #include <QFile>
 #include <rhi/qshader.h>
 #endif
@@ -286,7 +279,7 @@ MeterWidget::MeterWidget(QWidget* parent)
     // widget needs focus to get keys).
     setFocusPolicy(Qt::ClickFocus);
 
-#ifdef NEREUS_METER_GPU
+#ifdef NEREUS_GPU_SPECTRUM
     // Platform-specific QRhi backend selection.
     // Order matters: setApi() first, then WA_NativeWindow.
     // Mirrors SpectrumWidget.cpp:97-110 exactly.
@@ -399,7 +392,7 @@ void MeterWidget::addItem(MeterItem* item)
         const auto cached = m_lastBindingValue.constFind(binding);
         if (!item->property("containerUnsupportedSource").toBool() && radio && cached != m_lastBindingValue.constEnd()) { item->pushBindingValue(binding, cached.value()); }
     }
-#ifdef NEREUS_METER_GPU
+#ifdef NEREUS_GPU_SPECTRUM
     markOverlayDirty();
     m_bgDirty = true;
 #endif
@@ -425,7 +418,7 @@ void MeterWidget::removeItem(MeterItem* item)
         if (auto* led = qobject_cast<LEDItem*>(item)) {
             led->clearPublishedResult();
         }
-#ifdef NEREUS_METER_GPU
+#ifdef NEREUS_GPU_SPECTRUM
         markOverlayDirty();
         m_bgDirty = true;
 #endif
@@ -463,7 +456,7 @@ void MeterWidget::clearItems()
     m_items.clear();
     m_legacyRecords.clear();
     emit displayVisibilityChanged();
-#ifdef NEREUS_METER_GPU
+#ifdef NEREUS_GPU_SPECTRUM
     markOverlayDirty();
     m_bgDirty = true;
 #endif
@@ -472,6 +465,9 @@ void MeterWidget::clearItems()
 
 void MeterWidget::updateMeterValue(int bindingId, double value)
 {
+    // Hold: keep the peaks. A reading that says "no signal" does not replace
+    // what is shown; the next transmission's readings update it as usual.
+    if (m_readingHold && isNoMeterReading(value)) { return; }
     const auto old = m_lastBindingValue.constFind(bindingId);
     const bool inputChanged = old == m_lastBindingValue.constEnd() || old.value() != value;
     m_lastBindingValue[bindingId] = value;
@@ -517,15 +513,28 @@ void MeterWidget::updateMmioValue(MeterItem* item, double value, const QString& 
                                   MeterItem::BindingSupport support)
 {
     if (!item || !m_items.contains(item)) { return; }
+    // Hold: while off-air the power/reflected/SWR faces keep the last reading
+    // received (the peak of the last transmission). New values are not stored
+    // then; the item stays available (no veil) and keeps painting.
+    QString reason = unavailableReason;
+    const QString key = item->mmioSourceKey();
+    const bool holdOffAir = m_readingHold && !m_itemTxState
+        && qobject_cast<CompositePresetItem*>(item) != nullptr;
+    if (holdOffAir) {
+        const auto held = m_lastMmioReading.constFind(key);
+        if (held != m_lastMmioReading.constEnd()) { value = held->value; }
+        reason.clear();
+    } else {
+        m_lastMmioReading[key] = {value, reason, support};
+    }
     const BarItem* bar = qobject_cast<BarItem*>(item);
     const NeedleItem* needle = qobject_cast<NeedleItem*>(item);
     const double before = bar ? bar->smoothedValue() : (needle ? needle->smoothedValue() : item->value());
     const double oldPeak = bar ? bar->peakValue() : 0.0;
-    const bool availabilityChanged = item->bindingUnavailableReason(item->bindingId()) != unavailableReason;
+    const bool availabilityChanged = item->bindingUnavailableReason(item->bindingId()) != reason;
     const bool supportChanged = item->bindingSupport(item->bindingId()) != support;
-    m_lastMmioReading[item->mmioSourceKey()] = {value, unavailableReason, support};
     QSet<int> bindings = item->readingBindings(); bindings.subtract(item->readingBindingsBesideMmio()); bindings.insert(item->bindingId());
-    for (int binding : bindings) { item->setBindingSupport(binding, support); item->setBindingUnavailable(binding, unavailableReason); }
+    for (int binding : bindings) { item->setBindingSupport(binding, support); item->setBindingUnavailable(binding, reason); }
     const bool inputChanged = item->value() != value;
     item->setValue(value);
     if (supportChanged) { invalidateReadingLayers(true); }
@@ -541,9 +550,21 @@ void MeterWidget::updateMmioValue(MeterItem* item, int index, double value, cons
 {
     if (index == 0) { updateMmioValue(item, value, unavailableReason, support); return; }
     if (!item || !m_items.contains(item) || !item->hasMmioBinding(index)) { return; }
-    m_lastMmioReading[item->mmioSourceKey(index)] = {value, unavailableReason, support};
+    // Hold: the secondary readings are SWR and reflected power. Same rule as
+    // the main reading — off-air the last received value is shown, not stored.
+    QString reason = unavailableReason;
+    const QString key = item->mmioSourceKey(index);
+    const bool holdOffAir = m_readingHold && !m_itemTxState
+        && qobject_cast<CompositePresetItem*>(item) != nullptr;
+    if (holdOffAir) {
+        const auto held = m_lastMmioReading.constFind(key);
+        if (held != m_lastMmioReading.constEnd()) { value = held->value; }
+        reason.clear();
+    } else {
+        m_lastMmioReading[key] = {value, reason, support};
+    }
     // A reading the source does not have hides the variable's marker.
-    item->setSecondaryValue(index, unavailableReason.isEmpty() ? value : std::numeric_limits<double>::quiet_NaN());
+    item->setSecondaryValue(index, reason.isEmpty() ? value : std::numeric_limits<double>::quiet_NaN());
     invalidateItemLayers(item);
 }
 
@@ -557,7 +578,7 @@ void MeterWidget::invalidatePresentation(const MeterItem* item)
 void MeterWidget::invalidateItemLayers(const MeterItem* item)
 {
     ++m_readingInvalidations;
-#ifdef NEREUS_METER_GPU
+#ifdef NEREUS_GPU_SPECTRUM
     // Legacy Background-only dynamic items need their cached texture rebuilt.
     // A complete face keeps its backdrop static and paints moving parts in
     // OverlayDynamic/Geometry, so normal readings preserve its static caches.
@@ -568,36 +589,18 @@ void MeterWidget::invalidateItemLayers(const MeterItem* item)
     markDynamicDirty();
 #else
     Q_UNUSED(item);
-    scheduleReadingRepaint();
-#endif
-}
-
-#ifndef NEREUS_METER_GPU
-void MeterWidget::scheduleReadingRepaint()
-{
-#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
-    if (m_readingRepaintQueued) {
-        return;
-    }
-    m_readingRepaintQueued = true;
-    QMetaObject::invokeMethod(this, [this] {
-        m_readingRepaintQueued = false;
-        update();
-    }, Qt::QueuedConnection);
-#else
     update();
 #endif
 }
-#endif
 
 void MeterWidget::invalidateReadingLayers(bool staticLayers)
 {
-#ifdef NEREUS_METER_GPU
+#ifdef NEREUS_GPU_SPECTRUM
     if (staticLayers) { m_bgDirty = true; markOverlayDirty(); }
     else { markDynamicDirty(); }
 #else
     Q_UNUSED(staticLayers);
-    scheduleReadingRepaint();
+    update();
 #endif
 }
 
@@ -615,6 +618,18 @@ void MeterWidget::advanceMeters(qint64 monotonicMs)
         // a fade cover, is drawn on the dynamic layer).
         if (item->advanceFade(monotonicMs)) { invalidateReadingLayers(false); }
     }
+}
+
+void MeterWidget::setReadingHold(bool on)
+{
+    if (on == m_readingHold) { return; }
+    m_readingHold = on;
+    // Text overlays freeze their resolved tokens with the readings.
+    for (MeterItem* item : m_items) {
+        if (item) { item->setReadingHold(on && !m_itemTxState); }
+    }
+    invalidateReadingLayers(true);
+    update();
 }
 
 void MeterWidget::resetForTxTransition(bool inTx)
@@ -731,42 +746,11 @@ bool MeterWidget::deserializeItems(const QString& data)
 // Paint / Resize Events
 // ============================================================================
 
-#ifdef NEREUS_METER_GPU
-static void noteMeterPaintMs(qint64 ms)
-{
-    static qint64 totalMs = 0;
-    static int paints = 0;
-    static qint64 worstMs = 0;
-    static QElapsedTimer window;
-    if (!window.isValid()) {
-        window.start();
-    }
-    totalMs += ms;
-    ++paints;
-    worstMs = qMax(worstMs, ms);
-    if (window.elapsed() < 1000) {
-        return;
-    }
-    qDebug() << "MeterWidget: paint" << paints << "totalMs" << totalMs
-             << "worstMs" << worstMs;
-    totalMs = 0;
-    paints = 0;
-    worstMs = 0;
-    window.restart();
-}
-#endif
-
 void MeterWidget::paintEvent(QPaintEvent* event)
 {
-#ifdef NEREUS_METER_GPU
-    // GPU path: delegate to QRhiWidget base class.
-    // Set before QRhiWidget::paintEvent builds the color texture. A resize
-    // and the first Show both paint through here.
-    applyMeterColorBufferSize();
-    QElapsedTimer meterPaintTimer;
-    meterPaintTimer.start();
+#ifdef NEREUS_GPU_SPECTRUM
+    // GPU path: delegate to QRhiWidget base class
     MeterBaseClass::paintEvent(event);
-    noteMeterPaintMs(meterPaintTimer.elapsed());
 #else
     Q_UNUSED(event);
     QPainter p(this);
@@ -779,7 +763,7 @@ void MeterWidget::resizeEvent(QResizeEvent* event)
 {
     MeterBaseClass::resizeEvent(event);
     reflowStackedItems();
-#ifdef NEREUS_METER_GPU
+#ifdef NEREUS_GPU_SPECTRUM
     markOverlayDirty();
     m_bgDirty = true;
 #endif
@@ -908,11 +892,111 @@ void MeterWidget::inferStackFromGeometry()
     reflowStackedItems();
 }
 
-void MeterWidget::mousePressEvent(QMouseEvent* event)
+void MeterWidget::contextMenuEvent(QContextMenuEvent* event)
 {
+    if (m_legacyEdit) {
+        const int w = width();
+        const int h = height();
+        MeterItem* best = nullptr;
+        double bestArea = 0.0;
+        for (MeterItem* item : m_items) {
+            if (!item || !item->hitTest(event->pos(), w, h)) { continue; }
+            if (item->property("containerEntryId").toString().isEmpty()) { continue; }
+            const double area = double(item->itemWidth()) * double(item->itemHeight());
+            if (area >= bestArea) { bestArea = area; best = item; }
+        }
+        if (best) {
+            emit legacyContextMenuRequested(best->property("containerEntryId").toString(),
+                                            event->globalPos());
+            event->accept();
+            return;
+        }
+    }
+    MeterWidget::contextMenuEvent(event);
+}
+
+void MeterWidget::setLegacyEditEnabled(bool on)
+{
+    if (on == m_legacyEdit) { return; }
+    m_legacyEdit = on;
+    if (!on) {
+        m_legacyDragging = false;
+        m_legacyDragItem = nullptr;
+        m_legacyDragGroup.clear();
+    }
+    setCursor(on ? Qt::OpenHandCursor : Qt::ArrowCursor);
+}
+
+void MeterWidget::mousePressEvent(QMouseEvent* event){
     const int w = width();
     const int h = height();
     const QPointF pos = event->position();
+
+    if (m_legacyEdit && event->button() == Qt::LeftButton) {
+        // Every block under the pointer, largest first: a composite block
+        // contains needle/scale items that hit-test too, and grabbing a needle
+        // must move the block. Ctrl+click steps to the next block in that
+        // order, so a small overlay lying on a larger block is still reachable
+        // on the face.
+        QVector<MeterItem*> hits;
+        for (MeterItem* item : m_items) {
+            if (!item || !item->hitTest(pos, w, h)) { continue; }
+            if (item->property("containerEntryId").toString().isEmpty()) { continue; }
+            hits.append(item);
+        }
+        std::sort(hits.begin(), hits.end(), [](MeterItem* a, MeterItem* b) {
+            const double areaA = double(a->itemWidth()) * double(a->itemHeight());
+            const double areaB = double(b->itemWidth()) * double(b->itemHeight());
+            if (areaA != areaB) { return areaA > areaB; }
+            return a->zOrder() > b->zOrder();
+        });
+        MeterItem* best = hits.isEmpty() ? nullptr : hits.first();
+        if (best && hits.size() > 1 && (event->modifiers() & Qt::ControlModifier)) {
+            // Same spot: step through the stack; a fresh spot: start largest.
+            const bool sameSpot = !m_legacyCyclePos.isNull()
+                && (pos - m_legacyCyclePos).manhattanLength() < 6.0;
+            int index = 0;
+            if (sameSpot) {
+                index = hits.indexOf(m_legacyCycleLast.data());
+                index = index < 0 ? 0 : (index + 1) % hits.size();
+            }
+            best = hits.at(index);
+            m_legacyCycleLast = best;
+            m_legacyCyclePos = pos;
+        } else {
+            m_legacyCycleLast = nullptr;
+            m_legacyCyclePos = pos;
+        }
+        if (best) {
+            MeterItem* item = best;
+            m_legacyDragItem = item;
+            m_legacyDragStart = pos;
+            m_legacyDragging = true;
+            m_legacyStartRect = QRectF(item->x(), item->y(),
+                                       item->itemWidth(), item->itemHeight());
+            // Everything that moves with this block: a move group (several
+            // blocks moved as one, e.g. a cross meter and its readouts) or the
+            // single linked partner older workspaces stored.
+            m_legacyDragGroup.clear();
+            const QString group = item->property("legacyMoveGroup").toString();
+            const QString partnerId = item->property("legacyMovePartner").toString();
+            for (MeterItem* other : m_items) {
+                if (!other || other == item) { continue; }
+                const QString otherId = other->property("containerEntryId").toString();
+                if (otherId.isEmpty()) { continue; }
+                const bool member = (!group.isEmpty()
+                                     && other->property("legacyMoveGroup").toString() == group)
+                    || (!partnerId.isEmpty() && otherId == partnerId);
+                if (member) {
+                    m_legacyDragGroup.append({other, QRectF(other->x(), other->y(),
+                                                            other->itemWidth(), other->itemHeight())});
+                }
+            }
+            setCursor(Qt::ClosedHandCursor);
+            m_legacyPaintClock.restart();
+            return;
+        }
+    }
 
     for (int i = m_items.size() - 1; i >= 0; --i) {
         MeterItem* item = m_items[i];
@@ -932,6 +1016,27 @@ void MeterWidget::mouseReleaseEvent(QMouseEvent* event)
     const int h = height();
     const QPointF pos = event->position();
 
+    if (m_legacyDragging && event->button() == Qt::LeftButton) {
+        m_legacyDragging = false;
+        const auto report = [this](MeterItem* item) {
+            if (!item) { return; }
+            const QString id = item->property("containerEntryId").toString();
+            if (id.isEmpty()) { return; }
+            emit legacyGeometryEdited(id,
+                QRectF(item->x(), item->y(), item->itemWidth(), item->itemHeight()),
+                item->serialize());
+        };
+        report(m_legacyDragItem);
+        for (const auto& member : m_legacyDragGroup) { report(member.first.data()); }
+        m_legacyDragItem = nullptr;
+        m_legacyDragGroup.clear();
+        setCursor(Qt::OpenHandCursor);
+        // The drop's final position must dirty every cached layer even when
+        // the commit takes the geometry-only path (no rebuild).
+        invalidateGeometry();
+        return;
+    }
+
     for (int i = m_items.size() - 1; i >= 0; --i) {
         MeterItem* item = m_items[i];
         if (itemFeatureBuilt(item) && item->hitTest(pos, w, h)) {
@@ -949,6 +1054,40 @@ void MeterWidget::mouseMoveEvent(QMouseEvent* event)
     const int w = width();
     const int h = height();
     const QPointF pos = event->position();
+
+    if (m_legacyDragging && m_legacyDragItem && (event->buttons() & Qt::LeftButton)) {
+        const QPointF delta = pos - m_legacyDragStart;
+        const double dx = delta.x() / std::max(1, w);
+        const double dy = delta.y() / std::max(1, h);
+        const auto moveTo = [](MeterItem* item, const QRectF& start, double ddx, double ddy) {
+            if (!item) { return; }
+            // Imported layouts can be wider than the canvas (a Thetis overlay
+            // stored 1.0 wide at an offset). Clamping such a block to
+            // 1 - width pinned it to x = 0, so it could only move vertically.
+            const double width = std::max(0.01, static_cast<double>(start.width()));
+            const double height = std::max(0.01, static_cast<double>(start.height()));
+            const double maxX = width < 1.0 ? 1.0 - width : 1.0;
+            const double maxY = height < 1.0 ? 1.0 - height : 1.0;
+            const double x = std::clamp(static_cast<double>(start.x()) + ddx, 0.0, maxX);
+            const double y = std::clamp(static_cast<double>(start.y()) + ddy, 0.0, maxY);
+            item->setRect(static_cast<float>(x), static_cast<float>(y),
+                          static_cast<float>(width), static_cast<float>(height));
+        };
+        moveTo(m_legacyDragItem, m_legacyStartRect, dx, dy);
+        for (const auto& member : m_legacyDragGroup) {
+            moveTo(member.first.data(), member.second, dx, dy);
+        }
+        // The GPU path (NEREUS_GPU_SPECTRUM) caches each face's background and
+        // static overlay. A move changes where they are drawn, so all layers
+        // are invalidated; invalidatePresentation keeps a face's static cache
+        // for a reading change, which is why only the needles followed the
+        // pointer before. At most ~25 fps.
+        if (!m_legacyPaintClock.isValid() || m_legacyPaintClock.elapsed() >= 40) {
+            invalidateGeometry();
+            m_legacyPaintClock.restart();
+        }
+        return;
+    }
 
     // The item now under the pointer; the one it left hears so.
     MeterItem* hovered = nullptr;
@@ -1092,7 +1231,7 @@ void MeterWidget::setBindingUnavailable(int bindingId, const QString& reason)
     } else {
         m_unavailableBindings.insert(bindingId, reason);
     }
-#ifdef NEREUS_METER_GPU
+#ifdef NEREUS_GPU_SPECTRUM
     markOverlayDirty();
 #else
     update();
@@ -1142,7 +1281,7 @@ bool MeterWidget::event(QEvent* event)
     // another container.
     if ((event->type() == QEvent::StyleChange || event->type() == QEvent::ParentChange)
         && WorkspacePreview::enabled()) {
-#ifdef NEREUS_METER_GPU
+#ifdef NEREUS_GPU_SPECTRUM
         m_bgDirty = true;
 #endif
         update();
@@ -1197,7 +1336,7 @@ void MeterWidget::setMox(bool mox)
 {
     if (m_mox == mox) { return; }
     m_mox = mox;
-#ifdef NEREUS_METER_GPU
+#ifdef NEREUS_GPU_SPECTRUM
     markOverlayDirty();
     m_bgDirty = true;
 #endif
@@ -1225,6 +1364,7 @@ void MeterWidget::setItemTxState(bool tx)
     if (transition) { clearItemHistory(); }
     bool any = false;
     for (MeterItem* item : m_items) {
+        if (item) { item->setReadingHold(m_readingHold && !tx); }
         any = applyItemTxState(item, tx) || any;
     }
     if (any) {
@@ -1248,7 +1388,7 @@ void MeterWidget::setDisplayGroup(int group)
     if (m_displayGroup == group) { return; }
     m_displayGroup = group;
     feedDisplayGroupText(m_items, m_displayGroup);
-#ifdef NEREUS_METER_GPU
+#ifdef NEREUS_GPU_SPECTRUM
     markOverlayDirty();
     m_bgDirty = true;
 #endif
@@ -1261,32 +1401,7 @@ void MeterWidget::setDisplayGroup(int group)
 // Mirrors SpectrumWidget.cpp:1257-1765 exactly.
 // ============================================================================
 
-#ifdef NEREUS_METER_GPU
-
-void MeterWidget::applyMeterColorBufferSize()
-{
-#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
-    // This Mac's panel is scaled so the window framebuffer is about twice
-    // the logical size. Each meter uploads its overlay and then waits for
-    // that Metal frame on the GUI thread. Draw at logical pixels. The
-    // backing store scales the texture up to the widget. Apple silicon
-    // keeps device pixels.
-    const int w = width();
-    const int h = height();
-    if (w > 0 && h > 0) {
-        setFixedColorBufferSize(w, h);
-    }
-#endif
-}
-
-qreal MeterWidget::meterColorBufferRatio() const
-{
-#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
-    return 1.0;
-#else
-    return devicePixelRatioF();
-#endif
-}
+#ifdef NEREUS_GPU_SPECTRUM
 
 // Fullscreen quad: position (x,y) + texcoord (u,v)
 // From AetherSDR SpectrumWidget.cpp:1779 / SpectrumWidget.cpp:1266
@@ -1318,17 +1433,9 @@ void MeterWidget::initBackgroundPipeline()
     m_bgVbo = r->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::VertexBuffer, sizeof(kMeterQuadData));
     m_bgVbo->create();
 
-    const qreal dpr = meterColorBufferRatio();
-    // A 64px floor is for a device-pixel texture. On Intel the color buffer
-    // is the logical size, and a floor above that size would stretch a short
-    // meter (the quad samples the whole texture).
-#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
-    const int w = qMax(qRound(width() * dpr), 1);
-    const int h = qMax(qRound(height() * dpr), 1);
-#else
+    const qreal dpr = devicePixelRatioF();
     const int w = qMax(qRound(width() * dpr), 64);
     const int h = qMax(qRound(height() * dpr), 64);
-#endif
     m_bgGpuTex = r->newTexture(QRhiTexture::RGBA8, QSize(w, h));
     m_bgGpuTex->create();
 
@@ -1422,14 +1529,9 @@ void MeterWidget::initOverlayPipeline()
     m_ovVbo = r->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::VertexBuffer, sizeof(kMeterQuadData));
     m_ovVbo->create();
 
-    const qreal dpr = meterColorBufferRatio();
-#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
-    const int w = qMax(width(), 1);
-    const int h = qMax(height(), 1);
-#else
     const int w = qMax(width(), 64);
     const int h = qMax(height(), 64);
-#endif
+    const qreal dpr = devicePixelRatioF();
     const int pw = static_cast<int>(w * dpr);
     const int ph = static_cast<int>(h * dpr);
     m_ovGpuTex = r->newTexture(QRhiTexture::RGBA8, QSize(pw, ph));
@@ -1494,8 +1596,7 @@ void MeterWidget::initialize(QRhiCommandBuffer* cb)
         qCWarning(lcMeter) << "MeterWidget: QRhi init failed — no GPU backend";
         return;
     }
-    qCDebug(lcMeter) << "MeterWidget: QRhi backend:" << r->backendName()
-                     << "color buffer" << fixedColorBufferSize() << "logical" << size();
+    qCDebug(lcMeter) << "MeterWidget: QRhi backend:" << r->backendName();
 
     auto* batch = r->nextResourceUpdateBatch();
 
@@ -1530,12 +1631,8 @@ void MeterWidget::renderGpuFrame(QRhiCommandBuffer* cb)
     // ---- Pipeline 1: Background ----
     // Repaint if dirty (size change or items changed)
     {
-        const qreal dpr = meterColorBufferRatio();
-#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
-        const QSize bgSize(qMax(qRound(w * dpr), 1), qMax(qRound(h * dpr), 1));
-#else
+        const qreal dpr = devicePixelRatioF();
         const QSize bgSize(qMax(qRound(w * dpr), 64), qMax(qRound(h * dpr), 64));
-#endif
         if (m_bgImage.size() != bgSize || !qFuzzyCompare(m_bgImage.devicePixelRatio(), dpr)) {
             m_bgImage = QImage(bgSize, QImage::Format_RGBA8888);
             m_bgImage.setDevicePixelRatio(dpr);
@@ -1584,7 +1681,7 @@ void MeterWidget::renderGpuFrame(QRhiCommandBuffer* cb)
 
     // ---- Pipeline 3: Overlay ----
     {
-        const qreal dpr = meterColorBufferRatio();
+        const qreal dpr = devicePixelRatioF();
         const int pw = static_cast<int>(w * dpr);
         const int ph = static_cast<int>(h * dpr);
 
@@ -1718,6 +1815,6 @@ void MeterWidget::releaseResources()
     m_rhiInitialized = false;
 }
 
-#endif // NEREUS_METER_GPU
+#endif // NEREUS_GPU_SPECTRUM
 
 } // namespace NereusSDR

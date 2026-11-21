@@ -10,10 +10,9 @@
 // the ported constants live in SMeterDialContent.cpp, which carries the
 // headers.
 //
-// Registers two per-instance widget types with ContainerContentRegistry:
+// Registers one per-instance widget type with ContainerContentRegistry:
 //
-//   sMeter.dial         SMeterWidget, SettingsStore::Instance
-//   sMeter.dialScaled   the same dial, scaled to the space it is given
+//   sMeter.dial   SMeterWidget, SettingsStore::Instance
 //
 // Any number of copies, in any container. Each copy follows its entry's
 // effective source context (the container's source chip: Active or RX A
@@ -44,8 +43,6 @@
 //                 ratios, history, and Fade on RX / TX; history and peak
 //                 hold clear on each transmit change. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
-//   2026-11-12 - sMeter.dialScaled, the same dial, scaled to its container.
-//                 Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 // =================================================================
 
 #pragma once
@@ -62,12 +59,6 @@ class ContainerContentRegistry;
 namespace SMeterDialContent {
 
 inline constexpr auto kDialType = "sMeter.dial";
-// The same dial as kDialType. Its face is the Main Panel plate, scaled to
-// fit the widget, and a vertical stack gives it the leftover height.
-inline constexpr auto kScaledDialType = "sMeter.dialScaled";
-// Where the scaled plate sits in its window: "Top", "Center", "Bottom".
-// Absent is Center. The unscaled dial ignores it.
-inline constexpr auto kVerticalAlignKey = "verticalAlign";
 
 // Entry config keys. Absent keys are today's defaults (the Main Panel's
 // defaults with no saved key): Power, Signal, peak hold on, Medium; an

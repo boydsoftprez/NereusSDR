@@ -19,6 +19,7 @@
 #include "gui/OperatorReasonText.h"
 #include "gui/StyleConstants.h"
 #include "models/RadioModel.h"
+#include <QTimer>
 #include "models/SliceModel.h"
 
 #include <QComboBox>
@@ -128,6 +129,23 @@ void NnrControls::buildUi(Presentation presentation)
                            "a connected radio may reject a model that is not installed."));
     quickForm->addRow(tr("Model"), m_model);
 
+    // NNR-P, the position, on the quick controls too (before this it was only
+    // inside Advanced, so the flag's NNR popup never showed it).
+    m_position = new QComboBox(quick);
+    m_position->setObjectName(QStringLiteral("nnrPositionCombo"));
+    for (std::size_t i = 0; i < ControlRanges::kNnrPosition.optionCount; ++i) {
+        const ControlRanges::NrChoiceItem& item = ControlRanges::kNnrPosition.options[i];
+        m_position->addItem(tr(item.label), item.id);
+    }
+    m_position->setToolTip(tr("NNR-P: choose whether NNR runs before or after automatic gain control."));
+    quickForm->addRow(tr("Position"), m_position);
+
+    // The receiver's measured DSP load, beside the model: the same figure the
+    // Diagnostics carried, now visible without opening anything.
+    m_dspLoad = new QLabel(quick);
+    m_dspLoad->setObjectName(QStringLiteral("nnrDspLoadReadback"));
+    quickForm->addRow(tr("DSP load"), m_dspLoad);
+
     // R-R3-40: shown only while the Core holds this receiver below the saved
     // choice because the computer could not keep up.
     m_limitRow = new QWidget(quick);
@@ -212,15 +230,6 @@ void NnrControls::buildUi(Presentation presentation)
     auto* advanced = new QFormLayout(advancedGroup);
     advanced->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
 
-    m_position = new QComboBox(advancedGroup);
-    m_position->setObjectName(QStringLiteral("nnrPositionCombo"));
-    for (std::size_t i = 0; i < ControlRanges::kNnrPosition.optionCount; ++i) {
-        const ControlRanges::NrChoiceItem& item = ControlRanges::kNnrPosition.options[i];
-        m_position->addItem(tr(item.label), item.id);
-    }
-    m_position->setToolTip(tr("Choose whether NNR runs before or after automatic gain control."));
-    advanced->addRow(tr("Position"), m_position);
-
     m_alpha = makeDouble(
         "nnrAlphaSpin", ControlRanges::kNnrAlpha,
         tr("Shapes deep-filter gains below the alpha knee. A value of 1 leaves "
@@ -299,6 +308,29 @@ void NnrControls::buildUi(Presentation presentation)
     readbacks->addRow(tr("Source"), m_source);
     readbacks->addRow(tr("Status"), m_status);
     diagnosticLayout->addLayout(readbacks);
+
+    // Measured share of wall time the receiver's DSP worker spends inside
+    // blocks: 100 % means it never leaves them and cannot keep up. This is
+    // the number the NNR warning policy reads, shown as a percentage so the
+    // Premium-versus-Standard cost is visible on this machine.
+    m_dspLoad->setText(tr("--"));
+    m_loadTimer = new QTimer(this);
+    m_loadTimer->setInterval(500);
+    connect(m_loadTimer, &QTimer::timeout, this, [this] {
+        if (!m_radio || !m_slice || !m_dspLoad) { return; }
+        const auto load = m_radio->receiverDspLoad(m_slice->sliceIndex());
+        if (!load) {
+            m_dspLoad->setText(tr("--"));
+            m_dspLoad->setToolTip(tr("No DSP load sample yet for this receiver."));
+            return;
+        }
+        const double percent = std::clamp(load->load * 100.0, 0.0, 100.0);
+        m_dspLoad->setText(QStringLiteral("%1 %").arg(percent, 0, 'f', 0));
+        m_dspLoad->setToolTip(tr(
+            "Share of real time the receiver's DSP worker spends in its blocks. "
+            "Near 100 % means it cannot keep up; the NNR warning uses this."));
+    });
+    m_loadTimer->start();
 
     auto* diagnosticActions = new QHBoxLayout;
     m_testMode = new QComboBox(diagnostics);

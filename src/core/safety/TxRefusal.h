@@ -111,6 +111,9 @@ TxRefusal stationReceiveOnly();
 TxRefusal bandPlan(const QString& reason);
 /// The radio's TX inhibit input holds transmit off.
 TxRefusal txInhibited();
+/// TX audio check (TX/N) is running the chain with no RF; every key is
+/// refused until the operator switches back to TX/Y.
+TxRefusal txAudioCheck();
 /// TX safety (2026-09-30, code interlock): every key while the link to the
 /// radio is lost and until it is back: "The link to the radio is down."
 TxRefusal radioLinkDown();

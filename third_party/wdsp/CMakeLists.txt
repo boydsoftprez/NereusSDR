@@ -1,6 +1,6 @@
 # WDSP DSP Library — static build for NereusSDR
 #
-# Based on TAPR/OpenHPSDR-wdsp 2.10 by Warren Pratt, NR0V
+# Based on TAPR/OpenHPSDR-wdsp 2.11 by Warren Pratt, NR0V
 # Pinned source and retained extensions: docs/attribution/WDSP-PROVENANCE.md
 # Cross-platform support via linux_port.h/c from g0orx/wdsp (John Melton, G0ORX)
 #
@@ -68,8 +68,11 @@ set(WDSP_SOURCES
     src/nnet.c
     src/nnio.c
     src/nnr.c
+    src/nnrbypass.c
     src/nnr_model_0.c
     src/nnr_model_1.c
+    src/nnr_model_2.c
+    src/nnr_model_3.c
     src/nob.c
     src/nobII.c
     src/nurbs.c
@@ -181,9 +184,10 @@ if(WIN32)
     # WDSP's vendored C source (RXA.c, cfcomp.c, emnr.c, snb.c, ssql.c, ...)
     # uses those macros directly and has no std::min/std::max collision risk.
     # Undef NOMINMAX for the wdsp_static target only so windows.h restores them.
+    # NOMINMAX is applied only to Nereus targets now, so WDSP's C sources see
+    # windows.h's min/max macros naturally; no /UNOMINMAX (and no D9025).
     target_compile_options(wdsp_static PRIVATE
-        $<$<C_COMPILER_ID:MSVC>:/UNOMINMAX>
-        $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNOMINMAX>
+        $<$<C_COMPILER_ID:MSVC>:/wd4005>
     )
 else()
     target_link_libraries(wdsp_static PRIVATE pthread m)

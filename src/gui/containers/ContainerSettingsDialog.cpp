@@ -1,4 +1,4 @@
-// =================================================================
+﻿// =================================================================
 // src/gui/containers/ContainerSettingsDialog.cpp  (NereusSDR)
 // =================================================================
 //
@@ -93,28 +93,28 @@
 //                 ContainerSourceAdapter::writeContainerSource, shared with
 //                 the workspace header's source menu. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
-//   2026-10-04 — Separate compact object actions within their editor panes by
+//   2026-10-04 â€” Separate compact object actions within their editor panes by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
-//   2026-10-04 — Reset Qt 6.11 Cocoa popup accessibility cache before
+//   2026-10-04 â€” Reset Qt 6.11 Cocoa popup accessibility cache before
 //                 draft dropdown refresh by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
-//   2026-10-03 — Compact independent control creation geometry by
+//   2026-10-03 â€” Compact independent control creation geometry by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
-//   2026-10-03 — Explicit readable dropdown selection by J.J. Boyd
+//   2026-10-03 â€” Explicit readable dropdown selection by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
-//   2026-10-03 — New-copy return homes and retained unsupported preferences by
+//   2026-10-03 â€” New-copy return homes and retained unsupported preferences by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
-//   2026-10-03 — Plain meter-data-source tooltip by J.J. Boyd (KG4VCF),
+//   2026-10-03 â€” Plain meter-data-source tooltip by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
-//   2026-10-02 — Effective contextual draft properties and portable settings by
+//   2026-10-02 â€” Effective contextual draft properties and portable settings by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
-//   2026-10-02 — Draft-only edits and inert cached previews by J.J. Boyd
+//   2026-10-02 â€” Draft-only edits and inert cached previews by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
-//   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
+//   2026-10-02 â€” Atomic container arrangement and reserved chrome by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
-//   2026-10-02 — Mixed container ownership, persistence and source routing by
+//   2026-10-02 â€” Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
-//   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
+//   2026-04-17 â€” Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
 //   2026-09-24 - R-R3-49: the Voice Rec/Play control is not offered or
@@ -238,7 +238,7 @@ mw0lge@grange-lane.co.uk
 #include "ContainerWorkspaceStore.h"
 #include "MmioEndpointsDialog.h"
 
-// Phase 3G-6 block 4 — per-item property editors
+// Phase 3G-6 block 4 â€” per-item property editors
 #include "meter_property_editors/BaseItemEditor.h"
 #include "meter_property_editors/BarItemEditor.h"
 #include "meter_property_editors/SolidColourItemEditor.h"
@@ -330,8 +330,12 @@ mw0lge@grange-lane.co.uk
 #include <QStyledItemDelegate>
 #include <QPushButton>
 #include <QLabel>
+#include <QCoreApplication>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QSaveFile>
+#include <QStandardPaths>
+#include "ThetisContainerFile.h"
 #include <QJsonDocument>
 #include "core/LogCategories.h"
 #include <QJsonArray>
@@ -562,13 +566,13 @@ void ContainerSettingsDialog::buildLayout()
 
     root->addWidget(m_splitter, 1);
     if (m_editSession && m_manager->previewPoller()) {
-        auto* label=new QLabel(tr("Live preview — edits remain in the draft until Apply"),this);
+        auto* label=new QLabel(tr("Live preview â€” edits remain in the draft until Apply"),this);
         label->setStyleSheet(kSectionHeaderStyle); root->addWidget(label);
         auto* scroll=new QScrollArea(this); scroll->setWidgetResizable(true); scroll->setMinimumHeight(260);
         m_preview=new ContainerPreviewWidget(*m_manager->contentRegistry(),*m_manager->previewPoller());
         connect(m_preview,&ContainerPreviewWidget::freeCanvasRectEdited,this,[this](const QString& id,const QRectF& rect){
             auto draft=m_editSession->draft();
-            for(auto& c:draft.containers) {if(c.id!=m_selectedId || c.locked) {continue;}for(auto& entry:c.contents) {if(entry.id==id) {entry.setFreeCanvasRect(rect);}}}
+            for(auto& c:draft.containers) {if(c.id!=m_selectedId || c.lockItemPositions) {continue;}for(auto& entry:c.contents) {if(entry.id==id) {entry.setFreeCanvasRect(rect);}}}
             m_editSession->setDraft(draft);if(m_contentEditor) {m_contentEditor->updateFreeCanvasRect(id,rect);}updateDraftStatus();
         });
         connect(m_preview,&ContainerPreviewWidget::freeCanvasGeometryRestored,this,[this](const ContentEntry& restored){
@@ -661,7 +665,7 @@ void ContainerSettingsDialog::buildInUsePanel(QWidget* parent)
     connect(m_itemList, &QListWidget::currentRowChanged,
             this, &ContainerSettingsDialog::onItemSelectionChanged);
 
-    // Action buttons row — the legacy + (popup) button is kept for
+    // Action buttons row â€” the legacy + (popup) button is kept for
     // parity with the old flow; it sits alongside the new Remove /
     // Up / Down controls.
     QHBoxLayout* btnRow = new QHBoxLayout;
@@ -700,7 +704,7 @@ void ContainerSettingsDialog::buildInUsePanel(QWidget* parent)
             }
             m_editSession->setDraft(d);loadCurrentDraft();m_itemList->setCurrentRow(row+1);
         });
-        auto* move=makeObjectAction(tr("Move to container…"),parent);move->setObjectName("moveContent");layout->addWidget(move);
+        auto* move=makeObjectAction(tr("Move to containerâ€¦"),parent);move->setObjectName("moveContent");layout->addWidget(move);
         connect(move,&QPushButton::clicked,this,[this,move]{
             saveCurrentDraft(); auto* menu=new QMenu(this);
             for(const auto& c:m_editSession->draft().containers) {if(c.id==m_selectedId) {continue;} auto* action=menu->addAction(c.name); action->setEnabled(!c.locked);
@@ -750,7 +754,7 @@ void ContainerSettingsDialog::buildPropertiesPanel(QWidget* parent)
 
     // Phase 3G-6 block 7 commit 2: Copy / Paste Settings buttons
     // under the property stack. Mirrors Thetis's per-item clipboard
-    // affordance — copies the entire serialized item form, paste
+    // affordance â€” copies the entire serialized item form, paste
     // only enabled when clipboard's type tag matches the selected
     // item's type.
     QHBoxLayout* cpRow = new QHBoxLayout();
@@ -798,7 +802,7 @@ void ContainerSettingsDialog::populateAvailableList()
                     heading->setFlags(Qt::NoItemFlags);
                     headed = true;
                 }
-                auto* row=new QListWidgetItem(descriptor.title+(descriptor.singleton?tr(" — Move"):QString()),m_availableList);
+                auto* row=new QListWidgetItem(descriptor.title+(descriptor.singleton?tr(" â€” Move"):QString()),m_availableList);
                 row->setData(Qt::UserRole,descriptor.typeId); row->setToolTip(descriptor.unavailableReason);
                 if(!descriptor.available) { row->setFlags(row->flags() & ~Qt::ItemIsEnabled); }
             }
@@ -810,7 +814,7 @@ void ContainerSettingsDialog::populateAvailableList()
     m_availableList->clear();
 
     // Phase 3G-6 block 3 commit 15: Thetis lstMetersAvailable
-    // categorization (setup.cs:24522-24566) — three sections, each
+    // categorization (setup.cs:24522-24566) â€” three sections, each
     // alphabetical. Section headers are non-selectable disabled
     // QListWidgetItems in a highlight color. Block 4 will revisit
     // the per-entry mapping once the per-item editors are in place
@@ -818,15 +822,15 @@ void ContainerSettingsDialog::populateAvailableList()
     // with.
     struct Entry { const char* tag; const char* label; };
 
-    // Phase E port of Thetis Setup → Appearance → Meters/Gadgets
+    // Phase E port of Thetis Setup â†’ Appearance â†’ Meters/Gadgets
     // lstMetersAvailable left column. Each PRESET_* tag dispatches to
     // a factory in ItemGroup that returns a full Thetis-parity bar
     // row composition (SolidColour backdrop + BarItem with Line style
     // + ScaleItem with ShowType red title). When the user double-
-    // clicks or presses the "Add →" button on one of these, the
+    // clicks or presses the "Add â†’" button on one of these, the
     // dispatch lands in appendPresetRow() which rescales the preset's
     // 0..1 items into the next stack slot so rows naturally pile up
-    // in the container — matching how Thetis's "Add Container"
+    // in the container â€” matching how Thetis's "Add Container"
     // right-arrow works in the Appearance dialog.
     static const Entry kMeterRxItems[] = {
         {"PRESET_SignalBar",    "Signal Strength Peak"},
@@ -850,7 +854,7 @@ void ContainerSettingsDialog::populateAvailableList()
         {"PRESET_Leveler",      "Leveler"},
         {"PRESET_LevelerGain",  "Leveler Gain"},
         {"PRESET_Mic",          "Mic"},
-        // "Power", "Reverse Power", "SWR" are PowerSwr composite —
+        // "Power", "Reverse Power", "SWR" are PowerSwr composite â€”
         // deferred until a dedicated createPowerBarRowPreset ships.
     };
     // --- Raw building-block items (low-level MeterItem subclasses) ---
@@ -909,7 +913,7 @@ void ContainerSettingsDialog::populateAvailableList()
         }
     };
 
-    // High-level Thetis-style meter compositions first — these are
+    // High-level Thetis-style meter compositions first â€” these are
     // what most users reach for when building a multimeter container.
     addHeader(QStringLiteral("RX Meters (Thetis)"));
     for (const auto& e : kMeterRxItems) { addEntry(e); }
@@ -917,7 +921,7 @@ void ContainerSettingsDialog::populateAvailableList()
     addHeader(QStringLiteral("TX Meters (Thetis)"));
     for (const auto& e : kMeterTxItems) { addEntry(e); }
 
-    // Raw building blocks below — for custom meter construction.
+    // Raw building blocks below â€” for custom meter construction.
     addHeader(QStringLiteral("RX items"));
     for (const auto& e : kRxItems) { addEntry(e); }
 
@@ -942,7 +946,7 @@ void ContainerSettingsDialog::onAddFromAvailable()
     if (!sel) { return; }
     const QString tag = sel->data(Qt::UserRole).toString();
     if (tag.isEmpty()) { return; }
-    // Phase E — PRESET_* tags map to full Thetis-parity meter row
+    // Phase E â€” PRESET_* tags map to full Thetis-parity meter row
     // compositions rather than raw building-block items. Route to
     // appendPresetRow() which rescales the factory's 0..1 preset
     // into the next stack slot so rows pile up vertically.
@@ -961,7 +965,7 @@ void ContainerSettingsDialog::appendPresetRow(const QString& presetName)
     // into a narrow horizontal slot at the current stack bottom. The
     // result: each click adds one row beneath the previous one, up
     // to ~10 rows before the stack clamps at y=0.9. Mirrors Thetis's
-    // Setup → Appearance → Meters/Gadgets right-arrow "Add to
+    // Setup â†’ Appearance â†’ Meters/Gadgets right-arrow "Add to
     // Container" flow.
     // An unavailable preset (Max ADC Magnitude) builds nothing.
     if (!presetUnavailableReason(presetName, m_manager ? m_manager->contentRegistry() : nullptr).isEmpty()) { return; }
@@ -1004,7 +1008,7 @@ void ContainerSettingsDialog::appendPresetRow(const QString& presetName)
     //
     // Composite presets (ANAN MM, CrossNeedle, etc.) are authored
     // at their Thetis-nominal normalized size directly by the
-    // factory — e.g. ANAN MM occupies y=0..0.441 per Thetis
+    // factory â€” e.g. ANAN MM occupies y=0..0.441 per Thetis
     // MeterManager.cs:22472 `Size=(1, 0.441)`. No compress step
     // runs here; the composite's existing rect is left alone.
     //
@@ -1019,7 +1023,7 @@ void ContainerSettingsDialog::appendPresetRow(const QString& presetName)
     // then re-lays every stacked item. Thetis `_fHeight=0.05` from
     // MeterManager.cs:21266 + a NereusSDR pixel floor so rows stay
     // readable in tight containers. Rows past widgetH clip
-    // naturally at the container bottom — Thetis Default
+    // naturally at the container bottom â€” Thetis Default
     // Multimeter parity.
 
     // Next slot index = max existing stack slot + 1.
@@ -1250,21 +1254,20 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
         return cb;
     };
 
-    // The workspace look has no Lock setting: no checkbox there.
-    if (!WorkspacePreview::enabled()) {
-        m_lockCheck          = makeCheck(QStringLiteral("Lock"),
+    // Both locks are offered in either look. Lock protects the container's
+    // place and membership; Lock items freezes the objects inside it.
+    m_lockCheck              = makeCheck(tr("Lock"),
                                          m_container && m_container->isLocked());
-    }
+    m_lockItemsCheck         = makeCheck(tr("Lock items"),
+                                         m_container && m_container->lockItemPositions());
+    m_lockCheck->setToolTip(tr("Prevent moving or resizing this container and adding, removing or reordering its objects. Objects can still be adjusted."));
+    m_lockItemsCheck->setToolTip(tr("Prevent the objects in this container from being moved, nudged or resized. Untick to move them again."));
     m_hideTitleCheck         = makeCheck(QStringLiteral("Hide title"),
                                          m_container && !m_container->isTitleBarVisible());
     m_minimisesCheck         = makeCheck(QStringLiteral("Minimizes"),
                                          m_container && m_container->containerMinimises());
     m_autoHeightCheck        = makeCheck(QStringLiteral("Auto height"),
                                          m_container && m_container->autoHeight());
-    m_clearFloatingCheck     = makeCheck(QStringLiteral("Transparent background"),
-                                         m_container && m_container->clearFloatingBackground());
-    m_clearFloatingCheck->setObjectName(QStringLiteral("containerClearFloating"));
-    m_clearFloatingCheck->setToolTip(tr("The container background is clear. The meter and its menu stay solid. In a floating window the desktop shows through."));
     m_hidesWhenRxNotUsedCheck = makeCheck(tr("Hide when slice not open"),
                                          m_container && m_container->containerHidesWhenRxNotUsed());
     m_noControlsCheck        = makeCheck(tr("No controls"),
@@ -1279,6 +1282,9 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
     if (m_lockCheck) {
         row2->addWidget(m_lockCheck);
     }
+    if (m_lockItemsCheck) {
+        row2->addWidget(m_lockItemsCheck);
+    }
     if(m_editSession) {
         m_hideTitleCheck->hide();
         auto* modes=new QHBoxLayout;outer->addLayout(modes);
@@ -1287,13 +1293,33 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
             // Workspace preview: a header is shown or hidden.
             m_headerCombo->addItem(tr("Always visible"),int(HeaderMode::Shown)); m_headerCombo->addItem(tr("Hidden"),int(HeaderMode::Hidden));
         } else {
-            m_headerCombo->addItem(tr("Always visible"),int(HeaderMode::Shown)); m_headerCombo->addItem(tr("Reveal on hover / focus"),int(HeaderMode::Reveal)); m_headerCombo->addItem(tr("Hidden — recovery menu"),int(HeaderMode::Hidden));
+            m_headerCombo->addItem(tr("Always visible"),int(HeaderMode::Shown)); m_headerCombo->addItem(tr("Reveal on hover / focus"),int(HeaderMode::Reveal)); m_headerCombo->addItem(tr("Hidden â€” recovery menu"),int(HeaderMode::Hidden));
         }
         m_layoutCombo=new QComboBox(bar); m_layoutCombo->setObjectName("containerLayout"); m_layoutCombo->addItem(tr("Canvas"),int(ContentLayout::FreeCanvas)); m_layoutCombo->addItem(tr("Vertical stack"),int(ContentLayout::VerticalStack)); m_layoutCombo->addItem(tr("Saved legacy canvas"),int(ContentLayout::LegacyCanvas));
         m_layoutCombo->setToolTip(tr("Canvas lets each object move and resize independently and scrolls to retain its logical size. Saved legacy canvas preserves imported normalized compositions."));
         auto* canvasActions=new QHBoxLayout;outer->addLayout(canvasActions);
         auto* seed=makeBtn(tr("Start from stacked layout"),bar);seed->setObjectName("seedFreeCanvas");canvasActions->addWidget(seed);
-        auto* savedPositions=makeBtn(tr("Use saved legacy positions"),bar);savedPositions->setObjectName("convertLegacyCanvas");canvasActions->addWidget(savedPositions);canvasActions->addStretch();
+        auto* savedPositions=makeBtn(tr("Use saved legacy positions"),bar);savedPositions->setObjectName("convertLegacyCanvas");canvasActions->addWidget(savedPositions);
+        auto* restoreLegacy=makeBtn(tr("Restore legacy canvas"),bar);restoreLegacy->setObjectName("restoreLegacyCanvas");
+        restoreLegacy->setToolTip(tr("Put this container back on Saved legacy canvas, keeping its imported composition."));
+        canvasActions->addWidget(restoreLegacy);
+        canvasActions->addStretch();
+        connect(restoreLegacy,&QPushButton::clicked,this,[this]{
+            saveCurrentDraft();
+            // Force the layout in the next apply and unlock the items, so the
+            // click takes effect even if the combo's selection was ignored.
+            m_layoutOverride = ContentLayout::LegacyCanvas;
+            if(m_lockCheck) { m_lockCheck->setChecked(false); }
+            if(m_lockItemsCheck) { m_lockItemsCheck->setChecked(false); }
+            if(m_layoutCombo) {
+                const QSignalBlocker blocker(m_layoutCombo);
+                m_layoutCombo->setCurrentIndex(
+                    m_layoutCombo->findData(int(ContentLayout::LegacyCanvas)));
+            }
+            applyDraftFromButton();
+            m_layoutOverride.reset();
+            loadCurrentDraft();
+        });
         connect(seed,&QPushButton::clicked,this,[this]{
             saveCurrentDraft();auto draft=m_editSession->draft();
             for(auto& c:draft.containers) {if(c.id!=m_selectedId || c.locked || !m_preview) {continue;}auto stack=c;stack.layout=ContentLayout::VerticalStack;m_preview->setDocument(stack);c=m_preview->seededFromStack();}
@@ -1301,7 +1327,7 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
         });
         connect(savedPositions,&QPushButton::clicked,this,[this]{
             saveCurrentDraft();auto draft=m_editSession->draft();
-            for(auto& c:draft.containers) {if(c.id==m_selectedId && !c.locked && m_preview) {m_preview->setDocument(c);c=m_preview->convertedLegacyPositions();}}
+            for(auto& c:draft.containers) {if(c.id==m_selectedId && !c.locked && m_preview) {m_preview->setDocument(c);c=m_preview->convertedLegacyPositions(c.geometry.isValid()?QSizeF(c.geometry.size()):QSizeF());}}
             m_editSession->setDraft(draft);loadCurrentDraft();
         });
         m_placementCombo=new QComboBox(bar); m_placementCombo->setObjectName("containerPlacement"); m_placementCombo->addItem(tr("Panel"),int(DockMode::PanelDocked));m_placementCombo->addItem(tr("Overlay"),int(DockMode::OverlayDocked));m_placementCombo->addItem(tr("Floating"),int(DockMode::Floating));
@@ -1335,7 +1361,6 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
     } else {row2->addWidget(m_hideTitleCheck);}
     row2->addWidget(m_minimisesCheck);
     row2->addWidget(m_autoHeightCheck);
-    row2->addWidget(m_clearFloatingCheck);
     row2->addWidget(m_hidesWhenRxNotUsedCheck);
     row2->addWidget(m_noControlsCheck);
     row2->addWidget(m_highlightCheck);
@@ -1355,7 +1380,7 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
     row2->addWidget(m_btnDuplicate);
     row2->addWidget(m_btnDelete);
 
-    // Highlight is the only one that takes effect immediately — it's
+    // Highlight is the only one that takes effect immediately â€” it's
     // a pure runtime UI affordance showing the user which container
     // is being edited. The others latch into the container on Apply
     // / OK via applyToContainer (live-edit push machinery is block
@@ -1470,7 +1495,7 @@ void ContainerSettingsDialog::buildButtonBar()
         // Phase 3G-6 block 3 commit 14: Cancel reverts the container
         // and its meter items to the snapshot captured on dialog
         // open, then closes. Applied changes from Apply clicks are
-        // NOT reverted — that's intentional: Apply is a "commit"
+        // NOT reverted â€” that's intentional: Apply is a "commit"
         // action and the snapshot is only a safety net for
         // un-Applied edits.
         revertFromSnapshot();
@@ -1502,7 +1527,7 @@ void ContainerSettingsDialog::onItemSelectionChanged()
         for(const auto& c:m_editSession->draft().containers) { if(c.id!=m_selectedId || row<0 || row>=c.contents.size()) {continue;}
             const auto entry=c.contents[row];if(m_preview) {m_preview->selectEntry(entry.id);}
             auto* scroll=new QScrollArea(m_propertyStack); scroll->setWidgetResizable(true);
-            m_contentEditor=new ContentPropertyEditor(*m_manager->contentRegistry()); m_contentEditor->setLayoutPolicy(c.layout); m_contentEditor->setGeometryLocked(c.locked); m_contentEditor->setContainerDefaults(c.config); if(m_preview && c.layout==ContentLayout::FreeCanvas) {m_contentEditor->setCanvasPresentation(m_preview->resolvedFreeCanvasRect(entry.id),m_preview->freeCanvasMinimum(entry.id));} m_contentEditor->setEntry(entry);
+            m_contentEditor=new ContentPropertyEditor(*m_manager->contentRegistry()); m_contentEditor->setLayoutPolicy(c.layout); m_contentEditor->setGeometryLocked(c.lockItemPositions); m_contentEditor->setContainerDefaults(c.config); if(m_preview && c.layout==ContentLayout::FreeCanvas) {m_contentEditor->setCanvasPresentation(m_preview->resolvedFreeCanvasRect(entry.id),m_preview->freeCanvasMinimum(entry.id));} m_contentEditor->setEntry(entry);
             styleSelectorPopups(m_contentEditor);
             scroll->setWidget(m_contentEditor); m_currentTypeEditor=scroll; m_propertyStack->addWidget(scroll); m_propertyStack->setCurrentWidget(scroll);
             findChild<QPushButton*>("duplicateContent")->setEnabled(!entry.typeId.startsWith("applet:") && !c.locked);
@@ -1800,13 +1825,13 @@ void ContainerSettingsDialog::onMoveItemDown()
 }
 
 // ---------------------------------------------------------------------------
-// addNewItem — create and insert a new item after the current selection
+// addNewItem â€” create and insert a new item after the current selection
 // ---------------------------------------------------------------------------
 
 float ContainerSettingsDialog::nextStackYPos(const QVector<MeterItem*>& items)
 {
     // Compute the next vertical-stack y-position. Skip items that
-    // span more than 70% of the container vertically — those are
+    // span more than 70% of the container vertically â€” those are
     // background / overlay-style items (ImageItem backgrounds, ANANMM
     // full-container needles) and don't participate in the stack.
     // Without this filter the next-position math would clamp every
@@ -1818,7 +1843,7 @@ float ContainerSettingsDialog::nextStackYPos(const QVector<MeterItem*>& items)
     // new row via `slotH = 0.95 - yPos`; an earlier version of this
     // function clamped the return to 0.9 which caused the NEXT
     // append to overlap the last row once the stack reached the
-    // bottom — `slotH` became `0.05` again instead of going negative,
+    // bottom â€” `slotH` became `0.05` again instead of going negative,
     // and the bail-out at the caller never triggered. Callers now
     // see a monotonically increasing yPos and refuse the append
     // cleanly when slotH drops below the threshold.
@@ -1925,7 +1950,7 @@ void ContainerSettingsDialog::addNewItem(const QString& typeTag)
 }
 
 // ---------------------------------------------------------------------------
-// createDefaultItem — static factory for types not special-cased in addNewItem
+// createDefaultItem â€” static factory for types not special-cased in addNewItem
 // ---------------------------------------------------------------------------
 
 MeterItem* ContainerSettingsDialog::createDefaultItem(const QString& typeTag)
@@ -1935,7 +1960,7 @@ MeterItem* ContainerSettingsDialog::createDefaultItem(const QString& typeTag)
 }
 
 // ---------------------------------------------------------------------------
-// createItemFromSerialized — factory matching ItemGroup::deserialize() pattern
+// createItemFromSerialized â€” factory matching ItemGroup::deserialize() pattern
 // ---------------------------------------------------------------------------
 
 MeterItem* ContainerSettingsDialog::createItemFromSerialized(const QString& data)
@@ -1948,7 +1973,7 @@ MeterItem* ContainerSettingsDialog::createItemFromSerialized(const QString& data
 }
 
 // ---------------------------------------------------------------------------
-// typeTagDisplayName — human-readable label for each type tag
+// typeTagDisplayName â€” human-readable label for each type tag
 // ---------------------------------------------------------------------------
 
 QString ContainerSettingsDialog::typeTagDisplayName(const QString& tag)
@@ -1997,7 +2022,7 @@ QString ContainerSettingsDialog::typeTagDisplayName(const QString& tag)
 }
 
 // ---------------------------------------------------------------------------
-// refreshItemList — rebuild the QListWidget from m_workingItems
+// refreshItemList â€” rebuild the QListWidget from m_workingItems
 // ---------------------------------------------------------------------------
 
 void ContainerSettingsDialog::refreshItemList()
@@ -2010,7 +2035,7 @@ void ContainerSettingsDialog::refreshItemList()
                 if(title.startsWith('{')) { title=m_manager->contentRegistry()->makeEntry(entry.typeId).name; }
                 QString reason=entry.extensions.value("unavailableReason").toString();
                 if(reason.isEmpty() && !m_manager->contentRegistry()->isAvailable(entry)) {reason=m_manager->contentRegistry()->unavailableReason(entry);}
-                auto* row=new QListWidgetItem(title+(reason.isEmpty()?QString():tr(" — unavailable")),m_itemList);
+                auto* row=new QListWidgetItem(title+(reason.isEmpty()?QString():tr(" â€” unavailable")),m_itemList);
                 row->setData(Qt::UserRole,entry.id); row->setToolTip(reason);
             }
         }
@@ -2041,7 +2066,7 @@ void ContainerSettingsDialog::refreshItemList()
 }
 
 // ---------------------------------------------------------------------------
-// Helpers (stubs / partial — filled in later tasks)
+// Helpers (stubs / partial â€” filled in later tasks)
 // ---------------------------------------------------------------------------
 
 MeterWidget* ContainerSettingsDialog::findMeterWidget() const
@@ -2094,7 +2119,7 @@ void ContainerSettingsDialog::updatePreview()
         saveCurrentDraft();updateDraftStatus();
         if(m_preview) { for(const auto& c:m_editSession->draft().containers) { if(c.id==m_selectedId) { m_preview->setDocument(c); if(m_layoutCombo) {m_layoutCombo->setEnabled(!c.locked);}
         for(const QString& action:{QString("seedFreeCanvas"),QString("convertLegacyCanvas")}) {if(auto* button=findChild<QPushButton*>(action)) {button->setEnabled(!c.locked);}}
-        if(m_contentEditor) {m_contentEditor->setGeometryLocked(c.locked);m_contentEditor->setContainerDefaults(c.config);if(oldLayout!=c.layout) {onItemSelectionChanged();}} break; } } }
+        if(m_contentEditor) {m_contentEditor->setGeometryLocked(c.lockItemPositions);m_contentEditor->setContainerDefaults(c.config);if(oldLayout!=c.layout) {onItemSelectionChanged();}} break; } } }
         return;
     }
     // Phase 3G-6 block 3 commit 11: live preview removed. In-place
@@ -2111,8 +2136,23 @@ void ContainerSettingsDialog::updatePreview()
 void ContainerSettingsDialog::onSaveToFile()
 {
     if(m_editSession) {
-        const QString path=QFileDialog::getSaveFileName(this,tr("Save Container"),{},tr("NereusSDR Container (*.nscontainer)"));
-        if(path.isEmpty()) {return;} QSaveFile file(path);const auto bytes=exportPortableContainer();
+        const QString path=QFileDialog::getSaveFileName(this,tr("Save Container"),
+            QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)
+                + QStringLiteral("/NereusSDR"),
+            tr("NereusSDR Container (*.nscontainer);;Thetis Container (*.dat);;All Files (*)"));
+        if(path.isEmpty()) {return;}
+        if(path.endsWith(QStringLiteral(".dat"),Qt::CaseInsensitive)) {
+            saveCurrentDraft();
+            ContainerDocument chosen; bool found=false;
+            for(const auto& c:m_editSession->draft().containers) {if(c.id==m_selectedId) {chosen=c;found=true;break;}}
+            if(!found) {m_transactionStatus->setText(tr("No container is selected."));return;}
+            QString error; const QByteArray bytes=ThetisContainerFile::encode(chosen,&error);
+            if(bytes.isEmpty()) {m_transactionStatus->setText(error.isEmpty()?tr("Could not save the Thetis container."):error);return;}
+            QSaveFile file(path);
+            if(!file.open(QIODevice::WriteOnly) || file.write(bytes)!=bytes.size() || !file.commit()) {m_transactionStatus->setText(tr("Could not save container file."));}
+            return;
+        }
+        QSaveFile file(path);const auto bytes=exportPortableContainer();
         if(!file.open(QIODevice::WriteOnly) || file.write(bytes)!=bytes.size() || !file.commit()) {m_transactionStatus->setText(tr("Could not save container file."));} return;
     }
 
@@ -2141,10 +2181,15 @@ void ContainerSettingsDialog::onSaveToFile()
 void ContainerSettingsDialog::onLoadFromFile()
 {
     if (!m_container && !m_editSession) { return; }
+    // Start in the container folder shipped beside the app, so the ready-made
+    // Thetis layouts are one click away after installation.
+    QString startDirectory = QCoreApplication::applicationDirPath()
+        + QStringLiteral("/Container Files");
+    if (!QFileInfo::exists(startDirectory)) { startDirectory.clear(); }
     const QString path = QFileDialog::getOpenFileName(this,
         QStringLiteral("Load Container"),
-        QString(),
-        QStringLiteral("NereusSDR Container (*.nscontainer);;All Files (*)"));
+        startDirectory,
+        QStringLiteral("NereusSDR Container (*.nscontainer);;Thetis Container (*.dat);;All Files (*)"));
     if (path.isEmpty()) { return; }
 
     QFile f(path);
@@ -2154,7 +2199,14 @@ void ContainerSettingsDialog::onLoadFromFile()
         return;
     }
     if (m_editSession) {
-        importPortableContainer(f.readAll()); return;
+        const QByteArray bytes = f.readAll();
+        if (path.endsWith(QStringLiteral(".dat"), Qt::CaseInsensitive)) {
+            const DocumentResult decoded = ThetisContainerFile::decode(bytes);
+            if (!decoded.ok) { m_transactionStatus->setText(decoded.error); return; }
+            insertImported(decoded, true);
+            return;
+        }
+        importPortableContainer(bytes); return;
     }
     QTextStream in(&f);
     const QString containerLine = in.readLine();
@@ -2176,7 +2228,7 @@ void ContainerSettingsDialog::onOpenMmioDialog()
 {
     if (m_editSession) { return; }
     // Phase 3G-6 block 5 phase 3: real MMIO endpoints dialog. The
-    // block 3 commit 18 stub is gone — this now opens the endpoint
+    // block 3 commit 18 stub is gone â€” this now opens the endpoint
     // manager with live add/edit/remove backed by
     // ExternalVariableEngine.
     // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
@@ -2212,7 +2264,7 @@ void ContainerSettingsDialog::onContainerDropdownChanged(int index)
     populateItemList();
 
     // Reload the property bar checkboxes / spinners from the new
-    // container — the bar widgets are persistent, only their values
+    // container â€” the bar widgets are persistent, only their values
     // come from m_container.
     if (m_titleEdit) { m_titleEdit->setText(m_container->notes()); }
     if (m_borderCheck) { m_borderCheck->setChecked(m_container->hasBorder()); }
@@ -2223,10 +2275,10 @@ void ContainerSettingsDialog::onContainerDropdownChanged(int index)
     if (m_showOnRxCheck) { m_showOnRxCheck->setChecked(m_container->showOnRx()); }
     if (m_showOnTxCheck) { m_showOnTxCheck->setChecked(m_container->showOnTx()); }
     if (m_lockCheck) { m_lockCheck->setChecked(m_container->isLocked()); }
+    if (m_lockItemsCheck) { m_lockItemsCheck->setChecked(m_container->lockItemPositions()); }
     if (m_hideTitleCheck) { m_hideTitleCheck->setChecked(!m_container->isTitleBarVisible()); }
     if (m_minimisesCheck) { m_minimisesCheck->setChecked(m_container->containerMinimises()); }
     if (m_autoHeightCheck) { m_autoHeightCheck->setChecked(m_container->autoHeight()); }
-    if (m_clearFloatingCheck) { m_clearFloatingCheck->setChecked(m_container->clearFloatingBackground()); }
     if (m_hidesWhenRxNotUsedCheck) {
         m_hidesWhenRxNotUsedCheck->setChecked(m_container->containerHidesWhenRxNotUsed());
     }
@@ -2806,12 +2858,13 @@ void ContainerSettingsDialog::loadCurrentDraft()
         m_showOnRxCheck->setChecked(c.config.value("showOnRx").toBool(true));
         m_showOnTxCheck->setChecked(c.config.value("showOnTx").toBool(true));
         if(m_lockCheck) { m_lockCheck->setChecked(c.locked); }
+        if(m_lockItemsCheck) { m_lockItemsCheck->setChecked(c.lockItemPositions); }
+
         for(const QString& action:{QString("seedFreeCanvas"),QString("convertLegacyCanvas")}) {if(auto* button=findChild<QPushButton*>(action)) {button->setEnabled(!c.locked);}}
         if(m_layoutCombo) {m_layoutCombo->setEnabled(!c.locked);}
         if(m_hideTitleCheck) { m_hideTitleCheck->setChecked(c.header==HeaderMode::Hidden); }
         if(m_minimisesCheck) { m_minimisesCheck->setChecked(c.config.value("containerMinimises").toBool()); }
         if(m_autoHeightCheck) { m_autoHeightCheck->setChecked(c.autoHeight); }
-        if(m_clearFloatingCheck) { m_clearFloatingCheck->setChecked(c.config.value("clearFloatingBackground").toBool()); }
         if(m_hidesWhenRxNotUsedCheck) { m_hidesWhenRxNotUsedCheck->setChecked(c.config.value("hidesWhenRxNotUsed").toBool()); }
         if(m_noControlsCheck) { m_noControlsCheck->setChecked(c.config.value("noControls").toBool()); }
         if(m_highlightCheck) { m_highlightCheck->setChecked(c.config.value("highlight").toBool()); }
@@ -2839,7 +2892,7 @@ void ContainerSettingsDialog::updateDraftStatus()
 {
     if(!m_editSession || !m_draftStatus) {return;}
     const bool pending=m_editSession->hasPendingChanges();
-    m_draftStatus->setText(pending?tr("Pending Apply — changes are only in this draft."):tr("No pending changes."));
+    m_draftStatus->setText(pending?tr("Pending Apply â€” changes are only in this draft."):tr("No pending changes."));
     if(pending && m_transactionStatus && m_transactionStatus->text()==tr("All drafts saved.")) {m_transactionStatus->clear();}
 }
 CommitResult ContainerSettingsDialog::applyDraft()
@@ -2910,22 +2963,37 @@ void ContainerSettingsDialog::saveCurrentDraft()
             setBool("highlight",m_highlightCheck->isChecked());
             setBool("showOnRx",m_showOnRxCheck->isChecked(),true); setBool("showOnTx",m_showOnTxCheck->isChecked(),true);
             if (m_lockCheck) { d.locked=m_lockCheck->isChecked(); }
+            if (m_lockItemsCheck) { d.lockItemPositions=m_lockItemsCheck->isChecked(); }
+
             if (m_hideTitleCheck) {
                 if(m_hideTitleCheck->isChecked()) {d.header=HeaderMode::Hidden;}
                 else if(d.header==HeaderMode::Hidden) {d.header=HeaderMode::Shown;}
             }
             if (m_minimisesCheck) { setBool("containerMinimises",m_minimisesCheck->isChecked()); }
             if (m_autoHeightCheck) { d.autoHeight=m_autoHeightCheck->isChecked(); }
-            if (m_clearFloatingCheck) { setBool("clearFloatingBackground", m_clearFloatingCheck->isChecked()); }
             if (m_hidesWhenRxNotUsedCheck) { setBool("hidesWhenRxNotUsed",m_hidesWhenRxNotUsedCheck->isChecked()); }
             if (m_noControlsCheck) { setBool("noControls",m_noControlsCheck->isChecked()); }
             if(m_headerCombo) {d.header=static_cast<HeaderMode>(m_headerCombo->currentData().toInt());}
             if(m_layoutCombo) {
-                const auto desired=static_cast<ContentLayout>(m_layoutCombo->currentData().toInt());
+                const auto desired = m_layoutOverride
+                    ? *m_layoutOverride
+                    : static_cast<ContentLayout>(m_layoutCombo->currentData().toInt());
                 if(!d.locked && desired!=d.layout) {
                     bool saved=false;for(const auto& entry:d.contents) {if(entry.freeCanvasRect()) {saved=true;break;}}
                     if(desired==ContentLayout::FreeCanvas && d.layout==ContentLayout::VerticalStack && !saved && m_preview) {m_preview->setDocument(d);d=m_preview->seededFromStack();}
-                    else {d.layout=desired;}
+                    else {
+                        // Legacy canvas -> free canvas: reuse the preview's
+                        // conversion, which scales the normalized legacy
+                        // canvas rects to the canvas extent. Copying canvasRect
+                        // directly would place every object at a fraction of a
+                        // pixel and hide it.
+                        if(desired==ContentLayout::FreeCanvas && d.layout==ContentLayout::LegacyCanvas && m_preview) {
+                            m_preview->setDocument(d);
+                            d=m_preview->convertedLegacyPositions(d.geometry.isValid()?QSizeF(d.geometry.size()):QSizeF());
+                        } else {
+                            d.layout=desired;
+                        }
+                    }
                 } else if(d.locked && desired!=d.layout) {const QSignalBlocker blocker(m_layoutCombo);m_layoutCombo->setCurrentIndex(m_layoutCombo->findData(int(d.layout)));}
             }
             if(m_anchorCombo) {d.anchor=static_cast<AxisLock>(m_anchorCombo->currentData().toInt());}
@@ -2955,6 +3023,9 @@ void ContainerSettingsDialog::applyToContainer()
     if (m_lockCheck) {
         m_container->setLocked(m_lockCheck->isChecked());
     }
+    if (m_lockItemsCheck) {
+        m_container->setLockItemPositions(m_lockItemsCheck->isChecked());
+    }
     if (m_hideTitleCheck) {
         m_container->setTitleBarVisible(!m_hideTitleCheck->isChecked());
     }
@@ -2963,9 +3034,6 @@ void ContainerSettingsDialog::applyToContainer()
     }
     if (m_autoHeightCheck) {
         m_container->setAutoHeight(m_autoHeightCheck->isChecked());
-    }
-    if (m_clearFloatingCheck) {
-        m_container->setClearFloatingBackground(m_clearFloatingCheck->isChecked());
     }
     if (m_hidesWhenRxNotUsedCheck) {
         m_container->setContainerHidesWhenRxNotUsed(
@@ -3083,8 +3151,8 @@ void ContainerSettingsDialog::loadPresetByName(const QString& name)
 {
     // An unavailable preset (Max ADC Magnitude) builds nothing.
     if (!presetUnavailableReason(name, m_manager ? m_manager->contentRegistry() : nullptr).isEmpty()) { return; }
-    // Phase E — bar-row presets append to the current stack instead
-    // of replacing. This matches Thetis's Appearance → Meters/Gadgets
+    // Phase E â€” bar-row presets append to the current stack instead
+    // of replacing. This matches Thetis's Appearance â†’ Meters/Gadgets
     // flow where each meter type the user picks adds a new row below
     // the previous one. Composite presets (ANAN MM, Cross Needle,
     // Magic Eye, full S-Meter, Power/SWR) still replace on load
@@ -3302,7 +3370,7 @@ void ContainerSettingsDialog::onImport()
 }
 
 // ---------------------------------------------------------------------------
-// buildTypeSpecificEditor — type-tag dispatch to BaseItemEditor subclass
+// buildTypeSpecificEditor â€” type-tag dispatch to BaseItemEditor subclass
 // (block 4 phase 3, restored after block 7 commit 1 deleted the legacy
 // buildXItemEditor methods that lived above this in the file).
 // ---------------------------------------------------------------------------
@@ -3372,6 +3440,21 @@ bool ContainerSettingsDialog::insertImported(const DocumentResult& result,bool r
             auto outcome=ContainerArrangeController::returnBatch(d,i,retained);
             if(!outcome.ok) {m_transactionStatus->setText(outcome.error);return false;}
             imported.id=c.id;
+            // A helper container keeps its slot identity. The marker and the
+            // Thetis layout version belong to this workspace, not to the file:
+            // without them the next start treats the loaded composition as a
+            // stale import and replaces it from the shipped .dat, which is
+            // exactly how a loaded-and-applied layout "did not come back".
+            const QString helperSlot=c.config.value(QStringLiteral("helperContainer")).toString();
+            if(!helperSlot.isEmpty()) {
+                imported.config[QStringLiteral("helperContainer")]=helperSlot;
+                imported.config[QStringLiteral("thetisLayoutVersion")]=ContainerManager::kHelperThetisLayoutVersion;
+                imported.linkedHfAuto=c.linkedHfAuto;
+                imported.linkedWaveNode=c.linkedWaveNode;
+                if(c.config.contains(QStringLiteral("enabled"))) {
+                    imported.config[QStringLiteral("enabled")]=c.config.value(QStringLiteral("enabled"));
+                }
+            }
             if(c.id==d.mainContainerId) {imported.contents+=c.contents;}
             c=imported;
         } else {c.contents+=imported.contents;}

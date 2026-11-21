@@ -145,6 +145,12 @@ public:
     void setKeepShown(bool keepShown);
     bool keepShown() const;
 
+    // HF-Auto only: the TF (Tuner Follow) switch in the group header, left
+    // of the eye. Hidden on every other container.
+    void setTunerFollowVisible(bool visible);
+    void setTunerFollow(bool on);
+    bool tunerFollow() const;
+
     QWidget* grip() const;
     // The eye button, left of Pop out.
     QAbstractButton* keepShownButton() const { return m_keepShown; }
@@ -161,6 +167,8 @@ signals:
     void keepShownToggled(bool keepShown);
     // A click on the pin: keep the window on top, or stop.
     void pinToggled(bool pinned);
+    // A click on TF: the operator's Tuner Follow choice.
+    void tunerFollowToggled(bool on);
     void popOutClicked();
     void optionsClicked();
     void sourceClicked();
@@ -174,6 +182,7 @@ private:
     WorkspaceSourceChip* m_chip{nullptr};
     QAbstractButton* m_keepShown{nullptr};
     QAbstractButton* m_pin{nullptr};
+    QPushButton* m_tf{nullptr};
     QPushButton* m_popOut{nullptr};
     QPushButton* m_options{nullptr};
     QPushButton* m_hide{nullptr};

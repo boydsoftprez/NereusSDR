@@ -122,6 +122,12 @@ signals:
     void endpointAdded(const QUuid& guid);
     void endpointRemoved(const QUuid& guid);
     void endpointChanged(const QUuid& guid);
+    // A parsed value batch reached its endpoint (used by helper health
+    // checks and any live view that does not poll).
+    void dataReceived(const QUuid& guid);
+    // The endpoint's transport could not start (typically its port is
+    // already in use) or reported a transport error.
+    void endpointFault(const QUuid& guid, const QString& message);
 
 private slots:
     void onValueBatchReceived(const QHash<QString, QVariant>& batch);

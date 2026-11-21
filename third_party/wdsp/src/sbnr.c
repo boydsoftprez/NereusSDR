@@ -180,7 +180,7 @@ void SetRXASBNRRun (int channel, int run)
 	{
 		EnterCriticalSection (&ch[channel].csDSP);
 		a->run = run;
-		RXAbp1Check (channel);
+		RXAbp1Update (channel);
 		RXAbp1Set (channel);
 		LeaveCriticalSection (&ch[channel].csDSP);
 	}

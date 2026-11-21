@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  NereusSDR MSI (WiX v3).
+
+  The file list is harvested from the staged deploy tree by
+  packaging/windows/build-msi.ps1; this file supplies the product, directory
+  layout, shortcuts, firewall exception and UI.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+     xmlns:fire="http://schemas.microsoft.com/wix/FirewallExtension">
+
+  <Product Id="*"
+           Name="NereusSDR"
+           Language="1033"
+           Version="$(var.MsiVersion)"
+           Manufacturer="J.J. Boyd (KG4VCF)"
+           UpgradeCode="{B7F4E2A1-9C3D-4E5F-8A6B-1D2C3E4F5A60}">
+
+    <Package Id="*"
+             InstallerVersion="500"
+             Compressed="yes"
+             InstallScope="perMachine"
+             InstallPrivileges="elevated"
+             Description="NereusSDR cross-platform OpenHPSDR SDR console"
+             Comments="NereusSDR $(var.Version)" />
+
+    <MajorUpgrade Schedule="afterInstallValidate" AllowDowngrades="yes" />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <!-- MSI's numeric ProductVersion is 1.8.0 (major/minor must be <256);
+         show the release's real year-based version in Apps & features. -->
+    <Property Id="DisplayVersion" Value="$(var.Version)" />
+
+    <WixVariable Id="WixUILicenseRtf"
+                 Value="$(var.DeployDir)\licenses\NereusSDR-License.rtf" />
+    <UIRef Id="WixUI_InstallDir" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="NereusSDR" />
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="NereusSDR" />
+      </Directory>
+      <Directory Id="DesktopFolder" />
+    </Directory>
+
+    <DirectoryRef Id="ApplicationProgramsFolder">
+      <Component Id="ApplicationShortcuts" Guid="{1A2B3C4D-5E6F-4A7B-8C9D-0E1F2A3B4C5D}">
+        <Shortcut Id="StartMenuShortcut"
+                  Name="NereusSDR $(var.ShortcutName)"
+                  Target="[INSTALLFOLDER]NereusSDR.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <Shortcut Id="StartMenuWaveNodeUsb"
+                  Name="WaveNode USB"
+                  Target="[INSTALLFOLDER]WaveNodeUsb\WaveNodeUsb.exe"
+                  Arguments="--minimized"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <Shortcut Id="StartMenuUninstall"
+                  Name="Uninstall NereusSDR"
+                  Target="[System64Folder]msiexec.exe"
+                  Arguments="/x [ProductCode]" />
+        <RemoveFolder Id="RemoveApplicationProgramsFolder" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\NereusSDR" Name="StartMenu"
+                       Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="DesktopFolder">
+      <Component Id="DesktopShortcut" Guid="{2B3C4D5E-6F7A-4B8C-9D0E-1F2A3B4C5D6E}">
+        <Shortcut Id="DesktopShortcut"
+                  Name="NereusSDR $(var.ShortcutName)"
+                  Target="[INSTALLFOLDER]NereusSDR.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKCU" Key="Software\NereusSDR" Name="Desktop"
+                       Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="FirewallRule" Guid="{3C4D5E6F-7A8B-4C9D-0E1F-2A3B4C5D6E7F}">
+        <fire:FirewallException Id="NereusSDRFirewall"
+                                Name="NereusSDR (inbound UDP)"
+                                Scope="any"
+                                Protocol="udp"
+                                Program="[INSTALLFOLDER]NereusSDR.exe" />
+        <!-- TCI and the station link also need TCP inbound; without it
+             discovery works but the connection and TCI clients fail. -->
+        <fire:FirewallException Id="NereusSDRFirewallTcp"
+                                Name="NereusSDR (inbound TCP)"
+                                Scope="any"
+                                Protocol="tcp"
+                                Program="[INSTALLFOLDER]NereusSDR.exe" />
+        <RegistryValue Root="HKLM" Key="Software\NereusSDR" Name="Firewall"
+                       Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+
+      <Component Id="InstallLocation" Guid="{4D5E6F7A-8B9C-4D0E-9F1A-2B3C4D5E6F70}">
+        <RegistryValue Root="HKLM" Key="Software\NereusSDR" Name="InstallDir"
+                       Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="Software\NereusSDR" Name="Version"
+                       Type="string" Value="$(var.Version)" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="ProductFeature" Title="NereusSDR" Level="1"
+             ConfigurableDirectory="INSTALLFOLDER">
+      <ComponentGroupRef Id="NereusFiles" />
+      <ComponentRef Id="ApplicationShortcuts" />
+      <ComponentRef Id="DesktopShortcut" />
+      <ComponentRef Id="FirewallRule" />
+      <ComponentRef Id="InstallLocation" />
+    </Feature>
+  </Product>
+</Wix>

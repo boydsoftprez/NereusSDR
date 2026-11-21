@@ -30,10 +30,6 @@ target_include_directories(asiosdk_host PUBLIC
 # and creates each driver as a COM object (ole32).
 target_link_libraries(asiosdk_host PUBLIC ole32 advapi32)
 
-# The SDK is compiled as released; keep its warnings out of the
-# NereusSDR build log.
-if(MSVC)
-    target_compile_options(asiosdk_host PRIVATE /w)
-else()
-    target_compile_options(asiosdk_host PRIVATE -w)
-endif()
+# The SDK is compiled as released. Its own sources are warning-clean under
+# CMake's default level, so no /w override is needed (that would conflict
+# with the target's /W3 and emit D9025).

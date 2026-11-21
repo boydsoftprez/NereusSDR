@@ -14,10 +14,6 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-11-16 - VOICE in each keying row (recording plan Task 12): a
-//                VoiceButton per row, gated as TUNE and MOX are, and
-//                voiceButton(), voiceKeyerPanelRequested and voiceRefused.
-//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-21 - A copy of a row made after the gates starts as gated as the
 //                applet's own; a preview of a row is inert. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -281,7 +277,6 @@ class SliceModel;
 class TxChainSection;
 class TxFilterSection;
 class TxKeyingSection;
-class VoiceButton;
 class TxProcessingSection;
 class TxMonitorSection;
 class TxPowerSection;
@@ -315,7 +310,7 @@ class TxVoxSection;
 // 11.  2-Tone test button   — hidden until Phase 3M-3 (out-of-phase)
 // 12.  PS-A toggle          — hidden until Phase 3M-4 (out-of-phase)
 // 13.  DUP (full duplex)    — checkable
-// 14.  xPA indicator button — checkable
+// 14.  xPA button           - checkable, gates OC "TX PA" pins
 // 15.  SWR protection LED   — QLabel indicator
 //
 // NOTE: Mic Gain slider was here (Row 3b, J.1) but was relocated to
@@ -544,8 +539,6 @@ public:
     void setTakeTransmitOffered(bool offered, bool holderOnAir);
     bool takeTransmitOffered() const;
     QPushButton* takeTransmitButton() const;
-    /// Recording plan Task 12: VOICE in the applet's own keying row.
-    VoiceButton* voiceButton() const;
     QString transmitHolderText() const;
     QSlider*     tunePowerSlider()  const noexcept;
     QLabel*      rfPowerLabel()     const noexcept;
@@ -575,11 +568,6 @@ public:
 signals:
     /// Task 78: the Take transmit button was clicked.
     void takeTransmitRequested();
-    /// Recording plan Task 12: VOICE asked for the voice keyer panel, with
-    /// the message to record (0 for none).
-    void voiceKeyerPanelRequested(int n);
-    /// Recording plan Task 12: the Core refused what VOICE asked.
-    void voiceRefused(const QString& reason);
     // ── Phase 3M-1c J.1: right-click on TX Profile combo ────────────────────
     // Mirrors Thetis comboTXProfile_MouseDown (console.cs:44519-44522
     // [v2.10.3.13]):
@@ -620,6 +608,10 @@ private slots:
     /// TX-pipeline meter.  Cadence matches Thetis UpdateNoiseGate
     /// Task.Delay(100) at console.cs:25347 [v2.10.3.13].
     void pollVoxMeter();
+
+    /// 100 ms tick that paints the TX chain's stage badges (LEV/COMP, EQ,
+    /// CFC, ALC) from the same readings Thetis shows on its TX meters.
+    void pollTxStageBadges();
 
 private:
     void buildUI();
@@ -764,9 +756,6 @@ private:
     QList<QPointer<TxVoxSection>> m_extraVoxSections;
     QList<QPointer<TxProcessingSection>> m_extraProcessingSections;
     QList<QPointer<TxKeyingSection>> m_extraKeyingSections;
-    // Recording plan Task 12: each keying row's VOICE (owned by the row).
-    QList<QPointer<VoiceButton>> m_voiceButtons;
-    void addVoiceButton(TxKeyingSection* section);
     // The controls each transmit-permission gate covers, in the applet's own
     // rows and in every independent copy of them.
     QList<TxMonitorSection*> allMonitorSections() const;
@@ -789,6 +778,9 @@ private:
     QList<QWidget*> profileGatedControls() const;
     void wireMonitorSection(TxMonitorSection* section);
     void wirePowerSection(TxPowerSection* section);
+    // The transmit band's PA Gain "Use Max" watts (0 when off): drives the
+    // watt-scaled power sliders and their labels.
+    void updatePaPowerScale();
     void wireFilterSection(TxFilterSection* section);
     void wireChainSection(TxChainSection* section);
     void wireVoxSection(TxVoxSection* section);
@@ -923,6 +915,9 @@ private:
     // Core (setTunePowerForTxBand) and shows the Core's tunePowerForTxBand.
     bool remoteTunePower() const;
     int  shownTunePower(Band band) const;
+    // Slider value for the tune row: the fixed tune power in Fixed mode,
+    // otherwise the per-band percent mapped through the Use Max ceiling.
+    int  tunePowerSliderValue(TxPowerSection* section, Band band) const;
     void requestRemoteTunePower(int watts);
     // The words the transmit-permission gate shows while it holds; the
     // receive-only lock names them beside its own (Task 16 fix wave, M6).

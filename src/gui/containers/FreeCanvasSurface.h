@@ -55,6 +55,8 @@ private:
     void updateReveal(const QString& hover={});
     QString hoverAt(const QPoint& position) const;
     void changeRect(const QString&,const QRectF&);
+    // Free-canvas movement link: the entries that move with `id` (itself first).
+    QStringList moveGroupFor(const QString& id) const;
     void finishGesture(bool cancel);
     QHash<QString,Leaf> m_leaves;
     ContainerDocument m_document;
@@ -65,6 +67,12 @@ private:
     QSizeF m_extent;
     QSizeF m_logicalExtent; // placeViews' extent; each presentation sync starts here
     QString m_selected, m_active;
+    // Entries dragged with m_active, their geometry at the press, and the
+    // saved free-canvas rect each had then (for Escape).
+    QStringList m_group;
+    QHash<QString,QRectF> m_groupOriginal;
+    QHash<QString,QJsonValue> m_groupGeometry;
+    QHash<QString,bool> m_groupGeometryPresent;
     QPointer<QWidget> m_capture;
     bool m_resizing=false, m_presentationSyncQueued=false;
 };

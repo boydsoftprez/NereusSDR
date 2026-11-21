@@ -136,12 +136,18 @@ QHash<QString, QVariant> parseXml(const QByteArray& payload, const QUuid& endpoi
     const QString guidStr = endpointGuid.toString(QUuid::WithoutBraces);
     QXmlStreamReader xml(payload);
     QStringList path;
+    // Thetis starts the path at the four-character ID and walks the root's
+    // children (MeterManager.cs parseXMLElement). The root element name is
+    // not part of a variable name: <LP100A><dcvolts>1</dcvolts></LP100A> is
+    // "Zjjg.dcvolts", not "Zjjg.LP100A.dcvolts". Keeping the root here made
+    // every WaveNode XML variable miss its binding.
+    int depth = 0;
 
     while (!xml.atEnd() && !xml.hasError()) {
         const auto token = xml.readNext();
         switch (token) {
         case QXmlStreamReader::StartElement: {
-            path.append(xml.name().toString());
+            if (depth > 0) { path.append(xml.name().toString()); }
             // Attributes as keys under the current element path.
             const auto attrs = xml.attributes();
             for (const auto& a : attrs) {
@@ -149,10 +155,11 @@ QHash<QString, QVariant> parseXml(const QByteArray& payload, const QUuid& endpoi
                 attrPath.append(a.name().toString());
                 out.insert(makeKey(guidStr, attrPath), a.value().toString());
             }
+            ++depth;
             break;
         }
         case QXmlStreamReader::Characters: {
-            if (!xml.isWhitespace() && !path.isEmpty()) {
+            if (depth > 0 && !xml.isWhitespace() && !path.isEmpty()) {
                 const QString text = xml.text().toString().trimmed();
                 if (!text.isEmpty()) {
                     out.insert(makeKey(guidStr, path), text);
@@ -161,7 +168,8 @@ QHash<QString, QVariant> parseXml(const QByteArray& payload, const QUuid& endpoi
             break;
         }
         case QXmlStreamReader::EndElement:
-            if (!path.isEmpty()) { path.removeLast(); }
+            if (depth > 1) { path.removeLast(); }
+            if (depth > 0) { --depth; }
             break;
         default:
             break;

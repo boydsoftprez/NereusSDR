@@ -590,6 +590,12 @@ bool RadioDiscovery::parseP2Reply(const QByteArray& bytes, const QHostAddress& s
     // A reply that ends before the byte, or holds zero there, reports none.
     out.firmwareBetaVersion = bytes.size() > 23 ? static_cast<quint8>(bytes[23]) : 0;
 
+    // Hardware revision, byte 22. Thetis keeps it as HwRev and treats bit
+    // 0x10 as the Anvelina PRO3 24-bit audio architecture:
+    //   From Thetis clsRadioDiscovery.cs:1191 and NetworkIO.cs:19
+    //   public bool Supports24BitAudio => (HwRev & 0x10) != 0;
+    out.hardwareRevision = bytes.size() > 22 ? static_cast<quint8>(bytes[22]) : 0;
+
     // Populate derived capabilities
     out.adcCount = RadioInfo::adcCountForBoard(out.boardType);
     if (out.maxReceivers <= 0) {
@@ -1115,6 +1121,7 @@ void RadioDiscovery::probeAddress(const QHostAddress& addr,
     // Defer the whole call; the caller's timeout starts when the probe is
     // actually sent, so Connect flows just see a slightly longer probe.
     if (const qint64 waitMs = holdOffRemainingMs(); waitMs > 0) {
+
         QTimer::singleShot(int(waitMs), this, [this, addr, port, timeout]() {
             probeAddress(addr, port, timeout);
         });
@@ -1123,6 +1130,7 @@ void RadioDiscovery::probeAddress(const QHostAddress& addr,
 
     auto* sock = new QUdpSocket(this);
     sock->bind(QHostAddress::AnyIPv4, 0);
+
 
     auto* timer = new QTimer(this);
     timer->setSingleShot(true);
@@ -1145,6 +1153,7 @@ void RadioDiscovery::probeAddress(const QHostAddress& addr,
             sock->readDatagram(buf.data(), buf.size(), &src, &srcPort);
 
             RadioInfo info;
+
             if (parseP1Reply(buf, src, info) || parseP2Reply(buf, src, info)) {
                 m_radios.insert(info.macAddress, info);
                 m_lastSeen.insert(info.macAddress, QDateTime::currentMSecsSinceEpoch());
@@ -1157,6 +1166,7 @@ void RadioDiscovery::probeAddress(const QHostAddress& addr,
 
     // Timeout → emit failure and clean up.
     connect(timer, &QTimer::timeout, this, [this, addr, port, cleanup]() {
+
         emit probeFailed(addr, port);
         cleanup();
     });
@@ -1174,6 +1184,7 @@ void RadioDiscovery::probeAddress(const QHostAddress& addr,
 
     sock->writeDatagram(p1Packet, addr, port);
     sock->writeDatagram(p2Packet, addr, port);
+
 
     timer->start(int(timeout.count()));
 }

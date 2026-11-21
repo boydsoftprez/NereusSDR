@@ -147,11 +147,13 @@
 //============================================================================================//
 
 #include "GeneralOptionsPage.h"
+#include "StationHelperOptions.h"
 #include "gui/StyleConstants.h"
 #include "models/RadioModel.h"
 #include "models/SpotBeamTurner.h"
 #include "core/AppSettings.h"
 #include "core/BoardCapabilities.h"
+#include "core/platform/HybridCpu.h"
 #include "core/PureSignal.h"
 #include "core/StepAttenuatorController.h"
 #include "core/StepAttenuatorFacade.h"
@@ -338,6 +340,11 @@ GeneralOptionsPage::GeneralOptionsPage(RadioModel* model, QWidget* parent)
         syncFromFacade();
         applyRadioHardwareAvailability();
     }
+
+    // Optional station helpers and start/exit scripts, in the existing
+    // Options page. Both are opt-in; nothing is installed per user until
+    // enabled.
+    addContent(new StationHelperOptions(model, this));
 }
 
 void GeneralOptionsPage::setStationSettingsAvailable(bool available, const QString& reason)
@@ -900,6 +907,89 @@ void GeneralOptionsPage::buildOptionsGroup()
         }
     });
     vbox->addWidget(m_chkPreventTXonDifferentBandToRX);
+
+    // Intel hybrid CPU (P-core / E-core) option, ported from Thetis
+    // HybridCpu.cs and setup.cs InitHybridPcoreOption():
+    //   "P-cores only" keeps Thetis, including the ASIO callback thread it
+    //   creates, on the performance cores. Windows' CPU-set EfficiencyClass
+    //   identifies the P-cores; on a CPU without a P/E split the box has no
+    //   effect. Nereus applies the same process-affinity restriction here.
+    m_chkPcoresOnly = new QCheckBox(
+        tr("Intel P-Core enable \u2014 Nereus audio stability"), group);
+    m_chkPcoresOnly->setObjectName(QStringLiteral("chkGeneralPcoresOnly"));
+    m_chkPcoresOnly->setProperty("nereusSetupId", "general.options.pcoresOnly");
+    const QString pcoreTooltip = tr(
+        "Keeps Nereus, including its audio callback threads, on the "
+        "performance (P) cores of an Intel hybrid CPU. No effect on CPUs "
+        "without P/E cores.");
+    m_chkPcoresOnly->setToolTip(pcoreTooltip);
+    const bool pcoresOn =
+        AppSettings::instance().value(QStringLiteral("GeneralPcoresOnly"),
+                                      QStringLiteral("False")).toString()
+        == QStringLiteral("True");
+    m_chkPcoresOnly->setChecked(pcoresOn);
+    if (pcoresOn) {
+        m_chkPcoresOnly->setToolTip(NereusSDR::detectHybridCpu().description);
+    }
+    connect(m_chkPcoresOnly, &QCheckBox::toggled, this, [this, pcoreTooltip](bool on) {
+        AppSettings::instance().setValue(
+            QStringLiteral("GeneralPcoresOnly"),
+            on ? QStringLiteral("True") : QStringLiteral("False"));
+        if (on) {
+            QString message;
+            if (!NereusSDR::applyPerformanceCoresOnly(&message)) {
+                m_chkPcoresOnly->setToolTip(message);
+                QMessageBox::information(this, tr("Intel P-Core enable"), message);
+            } else {
+                m_chkPcoresOnly->setToolTip(message);
+            }
+        } else {
+            NereusSDR::restoreAllCores();
+            m_chkPcoresOnly->setToolTip(pcoreTooltip);
+        }
+    });
+    vbox->addWidget(m_chkPcoresOnly);
+
+    auto* pcoreHint = new QLabel(
+        tr("Restricts Nereus and its audio threads to the P-cores on an "
+           "Intel hybrid CPU."), group);
+    pcoreHint->setWordWrap(true);
+    pcoreHint->setStyleSheet(QStringLiteral(
+        "QLabel { color: #8090a0; font-size: 10px; background: transparent; }"));
+    vbox->addWidget(pcoreHint);
+
+    // Thetis's TX audio check / TX-N console button (Setup > Audio >
+    // Recording in Thetis). Runs the TX chain locally with no RF, so EQ,
+    // CFC, leveler and ALC can be adjusted and heard through MON. The TX
+    // applet's TX/N button is the console mirror of this option.
+    m_chkTxAudioCheck = new QCheckBox(
+        tr("TX audio check \u2014 no MOX/RF (monitor off until selected)"), group);
+    m_chkTxAudioCheck->setObjectName(QStringLiteral("chkTxAudioCheckNoMox"));
+    m_chkTxAudioCheck->setProperty("nereusSetupId", "general.options.txAudioCheck");
+    m_chkTxAudioCheck->setToolTip(tr(
+        "Runs the transmitter DSP chain (mic, EQ, COMP, CFC, leveler, ALC) "
+        "and lets you hear it through MON with the radio unkeyed. MOX, PTT "
+        "and VOX are disabled while it is on. The TX applet's TX/N button "
+        "mirrors this setting."));
+    if (model() != nullptr) {
+        m_chkTxAudioCheck->setChecked(
+            model()->transmitModel().txAudioCheckEnabled());
+    }
+    connect(m_chkTxAudioCheck, &QCheckBox::toggled, this, [this](bool on) {
+        if (RadioModel* radio = model()) {
+            radio->transmitModel().setTxAudioCheckEnabled(on);
+        }
+    });
+    if (model() != nullptr) {
+        connect(&model()->transmitModel(),
+                &TransmitModel::txAudioCheckEnabledChanged,
+                this, [this](bool on) {
+            if (m_chkTxAudioCheck == nullptr) { return; }
+            QSignalBlocker block(m_chkTxAudioCheck);
+            m_chkTxAudioCheck->setChecked(on);
+        });
+    }
+    vbox->addWidget(m_chkTxAudioCheck);
 
     // ── Phase 3M-4 Task 11: PureSignal Info Bar checkboxes ─────────────────
     //

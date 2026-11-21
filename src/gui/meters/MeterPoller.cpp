@@ -178,6 +178,7 @@ mw0lge@grange-lane.co.uk
 #include "MeterPoller.h"
 #include "WaveformMeterItem.h"
 #include <QEvent>
+#include <QElapsedTimer>
 #include "MeterWidget.h"
 
 #include <algorithm>  // std::clamp (Task 3.1 setIntervalMs / setAverageWindow)

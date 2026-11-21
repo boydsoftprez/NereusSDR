@@ -743,7 +743,7 @@ bool isModelOwnedNotchSettingsKey(QStringView rawKey)
         QStringLiteral("^notch(?:count|globalenabled|autoincrease"
                        "|(?:0|[1-9][0-9]*)(?:center|width|active))$"),
         QRegularExpression::CaseInsensitiveOption);
-    return kNotchKey.match(rawKey).hasMatch();
+    return kNotchKey.matchView(rawKey).hasMatch();
 }
 
 bool isModelOwnedStepAttenuatorSettingsKey(QStringView rawKey)

@@ -45,8 +45,9 @@ namespace NereusSDR {
 namespace {
 const QStringList kWorkspaceFields{"schemaVersion", "revision", "mainContainerId", "containers", "arrangement"};
 const QStringList kContainerFields{"id", "name", "contents", "layout", "dockMode", "edge", "anchor", "header",
-                                   "geometry", "geometryPane", "screen", "home", "visible", "locked", "autoHeight", "popOutShell",
-                                   "config"};
+                                   "geometry", "geometryPane", "screen", "home", "visible", "locked", "lockItemPositions",
+                                   "linkedHfAuto", "linkedWaveNode",
+                                   "autoHeight", "popOutShell", "config"};
 const QStringList kScreenFields{"name", "serial", "geometry"};
 const QStringList kHomeFields{"dockMode", "edge", "before", "after", "geometry", "geometryPane"};
 const QStringList kArrangementFields{"strips", "gridAlignment"};
@@ -425,7 +426,11 @@ bool decodeContainer(const QJsonObject& object, ContainerDocument& container)
         || !enumField(object, "layout", container.layout) || !enumField(object, "dockMode", container.dockMode)
         || !enumField(object, "anchor", container.anchor) || !enumField(object, "header", container.header)
         || !boolField(object, "visible", container.visible)
-        || !boolField(object, "locked", container.locked) || !boolField(object, "autoHeight", container.autoHeight)
+        || !boolField(object, "locked", container.locked)
+        || !boolField(object, "lockItemPositions", container.lockItemPositions)
+        || !boolField(object, "linkedHfAuto", container.linkedHfAuto)
+        || !boolField(object, "linkedWaveNode", container.linkedWaveNode)
+        || !boolField(object, "autoHeight", container.autoHeight)
         || !boolField(object, "popOutShell", container.popOutShell) || !objectField(object, "config", container.config)
         || !object["contents"].isArray()) {
         return false;
@@ -566,9 +571,19 @@ QJsonObject encodeContainer(const ContainerDocument& container)
         object["home"] = home;
     }
     object["visible"] = container.visible;
-    // Only when set: the workspace look has no Lock setting and writes none.
+    // Only when set: an unlocked container writes no lock keys, so existing
+    // documents keep their exact bytes.
     if (container.locked) {
         object["locked"] = true;
+    }
+    if (container.lockItemPositions) {
+        object["lockItemPositions"] = true;
+    }
+    if (container.linkedHfAuto) {
+        object["linkedHfAuto"] = true;
+    }
+    if (container.linkedWaveNode) {
+        object["linkedWaveNode"] = true;
     }
     object["autoHeight"] = container.autoHeight;
     object["popOutShell"] = container.popOutShell;

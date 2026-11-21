@@ -43,9 +43,6 @@
 //   2026-10-26: Remote transmit hold then cut: keepalives that stop leave
 //               the key held silent by 500 ms and cut by 3100 ms. J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
-//   2026-11-16: Recording plan Task 11: the key-admitted observer hears only
-//               admitted keys. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
-//               Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -323,30 +320,6 @@ private slots:
         QVERIFY(!result.accepted);
         QCOMPARE(p.core.model->keyedBy().epoch, static_cast<quint32>(epochOf(key)));
         QVERIFY(p.core.model->remoteRadioMicKeyActive(p.a.key.fingerprint()));
-    }
-
-    // Recording plan Task 11: the key-admitted observer hears a tx.key only
-    // once it is accepted (the voice keyer hands the air over for it), never
-    // a refused press or a copy of an earlier one.
-    void theKeyAdmittedObserverHearsOnlyAdmittedKeys()
-    {
-        Pair p;
-        QList<QByteArray> told;
-        p.core.server->remoteKeying()->setKeyAdmittedObserver(
-            [&told](const QByteArray& deviceId, const QString&) { told.append(deviceId); });
-        const quint32 id = p.nextId++;
-        const auto key = invokeAs(p.appA, "tx.key", id, trigger("screen"));
-        QVERIFY(accepted(key));
-        QCOMPARE(told, QList<QByteArray>{p.a.key.fingerprint()});
-        // B's press while A holds transmit: refused, not told.
-        QVERIFY(!accepted(p.send(p.appB, "tx.key", trigger("screen"))));
-        // A copy of A's key (the same id): answered, not told again.
-        QVERIFY(accepted(invokeAs(p.appA, "tx.key", id, trigger("screen"), 2)));
-        QCOMPARE(told.size(), 1);
-        // A's new press while its key is on: admitted, told.
-        QVERIFY(accepted(p.send(p.appA, "tx.key", trigger("screen"))));
-        QCOMPARE(told.size(), 2);
-        QVERIFY(accepted(p.send(p.appA, "tx.unkey", {int64("epoch", epochOf(key))})));
     }
 
     void sourceDisarmingVoxRechecksReentrantKeyBeforeCommit()

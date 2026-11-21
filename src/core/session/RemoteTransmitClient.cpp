@@ -75,9 +75,6 @@
 //   2026-11-06: first-look fixes: a key's release ends only the activity
 //               that key started; cwActivityEnded. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
-//   2026-11-16: Recording plan Task 11: a voice message the Core's voice
-//               keyer sends for this window keeps the keepalives going.
-//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/RemoteTransmitClient.h"
@@ -186,15 +183,6 @@ void RemoteTransmitClient::setVoxArmed(bool armed)
     refreshKeepalive();
 }
 
-void RemoteTransmitClient::setVoiceMessageSending(bool sending)
-{
-    if (m_voiceMessageSending == sending) {
-        return;
-    }
-    m_voiceMessageSending = sending;
-    refreshKeepalive();
-}
-
 quint32 RemoteTransmitClient::keepaliveEpoch() const
 {
     if (m_screen.phase == Phase::On && m_screen.epoch != 0) {
@@ -211,8 +199,7 @@ quint32 RemoteTransmitClient::keepaliveEpoch() const
 void RemoteTransmitClient::refreshKeepalive()
 {
     const bool wanted = m_available
-        && (micKeyDown() || holdsTransmit() || m_tuneAsked || m_twoToneAsked || m_voxArmed || m_cwPending || m_cwEpoch != 0
-            || m_voiceMessageSending);
+        && (micKeyDown() || holdsTransmit() || m_tuneAsked || m_twoToneAsked || m_voxArmed || m_cwPending || m_cwEpoch != 0);
     if (wanted == m_keepaliveTimer.isActive()) {
         return;
     }

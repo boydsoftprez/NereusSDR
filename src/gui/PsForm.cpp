@@ -1278,6 +1278,19 @@ void PsForm::onAmpViewClicked()
     }
 }
 
+void PsForm::restoreAmpView()
+{
+    if (!m_ampView) {
+        m_ampView = new AmpViewWindow(m_radioModel, m_pureSignal, this);
+    }
+    m_ampView->show();
+    m_ampView->raise();
+    m_ampView->activateWindow();
+    if (m_chkOnTop) {
+        m_ampView->setStayOnTopFromParent(m_chkOnTop->isChecked());
+    }
+}
+
 void PsForm::onDefaultPeaksClicked()
 {
     // From Thetis PSForm.cs:547-550 SetDefaultPeaks [v2.10.3.13]:

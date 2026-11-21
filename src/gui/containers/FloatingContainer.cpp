@@ -109,6 +109,24 @@ FloatingContainer::~FloatingContainer()
     qCDebug(lcContainer) << "FloatingContainer destroyed:" << m_id;
 }
 
+void FloatingContainer::showEvent(QShowEvent* event)
+{
+    // Only a shell that actually hosts its content may appear: a docked or
+    // closed container leaves an empty shell (the blank frames that used to
+    // sit on the desktop at startup).
+    const auto hosted = findChildren<ContainerWidget*>(QString(), Qt::FindDirectChildrenOnly);
+    // Only a shell that actually hosts its container may appear. A docked or
+    // closed container leaves an empty shell, which used to show as a blank
+    // always-on-top frame beside the console.
+    if (hosted.isEmpty() || hosted.first()->content() == nullptr) {
+        // hide() inside showEvent does not stick; queue it.
+        QTimer::singleShot(0, this, [this] { hide(); });
+        event->ignore();
+        return;
+    }
+    QWidget::showEvent(event);
+}
+
 void FloatingContainer::setId(const QString& id)
 {
     m_id = id;
@@ -354,33 +372,5 @@ void FloatingContainer::setContainerHidesWhenRxNotUsed(bool hides) { m_container
 void FloatingContainer::setFormEnabled(bool enabled) { m_formEnabled = enabled; }
 void FloatingContainer::setHiddenByMacro(bool hidden) { m_hiddenByMacro = hidden; }
 void FloatingContainer::setContainerFloating(bool floating) { m_floating = floating; }
-
-void FloatingContainer::setClearBackground(bool clear)
-{
-    if (m_clearBackground == clear) {
-        return;
-    }
-    m_clearBackground = clear;
-    // The platform window has to be recreated for the translucent bit to
-    // take effect on macOS.
-    const bool shown = isVisible();
-    if (shown) {
-        hide();
-    }
-    setAttribute(Qt::WA_TranslucentBackground, clear);
-    setAttribute(Qt::WA_NoSystemBackground, clear);
-    setAutoFillBackground(!clear);
-    if (clear) {
-        setStyleSheet(QStringLiteral("FloatingContainer { background: transparent; }"));
-    } else if (WorkspacePreview::enabled()) {
-        setStyleSheet(QStringLiteral("background: %1;")
-                          .arg(Workspace::role("panel", "#0f0f1a")));
-    } else {
-        setStyleSheet(QStringLiteral("background: #0f0f1a;"));
-    }
-    if (shown) {
-        show();
-    }
-}
 
 } // namespace NereusSDR

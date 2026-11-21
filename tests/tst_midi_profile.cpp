@@ -2,10 +2,6 @@
 // Modification history (NereusSDR):
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 10.
 //                AI-assisted implementation via Anthropic Claude Code.
-//   2026-11-16 - J.J. Boyd (KG4VCF), the worker cases record the worker's
-//                connection reports on this thread, so a report sent before
-//                the wait starts still counts on a loaded runner.
-//                AI-assisted via Anthropic Claude Code.
 // no-port-check: NereusSDR-original test.
 //
 // MIDI profiles, routing into the dispatcher, the unplug failsafe and the worker
@@ -145,7 +141,6 @@ private:
     std::unique_ptr<SliceModel> m_slice;
     std::unique_ptr<FakeMidiDeviceLayer> m_layer;
     std::unique_ptr<ControllerHost> m_host;
-    QList<bool> m_connectionReports;
 
     FakeTargets& t() { return *m_targets; }
     ControllerHost& host() { return *m_host; }
@@ -156,17 +151,6 @@ private:
         connect(&input, &MidiInput::controlEvent, m_host.get(), &ControllerHost::onMidiControlEvent);
         connect(&input, &MidiInput::portOpened, m_host.get(), &ControllerHost::onMidiPortOpened);
         connect(&input, &MidiInput::connectionChanged, m_host.get(), &ControllerHost::onMidiConnectionChanged);
-    }
-
-    // The worker's connectionChanged reports, as they reach this thread. Queued
-    // here, so one the worker sends before the test starts waiting still lands in
-    // the list; QSignalSpy::wait() counts only reports that come after it starts.
-    const QList<bool>& connectionReports(MidiInput* midi)
-    {
-        m_connectionReports.clear();
-        connect(midi, &MidiInput::connectionChanged, this,
-                [this](bool connected, const QString&) { m_connectionReports.append(connected); });
-        return m_connectionReports;
     }
 
     // Moves the clock past the burst limit, so every turn is seen at once.
@@ -974,9 +958,10 @@ private slots:
         QCOMPARE(midi->thread()->objectName(), QStringLiteral("NereusMidi"));
 
         host().setMidiProfile(profileWith({button(kNote60, QStringLiteral("tx.hold"))}));
-        const QList<bool>& connection = connectionReports(midi);
+        QSignalSpy connection(midi, &MidiInput::connectionChanged);
         host().setMidiDevice(kPad);
-        QTRY_COMPARE_WITH_TIMEOUT(connection, QList<bool>{true}, 60000);
+        QVERIFY(connection.wait(60000));
+        QCOMPARE(connection.at(0).at(0).toBool(), true);
 
         m_layer->ports->send(0x90, 60, 64);
         QTRY_COMPARE_WITH_TIMEOUT(t().keyHolds, QList<bool>{true}, 60000);
@@ -991,9 +976,9 @@ private slots:
         m_layer->ports->setNames({kPad});
         QPointer<MidiInput> midi(host().midi());
         QVERIFY(m_layer->ports->alive() >= 1);
-        const QList<bool>& connection = connectionReports(midi.data());
+        QSignalSpy connection(midi.data(), &MidiInput::connectionChanged);
         host().setMidiDevice(kPad);
-        QTRY_COMPARE_WITH_TIMEOUT(connection, QList<bool>{true}, 60000);
+        QVERIFY(connection.wait(60000));
         QCOMPARE(m_layer->ports->opened(), kPad);
 
         m_host.reset();

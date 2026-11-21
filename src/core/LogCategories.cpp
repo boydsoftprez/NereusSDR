@@ -33,7 +33,7 @@ Q_LOGGING_CATEGORY(lcHotKeys,    "nereus.hotkeys")
 // Raw knob and controller reports, for an owner to send a capture. Off unless asked for:
 // QT_LOGGING_RULES="nereus.hotkeys.device.debug=true".
 Q_LOGGING_CATEGORY(lcHotKeyDevice, "nereus.hotkeys.device", QtInfoMsg)
-Q_LOGGING_CATEGORY(lcRecordings, "nereus.recordings")
+Q_LOGGING_CATEGORY(lcRecordings, "nereus.recordings", QtInfoMsg)
 
 // --- LogManager ---
 
@@ -74,8 +74,6 @@ LogManager::LogManager()
           QStringLiteral("DX spot ingest (cluster, RBN, SpotCollector, WSJT-X)"), false },
         { QStringLiteral("nereus.cat"),      QStringLiteral("CAT"),
           QStringLiteral("CAT serial, TCP and rigctld ports, PTT input, refused settings"), false },
-        { QStringLiteral("nereus.recordings"), QStringLiteral("Recordings"),
-          QStringLiteral("Contact recordings, voice keyer messages, spectrum recorder files"), false },
     };
 }
 

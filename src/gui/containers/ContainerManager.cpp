@@ -216,21 +216,21 @@
 //                 header's title, source chip and lock request, and the
 //                 auto-height header extent by J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
-//   2026-10-04 — Follow responsive content height in auto-height containers by
+//   2026-10-04 â€” Follow responsive content height in auto-height containers by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
-//   2026-10-04 — Preserve pending container placement and initialize overlay
+//   2026-10-04 â€” Preserve pending container placement and initialize overlay
 //                 anchor baselines by J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
-//   2026-10-04 — Suppress shutdown presentation reconciliation while retaining
+//   2026-10-04 â€” Suppress shutdown presentation reconciliation while retaining
 //                 persistence by J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
-//   2026-10-02 — Effective contextual draft properties and portable settings by
+//   2026-10-02 â€” Effective contextual draft properties and portable settings by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
-//   2026-10-02 — Draft-only edits and inert cached previews by J.J. Boyd
+//   2026-10-02 â€” Draft-only edits and inert cached previews by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
-//   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
+//   2026-10-02 â€” Atomic container arrangement and reserved chrome by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
-//   2026-10-02 — Mixed container ownership, persistence and source routing by
+//   2026-10-02 â€” Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
-//   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
+//   2026-04-17 â€” Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
 //   2026-10-11 - Both looks: a deleted container drops only its own
@@ -295,6 +295,7 @@ mw0lge@grange-lane.co.uk
 #include "gui/meters/MeterPoller.h"
 #include "ContainerArrangeController.h"
 #include <QGuiApplication>
+#include <QElapsedTimer>
 #include <QScreen>
 #include <QApplication>
 #include <QScrollArea>
@@ -315,6 +316,9 @@ mw0lge@grange-lane.co.uk
 #include <QScopedValueRollback>
 #include <QJsonArray>
 #include <QEvent>
+#include <QCoreApplication>
+#include <QFile>
+#include <QSet>
 #include <QUuid>
 #include <algorithm>
 #include "ContainerContentHost.h"
@@ -322,6 +326,8 @@ mw0lge@grange-lane.co.uk
 #include "ContainerWorkspaceStore.h"
 #include "gui/GuiApplication.h"
 #include "ContainerDocumentCodec.h"
+#include "ThetisContainerFile.h"
+#include "gui/HelperApps.h"
 #include "core/ControlRanges.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "EdgeDockStrip.h"
@@ -337,7 +343,7 @@ namespace {
 // Locate the MeterWidget hosted inside a container's content widget.
 // Container shape varies: user-created containers use a bare MeterWidget
 // as content; the panel container wraps a MeterWidget inside an
-// AppletPanelWidget. findChild<MeterWidget*>() handles both cases — and
+// AppletPanelWidget. findChild<MeterWidget*>() handles both cases â€” and
 // returns the same pointer for the bare case since the search is
 // inclusive of the receiver. Returns nullptr for placeholder content.
 MeterWidget* innerMeterWidget(QWidget* content)
@@ -419,6 +425,8 @@ ContainerManager::ContainerManager(QWidget* dockParent, QSplitter* splitter,
     , m_splitter(splitter)
 {
     m_screens = ScreenSource::system();
+    m_hfHelperEnabled = AppSettings::instance().value(QStringLiteral("Helpers/HfAutoEnabled"), false).toBool();
+    m_waveNodeHelperEnabled = AppSettings::instance().value(QStringLiteral("Helpers/WaveNodeEnabled"), false).toBool();
     // Every meter announced for polling (created, restored, rebuilt or
     // moved) starts in the current transmit state, so an item loaded or
     // added while transmitting does not wait for the next change.
@@ -474,7 +482,7 @@ ContainerManager::~ContainerManager()
     for (auto* c : m_containers) { if (auto* host = contentHost(c->id())) { host->releaseViews(); } }
     const auto forms=m_floatingForms.values();
     for (auto* form : forms) { delete form; }
-    qCDebug(lcContainer) << "ContainerManager destroyed —" << m_containers.size() << "containers";
+    qCDebug(lcContainer) << "ContainerManager destroyed â€”" << m_containers.size() << "containers";
 }
 
 // Nereus-origin structured route: commit first, project only committed snapshots.
@@ -552,6 +560,31 @@ CommitResult ContainerManager::commitWorkspace(const WorkspaceDocument& document
         }
     }
     WorkspaceDocument saved = document;
+    // A removed/re-imported container can leave the main panel's ID stale.
+    // Repair it here so every later edit (helper enable, new container,
+    // move) can still commit instead of failing validation forever.
+    if (!saved.mainContainerId.isEmpty()) {
+        bool mainPresent = false;
+        for (const auto& container : saved.containers) {
+            if (container.id == saved.mainContainerId) { mainPresent = true; break; }
+        }
+        if (!mainPresent) {
+            QString repaired;
+            for (const auto& container : saved.containers) {
+                if (!container.config.value(QStringLiteral("helperContainer")).toString().isEmpty()) {
+                    continue;
+                }
+                repaired = container.id;
+                if (container.dockMode == DockMode::PanelDocked) { break; }
+            }
+            if (repaired.isEmpty() && !saved.containers.isEmpty()) {
+                repaired = saved.containers.first().id;
+            }
+            qCWarning(lcContainer) << "Workspace mainContainerId" << saved.mainContainerId
+                                   << "was stale; repaired to" << repaired;
+            saved.mainContainerId = repaired;
+        }
+    }
     if (!lockApplies()) {
         clearLocks(saved);
     }
@@ -691,7 +724,10 @@ bool ContainerManager::returnHome(const QString& id)
 
 bool ContainerManager::lockApplies()
 {
-    return !WorkspacePreview::enabled();
+    // Locks are part of both looks. The workspace look used to clear them
+    // because it had no padlock; the container settings now offer Lock and
+    // Lock item positions in either look, so a saved lock is honoured.
+    return true;
 }
 bool ContainerManager::clearLocks(WorkspaceDocument& document)
 {
@@ -747,7 +783,22 @@ bool ContainerManager::hiddenByOwnFlags(const ContainerDocument &document) const
 {
     return !document.visible || !document.config.value("enabled").toBool(true) ||
            document.config.value("hiddenByMacro").toBool(false) ||
+           helperHidden(document) ||
            !document.config.value(m_transmitting ? "showOnTx" : "showOnRx").toBool(true);
+}
+bool ContainerManager::helperHidden(const ContainerDocument &document) const
+{
+    return (document.linkedHfAuto && !m_hfHelperEnabled)
+        || (document.linkedWaveNode && !m_waveNodeHelperEnabled);
+}
+void ContainerManager::setHelperEnabled(bool hfAuto, bool waveNode)
+{
+    if (m_hfHelperEnabled == hfAuto && m_waveNodeHelperEnabled == waveNode) { return; }
+    m_hfHelperEnabled = hfAuto;
+    m_waveNodeHelperEnabled = waveNode;
+    if (m_store && !m_reconciling) {
+        reconcileWorkspace(m_store->snapshot());
+    }
 }
 void ContainerManager::setTransmitting(bool transmitting)
 {
@@ -932,6 +983,7 @@ bool ContainerManager::eventFilter(QObject* watched, QEvent* event)
 }
 void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
 {
+    QElapsedTimer clock; clock.start();
     // Final geometry/config commits remain durable without showing closed
     // forms again. This also covers aboutToQuit saves after Qt 6.4's Quit scope.
     if (GuiApplication::applicationQuitInProgress()) { return; }
@@ -1180,7 +1232,7 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
             else { c->setParent(m_dockParent); }
         }
         c->setDockMode(d.dockMode); c->setNotes(d.name); c->setRxSource(d.config.value("rxSource").toInt(1));
-        c->setAxisLock(d.anchor); c->setLocked(lockApplies() && d.locked); c->setAutoHeight(d.autoHeight);
+        c->setAxisLock(d.anchor); c->setLocked(lockApplies() && d.locked); c->setLockItemPositions(lockApplies() && d.lockItemPositions); c->setAutoHeight(d.autoHeight);
         c->setPopOutShell(d.popOutShell);
         c->setHeaderMode(d.header);
         if (WorkspacePreview::enabled()) {
@@ -1190,12 +1242,15 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
             c->setArrangeDropRule(edgeMode());
             c->setGridAlignment(document.arrangement.gridAlignment ? kWorkspaceSnapGridPx : 0);
         }
+        c->setHelperKind(d.config.value("helperContainer").toString());
         c->setContainerEnabled(d.config.value("enabled").toBool(true));
         c->setShowOnRx(d.config.value("showOnRx").toBool(true)); c->setShowOnTx(d.config.value("showOnTx").toBool(true));
-        c->setContainerMinimises(d.config.value("containerMinimises").toBool(false));
+        const bool helperWindow =
+            d.config.value(QStringLiteral("helperContainer")).toString().startsWith(QLatin1String("helper."));
+        c->setContainerMinimises(helperWindow ? false
+                                              : d.config.value(QStringLiteral("containerMinimises")).toBool(false));
         c->setContainerHidesWhenRxNotUsed(d.config.value("hidesWhenRxNotUsed").toBool(false));
         c->setBackgroundColor(QColor(d.config.value("backgroundColor").toString("#0f0f1a")));
-        c->setClearFloatingBackground(d.config.value("clearFloatingBackground").toBool(false));
         c->setBorder(d.config.value("border").toBool(true)); c->setNoControls(d.config.value("noControls").toBool(false));
         c->setPinOnTop(d.config.value("pinOnTop").toBool(false));
         if (fresh && d.dockMode==DockMode::Floating && !d.geometry.isValid()) {
@@ -1236,7 +1291,13 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
                 emit meterContextReady(meter, context);
                 emit meterReadyForPolling(meter);
             });
-            connect(host, &ContainerContentHost::reconciled, this, &ContainerManager::workspaceReconciled);
+            // One sweep per workspace reconcile: each host reconciles inside
+            // reconcileWorkspace, which emits once at its end. Forwarding every
+            // host's signal ran MainWindow's whole-container sweep four times
+            // per commit (about 300 ms on a three-container workspace).
+            connect(host, &ContainerContentHost::reconciled, this, [this] {
+                if (!m_reconciling) { emit workspaceReconciled(); }
+            });
             // The container is never narrower than its content (JJ,
             // 2026-10-08). Queued: a split set while the window is built
             // (MainWindow's first-run setSizes({1024, 256}), a restored
@@ -1311,6 +1372,21 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
             const bool restoring = m_displaced.contains(d.id) || (windowPlaced && !atDocumentPlace);
             placeFloatingWindow(d.id, d.geometry, d.screen, form, windowPlaced, restoring);
         }
+        if (d.dockMode == DockMode::Floating
+            && c->helperKind() == QLatin1String("helper.wavenode")) {
+            // The three-column face starts clipping its captions below this
+            // size. A fixed floor is used so growing the window does not
+            // keep raising the floor.
+            form->setMinimumSize(qMax(form->minimumWidth(), 600),
+                                 qMax(form->minimumHeight(), 250));
+        }
+        if (d.dockMode == DockMode::Floating
+            && c->helperKind() == QLatin1String("helper.hfauto")) {
+            // A smaller floor still leaves each of the three rows taller
+            // than its width-scaled text; it just leaves less air below.
+            form->setMinimumSize(qMax(form->minimumWidth(), 320),
+                                 qMax(form->minimumHeight(), 160));
+        }
         // A free container is shown by placeFreeContainers() below, from its
         // remembered place; nothing is clamped into that place here.
         if (d.dockMode == DockMode::Floating) {
@@ -1345,7 +1421,20 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
     if (!m_pendingGeometry.isEmpty() && !interactionActive && m_storageError.isEmpty()) {
         m_geometryCommit.start();
     }
+    // A floating shell only shows while it hosts its container as a floating
+    // window. An empty shell (a docked or closed container) is hidden, so no
+    // blank window appears beside the console at startup.
+    for (auto it = m_floatingForms.constBegin(); it != m_floatingForms.constEnd(); ++it) {
+        FloatingContainer* shell = it.value();
+        ContainerWidget* hosted = m_containers.value(it.key());
+        if (!shell) { continue; }
+        if (!hosted || hosted->dockMode() != DockMode::Floating || !hosted->isVisible()) {
+            shell->hide();
+        }
+    }
     emit workspaceReconciled();
+    qCInfo(lcContainer) << "workspace reconcile:" << document.containers.size() << "containers,"
+                        << changed.size() << "rebuilt" << clock.elapsed() << "ms";
 }
 void ContainerManager::setArrangeMode(bool on)
 {
@@ -2229,7 +2318,7 @@ void ContainerManager::wireContainer(ContainerWidget* container)
     // (createContainer + caller setContent) and the restore path
     // (ContainerManager itself calls setContent after wireContainer).
     // During restoreState() m_suppressMeterAnnouncements is set so
-    // the placeholder → setMeterFloating → fresh-meter cascade
+    // the placeholder â†’ setMeterFloating â†’ fresh-meter cascade
     // doesn't emit twice; restoreState emits one manual announcement
     // after the final content is in place.
     connect(container, &ContainerWidget::contentChanged, this,
@@ -2251,11 +2340,11 @@ QString ContainerManager::extractMeterItems(ContainerWidget* container)
     const QString payload = meter->serializeItems();
 
     if (qobject_cast<MeterWidget*>(content) == meter) {
-        // Bare MeterWidget as content — clear via setContent(nullptr) so
+        // Bare MeterWidget as content â€” clear via setContent(nullptr) so
         // the content holder layout is empty during the upcoming reparent.
         container->setContent(nullptr);
     } else if (auto* panel = qobject_cast<AppletPanelWidget*>(content)) {
-        // AppletPanelWidget header — detach the MeterWidget so the panel
+        // AppletPanelWidget header â€” detach the MeterWidget so the panel
         // can reparent with no native-window child.
         panel->clearHeaderWidget();
     }
@@ -2279,13 +2368,13 @@ void ContainerManager::installFreshMeter(ContainerWidget* container, const QStri
     if (auto* panel = qobject_cast<AppletPanelWidget*>(content)) {
         panel->setHeaderWidget(fresh, QStringLiteral("Meters"), 1.3f);
         // Same gate as the wireContainer contentChanged listener below
-        // — restoreState emits one manual announcement per container
+        // â€” restoreState emits one manual announcement per container
         // once the final content is in place.
         if (!m_suppressMeterAnnouncements) {
             emit meterReadyForPolling(fresh);
         }
     } else {
-        // Bare content path (user-created containers) — setContent emits
+        // Bare content path (user-created containers) â€” setContent emits
         // contentChanged which routes into meterReadyForPolling.
         container->setContent(fresh);
     }
@@ -2330,13 +2419,13 @@ ContainerWidget* ContainerManager::duplicateContainer(const QString& sourceId)
     dup->setNotes(src->notes());
     dup->setBorder(src->hasBorder());
     dup->setLocked(src->isLocked());
+    dup->setLockItemPositions(src->lockItemPositions());
     dup->setContainerEnabled(src->isContainerEnabled());
     dup->setShowOnRx(src->showOnRx());
     dup->setShowOnTx(src->showOnTx());
     dup->setContainerMinimises(src->containerMinimises());
     dup->setContainerHidesWhenRxNotUsed(src->containerHidesWhenRxNotUsed());
     dup->setAutoHeight(src->autoHeight());
-    dup->setClearFloatingBackground(src->clearFloatingBackground());
     dup->setTitleBarVisible(src->isTitleBarVisible());
     dup->setPinOnTop(src->isPinOnTop());
     dup->setAxisLock(src->axisLock());
@@ -2388,6 +2477,217 @@ void ContainerManager::showDuplicate(ContainerDocument& copy, const ContainerDoc
     // (a second copy of the same original would land on the first).
     copy.geometry = defaultWindowRect(anchor.translated(kDuplicateOffsetPx, kDuplicateOffsetPx));
     copy.screen = screenForNewWindow(copy.geometry);
+}
+
+QString ContainerManager::ensureHelperContainer(const QString& typeId, const QString& title,
+                                                bool linkedHfAuto, bool linkedWaveNode,
+                                                const QString& thetisDatPath)
+{
+    if (!m_store || m_reconciling) { return {}; }
+    // A helper container imported by an older build is replaced, so its item
+    // positions follow the current .dat instead of the stale import. The
+    // version is shared with ContainerSettingsDialog, so a layout loaded into
+    // a helper container is not replaced at the next start.
+    static constexpr int kThetisLayoutVersion = kHelperThetisLayoutVersion;
+    WorkspaceDocument document = m_store->snapshot();
+
+    // The old combined helper window (both panels in one container) is not
+    // part of the two-container layout. Remove it as the dedicated ones are
+    // made, so the operator does not have to delete it by hand.
+    bool removedLegacy = false;
+    for (int i = document.containers.size() - 1; i >= 0; --i) {
+        const ContainerDocument& candidate = document.containers.at(i);
+        if (!candidate.config.value(QStringLiteral("helperContainer")).toString().isEmpty()) {
+            continue;
+        }
+        int helperPanels = 0;
+        for (const auto& entry : candidate.contents) {
+            if (entry.typeId.startsWith(QLatin1String("helper."))) { ++helperPanels; }
+        }
+        if (helperPanels > 1) {
+            document.containers.removeAt(i);
+            removedLegacy = true;
+        }
+    }
+    if (removedLegacy) {
+        if (commitWorkspace(document, document.revision).status != CommitStatus::Saved) {
+            return {};
+        }
+        document = m_store->snapshot();
+    }
+
+    // A dedicated container already exists (marker, or only this helper's
+    // panel): reveal it. A container that holds both helper panels is not
+    // reused, so WaveNode and HF-Auto get separate containers.
+    int staleImport = -1;
+    for (int i = 0; i < document.containers.size(); ++i) {
+        ContainerDocument& c = document.containers[i];
+        const bool dedicated = c.config.value(QStringLiteral("helperContainer")).toString() == typeId;
+        bool hasPanel = false;
+        bool hasOtherHelper = false;
+        for (const auto& entry : c.contents) {
+            if (entry.typeId == typeId) { hasPanel = true; }
+            else if (entry.typeId.startsWith(QLatin1String("helper."))) { hasOtherHelper = true; }
+        }
+        if (!dedicated && (!hasPanel || hasOtherHelper)) { continue; }
+        if (dedicated && hasOtherHelper) { continue; }
+        if (dedicated && !thetisDatPath.isEmpty() && QFile::exists(thetisDatPath)
+            && c.config.value(QStringLiteral("thetisLayoutVersion")).toInt() != kThetisLayoutVersion) {
+            staleImport = i;
+            break;
+        }
+        const bool changed = !c.visible
+            || c.config.value(QStringLiteral("hiddenByMacro")).toBool(false);
+        c.visible = true;
+        c.config[QStringLiteral("hiddenByMacro")] = false;
+        if (changed) { commitWorkspace(document, document.revision); }
+        showHelperContainer(c.id);
+        return c.id;
+    }
+    if (staleImport >= 0) {
+        document.containers.removeAt(staleImport);
+        if (commitWorkspace(document, document.revision).status != CommitStatus::Saved) {
+            return {};
+        }
+        document = m_store->snapshot();
+    }
+
+    // The helper's own Thetis layout, when it is shipped and decodes.
+    if (!thetisDatPath.isEmpty()) {
+        QFile file(thetisDatPath);
+        if (file.open(QIODevice::ReadOnly)) {
+            const DocumentResult decoded = ThetisContainerFile::decode(file.readAll());
+            if (decoded.ok && decoded.document.containers.size() == 1) {
+                ContainerDocument container = decoded.document.containers.first();
+                QSet<QString> ids;
+                for (const auto& existing : document.containers) { ids.insert(existing.id); }
+                if (container.id.isEmpty() || ids.contains(container.id)) {
+                    container.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+                }
+                container.name = title;
+                container.dockMode = DockMode::Floating;
+                // Thetis saves the HF-Auto container with auto-height on,
+                // which pins its height and hides the resize grip. A helper
+                // window is an ordinary meter window here.
+                container.autoHeight = false;
+                // The saved "minimises" flag also collapses the window to
+                // its minimum before it is shown.
+                container.config[QStringLiteral("containerMinimises")] = false;
+                if (!container.geometry.isValid() || container.geometry.width() <= 0
+                    || container.geometry.height() <= 0) {
+                    container.geometry = typeId.contains(QLatin1String("hfauto"))
+                        ? QRect(940, 180, 520, 320) : QRect(240, 180, 660, 480);
+                } else {
+                    // Fit the Thetis window to this monitor while keeping its
+                    // aspect ratio, so the item layout is not stretched.
+                    const ScreenInfo screen = m_screens
+                        ? m_screens->screenFor(container.geometry) : ScreenInfo{};
+                    const QRect available = screen.available.isValid()
+                        ? screen.available : screen.geometry;
+                    if (available.isValid()) {
+                        const double scale = qMin(1.0,
+                            qMin(qMin(720.0, available.width() * 0.9) / container.geometry.width(),
+                                 (available.height() * 0.85) / container.geometry.height()));
+                        container.geometry.setSize(QSize(
+                            qMax(320, qRound(container.geometry.width() * scale)),
+                            qMax(240, qRound(container.geometry.height() * scale))));
+                        // The two helpers sit beside each other, not on top
+                        // of one another: WaveNode at the left, HF-Auto to
+                        // its right.
+                        const int left = available.left() + 40;
+                        const int wantedX = typeId.contains(QLatin1String("hfauto"))
+                            ? left + 740 : left;
+                        container.geometry.moveTopLeft(QPoint(
+                            qBound(left, wantedX,
+                                   qMax(left, available.right()
+                                                 - container.geometry.width() - 40)),
+                            available.top() + 40));
+                    }
+                }
+                container.visible = true;
+                container.linkedHfAuto = linkedHfAuto;
+                container.linkedWaveNode = linkedWaveNode;
+                container.config[QStringLiteral("helperContainer")] = typeId;
+                container.config[QStringLiteral("thetisLayoutVersion")] = kThetisLayoutVersion;
+                document.containers.append(container);
+                if (commitWorkspace(document, document.revision).status == CommitStatus::Saved) {
+                    keepNewWindowPlace(container.id);
+                    showHelperContainer(container.id);
+                    return container.id;
+                }
+            }
+        }
+    }
+
+    // Fallback: a dedicated panel container (the .dat was not available).
+    ContainerDocument container;
+    container.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    container.name = title;
+    container.layout = ContentLayout::VerticalStack;
+    container.dockMode = DockMode::Floating;
+    container.geometry = QRect(240, 180, 420, 300);
+    container.visible = true;
+    container.linkedHfAuto = linkedHfAuto;
+    container.linkedWaveNode = linkedWaveNode;
+    container.config[QStringLiteral("rxSource")] = 1;
+    container.config[QStringLiteral("helperContainer")] = typeId;
+    ContentEntry entry;
+    entry.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    entry.typeId = typeId;
+    entry.name = title;
+    entry.visible = true;
+    container.contents.append(entry);
+    document.containers.append(container);
+    if (commitWorkspace(document, document.revision).status != CommitStatus::Saved) {
+        return {};
+    }
+    keepNewWindowPlace(container.id);
+    showHelperContainer(container.id);
+    return container.id;
+}
+
+void ContainerManager::showHelperContainer(const QString& id)
+{
+    auto* widget = container(id);
+    if (widget) { widget->setVisible(true); }
+    // Only a floating helper has a window of its own. A docked helper's shell
+    // is empty, and showing it put a blank frame on the desktop.
+    if (widget && widget->dockMode() == DockMode::Floating) {
+        if (auto* form = m_floatingForms.value(id)) {
+            form->show();
+            form->raise();
+        }
+    }
+}
+
+void ContainerManager::resetHelperContainers()
+{
+    if (!m_store || m_reconciling) { return; }
+    WorkspaceDocument document = m_store->snapshot();
+    QVector<ContainerDocument> kept;
+    for (const auto& container : document.containers) {
+        bool helper = !container.config.value(QStringLiteral("helperContainer")).toString().isEmpty();
+        if (!helper) {
+            for (const auto& entry : container.contents) {
+                if (entry.typeId.startsWith(QLatin1String("helper."))) { helper = true; break; }
+            }
+        }
+        if (!helper) { kept.append(container); }
+    }
+    document.containers = kept;
+    commitWorkspace(document, document.revision);
+
+    HelperApps& helpers = HelperApps::instance();
+    const QString files = QCoreApplication::applicationDirPath()
+        + QStringLiteral("/Container Files/");
+    if (helpers.enabled(HelperApps::Helper::WaveNode)) {
+        ensureHelperContainer(QStringLiteral("helper.wavenode"), tr("WaveNode"), false, true,
+                              files + QStringLiteral("WaveNode-good.dat"));
+    }
+    if (helpers.enabled(HelperApps::Helper::HfAuto)) {
+        ensureHelperContainer(QStringLiteral("helper.hfauto"), tr("HF-Auto"), true, false,
+                              files + QStringLiteral("Palstar_HF-Auto.dat"));
+    }
 }
 
 ContainerWidget* ContainerManager::createContainer(int rxSource, DockMode mode)
@@ -3072,7 +3372,7 @@ void ContainerManager::updateDockedPositions(int hDelta, int vDelta)
         placeFreeContainersIn(QSize(hDelta, vDelta));
         return;
     }
-    // From Thetis MeterManager.cs:5812-5865 — overlay-docked only
+    // From Thetis MeterManager.cs:5812-5865 â€” overlay-docked only
     for (auto it = m_containers.constBegin(); it != m_containers.constEnd(); ++it) {
         ContainerWidget* c = it.value();
         if (!c->isOverlayDocked()) {
@@ -3281,7 +3581,7 @@ void ContainerManager::setContainerVisible(const QString& id, bool visible)
 }
 
 // ---------------------------------------------------------------------------
-// forEachMeterItem — Task 3.2 unit-mode fan-out helper
+// forEachMeterItem â€” Task 3.2 unit-mode fan-out helper
 //
 // Walks every container, extracts its MeterWidget via innerMeterWidget(),
 // and invokes fn on each MeterItem in that widget.  Used by MultimeterPage
@@ -3333,7 +3633,7 @@ void ContainerManager::saveState()
             auto* c = container(d.id); if (!c) { continue; }
             // Geometry commits retain the committed content verbatim; live readings
             // and stack projection are presentation state, not document edits.
-            d.name = c->notes(); d.dockMode = c->dockMode(); d.locked = c->isLocked(); d.autoHeight = c->autoHeight(); d.anchor = c->axisLock();
+            d.name = c->notes(); d.dockMode = c->dockMode(); d.locked = c->isLocked(); d.lockItemPositions = c->lockItemPositions(); d.autoHeight = c->autoHeight(); d.anchor = c->axisLock();
             // The remembered place, never the widget's rect: what is shown
             // may differ for a while (a small pane, a missing screen).
             d.geometry = m_rememberedGeometry.value(d.id, d.geometry);
@@ -3388,7 +3688,7 @@ void ContainerManager::saveState()
         // Bare-MeterWidget and AppletPanelWidget content shapes both
         // resolve via innerMeterWidget(); placeholder content (the
         // QLabel installed by the constructor) returns nullptr and is
-        // skipped. Stored in a parallel key — items payload contains
+        // skipped. Stored in a parallel key â€” items payload contains
         // both '|' and '\n' separators that would corrupt the
         // field-tolerant container metadata format if appended.
         if (auto* meter = innerMeterWidget(c->content())) {
@@ -3462,7 +3762,7 @@ void ContainerManager::restoreState()
         }
 
         // Restore meter items into whichever MeterWidget the content
-        // shape exposes (bare or wrapped). Empty payload → leave the
+        // shape exposes (bare or wrapped). Empty payload â†’ leave the
         // fresh meter empty so caller-side seeding can decide what to
         // do (Container #0's default presets, etc.).
         if (auto* meter = innerMeterWidget(content)) {

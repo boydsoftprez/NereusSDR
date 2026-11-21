@@ -221,6 +221,7 @@ private:
     bool rxOutOnTxNow() const;
     bool ext1OutOnTxNow() const;
     bool ext2OutOnTxNow() const;
+    bool autoRxBypassNow() const;
     bool rxOutOverrideNow() const;
     bool useTxAntForRxNow() const;
 
@@ -265,6 +266,8 @@ private:
     QCheckBox* m_chkRxOutOnTx     {nullptr};  // "RX Bypass on TX"
     QCheckBox* m_chkExt1OutOnTx   {nullptr};  // "Ext 1 on TX"
     QCheckBox* m_chkExt2OutOnTx   {nullptr};  // "Ext 2 on TX"
+    // WD5Y: "Rx Bypass on Tx Auto" - Ext 2 on TX follows the external PA.
+    QCheckBox* m_chkAutoBypass    {nullptr};
     QCheckBox* m_chkRxOutOverride {nullptr};  // "Disable RX Bypass relay"
     QCheckBox* m_chkUseTxAntForRx {nullptr};  // "Use TX antenna for RX"
     QCheckBox* m_chkBpf2GndOnTx   {nullptr};  // "Gnd BPF2 on Tx" (chkBPF2Gnd)

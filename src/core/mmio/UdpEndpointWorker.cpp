@@ -109,7 +109,10 @@ void UdpEndpointWorker::start()
     const quint16 port = m_endpoint->port();
 
     if (!m_socket->bind(bindAddr, port)) {
+        const QString reason = QStringLiteral("UDP port %1 could not be opened: %2")
+                                   .arg(port).arg(m_socket->errorString());
         qCWarning(lcMmio) << "UDP bind failed:" << m_socket->errorString();
+        emit errorOccurred(reason);
         setState(State::Error);
         return;
     }

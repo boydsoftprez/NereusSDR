@@ -163,6 +163,10 @@ public:
     /// showTwoToneMeasurementsChanged intent.
     void setShowTwoToneMeasurements(bool on);
 
+    /// Create/reuse the AmpView singleton and show it. Used by the AmpView
+    /// button and by startup restore when AmpView was open at the last exit.
+    void restoreAmpView();
+
     // Returns true when the dialog is currently in collapsed (Advanced)
     // mode (560x60 strip).  False when expanded (560x300 full form).
     // Mirrors Thetis _advancedON flag (PSForm.cs:888 [v2.10.3.13]).

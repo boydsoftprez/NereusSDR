@@ -353,6 +353,7 @@ private:
     PaCalProfile m_paCalProfile;
 
     QString m_mac;
+    bool m_loaded{false};
 };
 
 } // namespace NereusSDR

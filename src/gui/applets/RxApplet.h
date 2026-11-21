@@ -181,6 +181,7 @@ class QHBoxLayout;
 class QLabel;
 class QMenu;
 class QSlider;
+class QTimer;
 class QSpinBox;
 class QStackedWidget;
 class QToolButton;
@@ -374,6 +375,12 @@ private:
     void connectSlice(SliceModel* s);
     void disconnectSlice(SliceModel* s);
     void updateFilterLabel();
+
+    // RX EQ badges: the curve's maximum boost (headroom) and the live
+    // post-EQ level of this slice.
+    void refreshRxEqBadges();
+    void pollRxEqMeters();
+    double rxEqMaxBoostDb() const;
     void rebuildFilterButtons(DSPMode mode);
     // A copy's preset buttons from the applet's current presets; `wire`
     // false (a preview) leaves them inert.
@@ -515,6 +522,12 @@ private:
     // ── Row 1: badge | lock | rx ant | tx ant | filter label ──────────────
     QLabel*      m_sliceBadge     = nullptr;   // Control 1
     QPushButton* m_lockBtn        = nullptr;   // Control 2
+    QPushButton* m_eqBtn          = nullptr;   // RX equalizer
+    QWidget*     m_rxEqBadgeRow   = nullptr;   // BOOST / LVL badges
+    QLabel*      m_rxEqBoostBadge = nullptr;
+    QLabel*      m_rxEqLevelBadge = nullptr;
+    QTimer*      m_rxEqMeterTimer = nullptr;
+    double       m_rxEqLevelHoldDb{-120.0};
     QPushButton* m_rxAntBtn       = nullptr;   // Control 3
     QPushButton* m_txAntBtn       = nullptr;   // Control 4
     QLabel*      m_filterWidthLbl = nullptr;   // Control 5

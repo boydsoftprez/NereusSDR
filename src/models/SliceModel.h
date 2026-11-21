@@ -824,6 +824,7 @@ private:
     // Append-only wire field: measured receive input pressure, never an
     // applied NNR limit and never persisted. Empty means no current warning.
     Q_PROPERTY(QString nnrLoadWarning READ nnrLoadWarning NOTIFY nnrLoadWarningChanged)
+    Q_PROPERTY(int nnrDspLoadPercent READ nnrDspLoadPercent NOTIFY nnrDspLoadPercentChanged)
 
 public:
     // Receive-layout admission bounds: general receive defaults, not a
@@ -1196,6 +1197,15 @@ public:
     bool   muted()           const { return m_muted; }
     void   setMuted(bool v);
 
+    // TX audio check crash recovery (2026-11-15). The check mutes every
+    // receiver and gives the operator's own mute back when it ends; a crash
+    // in between used to leave the receiver silenced on the next start. The
+    // own mute is remembered under Slice<N>/MutedBeforeCheck before the
+    // check mutes, and loadFromSettings() takes it back if the check never
+    // ended. Static so RadioModel can forget a slice that closed mid-check.
+    static void rememberMuteForAudioCheck(int sliceIndex, bool muted);
+    static void forgetMuteForAudioCheck(int sliceIndex);
+
     double audioPan()        const { return m_audioPan; }
     void   setAudioPan(double pan);
 
@@ -1360,6 +1370,9 @@ public:
     // remote GUI by the station mirror. Never saved: the operator's saved
     // choice (nnrModelSlot, activeNr) is untouched while it is in force.
     QString nnrLoadWarning() const { return m_nnrLoadWarning; }
+    /// Measured DSP worker load for this receiver, 0-100 %, or -1 when not measured.
+    int nnrDspLoadPercent() const { return m_nnrDspLoadPercent; }
+    void setNnrDspLoadPercent(int percent);
     void setNnrLoadWarning(const QString& warning);
     int nnrLimit() const { return m_nnrLimit; }
     void setNnrLimit(int limit);
@@ -1895,6 +1908,7 @@ signals:
     void nnrLastErrorChanged();
     void nnrEditRejected(const QString& reason);
     void nnrLoadWarningChanged(const QString& warning);
+    void nnrDspLoadPercentChanged(int percent);
     void nnrLimitChanged(int limit);
     // The operator wants the saved NNR choice back: "Try again", or choosing
     // a model while a limit is in force.
@@ -2122,6 +2136,7 @@ private:
     QString m_settingsRadioMac;
     QString m_nnrLastError;
     QString m_nnrLoadWarning;
+    int m_nnrDspLoadPercent{-1};
     int m_nnrLimit{0};   // R-R3-40 runtime only; see nnrLimit()
     bool m_nnrLimitFromCore{false};   // set by the station mirror; see nnrLimitText()
     void setNnrLastError(const QString& error);

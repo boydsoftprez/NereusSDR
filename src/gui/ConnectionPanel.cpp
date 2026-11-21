@@ -167,6 +167,50 @@ namespace {
 // setDiscoveryStartSkippedForTest(): the constructor does not start
 // discovery. False in the app.
 bool g_discoveryStartSkippedForTest = false;
+
+// A row's Name label. Discovery can only report the board, and one board
+// row serves several products: HPSDRHW::OrionMKII is the ANAN-7000DLE, the
+// ANAN-8000DLE, the Anvelina Pro 3 and the Red Pitaya. When the operator
+// has selected a model for this MAC, that SKU is the useful label; the
+// Board column still names the physical board. A name the operator typed
+// (one that differs from the board's own label) always wins.
+QString rowDisplayName(const RadioInfo& info)
+{
+    const QString boardName = QString::fromLatin1(
+        BoardCapsTable::forBoard(info.boardType).displayName);
+    const bool usingBoardName = info.name.isEmpty() || info.name == boardName;
+    if (usingBoardName && info.modelOverride != HPSDRModel::FIRST
+        && info.modelOverride != HPSDRModel::LAST) {
+        return QString::fromLatin1(displayName(info.modelOverride));
+    }
+    if (!info.name.isEmpty()) {
+        return info.name;
+    }
+    if (!boardName.isEmpty()) {
+        return boardName;
+    }
+    return info.displayName();
+}
+
+// A manual saved entry (MANUAL:ip:port) and the radio discovery reports by
+// MAC are the same physical unit. The manual entry carries the operator's
+// name, model override and per-MAC settings; do not add a second row for its
+// discovered twin.
+bool coveredByManualEntry(const RadioInfo& info)
+{
+    if (info.macAddress.startsWith(QLatin1String("MANUAL:"))) {
+        return false;
+    }
+    for (const SavedRadio& saved : AppSettings::instance().savedRadios()) {
+        if (!saved.info.macAddress.startsWith(QLatin1String("MANUAL:"))) {
+            continue;
+        }
+        if (saved.info.address == info.address && saved.info.port == info.port) {
+            return true;
+        }
+    }
+    return false;
+}
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -300,7 +344,11 @@ ConnectionPanel::ConnectionPanel(RadioModel* model, QWidget* parent)
                                         sr.lastSeen.toMSecsSinceEpoch());
                 }
             }
-            upsertRowForInfo(sr.info, /*online=*/false);
+            // One row per physical radio: the manual entry already covers its
+            // discovered twin, which appears by MAC but is the same address.
+            if (!coveredByManualEntry(sr.info)) {
+                upsertRowForInfo(sr.info, /*online=*/false);
+            }
         }
         disc->setSavedMacs(savedMacs);
     }
@@ -911,17 +959,9 @@ void ConnectionPanel::populateRow(int row, const RadioInfo& info)
 {
     // Derive display strings — prefer the user-saved name when present
     // (matches what they typed in the Add Radio dialog or detail panel).
-    // Fall back to the board's canonical display name, then to displayName().
-    const QString& capDisplayName =
-        QString::fromUtf8(BoardCapsTable::forBoard(info.boardType).displayName);
-    QString name;
-    if (!info.name.isEmpty()) {
-        name = info.name;
-    } else if (!capDisplayName.isEmpty()) {
-        name = capDisplayName;
-    } else {
-        name = info.displayName();
-    }
+    // Fall back to the selected model's name (the board row alone cannot
+    // name an Anvelina Pro 3), then to the board's canonical display name.
+    QString name = rowDisplayName(info);
 
     // Board string — HPSDRHW enum to friendly name
     QString boardStr;
@@ -1052,6 +1092,9 @@ void ConnectionPanel::highlightMac(const QString& mac)
 
 void ConnectionPanel::onRadioDiscovered(const RadioInfo& info)
 {
+    if (coveredByManualEntry(info)) {
+        return;
+    }
     // Don't add duplicates
     if (rowForMac(info.macAddress) >= 0) {
         onRadioUpdated(info);
@@ -1065,6 +1108,13 @@ void ConnectionPanel::onRadioDiscovered(const RadioInfo& info)
     if (auto saved = AppSettings::instance().savedRadio(info.macAddress)) {
         if (!saved->info.name.isEmpty()) {
             merged.name = saved->info.name;
+        }
+        // Discovery carries the board, never the SKU. A model the operator
+        // picked earlier names the row (Anvelina Pro 3, not the shared
+        // ANAN-7000DLE/8000DLE board label).
+        if (merged.modelOverride == HPSDRModel::FIRST
+            && saved->info.modelOverride != HPSDRModel::FIRST) {
+            merged.modelOverride = saved->info.modelOverride;
         }
     }
 
@@ -1091,6 +1141,9 @@ void ConnectionPanel::onRadioDiscovered(const RadioInfo& info)
 
 void ConnectionPanel::onRadioUpdated(const RadioInfo& info)
 {
+    if (coveredByManualEntry(info)) {
+        return;
+    }
     // Layer the user-saved name (if any) over broadcast info — same merge
     // as onRadioDiscovered. Refresh-on-broadcast must not clobber the
     // user-typed label.
@@ -1098,6 +1151,12 @@ void ConnectionPanel::onRadioUpdated(const RadioInfo& info)
     if (auto saved = AppSettings::instance().savedRadio(info.macAddress)) {
         if (!saved->info.name.isEmpty()) {
             merged.name = saved->info.name;
+        }
+        // Same merge as onRadioDiscovered: the saved model override names
+        // the SKU the board byte cannot distinguish.
+        if (merged.modelOverride == HPSDRModel::FIRST
+            && saved->info.modelOverride != HPSDRModel::FIRST) {
+            merged.modelOverride = saved->info.modelOverride;
         }
     }
 
@@ -1582,6 +1641,17 @@ void ConnectionPanel::onModelComboChanged(int index)
 
     AppSettings::instance().setModelOverride(info.macAddress, model);
     AppSettings::instance().save();
+
+    // The row's Name column follows the selected SKU immediately. Discovery
+    // can only name the shared board row, so without this an operator who
+    // picked Anvelina Pro 3 still reads "ANAN-7000DLE/8000DLE".
+    if (m_discoveredRadios.contains(info.macAddress)) {
+        m_discoveredRadios[info.macAddress].modelOverride = model;
+        const int row = rowForMac(info.macAddress);
+        if (row >= 0) {
+            populateRow(row, m_discoveredRadios.value(info.macAddress));
+        }
+    }
 
     HPSDRModel defaultModel = defaultModelForBoard(info.boardType);
     QString boardName = QString::fromLatin1(

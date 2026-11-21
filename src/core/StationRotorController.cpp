@@ -694,7 +694,7 @@ bool StationRotorController::nudgeRotor(RotorDirection direction, bool active,
     if (!active) {
         // The window let go: its hold stops now. An overtaken window
         // letting go leaves the winner's hold alone.
-        if (m_overtaken.remove(sessionId) > 0) { return true; }
+        if (m_overtaken.remove(sessionId)) { return true; }
         if (m_holdActive && m_holdSession == sessionId) {
             endHold();
             m_connection->stop();

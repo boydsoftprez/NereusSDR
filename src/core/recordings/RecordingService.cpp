@@ -211,6 +211,15 @@ RecordingService::RecordingService(RadioModel* radio, QObject* parent)
     m_quietTimer = new QTimer(this);
     m_quietTimer->setInterval(kQuietCheckIntervalMs);
     connect(m_quietTimer, &QTimer::timeout, this, &RecordingService::checkQuiet);
+    // The recorder's lanes follow the radio's streams, however late those
+    // appear (a reconnect, or a start before the streams were made).
+    m_dsrSyncTimer = new QTimer(this);
+    m_dsrSyncTimer->setInterval(1000);
+    connect(m_dsrSyncTimer, &QTimer::timeout, this, [this] {
+        if (m_dsrRunning) {
+            syncDsrStreams();
+        }
+    });
     // Task 25: an opened stretch deleted from any device closes.
     connect(m_store.get(), &RecordingStore::changed, this, [this] {
         if (!m_stretch.id.isEmpty() && !m_store->find(m_stretch.id).has_value()) {
@@ -1634,6 +1643,27 @@ void RecordingService::setRadioStreaming(bool on)
         endAllRewinds(true);
     }
     applyDsr();
+    // The recorder may have started before the streams existed (a reconnect,
+    // or the settings applied at startup); give it their centres now.
+    if (on && m_dsrRunning) {
+        syncDsrStreams();
+    }
+}
+
+void RecordingService::syncDsrStreams()
+{
+    if (!m_dsr || !m_radio) {
+        return;
+    }
+    // Every stream the radio reports: the recorder's lanes are per receiver,
+    // and a lane with no centre would move the past by the whole RF offset.
+    for (int stream = 0; stream < 8; ++stream) {
+        const int rate = m_radio->streamSampleRateHz(stream);
+        const double centre = m_radio->streamCentreHz(stream);
+        if (rate > 0) {
+            m_dsr->setStream(stream, std::llround(centre), rate);
+        }
+    }
 }
 
 void RecordingService::applyDsr()
@@ -1653,6 +1683,9 @@ void RecordingService::applyDsr()
     }
     if (want && !m_dsrRunning) {
         startDsr(path, limit);
+        // The streams may exist by now; a lane without a centre would move
+        // the past by the whole RF offset and play noise.
+        syncDsrStreams();
     }
     m_dsrOff = problem;
     m_dsrReasonKnown = true;
@@ -1665,15 +1698,7 @@ void RecordingService::startDsr(const QString& path, qint64 limitBytes)
     ensureWorker();
     m_dsr->setAccepting(false);
     // What each receiver streams now; streamCentreChanged follows it.
-    if (m_radio) {
-        for (const SliceModel* slice : m_radio->slices()) {
-            const int stream = slice != nullptr ? slice->streamIndex() : -1;
-            if (stream >= 0) {
-                m_dsr->setStream(stream, std::llround(m_radio->streamCentreHz(stream)),
-                                 m_radio->streamSampleRateHz(stream));
-            }
-        }
-    }
+    syncDsrStreams();
     const quint64 token = ++m_dsrToken;
     m_dsrRunning = true;
     m_dsrPath = path;
@@ -1699,6 +1724,9 @@ void RecordingService::startDsr(const QString& path, qint64 limitBytes)
         }
     }, Qt::QueuedConnection);
     m_dsr->setAccepting(true);
+    if (m_dsrSyncTimer != nullptr && !m_dsrSyncTimer->isActive()) {
+        m_dsrSyncTimer->start();
+    }
 }
 
 void RecordingService::stopDsr()
@@ -1709,6 +1737,9 @@ void RecordingService::stopDsr()
     // Nothing is kept to play: rewound slices go back to the radio.
     endAllRewinds(true);
     m_dsrRunning = false;
+    if (m_dsrSyncTimer != nullptr) {
+        m_dsrSyncTimer->stop();
+    }
     m_dsr->setAccepting(false);
     const quint64 token = m_dsrToken;
     QMetaObject::invokeMethod(m_workerContext, [this, token] {
@@ -1780,6 +1811,9 @@ void RecordingService::onDsrFailed(quint64 token)
     }
     endAllRewinds(true);
     m_dsrRunning = false;
+    if (m_dsrSyncTimer != nullptr) {
+        m_dsrSyncTimer->stop();
+    }
     m_dsr->setAccepting(false);
     const DsrOff problem = dsrDiskProblem(dsrVolumes());
     m_dsrOff = problem == DsrOff::None ? DsrOff::CannotWrite : problem;

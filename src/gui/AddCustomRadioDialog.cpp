@@ -77,6 +77,7 @@ mw0lge@grange-lane.co.uk
 #include "AddCustomRadioDialog.h"
 #include "StyleConstants.h"
 #include "core/BoardCapabilities.h"
+#include "core/HardwareProfile.h"
 #include "core/HpsdrModel.h"
 
 #include <QDateTime>
@@ -223,6 +224,10 @@ void AddCustomRadioDialog::setEditTarget(const RadioInfo& info,
         m_probedInfo = info;
         m_probedInfoFromProbe = false;
     }
+    // The dialog has no board field, so keep what the entry already knows.
+    m_editBoardType = info.boardType;
+    m_editHardwareRevision = info.hardwareRevision;
+    m_editReportedReceivers = info.reportedReceivers;
 
     validateFields();  // re-evaluate Save button enablement
 }
@@ -870,10 +875,22 @@ RadioInfo AddCustomRadioDialog::result() const
     const int userModelInt = m_modelCombo->currentData().toInt();
     info.modelOverride = static_cast<HPSDRModel>(userModelInt);
 
-    // Derive board type and capabilities from model (best-effort for offline saves)
-    const HPSDRHW hw = boardForModel(info.modelOverride == HPSDRModel::FIRST
-                                         ? HPSDRModel::HERMESLITE   // safe default for offline
-                                         : info.modelOverride);
+    // Derive board type and capabilities from the chosen model. With
+    // Auto-detect, keep the board the entry already had (an edit) or the one
+    // the probe reported; only a hand-typed, never-seen radio falls back to
+    // the Hermes Lite 2 default. Otherwise editing an Anvelina entry with
+    // Auto-detect saved it as Hermes Lite 2, which changed its audio and
+    // hid the 24-bit path.
+    HPSDRHW hw = HPSDRHW::Unknown;
+    if (info.modelOverride != HPSDRModel::FIRST) {
+        hw = boardForModel(info.modelOverride);
+    } else if (m_probedInfoFromProbe && m_probedInfo.boardType != HPSDRHW::Unknown) {
+        hw = m_probedInfo.boardType;
+    } else if (m_editBoardType != HPSDRHW::Unknown) {
+        hw = m_editBoardType;
+    } else {
+        hw = boardForModel(HPSDRModel::HERMESLITE);
+    }
     info.boardType = hw;
     const BoardCapabilities& caps = BoardCapsTable::forBoard(hw);
     info.adcCount            = caps.adcCount;
@@ -893,7 +910,7 @@ RadioInfo AddCustomRadioDialog::result() const
     // row's top, which spans both protocols on boards that run either.
     info.maxSampleRate = BoardCapsTable::maxSampleRateFor(
         caps, info.protocol,
-        info.modelOverride == HPSDRModel::FIRST ? HPSDRModel::HERMESLITE  // as for hw above
+        info.modelOverride == HPSDRModel::FIRST ? defaultModelForBoard(hw)
                                                 : info.modelOverride);
 
     info.firmwareVersion = 0;   // Unknown for manually added radios
@@ -910,8 +927,19 @@ RadioInfo AddCustomRadioDialog::result() const
         info.firmwareVersion     = m_probedInfo.firmwareVersion;
         info.firmwareBetaVersion = m_probedInfo.firmwareBetaVersion;
         info.reportedReceivers   = m_probedInfo.reportedReceivers;
+        if (info.hardwareRevision == 0) {
+            info.hardwareRevision = m_probedInfo.hardwareRevision;
+        }
         if (info.reportedReceivers > 0) {
             info.maxReceivers = info.reportedReceivers;
+        }
+    } else if (info.hardwareRevision == 0) {
+        // Editing a MANUAL: entry does not seed m_probedInfo; keep what the
+        // entry already knew (the 24-bit hardware revision in particular).
+        info.hardwareRevision = m_editHardwareRevision;
+        if (m_editReportedReceivers > 0) {
+            info.reportedReceivers = m_editReportedReceivers;
+            info.maxReceivers = m_editReportedReceivers;
         }
     }
 

@@ -20,8 +20,12 @@
 // =================================================================
 
 #include "gui/applets/VoiceKeyerApplet.h"
+#include "core/AudioEngine.h"
+#include "models/RadioModel.h"
+#include "models/SliceModel.h"
 
 #include <QAction>
+#include <QDateTime>
 #include <QContextMenuEvent>
 #include <QDir>
 #include <QElapsedTimer>
@@ -32,6 +36,7 @@
 #include <QGraphicsOpacityEffect>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QHideEvent>
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QLabel>
@@ -137,7 +142,35 @@ VoiceKeyerApplet::VoiceKeyerApplet(RadioModel* model, RecordingsAccess* access, 
     setAccess(access);
 }
 
-VoiceKeyerApplet::~VoiceKeyerApplet() = default;
+void VoiceKeyerApplet::restoreListenState()
+{
+    if (!m_listenMuting) { return; }
+    const QList<SliceModel*> slices = m_model != nullptr ? m_model->slices() : QList<SliceModel*>();
+    for (SliceModel* slice : slices) {
+        if (slice == nullptr) { continue; }
+        const auto found = m_listenMuteSaved.constFind(slice->sliceIndex());
+        if (found != m_listenMuteSaved.cend()) {
+            slice->setMuted(found.value());
+        }
+    }
+    if (AudioEngine* engine = m_model != nullptr ? m_model->localAudioDevices() : nullptr) {
+        engine->setLocalPlaybackGain(1.0f);
+    }
+    m_listenMuteSaved.clear();
+    m_listenMuting = false;
+}
+
+void VoiceKeyerApplet::hideEvent(QHideEvent* event)
+{
+    // Closing or hiding the window must never leave the receivers muted.
+    restoreListenState();
+    AppletWidget::hideEvent(event);
+}
+
+VoiceKeyerApplet::~VoiceKeyerApplet()
+{
+    restoreListenState();
+}
 
 void VoiceKeyerApplet::buildUi()
 {
@@ -427,6 +460,16 @@ QString VoiceKeyerApplet::statusText() const
 
 void VoiceKeyerApplet::refresh()
 {
+    // Listen: restore the receivers once the message has finished playing.
+    if (m_listenMuting) {
+        const auto pb = m_access != nullptr ? m_access->playback() : std::nullopt;
+        const bool playing = pb.has_value() && pb->playing;
+        const bool ended = pb.has_value() && pb->lengthMs > 0 && pb->positionMs >= pb->lengthMs;
+        const bool waited = QDateTime::currentMSecsSinceEpoch() - m_listenStartedAtMs > 1500;
+        if ((!playing || ended) && waited) {
+            restoreListenState();
+        }
+    }
     const QString why = unavailableReason();
     const bool usable = why.isEmpty();
     m_note->setText(why);
@@ -461,7 +504,9 @@ void VoiceKeyerApplet::refresh()
     m_take->setVisible(held && m_takeOffered);
     refreshMessages();
     m_status->setText(statusText());
-    const bool live = recording || m_snapshot.sending.has_value();
+    // Listen keeps the timer alive too: the receivers stay muted until this
+    // poll sees the playback end, and without it nothing would ever restore.
+    const bool live = recording || m_snapshot.sending.has_value() || m_listenMuting;
     if (live && !m_refreshTimer->isActive()) {
         m_refreshTimer->start();
     } else if (!live && m_refreshTimer->isActive()) {
@@ -789,6 +834,27 @@ void VoiceKeyerApplet::populateMessageMenu(QMenu* menu, int n)
     connect(listen, &QAction::triggered, this, [this, n]() {
         if (m_access) {
             m_awaitingAnswer = true;
+            // Like TX/N: silence the receivers while the message plays here
+            // so the receive audio does not compete with it. Restored when
+            // playback ends (refresh()).
+            if (m_model != nullptr && !m_listenMuting) {
+                m_listenMuteSaved.clear();
+                const QList<SliceModel*> slices = m_model->slices();
+                for (SliceModel* slice : slices) {
+                    if (slice == nullptr) { continue; }
+                    m_listenMuteSaved.insert(slice->sliceIndex(), slice->muted());
+                    slice->setMuted(true);
+                }
+                m_listenMuting = true;
+                m_listenStartedAtMs = QDateTime::currentMSecsSinceEpoch();
+                // Clips are levelled when they are finished (local recorder),
+                // so listening is at their real level; restore is unity.
+                if (AudioEngine* engine = m_model->localAudioDevices()) {
+                    engine->setLocalPlaybackGain(1.0f);
+                }
+                // Start the poll now: without it the restore never runs.
+                refresh();
+            }
             m_access->listenVoice(n);
         }
     });

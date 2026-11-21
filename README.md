@@ -51,18 +51,20 @@ for bug reports and feature requests that need tracking.
 - **Settings that stay put.** Each receiver keeps its sample rate, each slice
   keeps its step, every slice comes back after a restart, and changes are saved
   within seconds.
-- **Recording, voice keyer and rewind.** Record a contact from the flag, play it
-  back to yourself or on the air, keep voice messages on the keyer (F1 to F8),
-  and let the Core keep the pan's signal on its disk so you can rewind through
-  past hours and save a stretch. These have passed the software tests only; none
-  has been tried on a radio or a Core yet.
 - **Receive and remote fixes.** Protocol 2 pans follow their own receiver's
   rate, separate pans no longer open black on radios that report fewer
   receivers, and a failed speaker no longer ends a Core session. The
   [release notes](CHANGELOG.md) list every change, including transmit and the
   phone app.
+- **Per-digit VFO tuning.** Hover a digit in the VFO flag's frequency readout
+  and turn the wheel to move that place (1 Hz through 10 MHz) instead of the
+  current tune step. The digit under the pointer lights up, and the pointer
+  follows it when the flag moves, so carrying across a digit boundary does not
+  lose the chosen digit.
 
-**Current release: 2026.11.1.** Download the desktop and Core packages from
+**Current release: 2026.11.1.** This snapshot titles the main window
+**NereusSDR 2026.11.1 (11.9.26)**, so the running build is identifiable at a
+glance and in the taskbar. Download the desktop and Core packages from
 [the release page](https://github.com/boydsoftprez/NereusSDR/releases/tag/v2026.11.1).
 Update the Core and desktop together; some changes for windows connected to a
 Core need the 2026.11.1 Core. The phone app is delivered separately, and its
@@ -100,6 +102,24 @@ first.
   meter history and clock resizing retain their intended state. The
   [release notes](CHANGELOG.md) cover the radio, tuner, PureSignal, remote
   audio and phone fixes in this release.
+- **Thetis containers and station helpers (November 2026 update).** Import
+  and save Thetis `.dat` containers with their text overlays, fonts, colours,
+  LED conditions and MMIO variables; use independent container and item
+  locks; run the bundled WaveNode and HF-Auto helpers with their `Zjjg.*` and
+  `QxG4.*` data sources; and fire Denkovi relay start/exit scripts with a
+  delay and a bounded launch retry. Details in the
+  [release notes](CHANGELOG.md#unreleased).
+- **WaveNode and HF-Auto faces, matched to Thetis.** The WaveNode container
+  keeps its three-column pixel layout, dark cross meters and macro buttons
+  (**Amp-On/Rdy/Hi-Pwr/Pwr-On**, **SWR Reset**, **SWR Protect**); the HF-Auto
+  container is resizable and its rows stay clear. Both helper windows have
+  readable size floors, and Container Settings previews use the live content
+  aspect and item rectangles. `Zjjg.*` XML readings and the macro MMIO
+  commands now reach the helpers.
+- **One row per radio in Connections.** A radio saved by manual IP and also
+  reported by discovery no longer appears twice. The manual entry keeps the
+  operator's name, model and per-radio settings and hides its discovered MAC
+  twin, including on a first start before discovery has replied.
 
 2026.11.0's desktop and Core packages are on
 [its release page](https://github.com/boydsoftprez/NereusSDR/releases/tag/v2026.11.0).
@@ -382,6 +402,11 @@ if you want to host the remote-access service yourself.
   bring readings together. Supported objects can follow the selected receiver
   or stay with a fixed receiver. Existing layouts and external MMIO bindings
   survive migration and portable layout exchange.
+- **Thetis container files.** Save or load one container as a Thetis `.dat`
+  file; the container, item positions, text overlays and LEDs come in with
+  their original text, fonts, colours, conditions and `%QxG4.*` / `%Zjjg.*`
+  variables. Lock a container in place and lock its objects independently.
+  Ready-made Palstar HF-Auto and WaveNode layouts ship in `Container Files`.
 - **Native audio and CAT.** Each system plays and records through its own
   audio system (Core Audio, Windows audio and ASIO, PipeWire or PulseAudio,
   and ALSA direct on the headless Core) with device lists that update live.
@@ -404,6 +429,30 @@ if you want to host the remote-access service yourself.
   the connected radio's capabilities, including attenuation, preamp,
   microphone inputs and ADC overload indication. Turn a GS-232A/B or Hamlib
   `rotctld` rotor through the Core, from the Rotor applet, the iPhone or a spot.
+- **Station helpers and start scripts.** Tick the bundled WaveNode and HF-Auto
+  Controller in **Containers → Helpers** (a status-bar segment shows what is
+  on); each opens its own container imported from its Thetis layout, and
+  HF-Auto has a **TF (Tuner Follow)** switch in its title bar. Their readings
+  appear as `Zjjg.*` and `QxG4.*` data sources for meters and text overlays.
+  Both are opt-in: their files are copied to your user folder only when
+  enabled, and **Remove installed files** or **Reset helper containers** in
+  **Setup → General → Options** takes them away or re-imports the layouts. The
+  same Options page runs the Denkovi relay start/exit scripts when ticked, with
+  a delay before auto-connect and a 60-second launch retry while the SDR boots.
+- **Intel P-Core audio affinity.** **Setup → General → Options** has
+  **Intel P-Core enable — Nereus audio stability** (ported from Thetis). On an
+  Intel hybrid CPU it keeps Nereus and the audio callback threads it creates on
+  the performance cores; unchecking restores all cores. CPUs without a P/E
+  split are unaffected.
+- **TX audio recorder.** The MON row's **REC / PLAY / STOP** buttons record
+  the processed transmit chain (mic, EQ, CFC, leveler, ALC) to a WAV file in
+  `Music/NereusSDR` and play the last recording on the default output. REC
+  works with MON on or off, so a take can be compared after EQ/CFC changes.
+- **TX audio check with no RF.** The TX applet's **TX/N** button and the
+  **Setup → General → Options** switch run mic → EQ → CFC → leveler → ALC
+  without keying the radio. MOX/PTT/VOX are refused, the receivers are muted
+  so MON carries only the processed TX audio, and the transmitting panadapter
+  and waterfall show the TX frequency and audio spectrum while it runs.
 
 ## Radios and downloads
 
@@ -478,7 +527,7 @@ supported QSK are included in this candidate. Physical paddle takeover on
 the installed Hermes Lite 2 firmware remains unverified, and the 50 microsecond
 heavy-load CW optimization goal is deferred. XDMA, the broader hotkey work
 and cross-platform waterfall time-axis consistency are deferred as well.
-FM pre-emphasis and legacy skin import remain future work.
+FM pre-emphasis, legacy skin import and WAV/IQ recording remain future work.
 Radio-specific and on-air checks are recorded in the
 [feature verification documents](docs/architecture/).
 

@@ -164,7 +164,7 @@ jobs:
             gstreamer1.0-pulseaudio gstreamer1.0-gl \
             libgstreamer-gl1.0-0 libgstreamer-plugins-base1.0-0 \
             libfuse2 file desktop-file-utils xvfb \
-            libfftw3-dev libmp3lame-dev imagemagick \
+            libfftw3-dev imagemagick \
             libasound2-dev libudev-dev libjack-jackd2-dev \
             libpipewire-0.3-dev libpulse-dev \
             libssl-dev
@@ -472,7 +472,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build pkg-config qt6-base-dev \
             qt6-multimedia-dev qt6-base-private-dev qt6-shadertools-dev \
-            qt6-svg-dev qt6-websockets-dev qt6-serialport-dev libfftw3-dev libmp3lame-dev libssl-dev \
+            qt6-svg-dev qt6-websockets-dev qt6-serialport-dev libfftw3-dev libssl-dev \
             libasound2-dev libudev-dev libjack-jackd2-dev libpipewire-0.3-dev libpulse-dev \
             libgl1-mesa-dev libxkbcommon-dev autoconf automake libtool wget
       # The pinned dependency downloads (see "Dependency downloads" above
@@ -759,8 +759,7 @@ jobs:
         # or a dependency of something else in this list) rather than
         # declaring the dependency this build actually has, the same way
         # fftw already is declared.
-        # lame: the MP3 encoder for recordings (docs/attribution/LAME-PROVENANCE.md).
-        run: brew install ninja create-dmg fftw openssl@3 ccache autoconf automake libtool wget lame
+        run: brew install ninja create-dmg fftw openssl@3 ccache autoconf automake libtool wget
 
       - name: Install non-Qt brew packages (x86_64 cross-compile)
         if: matrix.arch == 'x86_64'
@@ -876,41 +875,6 @@ jobs:
           test -f "$PREFIX/lib/libcrypto.3.dylib"  || { echo "::error::libcrypto.3.dylib not installed"; exit 1; }
           file "$PREFIX/lib/libcrypto.3.dylib" | grep -q x86_64 || { echo "::error::libcrypto.3.dylib was not built for x86_64 -- got: $(file "$PREFIX/lib/libcrypto.3.dylib")"; exit 1; }
 
-      - name: Build LAME from source for x86_64
-        if: matrix.arch == 'x86_64'
-        # The MP3 encoder for recordings (docs/attribution/LAME-PROVENANCE.md).
-        # Same story as FFTW and OpenSSL above on this row: the arm64
-        # Homebrew here has no x86_64 lame bottle, so build LAME 3.100 for
-        # the target arch into its own prefix. The tarball and its SHA-256
-        # are the ones Homebrew's lame formula pins, and so is the one
-        # source fix: lame_init_old is listed in include/libmp3lame.sym but
-        # not defined, which fails the macOS link
-        # (https://sourceforge.net/p/lame/mailman/message/36081038/).
-        # Shared only, as the arm64 row's Homebrew dylib is linked (LGPL-2.1
-        # section 6(b): a user can swap the library); no frontend, since only
-        # libmp3lame is used. macdeployqt copies libmp3lame.0.dylib into
-        # Contents/Frameworks the way it copies FFTW's.
-        run: |
-          set -euo pipefail
-          PREFIX="${{ github.workspace }}/lame-x86_64"
-          curl -fsSL https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz -o lame.tar.gz
-          echo "ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e  lame.tar.gz" | shasum -a 256 -c -
-          tar xzf lame.tar.gz
-          cd lame-3.100
-          sed -i '' '/^lame_init_old$/d' include/libmp3lame.sym
-
-          ./configure --disable-dependency-tracking --disable-debug \
-            --enable-shared --disable-static --disable-frontend \
-            --prefix="$PREFIX" --host=x86_64-apple-darwin \
-            CFLAGS="-arch x86_64 -mmacosx-version-min=${{ matrix.deployment_target }}" \
-            LDFLAGS="-arch x86_64"
-          make -j$(sysctl -n hw.ncpu)
-          make install
-
-          test -f "$PREFIX/include/lame/lame.h"    || { echo "::error::lame/lame.h not installed"; exit 1; }
-          test -f "$PREFIX/lib/libmp3lame.0.dylib" || { echo "::error::libmp3lame.0.dylib not installed"; exit 1; }
-          lipo "$PREFIX/lib/libmp3lame.0.dylib" -verify_arch x86_64
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -1022,10 +986,7 @@ jobs:
             # block can confirm the resolved copy is actually this one
             # (and not, say, a stale build/ cache from a previous
             # native-arm64 configure of the same working directory).
-            # LAME: our x86_64 source build above, named by LAME_ROOT so
-            # CMake takes it ahead of anything under /opt/homebrew (arm64
-            # only on this runner). Checked after configure below.
-            EXTRA_CMAKE_ARGS="-DOPENSSL_ROOT_DIR=${{ github.workspace }}/openssl-x86_64 -DLAME_ROOT=${{ github.workspace }}/lame-x86_64"
+            EXTRA_CMAKE_ARGS="-DOPENSSL_ROOT_DIR=${{ github.workspace }}/openssl-x86_64"
           else
             # Native path: brew supplies FFTW under the brew prefix
             # (/opt/homebrew on Apple Silicon). No env-var dance
@@ -1045,15 +1006,6 @@ jobs:
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DNEREUS_REQUIRE_SERIALPORT=ON \
             $EXTRA_CMAKE_ARGS
-          # Both rows record MP3: the Intel row must link the LAME it built,
-          # never a missing one or the arm64 Homebrew copy.
-          if [ "${{ matrix.arch }}" = "x86_64" ]; then
-            LAME_EXPECT="${{ github.workspace }}/lame-x86_64/lib/"
-          else
-            LAME_EXPECT="$(brew --prefix)/"
-          fi
-          grep -E "^LAME_LIBRARY:FILEPATH=${LAME_EXPECT}" build/CMakeCache.txt \
-            || { echo "::error::LAME is not the expected copy under ${LAME_EXPECT}; MP3 recordings would be off"; grep '^LAME_' build/CMakeCache.txt >&2 || true; exit 1; }
 
       - name: Build
         run: cmake --build build -j$(sysctl -n hw.ncpu)
@@ -1143,20 +1095,6 @@ jobs:
           # Contents/Frameworks, and no bundled binary may still point at the
           # build machine's copy.
           scripts/ci/macos-openssl.sh check-bundle build/NereusSDR.app
-
-          # LAME: libmp3lame must be in Contents/Frameworks, and no bundled
-          # binary may still point at the build machine's copy.
-          if ! ls build/NereusSDR.app/Contents/Frameworks/libmp3lame*.dylib >/dev/null 2>&1; then
-            echo "::error::libmp3lame is missing from Contents/Frameworks; MP3 recordings cannot work" >&2
-            exit 1
-          fi
-          for BIN in build/NereusSDR.app/Contents/MacOS/* build/NereusSDR.app/Contents/Frameworks/*.dylib; do
-            if otool -L "$BIN" | grep -qE '(/opt/homebrew|/usr/local|lame-x86_64)/.*libmp3lame'; then
-              echo "::error::$BIN still references a LAME library outside the bundle:" >&2
-              otool -L "$BIN" | grep -E '(/opt/homebrew|/usr/local|lame-x86_64)/.*libmp3lame' >&2
-              exit 1
-            fi
-          done
 
       - name: Copy license notices into app bundle
         run: |
@@ -1491,92 +1429,6 @@ jobs:
           cd ..
           Copy-Item fftw-tmp/fftw3.lib "$fftw_dir/lib/"
 
-      # LAME, the MP3 encoder for recordings on the Core
-      # (docs/attribution/LAME-PROVENANCE.md): LAME 3.100 built from source
-      # with MSYS2's MINGW64 toolchain, as the Intel macOS row builds it.
-      # MSYS2's own mingw-w64-x86_64-lame package imports libmpg123-0.dll,
-      # which this package does not ship. It is a C DLL, so this MSVC build
-      # links it through an import library made from its exports, as the
-      # FFTW DLL above, and ships it beside NereusSDR.exe.
-      - name: Set up MSYS2 MINGW64 toolchain for LAME
-        id: msys2
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: true
-          install: mingw-w64-x86_64-gcc make
-
-      - name: Download LAME source
-        shell: pwsh
-        run: |
-          # The tarball and SHA-256 the Intel macOS row pins (Homebrew's
-          # lame formula's values).
-          # Windows' own curl.exe, the same fetch as that row.
-          & curl.exe -fsSL https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz -o lame.tar.gz
-          if ($LASTEXITCODE -ne 0) { Write-Error "lame.tar.gz download failed"; exit 1 }
-          $sha = (Get-FileHash -LiteralPath lame.tar.gz -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($sha -ne 'ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e') {
-            Write-Error "lame.tar.gz SHA-256 is $sha, not the pinned value"
-            exit 1
-          }
-
-      - name: Build LAME from source
-        shell: msys2 {0}
-        # Shared only (LGPL-2.1 section 6(b): a user can swap the library),
-        # no frontend, and no decoder: minimp3 decodes MP3 on every
-        # platform, so the library carries LAME's encoder alone. Names the
-        # library does not define are taken out of include/libmp3lame.sym,
-        # its export list, or the -no-undefined DLL link fails:
-        # lame_init_old (Homebrew's fix, as on the Intel macOS row), and
-        # the hip_* and lame_decode* functions, which mpglib_interface.c
-        # defines only with the decoder (HAVE_MPGLIB).
-        run: |
-          set -euo pipefail
-          PREFIX="$(cygpath -u '${{ github.workspace }}')/lame-win64"
-          tar xzf lame.tar.gz
-          cd lame-3.100
-          sed -i -e '/^lame_init_old$/d' -e '/^hip_/d' -e '/^lame_decode/d' include/libmp3lame.sym
-
-          ./configure --disable-dependency-tracking --disable-debug \
-            --enable-shared --disable-static --disable-frontend --disable-decoder \
-            --prefix="$PREFIX"
-          make -j"$(nproc)"
-          make install
-
-          test -f "$PREFIX/include/lame/lame.h"     || { echo "::error::lame/lame.h not installed"; exit 1; }
-          test -f "$PREFIX/bin/libmp3lame-0.dll"    || { echo "::error::libmp3lame-0.dll not installed"; exit 1; }
-
-      - name: Stage LAME
-        shell: pwsh
-        run: |
-          $built = Join-Path '${{ github.workspace }}' 'lame-win64'
-          $lame = "third_party/lame"
-          New-Item -ItemType Directory -Force -Path "$lame/include/lame", "$lame/lib", "$lame/bin" | Out-Null
-          Copy-Item (Join-Path $built 'include/lame/lame.h') "$lame/include/lame/"
-          Copy-Item (Join-Path $built 'bin/libmp3lame-0.dll') "$lame/bin/"
-          # The DLL must need only Windows' own DLLs: nothing else of MSYS2's
-          # is shipped beside it.
-          $deps = & dumpbin /dependents "$lame/bin/libmp3lame-0.dll" |
-            Where-Object { $_ -match '^\s+(\S+\.dll)\s*$' } | ForEach-Object { $Matches[1] }
-          Write-Output "libmp3lame-0.dll needs: $($deps -join ', ')"
-          $foreign = @($deps | Where-Object { $_ -notmatch '^(KERNEL32|msvcrt|USER32|ADVAPI32|api-ms-win-.*)\.dll$' })
-          if ($foreign.Count -gt 0) {
-            Write-Error "libmp3lame-0.dll needs DLLs this package does not ship: $($foreign -join ', ')"
-            exit 1
-          }
-          $names = & dumpbin /exports "$lame/bin/libmp3lame-0.dll" |
-            Where-Object { $_ -match '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(\S+)' } |
-            ForEach-Object { $Matches[1] }
-          if (-not ($names -contains 'lame_init')) {
-            Write-Error "libmp3lame-0.dll exports no lame_init"
-            exit 1
-          }
-          # Decision check V10, printed: LAME's own decoder, which NereusSDR
-          # does not use (minimp3 decodes on every platform).
-          Write-Output "hip_decode exports: $(@($names | Where-Object { $_ -like 'hip_decode*' }) -join ', ')"
-          Set-Content -Path "$lame/lib/libmp3lame-0.def" -Value (@('LIBRARY libmp3lame-0.dll', 'EXPORTS') + $names)
-          lib /def:"$lame/lib/libmp3lame-0.def" /out:"$lame/lib/mp3lame.lib" /machine:x64
-
       - name: Configure
         shell: bash
         run: |
@@ -1585,8 +1437,6 @@ jobs:
           # ShaderTools or Gui private modules. v0.1.1 silently shipped
           # without GPU spectrum because this flag was implicit; never
           # again.
-          #
-          # LAME_ROOT: the folder "Stage LAME" filled.
           #
           # vcpkg (Remote Daemon R2, Task 17 fix round 1, coordinator
           # decision): windows-latest ships vcpkg with
@@ -1627,8 +1477,7 @@ jobs:
             -DNEREUS_REQUIRE_SERIALPORT=ON \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET=x64-windows-static-md \
-            -DOPENSSL_ROOT_DIR="$(pwd)/build/vcpkg_installed/x64-windows-static-md" \
-            -DLAME_ROOT="$(pwd)/third_party/lame"
+            -DOPENSSL_ROOT_DIR="$(pwd)/build/vcpkg_installed/x64-windows-static-md"
 
       - name: Build
         id: windows_build
@@ -1745,16 +1594,6 @@ jobs:
             Copy-Item $appDll deploy\
           } else {
             Write-Error "NereusSDRLib.dll missing from build\ (Windows artifact would ship broken: NereusSDR.exe will fail to launch with 'NereusSDRLib.dll was not found')"
-            exit 1
-          }
-          # libmp3lame-0.dll: LAME, which NereusCore.dll imports for MP3
-          # recordings (staged by "Stage LAME"). windeployqt only resolves Qt
-          # DLLs, so it is copied here or the Core fails to load.
-          $lameDll = "third_party\lame\bin\libmp3lame-0.dll"
-          if (Test-Path $lameDll) {
-            Copy-Item $lameDll deploy\
-          } else {
-            Write-Error "libmp3lame-0.dll missing from third_party\lame\bin\ (Windows artifact would ship broken: NereusCore.dll imports it)"
             exit 1
           }
           $coreDll = "build\NereusCore.dll"

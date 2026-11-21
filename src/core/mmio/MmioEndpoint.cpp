@@ -63,6 +63,7 @@ mw0lge@grange-lane.co.uk
 #include "../LogCategories.h"
 
 #include <QMutexLocker>
+#include <QDateTime>
 
 namespace NereusSDR {
 

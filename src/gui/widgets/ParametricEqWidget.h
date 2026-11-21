@@ -80,6 +80,7 @@ mw0lge@grange-lane.co.uk
 #include <QTimer>
 #include <QVector>
 #include <QWidget>
+#include <vector>
 #include "gui/NereusGuiExport.h"
 
 class QPaintEvent;
@@ -185,6 +186,18 @@ public:
 
     double globalGainDb()                    const { return m_globalGainDb; }
     void   setGlobalGainDb(double db);                                    // cs:704-720
+
+    // Live audio overlay: a dBFS spectrum drawn behind the curve so the
+    // operator sees the actual highs and lows while adjusting. NereusSDR
+    // addition; the samples come from the channel's read-only audio tap.
+    void setSpectrumVisible(bool on);
+    bool spectrumVisible() const { return m_spectrumVisible; }
+    void setSpectrumSamples(const std::vector<float>& samples, double sampleRateHz);
+    /// Measured audio floor from the last live spectrum: the 10th percentile
+    /// of its dBFS bins. -400 when no spectrum has been drawn.
+    double spectrumFloorMeasuredDb() const;
+    /// Bottom of the spectrum scale in dBFS (the top is always 0 dBFS).
+    void setSpectrumFloorDb(int dbfs);
 
     bool   globalGainIsHorizLine()           const { return m_globalGainIsHorizLine; }
     void   setGlobalGainIsHorizLine(bool on);                             // cs:722-735
@@ -361,6 +374,8 @@ private:
 
     // Draw helpers -- From Thetis ucParametricEq.cs:1575-2748 [v2.10.3.13].
     void drawGrid           (QPainter& g, const QRect& plot);
+    void drawSpectrum       (QPainter& g, const QRect& plot);
+    void drawSpectrumLabels (QPainter& g, const QRect& plot);
     void drawBarChart       (QPainter& g, const QRect& plot);
     void drawBandShading    (QPainter& g, const QRect& plot);
     void drawCurve          (QPainter& g, const QRect& plot);
@@ -463,6 +478,10 @@ private:
     double           m_frequencyMaxHz          = 4000.0;
 
     double           m_dbMin                   = -24.0;
+    QVector<float>   m_spectrumDb;
+    double           m_spectrumRate             = 48000.0;
+    bool             m_spectrumVisible          = false;
+    int              m_spectrumFloorDb          = -80;
     double           m_dbMax                   =  24.0;
 
     double           m_globalGainDb            = 0.0;

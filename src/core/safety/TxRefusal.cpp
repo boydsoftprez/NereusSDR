@@ -93,6 +93,12 @@ TxRefusal txInhibited()
                 QStringLiteral("The radio's transmit inhibit input is holding transmit off."));
 }
 
+TxRefusal txAudioCheck()
+{
+    return make(kInterlock,
+                QStringLiteral("TX audio check is on (no RF). Switch TX/N back to TX/Y to transmit."));
+}
+
 TxRefusal radioLinkDown()
 {
     return make(kInterlock, QStringLiteral("The link to the radio is down."));

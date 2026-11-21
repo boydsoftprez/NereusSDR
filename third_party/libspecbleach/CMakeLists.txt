@@ -69,11 +69,17 @@ endif()
 
 if(MSVC)
     # ── MSVC path: compile via clang-cl, archive into specbleach.lib ──
+    # Visual Studio ships LLVM under its own tree; include every installed
+    # instance (any version/edition) so a fresh configure finds clang-cl
+    # without needing a Developer Command Prompt.
+    file(GLOB _vs_llvm_bins
+        "$ENV{ProgramFiles}/Microsoft Visual Studio/*/*/VC/Tools/Llvm/x64/bin")
     find_program(CLANG_CL_EXECUTABLE clang-cl
         HINTS
             "$ENV{ProgramFiles}/LLVM/bin"
             "$ENV{ProgramW6432}/LLVM/bin"
-            "C:/Program Files/LLVM/bin")
+            "C:/Program Files/LLVM/bin"
+            ${_vs_llvm_bins})
 
     if(NOT CLANG_CL_EXECUTABLE)
         message(FATAL_ERROR

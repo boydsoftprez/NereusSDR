@@ -658,6 +658,81 @@ void PowerPage::buildTuneGroup()
         });
     }
 
+    // ── Pulsed tune (P-TU) carrier ─────────────────────────────────────────
+    // Thetis grpPulsedTune: the pulse window, duty and ramp used by Tune
+    // Check (TC). NereusSDR keys the same values from the P-TU button.
+    // From Thetis setup.cs:34409-34421 [v2.10.3.15].
+    m_pulseRateSpin = new QSpinBox(m_grpPATune);
+    m_pulseRateSpin->setObjectName(QStringLiteral("nudPulsedTuneWindow"));
+    m_pulseRateSpin->setRange(1, 50);
+    m_pulseRateSpin->setSuffix(QStringLiteral(" Hz"));
+    m_pulseRateSpin->setToolTip(tr("Pulse rate of the P-TU tune carrier."));
+    form->addRow(QStringLiteral("Pulse Rate:"), m_pulseRateSpin);
+
+    m_pulseDutySpin = new QSpinBox(m_grpPATune);
+    m_pulseDutySpin->setObjectName(QStringLiteral("nudPulsedTunePercent"));
+    m_pulseDutySpin->setRange(5, 95);
+    m_pulseDutySpin->setSuffix(QStringLiteral(" %"));
+    m_pulseDutySpin->setToolTip(tr("On-time of each pulse, as a percentage of the window."));
+    form->addRow(QStringLiteral("Pulse Duty:"), m_pulseDutySpin);
+
+    m_pulseRampSpin = new QSpinBox(m_grpPATune);
+    m_pulseRampSpin->setObjectName(QStringLiteral("nudPulsedTuneRamp"));
+    m_pulseRampSpin->setRange(0, 50);
+    m_pulseRampSpin->setSuffix(QStringLiteral(" ms"));
+    m_pulseRampSpin->setToolTip(tr("Ramp time at each pulse edge."));
+    form->addRow(QStringLiteral("Pulse Ramp:"), m_pulseRampSpin);
+
+    m_pulseInfoLabel = new QLabel(m_grpPATune);
+    m_pulseInfoLabel->setObjectName(QStringLiteral("lblPulsedTuneInfo"));
+    m_pulseInfoLabel->setWordWrap(true);
+    form->addRow(QString(), m_pulseInfoLabel);
+
+    if (model()) {
+        TransmitModel& tx = model()->transmitModel();
+
+        {
+            QSignalBlocker b1(m_pulseRateSpin);
+            QSignalBlocker b2(m_pulseDutySpin);
+            QSignalBlocker b3(m_pulseRampSpin);
+            m_pulseRateSpin->setValue(tx.pulseTuneRateHz());
+            m_pulseDutySpin->setValue(tx.pulseTuneDutyPct());
+            m_pulseRampSpin->setValue(tx.pulseTuneRampMs());
+        }
+
+        connect(m_pulseRateSpin, qOverload<int>(&QSpinBox::valueChanged),
+                this, [this](int v) {
+            if (model()) { model()->transmitModel().setPulseTuneRateHz(v); }
+        });
+        connect(m_pulseDutySpin, qOverload<int>(&QSpinBox::valueChanged),
+                this, [this](int v) {
+            if (model()) { model()->transmitModel().setPulseTuneDutyPct(v); }
+        });
+        connect(m_pulseRampSpin, qOverload<int>(&QSpinBox::valueChanged),
+                this, [this](int v) {
+            if (model()) { model()->transmitModel().setPulseTuneRampMs(v); }
+        });
+
+        TransmitModel* txp = &tx;
+        const auto refresh = [this, txp]() {
+            QSignalBlocker b1(m_pulseRateSpin);
+            QSignalBlocker b2(m_pulseDutySpin);
+            QSignalBlocker b3(m_pulseRampSpin);
+            m_pulseRateSpin->setValue(txp->pulseTuneRateHz());
+            m_pulseDutySpin->setValue(txp->pulseTuneDutyPct());
+            m_pulseRampSpin->setValue(txp->pulseTuneRampMs());
+            updatePulseTuneInfo();
+        };
+        connect(&tx, &TransmitModel::pulseTuneParamsChanged, this, refresh);
+        connect(m_pulseRateSpin, qOverload<int>(&QSpinBox::valueChanged),
+                this, [this](int) { updatePulseTuneInfo(); });
+        connect(m_pulseDutySpin, qOverload<int>(&QSpinBox::valueChanged),
+                this, [this](int) { updatePulseTuneInfo(); });
+        connect(m_pulseRampSpin, qOverload<int>(&QSpinBox::valueChanged),
+                this, [this](int) { updatePulseTuneInfo(); });
+    }
+    updatePulseTuneInfo();
+
     // ── Wire model ↔ radios ────────────────────────────────────────────────
     if (model()) {
         TransmitModel& tx = model()->transmitModel();
@@ -751,6 +826,29 @@ void PowerPage::applyFixedTuneSpinGate()
         m_settingsPermitted ? QString() : m_settingsReason);
 }
 
+void PowerPage::updatePulseTuneInfo()
+{
+    if (!m_pulseInfoLabel || !m_pulseRateSpin || !m_pulseDutySpin
+        || !m_pulseRampSpin) {
+        return;
+    }
+    const double window = 1000.0 / double(m_pulseRateSpin->value());
+    const double duty = window * (double(m_pulseDutySpin->value()) / 100.0);
+    const int ramp = m_pulseRampSpin->value();
+    const double total = duty + 2.0 * ramp;
+    const bool fits = window >= total;
+    m_pulseInfoLabel->setText(
+        tr("Window %1 ms, duty %2 ms, ramp %3 ms, total %4 ms - %5")
+            .arg(window, 0, 'f', 1)
+            .arg(duty, 0, 'f', 1)
+            .arg(ramp * 2)
+            .arg(total, 0, 'f', 1)
+            .arg(fits ? tr("fits the window") : tr("too long for the window")));
+    m_pulseInfoLabel->setStyleSheet(
+        fits ? QStringLiteral("color: #3fb950;")
+             : QStringLiteral("color: #f85149;"));
+}
+
 void PowerPage::setTransmitSettingsPermittedAt(int version, bool permitted,
                                                const QString& reason)
 {
@@ -771,7 +869,8 @@ void PowerPage::setTransmitSettingsPermittedAt(int version, bool permitted,
                           m_chkForceAttWhenPsOff, m_radDriveSlider, m_radTuneSlider,
                           m_radFixedDrive, m_chkSWRProtection, m_udSwrProtectionLimit,
                           m_chkSWRTuneProtection, m_udTunePowerSwrIgnore,
-                          m_chkWindBackPowerSWR, m_chkTXInhibit, m_chkTXInhibitReverse},
+                          m_chkWindBackPowerSWR, m_chkTXInhibit, m_chkTXInhibitReverse,
+                          m_pulseRateSpin, m_pulseDutySpin, m_pulseRampSpin},
                          permitted, m_settingsReason);
     applyFixedTuneSpinGate();
 }

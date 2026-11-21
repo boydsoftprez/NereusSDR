@@ -175,9 +175,12 @@ SetRXAANFRun (int channel, int run)
 	ANF a = rxa[channel].anf.p;
 	if (a->run != run)
 	{
+		RXAbp1Check (channel, rxa[channel].amd.p->run, rxa[channel].snba.p->run, 
+			rxa[channel].emnr.p->run, getRun_nnrbypass (rxa[channel].nnrbypass.p), 
+			run, rxa[channel].anr.p->run);
 		EnterCriticalSection (&ch[channel].csDSP);
 		a->run = run;
-		RXAbp1Check (channel);
+		RXAbp1Update (channel);
 		RXAbp1Set (channel);
 		flush_anf (a);
 		LeaveCriticalSection (&ch[channel].csDSP);
@@ -238,7 +241,7 @@ SetRXAANFPosition (int channel, int position)
 {
 	EnterCriticalSection (&ch[channel].csDSP);
 	rxa[channel].anf.p->position = position;
-	rxa[channel].bp1.p->position = position;
+	RXAbp1Set (channel);
 	flush_anf (rxa[channel].anf.p);
 	LeaveCriticalSection (&ch[channel].csDSP);
 }

@@ -86,7 +86,10 @@ quint8 AnvelinaDxOutputs::wireByte() const
 
 void AnvelinaDxOutputs::setMacAddress(const QString& mac)
 {
-    m_mac = mac;
+    if (m_mac != mac) {
+        m_mac = mac;
+        m_loaded = false;
+    }
 }
 
 QString AnvelinaDxOutputs::keyFor(int out, const char* field) const
@@ -102,6 +105,7 @@ void AnvelinaDxOutputs::load()
     if (m_mac.isEmpty()) {
         return;
     }
+    m_loaded = true;
     auto& s = AppSettings::instance();
     quint8 bits = 0;
     for (int out = kFirstOutput; out <= kLastOutput; ++out) {
@@ -121,6 +125,7 @@ void AnvelinaDxOutputs::save()
     if (m_mac.isEmpty()) {
         return;
     }
+    if (!m_loaded) { return; }
     auto& s = AppSettings::instance();
     // Only the keys whose saved value differs, read with load()'s own
     // defaults (as OcMatrix::save does), so one click in a remote window is

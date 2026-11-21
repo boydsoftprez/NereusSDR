@@ -104,6 +104,15 @@ struct ContainerDocument {
     std::optional<ContainerHome> home;
     bool visible = true;
     bool locked = false;
+    // Helper-linked visibility, as Thetis's ucMeter.LinkedHFAuto /
+    // LinkedWaveNode: the container is shown only while that helper is
+    // enabled.
+    bool linkedHfAuto = false;
+    bool linkedWaveNode = false;
+    // Lock item positions inside this container: the frame and its membership
+    // stay editable, but objects cannot be dragged, nudged or resized. Thetis
+    // keeps this separate from the container Lock (ucMeter.LockItemPositions).
+    bool lockItemPositions = false;
     bool autoHeight = false;
     bool popOutShell = false;
     QJsonObject config, extensions;

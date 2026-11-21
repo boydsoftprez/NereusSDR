@@ -162,7 +162,7 @@ void RecordStream::noteRemove(const QString& id)
         // A waiting upsert may be an update of a record the peer already
         // holds, so the remove is always queued (fix wave, I4); a window
         // ignores a remove for an id it never held.
-        if (pending.upserts.remove(id) > 0) {
+        if (pending.upserts.remove(id)) {
             pending.upsertOrder.removeOne(id);
         }
         if (!pending.removes.contains(id)) {

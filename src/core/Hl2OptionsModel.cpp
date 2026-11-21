@@ -121,6 +121,7 @@ void Hl2OptionsModel::setMacAddress(const QString& mac)
 void Hl2OptionsModel::load()
 {
     if (m_mac.isEmpty()) { return; }
+    m_loaded = true;
     auto& s = AppSettings::instance();
 
     m_swapAudioChannels = strBool(s.hardwareValue(m_mac, QString::fromLatin1(kKeySwapAudio)), false);
@@ -151,6 +152,7 @@ void Hl2OptionsModel::load()
 void Hl2OptionsModel::save() const
 {
     if (m_mac.isEmpty()) { return; }
+    if (!m_loaded) { return; }
     auto& s = AppSettings::instance();
 
     // R-R3-46: write only the keys whose saved value differs, read with

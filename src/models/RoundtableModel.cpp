@@ -567,7 +567,7 @@ void RoundtableModel::rebuildRoomFromRecords(const QString& roomId)
 {
     const QHash<QString, QJsonObject> records = m_records.value(roomStreamName(roomId));
     if (records.isEmpty()) {
-        if (m_views.remove(roomId) > 0) {
+        if (m_views.remove(roomId)) {
             emit roomChanged(roomId);
         }
         return;

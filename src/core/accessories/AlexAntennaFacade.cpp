@@ -127,6 +127,7 @@ void AlexAntennaFacade::bindController(AlexController* controller)
     follow(&C::rxOutOnTxChanged);
     follow(&C::ext1OutOnTxChanged);
     follow(&C::ext2OutOnTxChanged);
+    follow(&C::autoRxBypassChanged);
     follow(&C::rxOutOverrideChanged);
     follow(&C::useTxAntForRxChanged);
     refresh();
@@ -459,6 +460,21 @@ void AlexAntennaFacade::setExt1OutOnTx(bool on)
     publish(next);
 }
 
+void AlexAntennaFacade::setAutoRxBypass(bool on)
+{
+    if (!beginEdit("autoRxBypass")) {
+        return;
+    }
+    if (AlexController* c = m_controller.data()) {
+        c->setAutoRxBypass(on);
+        refresh();
+        return;
+    }
+    Values next = m_values;
+    next.autoRxBypass = on;
+    publish(next);
+}
+
 void AlexAntennaFacade::setExt2OutOnTx(bool on)
 {
     if (!beginEdit("ext2OutOnTx")) {
@@ -681,6 +697,7 @@ void AlexAntennaFacade::refresh()
     next.rxOutOnTx = c->rxOutOnTx();
     next.ext1OutOnTx = c->ext1OutOnTx();
     next.ext2OutOnTx = c->ext2OutOnTx();
+    next.autoRxBypass = c->autoRxBypass();
     next.rxOutOverride = c->rxOutOverride();
     publish(next);
 }
@@ -700,6 +717,7 @@ void AlexAntennaFacade::publish(const Values& next)
     if (before.rxOutOnTx != next.rxOutOnTx) { emit rxOutOnTxChanged(next.rxOutOnTx); }
     if (before.ext1OutOnTx != next.ext1OutOnTx) { emit ext1OutOnTxChanged(next.ext1OutOnTx); }
     if (before.ext2OutOnTx != next.ext2OutOnTx) { emit ext2OutOnTxChanged(next.ext2OutOnTx); }
+    if (before.autoRxBypass != next.autoRxBypass) { emit autoRxBypassChanged(next.autoRxBypass); }
     if (before.rxOutOverride != next.rxOutOverride) {
         emit rxOutOverrideChanged(next.rxOutOverride);
     }

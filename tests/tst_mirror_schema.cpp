@@ -42,8 +42,6 @@
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-11-05: Band stack plan Task 4: BandStackFacade joins it. J.J. Boyd
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
-// 2026-11-15: Recording plan Task 5: RecordingsFacade joins it. J.J. Boyd
-// (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-09-29: R-R3-49 / R-IOS-18: PaProfilesFacade joins it. J.J. Boyd
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-09-28: Slice control plan Task 4: SliceAccess joins it. J.J. Boyd
@@ -99,7 +97,6 @@
 #include "core/session/StationVaxFacade.h"
 #include "core/session/TransmitStateFacade.h"
 #include "core/session/BandStackFacade.h"
-#include "core/session/RecordingsFacade.h"
 #include "core/session/PaProfilesFacade.h"
 #include "core/roundtable/RoundtableState.h"
 
@@ -1000,8 +997,6 @@ private:
                  &PaProfilesFacade::staticMetaObject,
                  // Band stack plan Task 4: the Core's band stack, read-only.
                  &BandStackFacade::staticMetaObject,
-                 // Recording plan Task 5: the Core's recordings, read-only.
-                 &RecordingsFacade::staticMetaObject,
                  // Rotor control plan Task 4b: the Core's rotor, read-only.
                  &RotorLink::RotorModel::staticMetaObject,
                  // Roundtable plan Task 11: the Core's Roundtable connection.

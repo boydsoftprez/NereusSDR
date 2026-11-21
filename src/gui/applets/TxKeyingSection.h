@@ -14,9 +14,6 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-11-16 - VOICE, the third button in the TUNE / MOX row (the voice
-//                 keyer, recording plan Task 12; VoiceButton drives it).
-//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - The row's parts (SectionParts), which a container copy
 //                 hides and orders from its entry config. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -126,9 +123,10 @@ public:
     explicit TxKeyingSection(QWidget* parent, int rowSpacing, const QMargins& outerMargins);
 
     QPushButton* tuneButton() const { return m_tuneBtn; }
+    QPushButton* pulseTuneButton() const { return m_pulseTuneBtn; }
+    QPushButton* xpaButton() const { return m_xpaBtn; }
     QPushButton* moxButton() const { return m_moxBtn; }
-    // Recording plan Task 12: VOICE, the voice keyer's button, after MOX.
-    // VoiceButton gives it its look and its box.
+    // Imported feature (voice keyer): VOICE, driven by VoiceButton.
     QPushButton* voiceButton() const { return m_voiceBtn; }
     QPushButton* takeTransmitButton() const { return m_takeTransmitBtn; }
     QLabel*      holderLabel() const { return m_holderLabel; }
@@ -164,8 +162,10 @@ private:
     SectionParts m_parts{this};
 
     QPushButton* m_tuneBtn = nullptr;
+    QPushButton* m_pulseTuneBtn = nullptr;
+    QPushButton* m_xpaBtn = nullptr;
     QPushButton* m_moxBtn = nullptr;
-    QPushButton* m_voiceBtn = nullptr;
+    QPushButton* m_voiceBtn = nullptr;   // voice keyer (imported feature)
     QLabel*      m_holderLabel = nullptr;
     QPushButton* m_takeTransmitBtn = nullptr;
 

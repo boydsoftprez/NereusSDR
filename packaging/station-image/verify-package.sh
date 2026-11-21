@@ -15,11 +15,6 @@ case "$deps" in
     *libc6*libqt6*|*libqt6*libc6*) ;;
     *) echo 'Package lacks expected libc6/Qt6 dependencies' >&2; exit 1 ;;
 esac
-# MP3 recordings: the Core links LAME (build-trixie-deb.sh checks the define).
-case "$deps" in
-    *libmp3lame0*) ;;
-    *) echo 'Package lacks the libmp3lame0 dependency (MP3 recordings)' >&2; exit 1 ;;
-esac
 contents=$(dpkg-deb --contents "$deb")
 printf '%s\n' "$contents" | grep -q 'usr/bin/nereusd$'
 printf '%s\n' "$contents" | grep -q 'systemd/system/nereusd.service$'

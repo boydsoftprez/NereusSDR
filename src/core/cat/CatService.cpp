@@ -1007,11 +1007,20 @@ void CatService::applyPttSample(int channel, bool cts, bool dsr) {
     input->armed = false; input->asserted = true;
     const int selected = m_model->txSliceArbiter()->txBoundSliceId();
     SliceModel* target = nullptr;
-    if (selected == input->binding.primarySliceId) { target = m_adapter.resolveSlice(input->binding, CatVfo::Primary); }
+    if (input->binding.primarySliceId < 0) {
+        // Thetis's CAT PTT needs no slice binding: it keys the slice the
+        // operator has selected for transmit. A channel that has never been
+        // bound (the saved -1) follows that live selection here too, while
+        // the coordinator still enforces ownership and the live target.
+        target = m_model->txBoundSlice();
+    }
+    else if (selected == input->binding.primarySliceId) { target = m_adapter.resolveSlice(input->binding, CatVfo::Primary); }
     else if (input->binding.secondarySliceId && selected == *input->binding.secondarySliceId) {
         target = m_adapter.resolveSlice(input->binding, CatVfo::Secondary);
     }
-    // No implicit slice selection or handoff: the coordinator receives the actual live selected target only.
+    // No implicit slice selection or handoff: the coordinator receives the
+    // actual live selected target only. An unbound physical PTT channel
+    // reads that target rather than choosing one.
     const bool accepted = target && m_txCoordinator.requestPtt(input->sessionId, selected);
     if (self && generation == m_lifecycleGeneration && m_ptt == input) { setPttState(accepted ? "Asserted" : "PTT request refused"); }
 }

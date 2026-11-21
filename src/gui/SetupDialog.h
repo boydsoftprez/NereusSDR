@@ -227,8 +227,6 @@ signals:
     /// Present this window's connection details; never initiate a connection.
     void coreConnectionDetailsRequested();
     void coreDiagnosticsRequested();
-    /// Recording plan Task 8: Setup > Cores > Recordings' Recordings ›.
-    void recordingsWindowRequested();
     // Phase 3M-3a-ii Batch 6 (Task 3): forwarded from CfcSetupPage's
     // [Configure CFC bands…] button.  MainWindow connects this to the
     // TxApplet::requestOpenCfcDialog() slot so the modeless TxCfcDialog

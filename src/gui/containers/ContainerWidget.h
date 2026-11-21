@@ -224,6 +224,7 @@ class MeterItem;
 
 class FloatingContainer;
 class WorkspaceGroupHeader;
+class HfAutoControls;
 
 class NEREUS_GUI_EXPORT ContainerWidget : public QWidget {
     Q_OBJECT
@@ -275,11 +276,6 @@ public:
     // --- Container Properties ---
     QColor backgroundColor() const {return m_backgroundColor;}
     void setBackgroundColor(const QColor& color);
-    // When set, a popped-out or floating window leaves the area around the
-    // meter clear. Docked containers keep their background. The meter still
-    // paints itself.
-    bool clearFloatingBackground() const { return m_clearFloatingBackground; }
-    void setClearFloatingBackground(bool clear);
     // The colour a container configured with `configured` paints behind
     // its content: `configured`, or with the workspace preview on the
     // panel role for the default background. The Container Settings
@@ -292,6 +288,8 @@ public:
     void setBorder(bool border);
     bool isLocked() const { return m_locked; }
     void setLocked(bool locked);
+    bool lockItemPositions() const { return m_lockItemPositions; }
+    void setLockItemPositions(bool locked) { m_lockItemPositions = locked; }
     bool isContainerEnabled() const { return m_enabled; }
     void setContainerEnabled(bool enabled);
     bool showOnRx() const { return m_showOnRx; }
@@ -306,6 +304,10 @@ public:
     void setContainerHidesWhenRxNotUsed(bool hides);
     QString notes() const { return m_notes; }
     void setNotes(const QString& notes);
+    // A helper's own container: "helper.hfauto" adds the TF (Tuner Follow)
+    // button to the title bar. Anything else removes it.
+    void setHelperKind(const QString& kind);
+    QString helperKind() const { return m_helperKind; }
     bool noControls() const { return m_noControls; }
     void setNoControls(bool noControls);
     bool autoHeight() const { return m_autoHeight; }
@@ -528,9 +530,6 @@ private:
     void updateTitleBar();
     void updateTitle();
     void setupBorder();
-    void applyContentBackground();
-    void applyFloatingClear();
-    bool floatingClearActive() const;
 
     void beginDrag(const QPoint& pos);
     void updateDrag(const QPoint& globalPos);
@@ -572,6 +571,7 @@ private:
     bool m_border{true};
     bool m_noControls{false};
     bool m_locked{false};
+    bool m_lockItemPositions{false};
     bool m_enabled{true};
     bool m_showOnRx{true};
     bool m_showOnTx{true};
@@ -585,7 +585,6 @@ private:
     bool m_minimised{false};          // runtime only, not persisted
     bool m_highlighted{false};        // runtime only, not persisted
     QColor m_backgroundColor{0x0f, 0x0f, 0x1a};
-    bool m_clearFloatingBackground{false};
 
     // --- Drag/Resize state ---
     QPoint m_dragStartPos;
@@ -622,12 +621,15 @@ private:
     QWidget* m_titleBar{nullptr};
     QWidget* m_contentHolder{nullptr};
     QWidget* m_content{nullptr};
+    HfAutoControls* m_hfAutoControls{nullptr};
     QWidget* m_resizeGrip{nullptr};
     QLabel* m_titleLabel{nullptr};
     QPushButton* m_btnFloat{nullptr};
     QPushButton* m_btnAxis{nullptr};
     QPushButton* m_btnPin{nullptr};
+    QPushButton* m_btnFollow{nullptr};
     QPushButton* m_btnSettings{nullptr};
+    QString m_helperKind;
 
     // --- Workspace preview header ---
     WorkspaceGroupHeader* m_groupHeader{nullptr};

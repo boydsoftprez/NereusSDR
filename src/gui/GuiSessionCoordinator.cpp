@@ -148,6 +148,7 @@ bool GuiSessionCoordinator::replace(const StationStartupSelection& selection,
                                     bool startConnection, QString* error)
 {
     if (!canReplace(selection, error)) { return false; }
+
     const QPointer<GuiSessionCoordinator> self(this);
     const bool previousReplacing = std::exchange(m_replacing, true);
     const auto replacing = qScopeGuard([self, previousReplacing] {

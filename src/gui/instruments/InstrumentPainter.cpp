@@ -479,7 +479,7 @@ void paintPeakNeedle(QPainter& p, const ArcSpine& s, double f,
     const qreal rOut = s.radius() - s.troughWidth() / 2.0
                        - u * kNeedleTipGapOfUnit;
     QColor dim = c;
-    dim.setAlphaF(kPeakOpacity);
+    dim.setAlphaF(static_cast<float>(kPeakOpacity));
 
     p.save();
     p.setRenderHint(QPainter::Antialiasing, true);
@@ -513,7 +513,7 @@ void paintTicks(QPainter& p, const Spine& s, const ReadingDescriptor& d)
     const QColor scale(Style::kTextScale);
 
     QColor minor = scale;
-    minor.setAlphaF(kMinorTickOpacity);
+    minor.setAlphaF(static_cast<float>(kMinorTickOpacity));
     p.setPen(QPen(minor, pen(kMinorTickWidthOfUnit, s)));
     for (double v : d.minorTicks) {
         p.drawLine(s.tick(d.fraction(v), at(kMinorTickLenOfUnit, s)));

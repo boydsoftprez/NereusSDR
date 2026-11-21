@@ -184,6 +184,10 @@
 
 #include <QList>
 #include <QString>
+#include <QElapsedTimer>
+#include <QDialog>
+#include <QPointer>
+#include <QVector>
 #include <array>
 #include <limits>
 
@@ -289,6 +293,11 @@ public:
     };
 
     explicit PaGainByBandPage(RadioModel* model, QWidget* parent = nullptr);
+    /// A running sequence must never leave TUNE on if the page goes away.
+    ~PaGainByBandPage() override;
+    /// Setup closing or this page hidden restores any measurement's drive
+    /// and limits, like a cleared panel.
+    void hideEvent(QHideEvent* event) override;
 
     // Phase 8 (#167) per-SKU visibility wiring. Called by SetupDialog on
     // construct + on RadioModel::currentRadioChanged.
@@ -340,17 +349,6 @@ public:
     AutoCalState autoCalStateForTest() const noexcept { return m_autoCalState; }
     Band         autoCalCurrentBandForTest() const noexcept { return m_autoCalCurrentBand; }
     int          autoCalCurrentDriveStepForTest() const noexcept { return m_autoCalCurrentDriveStep; }
-
-    /// Inject a simulated FWD power reading for the given (band, step) pair.
-    /// Bypasses the real settle timer + PaCalProfile interpolation path so
-    /// tests can advance the state machine deterministically.  No-op if the
-    /// state machine is not currently swept on (band, step).
-    void simulateBandFwdReadingForTest(Band band, int driveStep, double watts);
-
-    /// Fast-forward through the entire HF sweep, injecting target watts at
-    /// every (band, step) pair so the state machine reaches Completed
-    /// without waiting for QTimer fires.  Used by the completion test.
-    void completeAutoCalForTest();
 
     /// Inject a name string consumed by the next New / Copy click instead of
     /// opening QInputDialog::getText. Cleared after consumption.
@@ -412,56 +410,44 @@ private slots:
     /// Per-band Use-Max checkbox toggled → mutate active profile + persist.
     void onUseMaxPowerToggled(Band band, bool use);
 
-    // ── Phase 7 of #167: auto-cal sweep state machine ────────────────────
-    /// Mirrors Thetis chkAutoPACalibrate_CheckedChanged (setup.cs:15683-
-    /// 15698 [v2.10.3.13]) for the panel-toggle side, plus
-    /// btnPAGainCalibration_Click (setup.cs:9743-9809 [v2.10.3.13]) and
-    /// CalibratePAGain (console.cs:10228-10387 [v2.10.3.13]) for the
-    /// state-machine side.  Thetis spawns a worker thread; NereusSDR
-    /// drives the same logic from the GUI thread via QTimer + signal
-    /// dispatch so the audio callback / WDSP threads are never blocked.
+    // ── Per-band PA Gain auto-calibration (2026-11-17) ────────────────────
+    /// "Auto-Calibrate Sequence" only reveals the panel.  Start keys TUNE on
+    /// the selected band, reads FWD, and trims that band's base Gain until the
+    /// output is within -1/+2 W of Max W (capped at 100 W), then unkeys.  The
+    /// nine trim cells stay manual and are not touched.
     void onAutoCalibrateToggled(bool checked);
-    /// QTimer slot invoked after the per-step settle delay; advances the
-    /// state machine into ReadingPower if no telemetry has arrived yet.
-    void onAutoCalSettle();
-    /// RadioStatus::powerChanged subscriber.  Captures the live FWD watts
-    /// reading when the state machine is in SettlingStep / ReadingPower.
-    void onFwdPowerSample(double fwdW, double revW, double swr);
+    /// Populate the band combo and the target readout from the active profile.
+    void updateAutoCalTargets();
 
 private:
-    // ── Phase 7 helpers ──────────────────────────────────────────────────
-    /// Initialise the sweep: snapshot current MOX/power slider, set the
-    /// state cursor to (Band160m, step 0), arm the settle timer, transition
-    /// to SettlingStep.
-    void startAutoCal();
-    /// User cancelled (chkAutoPACalibrate OFF) — restore radio state, hide
-    /// the sub-panel, reset state to Idle.  No partial profile writes.
-    void cancelAutoCal();
-    /// After capturing a reading + writing the gain delta, advance the
-    /// state cursor to the next drive step or next band.
-    void advanceAutoCalStep();
-    void advanceAutoCalBand();
-    /// Sweep finished cleanly — save profile through PaProfileManager,
-    /// transition to Completed, auto-uncheck the chkAutoPACalibrate.
-    void completeAutoCal();
-    /// Safety-aborted — clamp checkbox OFF, surface reason in status
-    /// label, transition to Aborted.
-    void abortAutoCal(const QString& reason);
-    /// Per-band safety check.  Returns false if `observedWatts` exceeds
-    /// `band_max * 1.1` (10% margin over factory max-power ceiling).
-    bool autoCalSafetyCheck(double observedWatts, Band band) const;
-    /// Compute diff_dBm = WattsTodBm(observed) - WattsTodBm(target),
-    /// then write -diff_dBm into active profile's adjust matrix at
-    /// (band, driveStep).
-    /// From Thetis console.cs:10319-10336 [v2.10.3.13] (the
-    /// `if (Math.Abs(watts - target) > 2)` branch).  NereusSDR maps to
-    /// PaProfile::setAdjust because the adjust matrix is the per-step
-    /// finetune column; Thetis uses setBypassGain on the base row.
-    void writeAutoCalGainAdjust(Band band, int driveStep, double observedWatts);
-    /// Update the status label / progress bar for the current state.
+    // ── Auto-cal sequence ────────────────────────────────────────────────
+    void startAutoCal();              ///< "Measure": reads while the operator holds TUNE
+    void onAutoCalMeasureReady();
+    void restoreAutoCalDrive();
+    void stopAutoCal();               ///< "Clear": drops the suggestion
+    void applyAutoCalSuggestion();
+    void applyAutoCalGain(double dbError, Band band);
+    void openLinearizationPopup();
+    void refreshLinearPointButtons();
+    void selectLinearPoint(int step);   ///< -1 = base Gain, 0..8 = 10 %..90 %
+    QPointer<QDialog> m_linearizeDialog;
+    QVector<QPushButton*> m_linearPointButtons;
+    QVector<QDoubleSpinBox*> m_linearAdjustSpins;
+    QDoubleSpinBox* m_linearBaseGainSpin{nullptr};
+    void refreshLinearHighlight();
+    void clearLinearHighlight();
+    void setAutoCalGainFromSpin(double gainDb);
+    void autoCalTolerance(double* under, double* over) const;
+    void onAutoCalWatchdog();
     void refreshAutoCalUi();
-    /// Lookup the band-max-watts ceiling for the active PaProfile, falling
-    /// back to a per-SKU default if the profile slot is unset.
+    Band selectedAutoCalBand() const;
+    /// Forward/reflected watts from the chosen source: 0 = the radio's own
+    /// meter, 1..4 = the WaveNode helper's fwdpwrN/refpwrN variables.
+    double readAutoCalForwardWatts();
+    double readAutoCalReflectedWatts();
+    int autoCalSource() const { return m_autoCalSource; }
+    /// The target is the band's Max W, capped at 100 W.  Falls back to the
+    /// per-SKU default only for the status text; Start requires Use Max.
     double autoCalBandMaxWatts(Band band) const;
 
 private:
@@ -554,25 +540,61 @@ private:
     // placeholder's enabled flag is the test seam's proxy for editor state.
     QLabel* m_placeholderLabel{nullptr};
 
-    // ── Phase 7 of #167: auto-cal sweep state machine ────────────────────
+    // ── Per-band PA Gain auto-calibration (2026-11-17) ───────────────────
     AutoCalState m_autoCalState{AutoCalState::Idle};
-    /// QTimer driving the per-step settle delay (Thetis on_time = 2500 ms;
-    /// NereusSDR uses a shorter 200 ms default since the radio's TX FIFO
-    /// is much faster than the Thetis WinForms loop).  Timer is
-    /// instantiated lazily on the first sweep start.
-    QTimer*       m_autoCalSettleTimer{nullptr};
+    QTimer*       m_autoCalSettleTimer{nullptr};   ///< one sequence timer
+    /// The selected band, and the cursor fields kept for the UI tests.
     Band          m_autoCalCurrentBand{Band::Band160m};
-    int           m_autoCalCurrentDriveStep{0};   ///< 0..8 covering 10..90%
-    double        m_autoCalTargetWatts{50.0};      ///< user-configurable target
-    /// Re-entry guard so chkAutoPACalibrate setChecked(false) inside
-    /// abortAutoCal/completeAutoCal does not recurse into cancelAutoCal.
+    int           m_autoCalCurrentDriveStep{0};
+    Band          m_autoCalBand{Band::Band20m};
+    int           m_autoCalIteration{0};
+    bool          m_autoCalRunning{false};
+    /// Target = the band's Max W, capped at 100 W (`kAutoCalMaxTargetWatts`).
+    double        m_autoCalTargetWatts{50.0};
+    /// Pre-run drive state, restored when the sequence ends.
+    int           m_autoCalSavedPower{50};
+    int           m_autoCalSavedTunePower{50};
+    int           m_autoCalSavedPowerLimit{100};
+    int           m_autoCalSavedTuneLimit{100};
+    Band          m_autoCalSavedBand{Band::Band20m};
+    int           m_autoCalSavedTuneSource{0};     ///< DrivePowerSource as int
+    bool          m_autoCalSavedValid{false};
+    /// Re-entry guard so setChecked(false) inside finish does not recurse.
     bool          m_autoCalProgrammaticToggle{false};
-    /// Sub-panel widgets (hidden until chkAutoPACalibrate is ticked).
+    /// First time the panel opens, start the band combo on the TX band.
+    bool          m_autoCalBandInitialized{false};
+    /// Sub-panel widgets (hidden until the checkbox is ticked).
     QGroupBox*    m_autoCalPanel{nullptr};
+    QLabel*       m_autoCalWarning{nullptr};
+    QCheckBox*    m_autoCalConfirm{nullptr};
+    QComboBox*    m_autoCalBandCombo{nullptr};
+    QComboBox*    m_autoCalSourceCombo{nullptr};
+    QComboBox*    m_autoCalTimeoutCombo{nullptr};
+    QComboBox*    m_autoCalToleranceCombo{nullptr};
+    QDoubleSpinBox* m_autoCalGainSpin{nullptr};  ///< manual base-Gain control
+    bool          m_autoCalUpdatingGain{false};
+    QTimer*       m_autoCalWatchdog{nullptr};
+    QElapsedTimer m_autoCalKeyClock;
+    QLabel*       m_autoCalCountdownLabel{nullptr};
+    int           m_autoCalSource{0};  ///< 0 = radio FWD, 1..4 = WaveNode PWRn
     QLabel*       m_autoCalStatusLabel{nullptr};
     QProgressBar* m_autoCalProgressBar{nullptr};
+    QPushButton*  m_autoCalStartButton{nullptr};
+    QPushButton*  m_autoCalTuneButton{nullptr};
+    bool          m_autoCalTuneUpdating{false};
+    QPushButton*  m_autoCalApplyButton{nullptr};
     QPushButton*  m_autoCalCancelButton{nullptr};
-    QDoubleSpinBox* m_autoCalTargetSpin{nullptr};
+    QPushButton*  m_autoCalLinearButton{nullptr};
+    QLabel*       m_autoCalModeLabel{nullptr};
+    /// -1 = base Gain (Max W); 0..8 = the selected 10 %..90 % trim point.
+    int           m_autoCalLinearPoint{-1};
+    Band          m_autoCalLinearBand{Band::Band20m};
+    /// The last measurement's suggested correction, waiting for Apply.
+    double        m_autoCalPendingDb{0.0};
+    Band          m_autoCalPendingBand{Band::Band20m};
+    bool          m_autoCalHasSuggestion{false};
+    bool          m_autoCalInTolerance{false};
+    QLabel*       m_autoCalTargetLabel{nullptr};  ///< "50 W (Max W)" / "100 W (limit)"
 
     // R-R3-46 / R-R3-49 (parity Task 6): the two gates and their controls.
     QList<QWidget*> paSettingsControls() const;
@@ -598,6 +620,13 @@ private:
     // the transmitting band, the Core's own window moves the drive as
     // Thetis does (RadioModel::applyPaEditOnAir).
     void applyEditOnAir(Band band, bool adjust, int step);
+    // A Max W / Use Max edit on the band that is transmitting: the drive
+    // percentage now maps to different watts, so the power math re-runs.
+    void applyCeilingEditOnAir(Band band);
+    // The nine trim points are percentages of the band's max when Use Max is
+    // on. Put the resulting watts in each cell's tooltip so the operator
+    // knows what "10%" means on this band.
+    void refreshAdjustTargets();
     bool    m_onAir{false};
     // Thetis _adjustingBand: the band transmitting now while on the air
     // (followed through band changes), or no band (-1).

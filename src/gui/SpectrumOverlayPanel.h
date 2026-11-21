@@ -153,6 +153,7 @@ class NEREUS_GUI_EXPORT SpectrumOverlayPanel : public QWidget {
 
 public:
     explicit SpectrumOverlayPanel(QWidget* parent = nullptr);
+    ~SpectrumOverlayPanel() override;
 
     /// TX rulings (JJ, 2026-09-30, item 3): this pan's slice is one this
     /// window only listens to (another device controls it), so the ATT
@@ -391,7 +392,12 @@ private:
 
     // ── Main button strip ────────────────────────────────────────────────
     QPushButton*         m_collapseBtn{nullptr};
-    QVector<QPushButton*> m_menuBtns;   // indices 0-6 (buttons 2-8)
+    QVector<QPushButton*> m_menuBtns;   // indices 0-7 (buttons 2-9)
+    // HF-Auto's TF (Tuner Follow) button, below ATT. Offered only while
+    // HF-Auto is enabled, as Thetis does.
+    QPushButton* m_tfBtn{nullptr};
+    bool m_tfAvailable{false};
+    int m_tfObserverId{-1};
     // False on a board with no antenna choices: the ANT flyout would be
     // empty, so its button is not shown (R-R3-49).
     bool                 m_antAvailable{true};

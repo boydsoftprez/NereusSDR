@@ -95,6 +95,8 @@ mw0lge@grange-lane.co.uk
 
 #include "core/ParaEqCurve.h"
 
+#include <complex>
+#include <vector>
 #include <QBrush>
 #include <QCursor>
 #include <QDateTime>
@@ -1015,6 +1017,7 @@ void ParametricEqWidget::paintEvent(QPaintEvent* /*event*/) {
     if (plot.width() < 2 || plot.height() < 2) return;
 
     drawGrid(g, plot);
+    drawSpectrum(g, plot);
 
     g.save();
     g.setClipRect(plot);
@@ -1030,6 +1033,7 @@ void ParametricEqWidget::paintEvent(QPaintEvent* /*event*/) {
 
     drawGlobalGainHandle(g, plot);
     drawBorder           (g, plot);
+    drawSpectrumLabels   (g, plot);
     if (m_showReadout) drawReadout(g, plot);
 }
 
@@ -2336,6 +2340,158 @@ void ParametricEqWidget::setLogScale(bool on) {
     if (on == m_logScale) return;
     m_logScale = on;
     update();
+}
+
+// Live audio overlay (NereusSDR addition): dBFS per bin, 0..Nyquist, from the
+// channel's read-only audio tap. The spectrum is drawn behind the curve so the
+// operator sees the actual highs and lows while adjusting.
+namespace {
+constexpr double kSpectrumPi = 3.14159265358979323846;
+
+void fftRadix2(std::vector<std::complex<double>>& a)
+{
+    const std::size_t n = a.size();
+    if (n < 2) { return; }
+    for (std::size_t i = 1, j = 0; i < n; ++i) {
+        std::size_t bit = n >> 1;
+        for (; j & bit; bit >>= 1) { j ^= bit; }
+        j ^= bit;
+        if (i < j) { std::swap(a[i], a[j]); }
+    }
+    for (std::size_t len = 2; len <= n; len <<= 1) {
+        const double ang = -2.0 * kSpectrumPi / static_cast<double>(len);
+        const std::complex<double> wlen(std::cos(ang), std::sin(ang));
+        for (std::size_t i = 0; i < n; i += len) {
+            std::complex<double> w(1.0, 0.0);
+            for (std::size_t k = 0; k < len / 2; ++k) {
+                const std::complex<double> u = a[i + k];
+                const std::complex<double> v = a[i + k + len / 2] * w;
+                a[i + k] = u + v;
+                a[i + k + len / 2] = u - v;
+                w *= wlen;
+            }
+        }
+    }
+}
+} // namespace
+
+void ParametricEqWidget::setSpectrumVisible(bool on)
+{
+    if (on == m_spectrumVisible) { return; }
+    m_spectrumVisible = on;
+    if (!on) { m_spectrumDb.clear(); }
+    update();
+}
+
+void ParametricEqWidget::setSpectrumFloorDb(int dbfs)
+{
+    const int clamped = std::clamp(dbfs, -120, -20);
+    if (clamped == m_spectrumFloorDb) { return; }
+    m_spectrumFloorDb = clamped;
+    update();
+}
+
+void ParametricEqWidget::setSpectrumSamples(const std::vector<float>& samples,
+                                            double sampleRateHz)
+{
+    constexpr std::size_t kN = 1024;
+    if (!m_spectrumVisible || samples.size() < 64 || sampleRateHz <= 0.0) { return; }
+    m_spectrumRate = sampleRateHz;
+    std::vector<std::complex<double>> buf(kN);
+    const std::size_t take = std::min(kN, samples.size());
+    const std::size_t offset = samples.size() - take;
+    for (std::size_t i = 0; i < kN; ++i) {
+        const double sample = i < take ? static_cast<double>(samples[offset + i]) : 0.0;
+        const double window = 0.5 - 0.5 * std::cos(2.0 * kSpectrumPi * static_cast<double>(i) /
+                                                    static_cast<double>(kN - 1));
+        buf[i] = std::complex<double>(sample * window, 0.0);
+    }
+    fftRadix2(buf);
+    const std::size_t bins = kN / 2;
+    m_spectrumDb.resize(static_cast<int>(bins));
+    for (std::size_t i = 0; i < bins; ++i) {
+        const double mag = std::abs(buf[i]) * 2.0 / static_cast<double>(kN);
+        m_spectrumDb[static_cast<int>(i)] =
+            static_cast<float>(20.0 * std::log10(mag + 1e-9));
+    }
+    update();
+}
+
+double ParametricEqWidget::spectrumFloorMeasuredDb() const
+{
+    if (m_spectrumDb.isEmpty()) {
+        return -400.0;
+    }
+    std::vector<float> bins(m_spectrumDb.begin(), m_spectrumDb.end());
+    std::sort(bins.begin(), bins.end());
+    const std::size_t index = std::min(bins.size() - 1, bins.size() / 10);
+    return static_cast<double>(bins[index]);
+}
+
+void ParametricEqWidget::drawSpectrum(QPainter& g, const QRect& plot)
+{
+    if (!m_spectrumVisible || m_spectrumDb.isEmpty() || m_spectrumRate <= 0.0) { return; }
+    const int bins = m_spectrumDb.size();
+    if (bins < 2) { return; }
+    const double nyquist = m_spectrumRate * 0.5;
+    const double fMax = std::min(nyquist, m_frequencyMaxHz);
+    if (fMax <= m_frequencyMinHz) { return; }
+
+    QPainterPath path;
+    path.moveTo(xFromFreq(plot, m_frequencyMinHz), plot.bottom());
+    // True dBFS scale: top of the plot is 0 dBFS, bottom is the chosen floor,
+    // so a bin's height reads its real level rather than a fitted one.
+    const double floorDb = static_cast<double>(m_spectrumFloorDb);
+    const double spanDb = 0.0 - floorDb;
+    bool any = false;
+    for (int i = 1; i < bins; ++i) {
+        const double f = nyquist * static_cast<double>(i) / static_cast<double>(bins - 1);
+        if (f < m_frequencyMinHz) { continue; }
+        if (f > fMax) { break; }
+        const double dbfs = static_cast<double>(m_spectrumDb[i]);
+        const double norm = std::clamp((dbfs - floorDb) / spanDb, 0.0, 1.0);
+        path.lineTo(xFromFreq(plot, f), plot.bottom() - norm * plot.height());
+        any = true;
+    }
+    if (!any) { return; }
+    path.lineTo(xFromFreq(plot, fMax), plot.bottom());
+    path.closeSubpath();
+
+    g.save();
+    g.setPen(Qt::NoPen);
+    g.fillPath(path, QColor(0, 190, 235, 55));
+    g.setPen(QPen(QColor(0, 190, 235, 120), 1.0));
+    g.drawPath(path);
+    g.restore();
+}
+
+// Drawn last (above the curve and handles) so the level labels are never
+// hidden under the band paint or the curve line.
+void ParametricEqWidget::drawSpectrumLabels(QPainter& g, const QRect& plot)
+{
+    if (!m_spectrumVisible) { return; }
+    const double floorDb = static_cast<double>(m_spectrumFloorDb);
+    const double spanDb = 0.0 - floorDb;
+    if (spanDb <= 0.0) { return; }
+
+    g.save();
+    QFont small = g.font();
+    small.setPointSizeF(std::max(6.5, small.pointSizeF() - 2.0));
+    g.setFont(small);
+    const QColor text(0, 210, 245, 200);
+    // Right margin, mirroring the gain labels in the left margin. The global
+    // gain handle sits at the plot edge, so start clear of it.
+    const int x = plot.right() + 12;
+    const int width = std::min(40, this->width() - x - 2);
+    if (width < 20) { g.restore(); return; }
+    for (int db = 0; db >= m_spectrumFloorDb; db -= 20) {
+        const double norm = (static_cast<double>(db) - floorDb) / spanDb;
+        const int y = static_cast<int>(std::lround(plot.bottom() - norm * plot.height()));
+        const QRect box(x, y - 8, width, 16);
+        g.setPen(text);
+        g.drawText(box, Qt::AlignLeft | Qt::AlignVCenter, QString::number(db));
+    }
+    g.restore();
 }
 
 // From Thetis ucParametricEq.cs:662-681 [v2.10.3.13] -- DbMin.

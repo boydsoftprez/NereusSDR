@@ -1240,6 +1240,9 @@ void Hl2IoBoardTab::onN2adrToggled(bool checked)
 void Hl2IoBoardTab::applyN2adrMatrix(bool checked)
 {
     if (!m_model) { return; }
+    // Never touch the OC matrix for N2ADR on a board that has no HL2 I/O
+    // board: the preset clears every pin before applying its own pattern.
+    if (!m_model->boardCapabilities().hasIoBoardHl2) { return; }
     OcMatrix& oc = m_model->ocMatrixMutable();
     // R-R3-46: without the transmit permission (a remote window) only the
     // receive half applies, as the Core applies it; the transmit pins stay
@@ -1403,6 +1406,14 @@ void Hl2IoBoardTab::restoreSettings(const QMap<QString, QVariant>& settings)
     // reconciled at its own connect. Rewriting it here would send the
     // Core a write just for opening Setup.
     if (m_model && !m_model->ownsLocalDsp()) {
+        return;
+    }
+    // N2ADR is an HL2 accessory. On any other board this key can exist
+    // (migrated from a manual identity or a previous profile), and applying
+    // the preset would clear the operator's whole OC matrix just by opening
+    // Setup. The connect path already limits the preset to HL2; do the same
+    // here.
+    if (!m_model || !m_model->boardCapabilities().hasIoBoardHl2) {
         return;
     }
     applyN2adrMatrix(checked);

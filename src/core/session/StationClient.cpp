@@ -9,25 +9,6 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-11-16: Recording plan Task 22: the dsr.* verbs (rewind sound) are
-//               sent and answered with the recordings verbs.
-//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
-//   2026-11-16: Recording plan Task 11 fix round 2: a token sign-in knows the
-//               voice message is its own by the sender the Core's answer to
-//               its voiceKeyer.send names (followVoiceMessageSending).
-//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
-//   2026-11-16: Recording plan Task 11 review fix: keepalives while the
-//               Core's voice keyer sends this window's message (the mirrored
-//               voiceKeyer.sending names this device). J.J. Boyd (KG4VCF),
-//               AI-assisted via Anthropic Claude Code.
-//   2026-11-16: Recording plan Task 11: the voiceKeyer.* verbs go and come
-//               back as the recordings.* verbs do. J.J. Boyd (KG4VCF),
-//               AI-assisted via Anthropic Claude Code.
-//   2026-11-15: Recording plan Task 5: recordings declared, the `recordings` mirror,
-//               sendRecordingsCommand and the recordings.* answers to
-//               RemoteRecordingsAccess; coreIsOnThisComputer split out of
-//               coreServesTciOnThisComputer.
-//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05: Band stack plan Task 6: sliceControlledHere; a bandStack.* refusal goes
 //               to BandStackAccess::refused.
 //   2026-11-05: Band stack plan Task 4: bandStack declared, the `bandStack` mirror and
@@ -643,7 +624,6 @@
 
 #include <utility>
 #include <QJsonDocument>
-#include <QJsonObject>
 #include <QJsonArray>
 #include "core/session/NetworkTrouble.h"
 #include "core/session/HappyEyeballs.h"
@@ -695,8 +675,6 @@
 #include "models/RoundtableModel.h"
 #include "core/roundtable/RoundtableState.h"
 #include "core/session/BandStackFacade.h"
-#include "core/session/RecordingsFacade.h"
-#include "models/recordings/RemoteRecordingsAccess.h"
 #include "core/session/RecordStream.h"
 
 #include <QAuthenticator>
@@ -1086,9 +1064,6 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     // Band stack plan Task 4: this window shows the Core's band stack (the
     // `bandStack` object and the bandStack.* verbs; bandStackVersion 1).
     m_declaredFeatures.insert(QByteArrayLiteral("bandStack"), 1);
-    // Recording plan Task 5: this window shows and uses the Core's recordings
-    // (the `recordings` object and the recordings.* verbs; recordingsVersion 1).
-    m_declaredFeatures.insert(QByteArrayLiteral("recordings"), 1);
     // R-R3-46 / R-R3-11: this window shows and sets the other ADC's own
     // attenuator for the slices on it (stepAtt rx2AttenuationDb,
     // rx2SliceMask; adcAttenuatorVersion 1).
@@ -1301,12 +1276,6 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
                     m_remoteTransmit->setVoxArmed(armedHere);
                     emit voxArmedHereChanged(armedHere);
                 });
-        // Recording plan Task 11: the Core's voice keyer keys the radio as
-        // this device while it sends this window's message (or waits to
-        // repeat it); the keepalives go meanwhile, as for its own key, so
-        // the Core's watchdog does not cut it (a dead window still is).
-        connect(radioModel->recordingsFacade(), &RecordingsFacade::changed, this,
-                [this]() { followVoiceMessageSending(); });
         // A refused press is shown in the Core's words, where a local
         // refusal shows (MainWindow's toast; the buttons follow the Core).
         const QPointer<RadioModel> model(radioModel);
@@ -2574,8 +2543,6 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
 
     m_capabilities.coreBuildInfo.reset();
     m_signedInWithDeviceKey = false;
-    // Fix round 2: the Core's name for this window was this session's.
-    m_voiceKeyerSelfWireId.clear();
     m_capabilitiesThisSession = false;
     if (m_radioModel) { m_radioModel->setStationRadeV2Enabled(false); }
     m_capabilities.radioAntennaRowsVersion = 0;
@@ -2730,9 +2697,6 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
             }
             // Band stack plan Task 4: so does the Core's band stack.
             m_radioModel->bandStackFacade()->clearStationValues();
-            // Recording plan Task 5: and its recordings. The Core keeps
-            // recording; the next snapshot shows it again (section 7).
-            m_radioModel->recordingsFacade()->clearStationValues();
         }
     }
     m_roundtableStreams.clear();
@@ -4281,19 +4245,6 @@ void StationClient::handleCapabilities(const SessionMessage& message)
         }
     }
 
-    // Recording plan Task 5 (recordingsVersion 1): the Core's recordings,
-    // read only; never written back. Against a Core that does not offer them
-    // the key is not held.
-    if (m_radioModel->role() == RadioModel::Role::Remote) {
-        RecordingsFacade* recordings = m_radioModel->recordingsFacade();
-        if (recordingsVersion() >= 1) {
-            m_objects.insert(QByteArrayLiteral("recordings"), recordings);
-        } else {
-            m_objects.remove(QByteArrayLiteral("recordings"));
-            recordings->clearStationValues();
-        }
-    }
-
     // Parity Task 19 (recordStreamVersion 1): the Core's spot sources, read
     // only; never written back. Against a Core that does not send them the
     // key is not held and the station's sources read off.
@@ -5630,12 +5581,6 @@ bool StationClient::applyClientOnlyProperty(QObject* target, const QByteArray& c
         auto* bandStack = qobject_cast<BandStackFacade*>(target);
         return bandStack != nullptr && bandStack->applyStationValue(propertyName, native);
     }
-    // Recording plan Task 5: a plain state apply; changes only by the
-    // recordings.* verbs.
-    if (className == "RecordingsFacade") {
-        auto* recordings = qobject_cast<RecordingsFacade*>(target);
-        return recordings != nullptr && recordings->applyStationValue(propertyName, native);
-    }
     if (className != "SliceModel") {
         return false;
     }
@@ -6108,46 +6053,6 @@ StationClient::CommandOutcome StationClient::requestSelectBand(int sliceId, int 
     return sendCommand("slice.selectBand", sliceId,
                        { intArgument("sliceId", sliceId), intArgument("band", band) },
                        QStringLiteral("the band change"));
-}
-
-int StationClient::recordingsVersion() const
-{
-    // Recording plan Task 5: the Core sends recordingsVersion only to a window
-    // that declared recordings. Kept while the link is down, as last offered.
-    return m_agreedMinor >= kRadioIdentitySessionProtocolMinor ? m_capabilities.recordingsVersion
-                                                               : 0;
-}
-
-StationClient::CommandOutcome StationClient::sendRecordingsCommand(const QString& verb,
-                                                                   const QJsonObject& arguments)
-{
-    if (!stationLinkReady() || recordingsVersion() < 1) {
-        return IStationLink::sendRecordingsCommand(verb, arguments);
-    }
-    const QString notSent = QStringLiteral("The recordings request could not be sent.");
-    if (!verb.startsWith(QLatin1String("recordings.")) && !verb.startsWith(QLatin1String("voiceKeyer."))
-        && !verb.startsWith(QLatin1String("dsr."))) {
-        return {false, notSent};
-    }
-    QList<MirrorUpdate> wire;
-    for (auto it = arguments.constBegin(); it != arguments.constEnd(); ++it) {
-        const QByteArray name = it.key().toUtf8();
-        const QJsonValue value = it.value();
-        if (value.isString()) {
-            wire.append(stringArgument(name, value.toString()));
-        } else if (value.isBool()) {
-            wire.append(boolArgument(name, value.toBool()));
-        } else if (value.isDouble()) {
-            wire.append(MirrorUpdate{0, name, MirrorWireKind::Int64,
-                                     QVariant(static_cast<qlonglong>(value.toInteger()))});
-        } else if (value.isArray()) {
-            wire.append(stringArgument(name, QString::fromUtf8(QJsonDocument(value.toArray())
-                                                                   .toJson(QJsonDocument::Compact))));
-        } else {
-            return {false, notSent};
-        }
-    }
-    return sendCommand(verb.toUtf8(), -1, wire, QStringLiteral("the recordings request"));
 }
 
 bool StationClient::bandStackAvailable() const
@@ -8849,28 +8754,6 @@ void StationClient::handleCommandResult(const SessionMessage& message)
     if (handleRoundtableResult(message)) {
         return;
     }
-    // Recording plan Task 5: the recordings.* answers, and the Core's
-    // recordings.playback (this window's own playback, sent on its own), go
-    // to the window's RemoteRecordingsAccess, none to the generic routes.
-    if (message.commandVerb.startsWith("recordings.") || message.commandVerb.startsWith("voiceKeyer.")
-        || message.commandVerb.startsWith("dsr.")) {
-        m_pendingCommands.remove(message.commandId);
-        // Fix round 2: the Core names this window's own send as `sending`
-        // will, which a token sign-in cannot work out for itself.
-        if (message.commandVerb == "voiceKeyer.send" && message.accepted) {
-            for (const MirrorUpdate& update : message.updates) {
-                if (update.name == "deviceId") {
-                    m_voiceKeyerSelfWireId = update.value.toString();
-                }
-            }
-            followVoiceMessageSending();
-        }
-        if (auto* recordings = qobject_cast<RemoteRecordingsAccess*>(m_radioModel->recordings())) {
-            recordings->takeResult(message.commandVerb, message.accepted, message.reason,
-                                   message.updates);
-        }
-        return;
-    }
     // iPhone app plan Task 29 (link section 21.2): the ticket this window
     // asked for to move the session. Never logged beyond the outcome.
     if (message.commandVerb == "session.pathTicket") {
@@ -9499,13 +9382,6 @@ bool StationClient::coreServesTciOnThisComputer() const
         || m_capabilities.stationTciVersion < 1) {
         return false;
     }
-    return coreIsOnThisComputer();
-}
-
-bool StationClient::coreIsOnThisComputer() const
-{
-    // Recording plan Task 5: split out of coreServesTciOnThisComputer, which
-    // adds what the Core offers. The address this window last used.
     if (m_coreOnThisComputerForTest >= 0) {
         return m_coreOnThisComputerForTest == 1;
     }
@@ -9683,31 +9559,6 @@ QList<QByteArray> StationClient::mirroredObjectKeys() const
 QObject* StationClient::mirroredObject(const QByteArray& objectKey) const
 {
     return m_objects.value(objectKey).data();
-}
-
-void StationClient::followVoiceMessageSending()
-{
-    // Recording plan Task 11: the Core's voice keyer keys the radio as this
-    // device while it sends this window's message (or waits to repeat it).
-    if (m_remoteTransmit == nullptr) {
-        return;
-    }
-    const QJsonObject sending =
-        QJsonDocument::fromJson(m_radioModel ? m_radioModel->recordingsFacade()->json().toUtf8()
-                                             : QByteArray())
-            .object()
-            .value(QStringLiteral("voiceKeyer"))
-            .toObject()
-            .value(QStringLiteral("sending"))
-            .toObject();
-    const QString sender = sending.value(QStringLiteral("deviceId")).toString();
-    const QString self = thisDeviceWireId();
-    // A device-key sign-in knows its own id; a token sign-in learns the
-    // Core's name for it from the answer to its own send.
-    const bool mine = !sender.isEmpty()
-        && ((!self.isEmpty() && sender == self)
-            || (!m_voiceKeyerSelfWireId.isEmpty() && sender == m_voiceKeyerSelfWireId));
-    m_remoteTransmit->setVoiceMessageSending(mine);
 }
 
 QString StationClient::thisDeviceWireId() const

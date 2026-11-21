@@ -13,31 +13,14 @@
 // that name you never fold; zooming in opens folds. Then the tags a
 // RoundtableModel gives (labels, members, mine, mentions, your own turn)
 // and how a pan shows them for each link state (U4). Then a pan's drawing:
-// your frequency's line and the tags in the Roundtable strip under the
-// frequency scale, nothing on the spectrum; a click tunes, +N lists its rooms
-// by frequency and a row tunes; offline greys them, connecting hides them; no
-// tune while keyed. Reports leave the GPU caches clean.
+// the tags along the foot of the spectrum, clear of the VFO flags and the
+// band plan; a click tunes, +N lists its rooms by frequency and a row
+// tunes; offline greys them, connecting hides them; no tune while keyed.
+// Collapsing the pan's toolbar lays the tags out again in the independent
+// GPU child, or schedules a CPU repaint. Reports leave the GPU caches clean.
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-11-16: Review fixes: details opened upward stand past the flag, under
-//               the divider, opaque; the strip left out over a waterfall share
-//               under 58 px; a flag hanging into the strip moves your line and
-//               the tags; the scale column's end of the strip takes presses;
-//               your own tag stays while its details are open. J.J. Boyd
-//               (KG4VCF), AI-assisted via Anthropic Claude Code.
-//   2026-11-16: The details over the waterfall: placeRoundtableDetails cases,
-//               the spot's areas and left edge, a short waterfall opens them
-//               upward, and the line's width no longer follows its values. The
-//               foot-of-spectrum inspector cases are gone. J.J. Boyd (KG4VCF),
-//               AI-assisted via Anthropic Claude Code.
-//   2026-11-16: Your frequency's line and the tags in the strip: the line's
-//               placement and drawing replace the card's, the tags sit in the
-//               strip clear only of the line, and nothing Roundtable is on the
-//               spectrum. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
-//   2026-11-16: The Roundtable strip: its row in the pan layout, toggling it,
-//               when it shows, and a press in it that tunes nothing. J.J. Boyd
-//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-04: placeRoundtableInspector. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
 //   2026-11-03: Overlay redesign truth rules and card model (design D1 to D9,
@@ -76,7 +59,6 @@
 #include <QLoggingCategory>
 #include <QLabel>
 #include <QMenu>
-#include <QPaintEngine>
 #include <QPainter>
 #include <QPushButton>
 #include <QSignalSpy>
@@ -218,8 +200,6 @@ struct Pan {
         widget.setFrequencyRange(kPanCenterHz, kPanSpanHz);
         widget.setBandPlanManager(&plans);
         widget.setConnectionState(ConnectionState::Connected);
-        // Roundtable is on: the strip under the frequency scale holds the line and the tags.
-        widget.setRoundtableStripShown(true);
         flag = widget.addVfoWidget(0);
         flag->setFrequency(kPanCenterHz);
         widget.show();
@@ -291,81 +271,21 @@ RoundtableCardModel talkingCard(int rows = 3, RoundtableCardModel::Kind kind = R
     return card;
 }
 
-// A strip 1200 wide, as a pan's, with room above and below it.
-const QRect kStrip(0, 100, 1200, 30);
-
-// The line placed in kStrip by `dialX`, then drawn on black.
-struct DrawnLine {
-    QImage image;
-    RoundtableStripLinePlacement placed;
-};
-
-DrawnLine drawLine(const RoundtableCardModel& card, int dialX = 600, bool dimmed = false, bool open = false)
+QFontMetrics cardMetrics()
 {
-    DrawnLine drawn;
-    drawn.image = QImage(1200, 160, QImage::Format_ARGB32_Premultiplied);
-    drawn.image.fill(Qt::black);
-    drawn.placed = placeRoundtableStripLine(card, kStrip, dialX, false, QStringLiteral("dBm"), &drawn.image);
-    {
-        QPainter painter(&drawn.image);
-        paintRoundtableStripLine(painter, card, drawn.placed, QStringLiteral("dBm"), dimmed, open);
-    }
-    return drawn;
+    QFont font = WorkspacePreview::readableFont(QFont());
+    font.setPixelSize(WorkspacePreview::readableTextPixelSize(12));
+    font.setWeight(QFont::Bold);
+    return QFontMetrics(font);
 }
 
-// A paint device that keeps only the words drawn on it.
-class TextRecorder : public QPaintDevice {
-public:
-    TextRecorder() : m_engine(this) {}
-    ~TextRecorder() override = default;
-    QStringList texts;
-    QPaintEngine* paintEngine() const override { return &m_engine; }
+// The board's desktop band: dial 570 of a 1143 wide pan, the tool strip to 80,
+// the scale from 1109, the foot at 303, and a flag 250 wide.
+const QRect kBoardPan(80, 32, 1109 - 80, 303 - 32);
 
-protected:
-    int metric(PaintDeviceMetric metric) const override
-    {
-        switch (metric) {
-        case PdmWidth: return 1200;
-        case PdmHeight: return 160;
-        case PdmWidthMM: return 317;
-        case PdmHeightMM: return 42;
-        case PdmDpiX:
-        case PdmDpiY:
-        case PdmPhysicalDpiX:
-        case PdmPhysicalDpiY: return 96;
-        case PdmDepth: return 32;
-        case PdmNumColors: return 0;
-        default: return QPaintDevice::metric(metric);
-        }
-    }
-
-private:
-    class Engine : public QPaintEngine {
-    public:
-        explicit Engine(TextRecorder* owner) : QPaintEngine(QPaintEngine::AllFeatures), m_owner(owner) {}
-        bool begin(QPaintDevice*) override { return true; }
-        bool end() override { return true; }
-        void updateState(const QPaintEngineState&) override {}
-        void drawPixmap(const QRectF&, const QPixmap&, const QRectF&) override {}
-        void drawPolygon(const QPointF*, int, PolygonDrawMode) override {}
-        void drawPath(const QPainterPath&) override {}
-        void drawTextItem(const QPointF&, const QTextItem& item) override { m_owner->texts.append(item.text()); }
-        Type type() const override { return QPaintEngine::User; }
-
-    private:
-        TextRecorder* m_owner;
-    };
-    mutable Engine m_engine;
-};
-
-// Every word paintRoundtableStripLine draws for `placed`.
-QStringList lineTexts(const RoundtableCardModel& card, const RoundtableStripLinePlacement& placed)
+QRect boardFlag(int dialX, bool flipped = false)
 {
-    TextRecorder recorder;
-    QPainter painter(&recorder);
-    paintRoundtableStripLine(painter, card, placed, QStringLiteral("dBm"), false, false);
-    painter.end();
-    return recorder.texts;
+    return flipped ? QRect(dialX - 252, 30, 276, 162) : QRect(dialX - 24, 30, 276, 162);
 }
 
 bool hasColor(const QImage& image, const QRect& area, const QColor& want)
@@ -944,243 +864,247 @@ private slots:
         QVERIFY(rows.contains(heading));
     }
 
-    // ---- The details: placement (strip design 5, V4, V5) ----
+    // ---- The inspector: placement (overlay design D34, D37; overlay.js placeIns) ----
 
-    void theDetailsHangUnderTheStripWithPlentyOfRoom()
+    void theInspectorStandsOnTheFootPastTheFlag()
     {
-        const QRect below(0, 330, 1000, 400);
-        const QRect above(0, 0, 1000, 300);
-        RoundtableDetailsPlacement placed = placeRoundtableDetails(below, above, 500, 200);
-        QVERIFY(!placed.upward);
-        QCOMPARE(placed.rect, QRect(500, 334, 300, 200));
-        // Taller than the room: cut 4 px above the waterfall's foot.
-        placed = placeRoundtableDetails(below, above, 500, 900);
-        QVERIFY(!placed.upward);
-        QCOMPARE(placed.rect.top(), below.top() + 4);
-        QCOMPARE(placed.rect.bottom(), below.bottom() - 4);
-        QCOMPARE(placed.rect.height(), 392);
+        const int dialX = 400;
+        const QRect flag = boardFlag(dialX);
+        const QRect placed = placeRoundtableInspector(kBoardPan, dialX, {flag}, false, 180);
+        QCOMPARE(placed.width(), 300);
+        QCOMPARE(placed.height(), 180);
+        // At the stretch's edge, 4 px past the flag, not centered on anything.
+        QCOMPARE(placed.left(), flag.left() + flag.width() + 4);
+        QCOMPARE(placed.top() + placed.height(), 303);
+        QVERIFY(!placed.intersects(flag));
     }
 
-    void theDetailsAnchorClampsIntoTheArea()
+    void theInspectorIsCutToAShortPanAndStaysInside()
     {
-        const QRect below(10, 330, 1000, 400);
-        const QRect above(10, 0, 1000, 300);
-        // Past the right edge: the right edge holds it.
-        QCOMPARE(placeRoundtableDetails(below, above, 900, 100).rect.left(), 1010 - 300);
-        QCOMPARE(placeRoundtableDetails(below, above, 5000, 100).rect.right(), below.right());
-        // Past the left edge: the left edge holds it.
-        QCOMPARE(placeRoundtableDetails(below, above, -50, 100).rect.left(), 10);
-        QCOMPARE(placeRoundtableDetails(below, above, 300, 100).rect.left(), 300);
+        const int dialX = 400;
+        const QRect flag = boardFlag(dialX);
+        const QRect shortPan(80, 183, 1029, 120);
+        const QRect placed = placeRoundtableInspector(shortPan, dialX, {flag}, false, 400);
+        QCOMPARE(placed.height(), 120);
+        QCOMPARE(placed.top(), 183);
+        QCOMPARE(placed.top() + placed.height(), 303);
+        QCOMPARE(placed.width(), 300);
+        QVERIFY(!placed.intersects(flag));
+        // Tall enough, it asks for no more than it wants.
+        const QRect tall = placeRoundtableInspector(kBoardPan, dialX, {flag}, false, 90);
+        QCOMPARE(tall.height(), 90);
+        QCOMPARE(tall.top() + tall.height(), 303);
     }
 
-    void theDetailsTakeANarrowAreasWidth()
+    void theInspectorFollowsAFlippedFlag()
     {
-        const QRect below(40, 330, 200, 400);
-        const RoundtableDetailsPlacement placed = placeRoundtableDetails(below, QRect(40, 0, 200, 300), 120, 100);
-        QCOMPARE(placed.rect.width(), 200);
-        QCOMPARE(placed.rect.left(), 40);
-        QVERIFY(below.contains(placed.rect));
+        const int dialX = 800;
+        const QRect flag = boardFlag(dialX, true);
+        const QRect placed = placeRoundtableInspector(kBoardPan, dialX, {flag}, true, 180);
+        QCOMPARE(placed.width(), 300);
+        // Ends 4 px short of the flag, on the far side from the dial.
+        QCOMPARE(placed.left() + placed.width(), flag.left() - 4);
+        QVERIFY(!placed.intersects(flag));
+        QCOMPARE(placed.top() + placed.height(), 303);
     }
 
-    void underRoomBelowWithMoreAboveTheDetailsOpenUpward()
+    // The two stretches differ from the card's: a 260 stretch counts, 259 does not,
+    // and narrower than 300 it takes what there is.
+    void theInspectorsStretchIsAtLeast260()
     {
-        const QRect above(0, 0, 1000, 300);
-        const QRect below(0, 330, 1000, 100);  // 92 px of room
-        RoundtableDetailsPlacement placed = placeRoundtableDetails(below, above, 500, 200);
-        QVERIFY(placed.upward);
-        QCOMPARE(placed.rect, QRect(500, 100, 300, 200));
-        QCOMPARE(placed.rect.bottom(), above.bottom());
-        // Cut to the spectrum's height.
-        placed = placeRoundtableDetails(below, above, 500, 900);
-        QVERIFY(placed.upward);
-        QCOMPARE(placed.rect, QRect(500, 0, 300, 300));
-        // 140 px of room below is enough: they stay below.
-        placed = placeRoundtableDetails(QRect(0, 330, 1000, 148), above, 500, 200);
-        QVERIFY(!placed.upward);
-        QCOMPARE(placed.rect, QRect(500, 334, 300, 140));
-        // 139 is not.
-        QVERIFY(placeRoundtableDetails(QRect(0, 330, 1000, 147), above, 500, 200).upward);
-        QCOMPARE(kRoundtableDetailsMinBelow, 140);
+        const QRect pan(0, 0, 1000, 300);
+        const int dialX = 300;
+        const auto flagEnding = [](int right) { return QRect(100, 0, right - 100, 100); };
+        // Past the flag there is 1000 - 736 = 264 wide: narrower than 300, still taken.
+        QRect placed = placeRoundtableInspector(pan, dialX, {flagEnding(732)}, false, 100);
+        QCOMPARE(placed.left(), 736);
+        QCOMPARE(placed.width(), 264);
+        // 1000 - 741 = 259 is too narrow, and so is what the flag leaves on the near
+        // side: no stretch has room, so it stays open at the pan's edge.
+        placed = placeRoundtableInspector(pan, dialX, {flagEnding(737)}, false, 100);
+        QCOMPARE(placed.left(), pan.left());
+        QCOMPARE(placed.width(), 300);
     }
 
-    void underRoomBelowWithLessAboveTheDetailsStayBelow()
+    void theInspectorUsesTheDialOnlyWhenItLiesInsideTheStretch()
     {
-        const QRect below(0, 330, 1000, 130);  // 122 px of room
-        const QRect above(0, 0, 1000, 100);
-        const RoundtableDetailsPlacement placed = placeRoundtableDetails(below, above, 500, 200);
-        QVERIFY(!placed.upward);
-        QCOMPARE(placed.rect, QRect(500, 334, 300, 122));
-        // Nothing anywhere: no spot.
-        QVERIFY(placeRoundtableDetails(QRect(), QRect(), 500, 200).rect.isNull());
+        const QRect pan(0, 0, 1000, 300);
+        // Nothing in the way: the stretch holds the dial, so it centers on it.
+        QCOMPARE(placeRoundtableInspector(pan, 500, {}, false, 100).left(), 350);
+        // Clamped to the stretch near an end.
+        QCOMPARE(placeRoundtableInspector(pan, 40, {}, false, 100).left(), 0);
+        QCOMPARE(placeRoundtableInspector(pan, 980, {}, false, 100).left(), 700);
+        // A flag out of the pan's height keeps nothing clear.
+        QCOMPARE(placeRoundtableInspector(pan, 500, {QRect(400, -200, 200, 100)}, false, 100).left(), 350);
     }
 
-    // ---- Your frequency's line in the strip: placement (strip design 3; placeStrip) ----
-
-    void fiveReadingsInAWideStripShowAll()
+    void theInspectorStaysOpenWithNoFreeStretch()
     {
-        QImage device(1, 1, QImage::Format_ARGB32_Premultiplied);
-        // Five short calls: each reading takes its 78 px least.
-        RoundtableCardModel card = talkingCard(5);
-        const QStringList calls{"K1A", "K2B", "K3C", "K4D", "K5E"};
-        for (int i = 0; i < 5; ++i) { card.rows[i].call = calls.at(i); }
-        const RoundtableStripLinePlacement placed
-            = placeRoundtableStripLine(card, kStrip, 600, false, QStringLiteral("dBm"), &device);
-        QVERIFY(!placed.line.isNull());
-        QCOMPARE(placed.readings, 5);
-        QCOMPARE(placed.moreReadings, 0);
-        QCOMPARE(placed.line.height(), 24);
-        QCOMPARE(placed.line.top(), kStrip.top() + 3);
-        // Beside the dial, 8 px off it, on one side or the other.
-        QVERIFY2(placed.line.left() == 608 || placed.line.right() + 1 == 592,
-                 qPrintable(QStringLiteral("%1 to %2").arg(placed.line.left()).arg(placed.line.right())));
-        QVERIFY(placed.line.left() >= kStrip.left() + 4);
-        QVERIFY(placed.line.right() <= kStrip.right() - 4);
+        const QRect wall(80, 30, 1029, 162);
+        const QRect placed = placeRoundtableInspector(kBoardPan, 570, {wall}, false, 180);
+        QCOMPARE(placed.left(), kBoardPan.left());
+        QCOMPARE(placed.width(), 300);
+        QCOMPARE(placed.top() + placed.height(), 303);
+        // A pan narrower than the inspector holds it inside, and an empty one has no spot.
+        const QRect narrow = placeRoundtableInspector(QRect(10, 0, 200, 300), 50, {}, false, 100);
+        QCOMPARE(narrow.left(), 10);
+        QCOMPARE(narrow.width(), 200);
+        QVERIFY(placeRoundtableInspector(QRect(), 50, {}, false, 100).isNull());
     }
 
-    void readingsDropFromTheEndBehindPlusMore()
+    // ---- The live card: placement (overlay design D16, D19) ----
+
+    void theCardSitsPastTheFlagOnTheFoot()
     {
-        QImage device(1, 1, QImage::Format_ARGB32_Premultiplied);
-        const RoundtableCardModel card = talkingCard(5);
-        const int dialX = 20;
-        RoundtableStripLinePlacement placed;
-        // Narrow the strip until its far side holds the head and only two readings.
-        for (int width = 1200; width > 100; width -= 2) {
-            placed = placeRoundtableStripLine(card, QRect(0, 100, width, 30), dialX, false, QStringLiteral("dBm"), &device);
-            if (placed.readings <= 2) { break; }
+        const QFontMetrics fm = cardMetrics();
+        const int dialX = 570;
+        const QRect flag = boardFlag(dialX);
+        const RoundtableCardPlacement placed = placeRoundtableCard(talkingCard(), kBoardPan, dialX, {flag}, false, fm);
+        QVERIFY(!placed.card.isNull());
+        QCOMPARE(placed.card.width(), 232);
+        QVERIFY(placed.card.left() > flag.right());
+        QCOMPARE(placed.card.top() + placed.card.height(), 303);
+        QVERIFY(!placed.beside);
+        QCOMPARE(placed.rows, 3);
+        QCOMPARE(placed.moreRows, 0);
+    }
+
+    void theCardComesBackOnTheNearSideWithoutRoomPastTheFlag()
+    {
+        const QFontMetrics fm = cardMetrics();
+        // 199 free past the flag: too few.
+        int dialX = 654;
+        QRect flag = boardFlag(dialX);
+        QCOMPARE(flag.left() + flag.width() + 4 + 199, 1109);
+        RoundtableCardPlacement placed = placeRoundtableCard(talkingCard(), kBoardPan, dialX, {flag}, false, fm);
+        QVERIFY(placed.beside);
+        QCOMPARE(placed.card.width(), 232);
+        QVERIFY(placed.card.right() < flag.left());
+        // 200 free: past the flag at that width.
+        flag.translate(-1, 0);
+        dialX -= 1;
+        placed = placeRoundtableCard(talkingCard(), kBoardPan, dialX, {flag}, false, fm);
+        QVERIFY(!placed.beside);
+        QCOMPARE(placed.card.width(), 200);
+        QVERIFY(placed.card.left() > flag.right());
+    }
+
+    void aFlippedFlagPutsTheCardPastItOnTheLeft()
+    {
+        const QFontMetrics fm = cardMetrics();
+        const int dialX = 1000;
+        const QRect flag = boardFlag(dialX, true);
+        const RoundtableCardPlacement placed = placeRoundtableCard(talkingCard(), kBoardPan, dialX, {flag}, true, fm);
+        QVERIFY(!placed.beside);
+        QVERIFY(placed.card.right() < flag.left());
+        QCOMPARE(placed.card.width(), 232);
+    }
+
+    void theCardNeverCrossesAFlagOrLeavesThePan_data()
+    {
+        QTest::addColumn<int>("dialX");
+        QTest::addColumn<bool>("flipped");
+        for (int dialX = 90; dialX < 1100; dialX += 97) {
+            QTest::addRow("right of %d", dialX) << dialX << false;
+            QTest::addRow("left of %d", dialX) << dialX << true;
         }
-        QCOMPARE(placed.readings, 2);
-        QCOMPARE(placed.moreReadings, 3);
-        QCOMPARE(placed.line.left(), dialX + 8);
-        const RoundtableStripLineParts parts
-            = roundtableStripLineParts(card, placed, QStringLiteral("dBm"), &device);
-        QCOMPARE(parts.readings.size(), 2);
-        QVERIFY(!parts.more.isNull());
-        QVERIFY(parts.more.right() <= placed.line.right());
-        const QStringList texts = lineTexts(card, placed);
-        QVERIFY2(texts.join(QLatin1Char('|')).contains(QStringLiteral("+3 more")), qPrintable(texts.join('|')));
-        // The line names no frequency.
-        for (const QString& text : texts) {
-            QVERIFY2(!text.contains(QStringLiteral("7.2")), qPrintable(text));
+    }
+
+    void theCardNeverCrossesAFlagOrLeavesThePan()
+    {
+        QFETCH(int, dialX);
+        QFETCH(bool, flipped);
+        const QFontMetrics fm = cardMetrics();
+        const QVector<QRect> flags{boardFlag(dialX, flipped), QRect(600, 30, 90, 162)};
+        const RoundtableCardPlacement placed = placeRoundtableCard(talkingCard(7), kBoardPan, dialX, flags, flipped, fm);
+        if (placed.card.isNull()) {
+            return;
+        }
+        QVERIFY(kBoardPan.contains(placed.card));
+        for (const QRect& flag : flags) {
+            QVERIFY(!placed.card.intersects(flag));
         }
     }
 
-    void nearTheRightEdgeTheLineGoesLeft()
+    void noStretchWideEnoughMeansNoCard()
     {
-        QImage device(1, 1, QImage::Format_ARGB32_Premultiplied);
-        // The flag's far side is right of the dial, 60 px from the strip's end.
-        const int dialX = kStrip.right() + 1 - 60;
-        const RoundtableStripLinePlacement placed
-            = placeRoundtableStripLine(talkingCard(), kStrip, dialX, false, QStringLiteral("dBm"), &device);
-        QVERIFY(!placed.line.isNull());
-        QCOMPARE(placed.line.right() + 1, dialX - 8);
-        QCOMPARE(placed.readings, 3);
-        // Flipped near the left end: the far side is left, so it goes right.
-        const RoundtableStripLinePlacement flipped
-            = placeRoundtableStripLine(talkingCard(), kStrip, 60, true, QStringLiteral("dBm"), &device);
-        QCOMPARE(flipped.line.left(), 68);
-        // Flipped with room on the left: past the flag, left of the dial.
-        const RoundtableStripLinePlacement left
-            = placeRoundtableStripLine(talkingCard(), kStrip, 900, true, QStringLiteral("dBm"), &device);
-        QCOMPARE(left.line.right() + 1, 892);
+        // A flag each side, 199 between them and neither side of them wider.
+        const QFontMetrics fm = cardMetrics();
+        const QRect pan(0, 0, 803, 300);
+        const QVector<QRect> flags{QRect(199, 0, 201, 100), QRect(603, 0, 200, 100)};
+        const RoundtableCardPlacement placed = placeRoundtableCard(talkingCard(), pan, 500, flags, false, fm);
+        QVERIFY(placed.card.isNull());
+        QCOMPARE(placed.rows, 0);
     }
 
-    void aQuietCardWithNoNoteHasNoLine()
+    void rowsGiveWayFirstOnAShortPan()
     {
-        QImage device(1, 1, QImage::Format_ARGB32_Premultiplied);
-        RoundtableCardModel quiet;
-        quiet.hz = 7200000;
-        QVERIFY(placeRoundtableStripLine(quiet, kStrip, 600, false, QStringLiteral("dBm"), &device).line.isNull());
-        // A link note is something to show.
-        quiet.frozen = true;
-        quiet.note = QStringLiteral("Reconnecting");
-        const RoundtableStripLinePlacement noted
-            = placeRoundtableStripLine(quiet, kStrip, 600, false, QStringLiteral("dBm"), &device);
-        QVERIFY(!noted.line.isNull());
-        QCOMPARE(noted.readings, 0);
-        QVERIFY(lineTexts(quiet, noted).contains(QStringLiteral("Reconnecting")));
-        // No side with room for the head: no line.
-        QVERIFY(placeRoundtableStripLine(talkingCard(), QRect(0, 100, 60, 30), 30, false, QStringLiteral("dBm"), &device)
-                    .line.isNull());
+        const QFontMetrics fm = cardMetrics();
+        RoundtableCardPlacement placed = placeRoundtableCard(talkingCard(7), kBoardPan, 570, {boardFlag(570)}, false, fm);
+        QCOMPARE(placed.rows, 5);
+        QCOMPARE(placed.moreRows, 2);
+        const RoundtableCardModel card = talkingCard(5, RoundtableCardModel::Kind::Double);
+        int last = 5;
+        int zeroRowsHeight = 0;
+        for (int height = 220; height >= 40; height -= 4) {
+            const QRect pan(80, 303 - height, 1029, height);
+            placed = placeRoundtableCard(card, pan, 570, {}, false, fm);
+            QVERIFY(!placed.card.isNull());
+            QVERIFY2(placed.rows <= last, "a shorter pan never shows more rows");
+            QCOMPARE(placed.moreRows, 5 - placed.rows);
+            QVERIFY(placed.card.height() <= height);
+            QCOMPARE(placed.card.top() + placed.card.height(), 303);
+            last = placed.rows;
+            if (placed.rows == 0 && zeroRowsHeight == 0) { zeroRowsHeight = height; }
+        }
+        QVERIFY(zeroRowsHeight > 0);
     }
 
-    void aDoubleNamesBothSideBySideClearOfItsReadings()
+    void aShortPanKeepsTheDoubleHeadAndNames()
     {
-        QImage device(1, 1, QImage::Format_ARGB32_Premultiplied);
-        RoundtableCardModel card = talkingCard(3, RoundtableCardModel::Kind::Double);
-        card.clockMs = 83000;
-        const RoundtableStripLinePlacement placed
-            = placeRoundtableStripLine(card, kStrip, 300, false, QStringLiteral("dBm"), &device);
-        QCOMPARE(placed.readings, 3);
-        const RoundtableStripLineParts parts = roundtableStripLineParts(card, placed, QStringLiteral("dBm"), &device);
-        QCOMPARE(parts.names.size(), 2);
-        QVERIFY(!parts.clock.isNull());
-        QCOMPARE(parts.readings.size(), 3);
-        QVERIFY(!parts.head.intersects(parts.names.first()));
-        QCOMPARE(parts.names.at(1).left() - parts.names.at(0).right() - 1, 8);
-        for (const QRect& name : parts.names) {
-            QVERIFY(!name.intersects(parts.clock));
-            for (const QRect& reading : parts.readings) {
-                QVERIFY(!name.intersects(reading));
-                QVERIFY(!parts.clock.intersects(reading));
+        const QFontMetrics fm = cardMetrics();
+        const RoundtableCardModel card = talkingCard(5, RoundtableCardModel::Kind::Double);
+        // Room for the rail, the head and one line of names, nothing else.
+        const int height = 2 + 3 + 5 + 5 + 16 + 3 + 15 + 2 + 2;
+        const QRect pan(0, 0, 800, height);
+        const RoundtableCardPlacement placed = placeRoundtableCard(card, pan, 100, {}, false, fm);
+        QVERIFY(!placed.card.isNull());
+        QCOMPARE(placed.rows, 0);
+        QCOMPARE(placed.moreRows, 5);
+        QImage image(800, height, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::black);
+        {
+            QPainter painter(&image);
+            paintRoundtableCard(painter, card, placed, QStringLiteral("dBm"), fm, false);
+        }
+        // The rail's stripes and the red name dot are both there.
+        QVERIFY(hasColor(image, QRect(placed.card.left() + 2, placed.card.top() + 1, 40, 3), QColor(0xe0, 0x6c, 0x6e)));
+        QVERIFY(hasColor(image, placed.card.adjusted(7, 24, -7, 0), QColor(0xe0, 0x6c, 0x6e)));
+    }
+
+    void valueUpdatesChangeNoCardGeometry()
+    {
+        const QFontMetrics fm = cardMetrics();
+        RoundtableCardModel card = talkingCard(4);
+        const QVector<QRect> flags{boardFlag(570)};
+        const RoundtableCardPlacement first = placeRoundtableCard(card, kBoardPan, 570, flags, false, fm);
+        for (int i = 0; i < 40; ++i) {
+            for (RoundtableCardRow& row : card.rows) {
+                row.dbm -= 3.0;
+                row.ageMs += 37000;
+                row.old = row.ageMs > 20000;
+                row.peakDbm = row.dbm + 1.0;
             }
-        }
-        QVERIFY(placed.line.contains(parts.readings.last()));
-        const QStringList texts = lineTexts(card, placed);
-        for (const QString& word : {QStringLiteral("Double"), QStringLiteral("W1AW"), QStringLiteral("K4ABC"),
-                                    QStringLiteral("1:23")}) {
-            QVERIFY2(texts.contains(word), qPrintable(word + QStringLiteral(" in ") + texts.join('|')));
+            card.clockMs += 61000;
+            const RoundtableCardPlacement again = placeRoundtableCard(card, kBoardPan, 570, flags, false, fm);
+            QCOMPARE(again.card, first.card);
+            QCOMPARE(again.rows, first.rows);
         }
     }
 
-    void theLineDependsOnlyOnStructureAndTextWidths()
-    {
-        QImage device(1, 1, QImage::Format_ARGB32_Premultiplied);
-        for (const QString& format : {QStringLiteral("dBm"), QStringLiteral("S-units"), QStringLiteral("Both")}) {
-            for (int dialX : {600, 1100}) {
-                RoundtableCardModel card = talkingCard(4);
-                const RoundtableCardModel firstCard = card;
-                const RoundtableStripLinePlacement first
-                    = placeRoundtableStripLine(card, kStrip, dialX, false, format, &device);
-                QVERIFY(!first.line.isNull());
-                // New values of every width: whole dB across the meter, ages from one
-                // to two digits and to minutes, the peak, the clock, a row gone old.
-                const double dbms[] = {-121.0, -33.0, -7.0, -99.0, -60.0, -128.0};
-                const qint64 ages[] = {0, 9000, 10000, 59000, 600000, 3540000};
-                for (int i = 0; i < 6; ++i) {
-                    for (RoundtableCardRow& row : card.rows) {
-                        row.dbm = dbms[i];
-                        row.ageMs = ages[i];
-                        row.peakDbm = row.dbm + 1.0 + i;
-                        row.hasPeak = i % 2 == 0;
-                    }
-                    card.rows[3].old = i % 2 == 1;
-                    card.clockMs = ages[i];
-                    QVERIFY(roundtableCardSameStructure(card, firstCard));
-                    const RoundtableStripLinePlacement again
-                        = placeRoundtableStripLine(card, kStrip, dialX, false, format, &device);
-                    QCOMPARE(again, first);
-                }
-            }
-        }
-        // A double's clock and a last talker's ended age move nothing either.
-        RoundtableCardModel twin = talkingCard(2, RoundtableCardModel::Kind::Double);
-        twin.clockMs = 1000;
-        const RoundtableStripLinePlacement twinFirst
-            = placeRoundtableStripLine(twin, kStrip, 600, false, QStringLiteral("dBm"), &device);
-        twin.clockMs = 59 * 60000 + 58000;
-        QCOMPARE(placeRoundtableStripLine(twin, kStrip, 600, false, QStringLiteral("dBm"), &device), twinFirst);
-        RoundtableCardModel last = talkingCard(2, RoundtableCardModel::Kind::LastTalker);
-        last.endedAgoMs = 1000;
-        const RoundtableStripLinePlacement lastFirst
-            = placeRoundtableStripLine(last, kStrip, 600, false, QStringLiteral("dBm"), &device);
-        QVERIFY(!lastFirst.line.isNull());
-        last.endedAgoMs = 48000;
-        QCOMPARE(placeRoundtableStripLine(last, kStrip, 600, false, QStringLiteral("dBm"), &device), lastFirst);
-    }
+    // ---- The live card: drawing (D10, D11, D13, D15) ----
 
-    // ---- Your frequency's line: drawing (D10, D11, D13, D15; strip design 3, 6) ----
-
-    void aTalkingLineSitsInTheStripAndClickingItAsksForTheInspector()
+    void aTalkingCardStandsOnThePanAndClickingItAsksForTheInspector()
     {
         Pan pan;
         const QString room = QStringLiteral("frequency:lsb-7200000");
@@ -1190,25 +1114,20 @@ private slots:
         pan.widget.setRoundtableTags({tag}, RoundtableTagDisplay::Live);
         pan.widget.setRoundtableCard(talkingCard(), room);
         const QImage image = pan.draw();
-        // The line speaks for the frequency: no tag of its own.
+        // The card speaks for the frequency: no tag of its own.
         QCOMPARE(pan.widget.roundtableTagHitsForTest().size(), 1);
         const auto* hit = cardHit(pan.widget);
         QVERIFY(hit != nullptr);
         QCOMPARE(hit->hz, 7200000);
         QCOMPARE(hit->roomIds, QStringList{room});
-        const QRect strip = pan.widget.roundtableStripRectForTest();
-        QCOMPARE(hit->rect, pan.widget.roundtableStripLineForTest().line);
-        QCOMPARE(hit->rect.top(), strip.top() + 3);
-        QCOMPARE(hit->rect.height(), 24);
-        QVERIFY(strip.contains(hit->rect));
-        QCOMPARE(pan.widget.roundtableStripLineForTest().readings, 3);
-        // Beside the dial, 8 px off it.
-        const int dialX = pan.widget.hzToX(7200000.0, pan.widget.roundtableTagSpectrumRectForTest());
-        QVERIFY(hit->rect.left() == dialX + 8 || hit->rect.right() + 1 == dialX - 8);
-        // Border and rail in the talking green.
+        const QRect spec = pan.widget.roundtableTagSpectrumRectForTest();
+        QVERIFY(spec.contains(hit->rect));
+        QVERIFY(!pan.widget.receiverFlagRegion().intersects(hit->rect));
+        QCOMPARE(hit->rect.bottom() + 1, spec.bottom() + 1 - pan.widget.bandPlanStripHeightForTest() - 8);
+        // Border, rail and meter in the talking green.
         const QColor green(0x4c, 0xaf, 0x6a);
         QCOMPARE(QColor(image.pixel(hit->rect.center().x(), hit->rect.top())).name(), green.name());
-        QCOMPARE(QColor(image.pixel(hit->rect.left() + 2, hit->rect.center().y())).name(), green.name());
+        QCOMPARE(QColor(image.pixel(hit->rect.center().x(), hit->rect.top() + 2)).name(), green.name());
         // A click asks for the inspector (D25); there is no menu of its own, no tune.
         const QPoint click = hit->rect.center();
         QSignalSpy read(&pan.widget, &SpectrumWidget::roundtableReadRequested);
@@ -1220,14 +1139,6 @@ private slots:
         QCOMPARE(tuned.size(), 0);
         QCOMPARE(plainTune.size(), 0);
         QVERIFY(pan.widget.window()->findChild<QMenu*>() == nullptr);
-        // A right click asks for the short menu, and the pan's stays away.
-        QSignalSpy asked(&pan.widget, &SpectrumWidget::roundtableTagMenuRequested);
-        QTest::mouseClick(&pan.widget, Qt::RightButton, Qt::NoModifier, click);
-        QCOMPARE(asked.size(), 1);
-        QContextMenuEvent context(QContextMenuEvent::Mouse, click, pan.widget.mapToGlobal(click));
-        context.ignore();
-        QApplication::sendEvent(&pan.widget, &context);
-        QVERIFY(context.isAccepted());
     }
 
     void theShortMenuOffersTheInspectorTuneMessagesAndSignalWithItsGates()
@@ -1430,17 +1341,15 @@ private slots:
         QVERIFY(!contextAccepted(QPoint(spec.center().x(), spec.top() + 10)));
         QCOMPARE(asked.size(), 1);
 
-        // Ctrl asks for no short menu; in the strip it makes no notch either,
-        // since notches are made on the spectrum.
+        // Ctrl keeps its notch.
         QSignalSpy notch(&pan.widget, &SpectrumWidget::notchCreateRequested);
         QTest::mouseClick(&pan.widget, Qt::RightButton, Qt::ControlModifier, at);
-        QCOMPARE(notch.size(), 0);
+        QCOMPARE(notch.size(), 1);
         QCOMPARE(asked.size(), 1);
     }
 
-    // The inspector on your own frequency opens your line (.rcs.is-open); tags keep no
-    // room for it; and none of it reaches the static overlay.
-    void theInspectorOnYourFrequencyOpensYourLine()
+    // D34, D37: one box, not two; tags keep clear; and none of it reaches the static overlay.
+    void theOpenInspectorHidesTheCardAndTagsKeepClearOfIt()
     {
         Pan pan;
         const QString room = QStringLiteral("frequency:lsb-7200000");
@@ -1450,49 +1359,38 @@ private slots:
         RoundtableTag far = tagAt(QStringLiteral("frequency:lsb-7150000"), 7150000);
         pan.widget.setRoundtableTags({mine, near, far}, RoundtableTagDisplay::Live);
         pan.widget.setRoundtableCard(talkingCard(), room);
-        const QImage closed = pan.draw();
+        pan.draw();
         QVERIFY(cardHit(pan.widget) != nullptr);
-        const QRect lineRect = cardHit(pan.widget)->rect;
-        const QList<SpectrumWidget::RoundtableTagHit> before = pan.widget.roundtableTagHitsForTest();
+        const QRect cardRect = cardHit(pan.widget)->rect;
         const SpectrumWidget::RoundtableInspectorSpot spot = pan.widget.roundtableInspectorSpot(0, 0);
-        // The details line up with the drawn line, under the strip.
-        QCOMPARE(spot.anchorLeft, lineRect.left());
-        const QRect inspector = placeRoundtableDetails(spot.below, spot.above, spot.anchorLeft, 300).rect;
+        const QRect inspector = placeRoundtableInspector(spot.pan, spot.dialX, spot.flags, spot.flagFlipped, 300);
         QVERIFY(inspector.isValid());
-        QCOMPARE(inspector.left(), lineRect.left());
-        QCOMPARE(inspector.top(), pan.widget.roundtableStripRectForTest().bottom() + 1 + 4);
-        const QPoint edge(lineRect.center().x(), lineRect.top());
-        QCOMPARE(QColor(closed.pixel(edge)).name(), QStringLiteral("#4caf6a"));
+        // In the card's spot, the edge by the flag the same, on the same foot line.
+        QVERIFY(spot.flagFlipped);
+        QCOMPARE(inspector.right(), cardRect.right());
+        QCOMPARE(inspector.bottom(), cardRect.bottom());
 
         QCoreApplication::processEvents();
         pan.widget.clearOverlayStaticDirtyForTest();
-        pan.widget.setRoundtableViewedRoom(room);
+        const QString viewed = near.roomId;
+        pan.widget.setRoundtableViewedRoom(viewed);
         pan.widget.setRoundtableInspectorRect(inspector);
         QVERIFY(!pan.widget.overlayStaticDirtyForTest());
         const QImage open = pan.draw();
-        // The line stays, where it was, in the inspector's blue.
-        QVERIFY(cardHit(pan.widget) != nullptr);
-        QCOMPARE(cardHit(pan.widget)->rect, lineRect);
-        QCOMPARE(QColor(open.pixel(edge)).name(), QStringLiteral("#5e8db8"));
-        // The tags stay where they were.
-        QCOMPARE(pan.widget.roundtableTagHitsForTest().size(), before.size());
-        for (qsizetype i = 0; i < before.size(); ++i) {
-            QCOMPARE(pan.widget.roundtableTagHitsForTest().at(i).rect, before.at(i).rect);
+        QVERIFY(cardHit(pan.widget) == nullptr);
+        // Where the card's green was is nothing while the inspector is the box.
+        QVERIFY(QColor(open.pixel(cardRect.center().x(), cardRect.top())).name() != QStringLiteral("#4caf6a"));
+        for (const SpectrumWidget::RoundtableTagHit& hit : pan.widget.roundtableTagHitsForTest()) {
+            QVERIFY2(!hit.rect.intersects(inspector), qPrintable(hit.roomIds.join(QLatin1Char(' '))));
         }
-        // No tick runs from the inspector to the dial: the spectrum is untouched.
-        const QRect spec = pan.widget.roundtableTagSpectrumRectForTest();
-        QVERIFY(!hasColorOrBlend(open, spec, QColor(0x4c, 0xaf, 0x6a)));
+        QVERIFY(hitFor(pan.widget, far.roomId) != nullptr);
 
-        // Viewing another frequency, your line is not open.
-        pan.widget.setRoundtableViewedRoom(near.roomId);
-        const QImage other = pan.draw();
-        QCOMPARE(QColor(other.pixel(edge)).name(), QStringLiteral("#4caf6a"));
-
-        // Closed: the line is as it was.
+        // Closed: the card returns where it was.
         pan.widget.setRoundtableInspectorRect(QRect());
         pan.widget.setRoundtableViewedRoom(QString());
         pan.draw();
-        QCOMPARE(cardHit(pan.widget)->rect, lineRect);
+        QVERIFY(cardHit(pan.widget) != nullptr);
+        QCOMPARE(cardHit(pan.widget)->rect, cardRect);
 
         // A thousand moves never touch the static overlay.
         QCoreApplication::processEvents();
@@ -1504,9 +1402,8 @@ private slots:
         QVERIFY(!pan.widget.overlayStaticDirtyForTest());
     }
 
-    // Your compact tag stays while the details show your own, outlined, so it can
-    // close them; and while they show another (D37).
-    void yourCompactTagStaysWhileTheDetailsShowYourOwn()
+    // D37: your compact tag goes while it shows your own, and stays while it shows another.
+    void yourCompactTagGoesOnlyWhileItShowsYourOwn()
     {
         Pan pan;
         const QString room = QStringLiteral("frequency:lsb-7180000");
@@ -1522,12 +1419,9 @@ private slots:
         pan.draw();
         QVERIFY(hitFor(pan.widget, room) != nullptr);
         pan.widget.setRoundtableViewedRoom(room);
-        const QImage open = pan.draw();
-        const auto* own = hitFor(pan.widget, room);
-        QVERIFY(own != nullptr);
+        pan.draw();
+        QVERIFY(hitFor(pan.widget, room) == nullptr);
         QVERIFY(hitFor(pan.widget, other.roomId) != nullptr);
-        // With the viewed outline, 2 px outside its body.
-        QCOMPARE(QColor(open.pixel(own->rect.center().x(), own->rect.top() - 2)).name(), QStringLiteral("#5e8db8"));
     }
 
     // D37: a fold's list outlines its tag and hides none, even when your room leads it.
@@ -1543,57 +1437,65 @@ private slots:
         pan.widget.setRoundtableViewedRoom(room, true);
         pan.draw();
         QVERIFY(hitFor(pan.widget, room) != nullptr);
-        // Your own frequency in the inspector keeps it too.
+        // Your own frequency in the inspector still takes it away.
         pan.widget.setRoundtableViewedRoom(room);
         pan.draw();
-        QVERIFY(hitFor(pan.widget, room) != nullptr);
+        QVERIFY(hitFor(pan.widget, room) == nullptr);
     }
 
-    // The inspector is no keep-out: a tag stays where it was under any inspector.
-    void theInspectorKeepsNoTagClear()
+    // D34: the inspector stands in the card's place, so tags need not clear the hidden card.
+    void aCardTheInspectorHidesKeepsNoTagClear()
     {
+        const QString room = QStringLiteral("frequency:lsb-7200000");
+        QRect card;
+        {
+            Pan pan;
+            pan.widget.setRoundtableTags({}, RoundtableTagDisplay::Live);
+            pan.widget.setRoundtableCard(talkingCard(), room);
+            pan.draw();
+            QVERIFY(cardHit(pan.widget) != nullptr);
+            card = cardHit(pan.widget)->rect;
+        }
+        // The inspector well away from the card, and clear of the tag row.
+        const QRect inspector(card.center().x() < 600 ? 900 : 20, 40, 280, 200);
+        QVERIFY(!card.intersects(inspector));
+        // A tag under the middle of where the card stands, placed with and with no card.
+        Pan bare;
+        const double low = bare.widget.centerFrequency() - bare.widget.bandwidth() / 2.0;
+        const QRect spec = bare.widget.roundtableTagSpectrumRectForTest();
+        const qint64 hz = std::llround(low + (card.center().x() - spec.left()) * bare.widget.bandwidth() / spec.width());
+        RoundtableTag tag = tagAt(QStringLiteral("frequency:lsb-%1").arg(hz), hz);
+        bare.widget.setRoundtableTags({tag}, RoundtableTagDisplay::Live);
+        bare.widget.setRoundtableInspectorRect(inspector);
+        bare.draw();
+        QVERIFY(hitFor(bare.widget, tag.roomId) != nullptr);
+        const QRect clear = hitFor(bare.widget, tag.roomId)->rect;
         Pan pan;
-        RoundtableTag tag = tagAt(QStringLiteral("frequency:lsb-7150000"), 7150000);
+        pan.widget.setRoundtableCard(talkingCard(), room);
         pan.widget.setRoundtableTags({tag}, RoundtableTagDisplay::Live);
-        pan.draw();
-        QVERIFY(hitFor(pan.widget, tag.roomId) != nullptr);
-        const QRect clear = hitFor(pan.widget, tag.roomId)->rect;
-        // Even one laid right over the tag's row.
-        pan.widget.setRoundtableInspectorRect(clear.adjusted(-40, -40, 40, 40));
+        pan.widget.setRoundtableInspectorRect(inspector);
         pan.widget.setRoundtableViewedRoom(tag.roomId);
         pan.draw();
+        QVERIFY(cardHit(pan.widget) == nullptr);
         QVERIFY(hitFor(pan.widget, tag.roomId) != nullptr);
         QCOMPARE(hitFor(pan.widget, tag.roomId)->rect, clear);
     }
 
     // D37: the spot needs no card or tag, follows the flag, and a pan without the
-    // slice uses its own flag, or the clicked tag. Strip design 5: the details' areas
-    // are the waterfall clear of its time scale and the spectrum to the scale.
+    // slice uses its own flag, or the clicked tag.
     void theInspectorsSpotNeedsNoCardAndFollowsTheFlag()
     {
         Pan pan;
         pan.flag->setFrequency(7200000);
         pan.widget.updateVfoPositions();
         QSignalSpy changed(&pan.widget, &SpectrumWidget::roundtableInspectorSpotChanged);
-        const SpectrumWidget::SpectrumLayout layout = pan.widget.spectrumLayout();
         const QRect spec = pan.widget.roundtableTagSpectrumRectForTest();
-        const QRect timeScale = pan.widget.waterfallTimeScaleRect(layout.waterfallChrome);
         const SpectrumWidget::RoundtableInspectorSpot quiet = pan.widget.roundtableInspectorSpot(0, 0);
-        QCOMPARE(quiet.below.top(), layout.roundtableStrip.bottom() + 1);
-        QCOMPARE(quiet.below.top(), layout.waterfall.top());
-        QCOMPARE(quiet.below.bottom(), layout.waterfall.bottom());
-        QCOMPARE(quiet.below.left(), layout.waterfall.left());
-        QCOMPARE(quiet.below.right(), std::min(layout.waterfall.right(), timeScale.left() - 1));
-        QVERIFY(!quiet.below.intersects(timeScale));
-        QCOMPARE(quiet.above.top(), spec.top());
-        QCOMPARE(quiet.above.bottom() + 1, layout.divider.top());
-        QCOMPARE(quiet.above.left(), spec.left());
-        QCOMPARE(quiet.above.width(), spec.width());
+        QCOMPARE(quiet.pan.bottom() + 1, spec.bottom() + 1 - pan.widget.bandPlanStripHeightForTest() - 8);
+        QCOMPARE(quiet.pan.top(), spec.top() + 2);
         QCOMPARE(quiet.dialX, spec.left() + spec.width() / 2);
+        QVERIFY(!quiet.flags.isEmpty());
         QCOMPARE(quiet.flagFlipped, pan.flag->geometry().center().x() < quiet.dialX);
-        // No line drawn: 8 px past the dial on the flag's far side.
-        QVERIFY(pan.widget.roundtableStripLineForTest().line.isNull());
-        QCOMPARE(quiet.anchorLeft, quiet.flagFlipped ? quiet.dialX - 8 - 300 : quiet.dialX + 8);
 
         // The flag moves and the spot says so, with whichever side the flag now hangs on.
         pan.flag->setFrequency(7290000);
@@ -1602,20 +1504,15 @@ private slots:
         const SpectrumWidget::RoundtableInspectorSpot right = pan.widget.roundtableInspectorSpot(0, 0);
         QVERIFY(right.dialX > quiet.dialX);
         QVERIFY(right.flagFlipped);
-        QCOMPARE(right.anchorLeft, right.dialX - 8 - 300);
         pan.flag->setFrequency(7110000);
         pan.widget.updateVfoPositions();
         const SpectrumWidget::RoundtableInspectorSpot left = pan.widget.roundtableInspectorSpot(0, 0);
         QVERIFY(left.dialX < quiet.dialX);
         QVERIFY(!left.flagFlipped);
-        QCOMPARE(left.anchorLeft, left.dialX + 8);
 
-        // A resize says so, and so does the divider.
-        int before = changed.size();
+        // A resize says so too.
+        const int before = changed.size();
         pan.widget.resize(1100, 700);
-        QVERIFY(changed.size() > before);
-        before = changed.size();
-        pan.widget.setSpectrumFrac(0.3f);
         QVERIFY(changed.size() > before);
 
         // The slice named is not on this pan: this pan's own flag.
@@ -1632,43 +1529,7 @@ private slots:
         const QRect emptySpec = empty.roundtableTagSpectrumRectForTest();
         const SpectrumWidget::RoundtableInspectorSpot byTag = empty.roundtableInspectorSpot(0, static_cast<qint64>(kPanCenterHz));
         QCOMPARE(byTag.dialX, emptySpec.left() + emptySpec.width() / 2);
-        QCOMPARE(byTag.anchorLeft, byTag.dialX + 8);
-    }
-
-    // Your line appearing, moving sides or going re-places open details, after the paint.
-    void yourLineMovingReplacesTheDetails()
-    {
-        Pan pan;
-        const QString room = QStringLiteral("frequency:lsb-7200000");
-        pan.widget.setRoundtableTags({}, RoundtableTagDisplay::Live);
-        QSignalSpy changed(&pan.widget, &SpectrumWidget::roundtableInspectorSpotChanged);
-        pan.draw();
-        QCoreApplication::processEvents();
-        changed.clear();
-        pan.widget.setRoundtableCard(talkingCard(), room);
-        pan.draw();
-        const QRect first = pan.widget.roundtableStripLineForTest().line;
-        QVERIFY(!first.isNull());
-        // Queued: nothing during the paint, once after it.
-        QCOMPARE(changed.size(), 0);
-        QCoreApplication::processEvents();
-        QCOMPARE(changed.size(), 1);
-        QCOMPARE(pan.widget.roundtableInspectorSpot(0, 0).anchorLeft, first.left());
-        // The same line again says nothing.
-        pan.draw();
-        QCoreApplication::processEvents();
-        QCOMPARE(changed.size(), 1);
-        // The dial near the right edge: the line moves with it.
-        pan.widget.setFrequencyRange(7200000.0 - kPanSpanHz / 2.0 + 20000.0, kPanSpanHz);
-        QCoreApplication::processEvents();
-        const qsizetype before = changed.size();
-        pan.draw();
-        const QRect moved = pan.widget.roundtableStripLineForTest().line;
-        QVERIFY(moved != first);
-        QCOMPARE(changed.size(), before);
-        QCoreApplication::processEvents();
-        QCOMPARE(changed.size(), before + 1);
-        QCOMPARE(pan.widget.roundtableInspectorSpot(0, 0).anchorLeft, moved.left());
+        QVERIFY(byTag.flags.isEmpty());
     }
 
     // The line's right-click: the flag's own menu unless a frequency server asks for the short one.
@@ -1692,69 +1553,44 @@ private slots:
         QCOMPARE(line->contextMenuPolicy(), Qt::DefaultContextMenu);
     }
 
-    // Strip design 5 (V5): 100 px of waterfall under 300 px of spectrum. The details
-    // stand on the frequency scale and open upward over the spectrum, through the same
-    // spot the window uses.
-    void aShortWaterfallOpensTheDetailsUpward()
+    // 120 px usable, another frequency, through the same spot the window uses.
+    void aVeryShortPanStillOpensTheInspectorInside()
     {
         Pan pan;
-        pan.widget.resize(1200, 600);
-        const int chrome = 600 - pan.widget.spectrumLayout().contentHeight;
-        pan.widget.resize(1200, 430 + chrome);
-        pan.widget.setSpectrumFrac(300.5f / 430.0f);
-        const SpectrumWidget::SpectrumLayout layout = pan.widget.spectrumLayout();
-        QCOMPARE(layout.spectrum.height(), 300);
-        QCOMPARE(layout.waterfall.height(), 100);
+        for (int height = 760; height > 100 && pan.widget.roundtableInspectorSpot(0, 0).pan.height() > 120; --height) {
+            pan.widget.resize(1200, height);
+        }
         const SpectrumWidget::RoundtableInspectorSpot spot = pan.widget.roundtableInspectorSpot(0, 0);
+        QCOMPARE(spot.pan.height(), 120);
         auto* peek = new RoundtableFrequencyPeek(&pan.widget);
         peek->setSlice(7200000, QStringLiteral("lsb"), QStringLiteral("A"));
-        peek->setInspectorSpot(spot.below, spot.above, spot.anchorLeft, spot.upwardAnchorLeft);
+        peek->setInspectorSpot(spot.pan, spot.dialX, spot.flags, spot.flagFlipped);
         peek->showFor(7188600, QStringLiteral("lsb"));
         RoundtableCardModel card = talkingCard(3);
         card.hz = 7188600;
         peek->refresh(card, -71.0, false);
         pan.widget.setRoundtableInspectorRect(peek->inspectorRect());
-        const QRect rect = peek->inspectorRect();
-        QVERIFY(peek->upwardForTest());
-        QVERIFY(placeRoundtableDetails(spot.below, spot.above, spot.anchorLeft, 400, spot.upwardAnchorLeft).upward);
-        // On the divider's top edge, over the spectrum, cut to its height: the
-        // divider's grab stays free.
-        QCOMPARE(rect.bottom() + 1, layout.divider.top());
-        QVERIFY(!rect.intersects(layout.divider));
-        QVERIFY(spot.above.contains(rect));
-        QVERIFY(rect.height() <= spot.above.height());
-        QVERIFY(!rect.intersects(layout.frequency));
-        QVERIFY(!rect.intersects(layout.roundtableStrip));
-        QVERIFY(!rect.intersects(layout.waterfall));
-        QCOMPARE(rect.left(), spot.upwardAnchorLeft);
-        // Clear of the flag: past its outer edge, or on the dial's other side.
-        const QRect flagRect = pan.flag->occupiedRegion().boundingRect();
-        QVERIFY(!flagRect.isEmpty());
-        QVERIFY2(!rect.intersects(flagRect), qPrintable(QStringLiteral("details %1,%2 %3x%4 flag %5,%6 %7x%8")
-            .arg(rect.x()).arg(rect.y()).arg(rect.width()).arg(rect.height())
-            .arg(flagRect.x()).arg(flagRect.y()).arg(flagRect.width()).arg(flagRect.height())));
-        // Opaque: nothing under them shows through.
-        {
-            QImage painted(peek->size(), QImage::Format_ARGB32_Premultiplied);
-            painted.fill(Qt::transparent);
-            peek->render(&painted, QPoint(), QRegion(), QWidget::RenderFlags(QWidget::DrawChildren));
-            QCOMPARE(qAlpha(painted.pixel(20, peek->height() / 2)), 255);
-        }
+        QCOMPARE(peek->inspectorRect().height(), 120);
+        QVERIFY(spot.pan.contains(peek->inspectorRect()));
+        QVERIFY(peek->foldedForTest());
+        QVERIFY(peek->maxScrollForTest() > 0);
+        QVERIFY(peek->bodyHeightForTest() > 0);
         const QString captures = qEnvironmentVariable("NEREUS_ROUNDTABLE_ROUTING_CAPTURES");
         if (!captures.isEmpty()) {
             // The fixture holds the pan's updates, and its children's with them.
             pan.widget.setUpdatesEnabled(true);
+            pan.widget.show();
             QCoreApplication::processEvents();
             QImage image = pan.draw();
             image.fill(Qt::black);
             QPainter painter(&image);
-            painter.drawImage(rect.topLeft(), peek->grab().toImage());
+            painter.drawImage(peek->inspectorRect().topLeft(), peek->grab().toImage());
             painter.end();
-            QVERIFY(image.copy(rect.adjusted(-20, -20, 20, 20)).save(captures + QStringLiteral("/short-waterfall-upward.png")));
+            QVERIFY(image.copy(0, 0, 360, 130).save(captures + QStringLiteral("/usable-120-another-frequency.png")));
         }
     }
 
-    void aDoubleLineHasStripedMeters()
+    void aDoubleCardHasStripesOnRailAndMeters()
     {
         Pan pan;
         pan.widget.setRoundtableTags({}, RoundtableTagDisplay::Live);
@@ -1764,18 +1600,15 @@ private slots:
         const QImage image = pan.draw();
         const auto* hit = cardHit(pan.widget);
         QVERIFY(hit != nullptr);
+        const QRect rail(hit->rect.left() + 6, hit->rect.top() + 1, hit->rect.width() - 12, 3);
+        QVERIFY(hasColor(image, rail, QColor(0xe0, 0x6c, 0x6e)));
+        QVERIFY(hasColor(image, rail, QColor(0x3a, 0x1a, 0x1b)));
         QCOMPARE(QColor(image.pixel(hit->rect.center().x(), hit->rect.top())).name(), QStringLiteral("#c25a5c"));
-        const RoundtableStripLineParts parts = roundtableStripLineParts(
-            card, pan.widget.roundtableStripLineForTest(), QStringLiteral("dBm"), &image);
-        QCOMPARE(parts.readings.size(), 2);
-        const auto meterOf = [](const QRect& reading) {
-            return QRect(reading.left(), reading.bottom() - 2, reading.width(), 3);
-        };
-        // A double's bars are striped red, your own row's striped cyan.
-        QVERIFY(hasColor(image, meterOf(parts.readings.at(0)), QColor(0x5d, 0x2c, 0x2e)));
-        QVERIFY(hasColor(image, meterOf(parts.readings.at(0)), QColor(0xe0, 0x6c, 0x6e)));
-        QVERIFY(hasColor(image, meterOf(parts.readings.at(1)), QColor(0x00, 0xd4, 0xff)));
-        QVERIFY(hasColor(image, meterOf(parts.readings.at(1)), QColor(0x0d, 0x4a, 0x58)));
+        const QRect all = hit->rect.adjusted(6, 40, -6, -2);
+        QVERIFY(hasColor(image, all, QColor(0x5d, 0x2c, 0x2e)));
+        // Your own row is striped cyan.
+        QVERIFY(hasColor(image, all, QColor(0x00, 0xd4, 0xff)));
+        QVERIFY(hasColor(image, all, QColor(0x0d, 0x4a, 0x58)));
     }
 
     // What a thin stem looks like with a font that never reaches full coverage.
@@ -1809,18 +1642,22 @@ private slots:
 
     void anOldRowGoesGreyWithAnAmberAgeAndNoTick()
     {
-        const auto drawOne = [](bool old, bool hasPeak) {
+        const QFontMetrics fm = cardMetrics();
+        const auto drawOne = [&fm](bool old, bool hasPeak) {
             RoundtableCardModel card = talkingCard(1);
             card.rows[0].old = old;
             card.rows[0].hasPeak = hasPeak;
-            const DrawnLine drawn = drawLine(card, 10);
-            const RoundtableStripLineParts parts
-                = roundtableStripLineParts(card, drawn.placed, QStringLiteral("dBm"), &drawn.image);
-            return std::pair<QImage, QRect>(drawn.image, parts.readings.value(0));
+            const QRect pan(0, 0, 300, 200);
+            const RoundtableCardPlacement placed = placeRoundtableCard(card, pan, 10, {}, false, fm);
+            QImage image(300, 200, QImage::Format_ARGB32_Premultiplied);
+            image.fill(Qt::black);
+            QPainter painter(&image);
+            paintRoundtableCard(painter, card, placed, QStringLiteral("dBm"), fm, false);
+            painter.end();
+            return std::pair<QImage, QRect>(image, placed.card);
         };
-        const auto [fresh, freshRow] = drawOne(false, true);
-        QVERIFY(!freshRow.isNull());
-        const QRect meter(freshRow.left(), freshRow.bottom() - 2, freshRow.width(), 3);
+        const auto [fresh, freshRect] = drawOne(false, true);
+        const QRect meter = freshRect.adjusted(6, freshRect.height() - 10, -6, -4);
         QVERIFY(hasColor(fresh, meter, QColor(0x4c, 0xaf, 0x6a)));
         // The tick, at 0.85 over the track or bar: nearly white.
         bool tick = false;
@@ -1830,8 +1667,8 @@ private slots:
             }
         }
         QVERIFY(tick);
-        const auto [old, oldRow] = drawOne(true, true);
-        QCOMPARE(oldRow, freshRow);
+        const auto [old, oldRect] = drawOne(true, true);
+        QCOMPARE(oldRect, freshRect);
         QVERIFY(hasColor(old, meter, QColor(0x60, 0x60, 0x66)));
         QVERIFY(!hasColor(old, meter, QColor(0x4c, 0xaf, 0x6a)));
         for (int y = meter.top(); y <= meter.bottom(); ++y) {
@@ -1839,12 +1676,13 @@ private slots:
                 QVERIFY(QColor(old.pixel(x, y)).lightness() <= 180);
             }
         }
-        // The age is amber: the narrowest age column, right of any value, above the meter.
-        const QRect ageColumn(meter.right() + 1 - kAgeColumnWidth, oldRow.top(), kAgeColumnWidth, meter.top() - oldRow.top());
+        // The age is amber: the narrowest age column, right of any value, above
+        // the meter. The caption's unit shares the column and does not change.
+        const QRect ageColumn(meter.right() + 1 - kAgeColumnWidth, oldRect.top(), kAgeColumnWidth, meter.top() - oldRect.top());
         QVERIFY(changedInkIsColor(fresh, old, ageColumn, QColor(0xd8, 0xa5, 0x5f)));
     }
 
-    void aFrozenLineDrawsNoLiveColor()
+    void aFrozenCardDrawsNoLiveColor()
     {
         Pan pan;
         pan.widget.setRoundtableTags({}, RoundtableTagDisplay::Frozen);
@@ -1861,8 +1699,6 @@ private slots:
                                    QColor(0x3a, 0x1a, 0x1b), QColor(0x5d, 0x2c, 0x2e), QColor(0x00, 0xd4, 0xff)}) {
             QVERIFY2(!hasColorOrBlend(image, hit->rect, live), qPrintable(live.name()));
         }
-        // The link's note is on the line.
-        QVERIFY(lineTexts(card, pan.widget.roundtableStripLineForTest()).contains(QStringLiteral("Offline since 14:32 UTC")));
     }
 
     void aDroppedLinkCardFromTheModelDrawsNoGreen()
@@ -1904,12 +1740,19 @@ private slots:
     {
         QFETCH(int, kind);
         QFETCH(bool, clock);
-        const auto draw = [kind](qint64 clockMs) {
+        const QFontMetrics fm = cardMetrics();
+        const auto draw = [&fm, kind](qint64 clockMs) {
             RoundtableCardModel card = talkingCard(1, static_cast<RoundtableCardModel::Kind>(kind));
             card.clockMs = clockMs;
-            return drawLine(card, 10).image;
+            const RoundtableCardPlacement placed = placeRoundtableCard(card, QRect(0, 0, 300, 200), 10, {}, false, fm);
+            QImage image(300, 200, QImage::Format_ARGB32_Premultiplied);
+            image.fill(Qt::black);
+            QPainter painter(&image);
+            paintRoundtableCard(painter, card, placed, QStringLiteral("dBm"), fm, false);
+            painter.end();
+            return image;
         };
-        QCOMPARE(draw(83000) != draw(94000), clock);
+        QCOMPARE(draw(83000) != draw(754000), clock);
     }
 
     void aHiddenStationsCardDims()
@@ -1952,17 +1795,13 @@ private slots:
     {
         Pan pan;
         const QString room = QStringLiteral("frequency:lsb-7200000");
-        QList<RoundtableTag> tags;
-        for (const qint64 hz : {7150000, 7230000, 7260000}) {
-            RoundtableTag other = tagAt(QStringLiteral("frequency:lsb-%1").arg(hz), hz);
-            other.stations = {QJsonObject{{"callsign", "K4ABC"}}};
-            tags.append(other);
-        }
-        pan.widget.setRoundtableTags(tags, RoundtableTagDisplay::Live);
+        RoundtableTag other = tagAt(QStringLiteral("frequency:lsb-7150000"), 7150000);
+        other.stations = {QJsonObject{{"callsign", "K4ABC"}}};
+        pan.widget.setRoundtableTags({other}, RoundtableTagDisplay::Live);
         pan.widget.setRoundtableCard(talkingCard(), room);
         pan.draw();
         const QList<SpectrumWidget::RoundtableTagHit> cpu = pan.widget.roundtableTagHitsForTest();
-        QCOMPARE(cpu.size(), 4);
+        QCOMPARE(cpu.size(), 2);
 #ifdef NEREUS_GPU_SPECTRUM
         // The GPU path paints in its child, onto its overlay format.
         QImage overlay(pan.widget.size(), QImage::Format_RGBA8888_Premultiplied);
@@ -1976,56 +1815,8 @@ private slots:
             QCOMPARE(gpu.at(i).rect, cpu.at(i).rect);
             QCOMPARE(gpu.at(i).kind, cpu.at(i).kind);
             QCOMPARE(gpu.at(i).hz, cpu.at(i).hz);
-            QCOMPARE(gpu.at(i).roomIds, cpu.at(i).roomIds);
         }
 #endif
-    }
-
-    // Strip design 6: with a talking line and three tags, nothing Roundtable is on
-    // the spectrum: no hit, no tick to the band plan, not one pixel.
-    void nothingRoundtableIsOnTheSpectrum()
-    {
-        Pan pan;
-        QList<RoundtableTag> tags;
-        for (const qint64 hz : {7150000, 7230000, 7260000}) {
-            RoundtableTag other = tagAt(QStringLiteral("frequency:lsb-%1").arg(hz), hz);
-            other.stations = {QJsonObject{{"callsign", "K4ABC"}}};
-            tags.append(other);
-        }
-        pan.widget.setRoundtableTags(tags, RoundtableTagDisplay::Live);
-        pan.widget.setRoundtableCard(talkingCard(), QStringLiteral("frequency:lsb-7200000"));
-        const QImage image = pan.draw();
-        const QRect spec = pan.widget.spectrumLayout().spectrum;
-        const QRect strip = pan.widget.roundtableStripRectForTest();
-        QCOMPARE(pan.widget.roundtableTagHitsForTest().size(), 4);
-        QVERIFY(cardHit(pan.widget) != nullptr);
-        for (const SpectrumWidget::RoundtableTagHit& hit : pan.widget.roundtableTagHitsForTest()) {
-            QVERIFY(!hit.rect.intersects(spec));
-            QVERIFY(strip.contains(hit.rect));
-        }
-        for (int y = 0; y < image.height(); ++y) {
-            for (int x = 0; x < image.width(); ++x) {
-                if (y >= strip.top() - 2 && y <= strip.bottom() + 2) { continue; }
-                QVERIFY2(image.pixel(x, y) == QColor(Qt::black).rgba(), qPrintable(QStringLiteral("%1,%2").arg(x).arg(y)));
-            }
-        }
-    }
-
-    // Roundtable off: no strip, nothing drawn, nothing to click.
-    void aHiddenStripDrawsNothing()
-    {
-        Pan pan;
-        pan.widget.setRoundtableTags(panTags(), RoundtableTagDisplay::Live);
-        pan.widget.setRoundtableCard(talkingCard(), QStringLiteral("frequency:lsb-7200000"));
-        pan.draw();
-        QVERIFY(!pan.widget.roundtableTagHitsForTest().isEmpty());
-        pan.widget.setRoundtableStripShown(false);
-        const QImage image = pan.draw();
-        QVERIFY(pan.widget.roundtableTagHitsForTest().isEmpty());
-        QVERIFY(pan.widget.roundtableStripLineForTest().line.isNull());
-        QImage black(image.size(), image.format());
-        black.fill(Qt::black);
-        QCOMPARE(image, black);
     }
 
     void cardValueUpdatesLeaveBothOverlaysClean()
@@ -2050,7 +1841,7 @@ private slots:
 
     // ---- The compact tags (D20) ----
 
-    void aDoubleTagIsRedStripedAndNamesTwoOnOneLine()
+    void aDoubleTagIsRedStripedAndNamesTwo()
     {
         Pan pan;
         RoundtableTag tag = tagAt(QStringLiteral("frequency:lsb-7150000"), 7150000);
@@ -2063,22 +1854,18 @@ private slots:
         const QImage image = pan.draw();
         const auto* hit = hitFor(pan.widget, tag.roomId);
         QVERIFY(hit != nullptr);
-        // One line, centered in the strip.
-        QCOMPARE(hit->rect.height(), 22);
-        QCOMPARE(hit->rect.top(), pan.widget.roundtableStripRectForTest().top() + 4);
+        QCOMPARE(hit->rect.height(), 22 + 2 * 16);
+        const QRect spec = pan.widget.roundtableTagSpectrumRectForTest();
+        QCOMPARE(hit->rect.bottom() + 1, spec.bottom() + 1 - pan.widget.bandPlanStripHeightForTest() - 8);
         QCOMPARE(QColor(image.pixel(hit->rect.center().x(), hit->rect.top())).name(), QStringLiteral("#c25a5c"));
         const QRect stripes(hit->rect.left() + 5, hit->rect.top() + 1, hit->rect.width() - 10, 2);
         QVERIFY(hasColor(image, stripes, QColor(0xe0, 0x6c, 0x6e)));
         QVERIFY(hasColor(image, stripes, QColor(0x3a, 0x1a, 0x1b)));
-        // Measured as it draws: the word, two names side by side, then the count.
+        // The whole word shows, however many stations are there.
         QFont font = WorkspacePreview::readableFont(QFont(), &image);
         font.setPixelSize(WorkspacePreview::readableTextPixelSize(11));
         font.setWeight(QFont::Bold);
-        const QFontMetrics metrics(font, &image);
-        const int wordEnd = hit->rect.left() + 21 + metrics.horizontalAdvance(QStringLiteral("Double"));
-        const int namesEnd = wordEnd + 6 + metrics.horizontalAdvance(QStringLiteral("W1AW")) + 6
-            + metrics.horizontalAdvance(QStringLiteral("K4ABC"));
-        QVERIFY2(hit->rect.right() > namesEnd, qPrintable(QStringLiteral("%1 of %2").arg(hit->rect.right()).arg(namesEnd)));
+        const int wordEnd = hit->rect.left() + 21 + QFontMetrics(font, &image).horizontalAdvance(QStringLiteral("Double"));
         int rightmostRed = 0;
         for (int y = hit->rect.top() + 4; y < hit->rect.top() + 20; ++y) {
             for (int x = hit->rect.left() + 21; x < hit->rect.right() - 1; ++x) {
@@ -2086,11 +1873,7 @@ private slots:
                 if (color.red() > 150 && color.green() < 130) { rightmostRed = std::max(rightmostRed, x); }
             }
         }
-        QVERIFY2(rightmostRed >= wordEnd - 3 && rightmostRed <= wordEnd + 1,
-                 qPrintable(QStringLiteral("%1 of %2").arg(rightmostRed).arg(wordEnd)));
-        // The names are drawn in the text color after the word.
-        QVERIFY(hasColorOrBlend(image, QRect(wordEnd + 6, hit->rect.top() + 4, namesEnd - wordEnd - 6, 14),
-                                QColor(0xec, 0xec, 0xf0)));
+        QVERIFY2(rightmostRed >= wordEnd - 3, qPrintable(QStringLiteral("%1 of %2").arg(rightmostRed).arg(wordEnd)));
         // Frozen: grey, and the stripes stop.
         pan.widget.setRoundtableTags({tag}, RoundtableTagDisplay::Frozen);
         const QImage frozen = pan.draw();
@@ -2170,7 +1953,7 @@ private slots:
     }
 
     // The board's main case: lower sideband, the flag right of the dial.
-    void onLowerSidebandTheLineIsPastTheFlagOnTheRight()
+    void onLowerSidebandTheCardIsPastTheFlagOnTheRight()
     {
         Pan pan;
         pan.flag->setMode(DSPMode::LSB);
@@ -2184,27 +1967,27 @@ private slots:
         pan.draw();
         const auto* hit = cardHit(pan.widget);
         QVERIFY(hit != nullptr);
-        QCOMPARE(hit->rect.left(), dialX + 8);
-        QVERIFY(pan.widget.roundtableStripRectForTest().contains(hit->rect));
+        QVERIFY(hit->rect.left() > pan.flag->geometry().right());
+        QVERIFY(spec.contains(hit->rect));
+        QCOMPARE(hit->rect.bottom() + 1, spec.bottom() + 1 - pan.widget.bandPlanStripHeightForTest() - 8);
     }
 
-    void onLowerSidebandWithoutRoomTheLineComesBackLeftOfTheDial()
+    void onLowerSidebandWithoutRoomTheCardComesBackBeforeTheFlag()
     {
         Pan pan;
         pan.flag->setMode(DSPMode::LSB);
-        pan.flag->setFrequency(7286000.0);
+        pan.flag->setFrequency(7236000.0);
         pan.widget.updateVfoPositions();
         pan.widget.refreshReceiverFlagRegion();
         RoundtableCardModel card = talkingCard();
-        card.hz = 7286000;
+        card.hz = 7236000;
         pan.widget.setRoundtableTags({}, RoundtableTagDisplay::Live);
-        pan.widget.setRoundtableCard(card, QStringLiteral("frequency:lsb-7286000"));
+        pan.widget.setRoundtableCard(card, QStringLiteral("frequency:lsb-7236000"));
         pan.draw();
         const auto* hit = cardHit(pan.widget);
         QVERIFY(hit != nullptr);
-        const int dialX = pan.widget.hzToX(7286000.0, pan.widget.roundtableTagSpectrumRectForTest());
-        QVERIFY2(hit->rect.right() + 1 == dialX - 8,
-                 qPrintable(QStringLiteral("line to %1, dial at %2").arg(hit->rect.right()).arg(dialX)));
+        QVERIFY2(hit->rect.right() < pan.flag->geometry().left(),
+                 qPrintable(QStringLiteral("card to %1, flag from %2").arg(hit->rect.right()).arg(pan.flag->geometry().left())));
     }
 
     void aTagNamesItsTalkerAndPlusTheRest()
@@ -2263,33 +2046,22 @@ private slots:
         QCOMPARE(pan.widget.roundtableTags().size(), 2);
     }
 
-    // Strip design 4: only the active slice's frequency gives way to the line; a
-    // second slice of yours on the pan keeps its tag.
-    void aSecondSliceOfYoursKeepsItsTag()
+    void aFrequencyAnotherSlicesFlagSpeaksForHasNoTag()
     {
         Pan pan;
         VfoWidget* other = pan.widget.addVfoWidget(1);
         other->setFrequency(7150000.0);
         other->setActiveSlice(false);
         pan.widget.updateVfoPositions();
-        const QString mineRoom = QStringLiteral("frequency:lsb-7200000");
-        RoundtableTag active = tagAt(mineRoom, 7200000, true);
-        active.active = true;
         const QString room = QStringLiteral("frequency:lsb-7150000");
-        RoundtableTag there = tagAt(room, 7150000, true);
+        RoundtableTag there = tagAt(room, 7150000);
         there.stations = {QJsonObject{{"callsign", "K4ABC"}}};
-        pan.widget.setRoundtableTags({active, there}, RoundtableTagDisplay::Live);
-        pan.widget.setRoundtableCard(talkingCard(), mineRoom);
+        RoundtableTag elsewhere = tagAt(QStringLiteral("frequency:lsb-7240000"), 7240000);
+        elsewhere.stations = {QJsonObject{{"callsign", "N3XYZ"}}};
+        pan.widget.setRoundtableTags({there, elsewhere}, RoundtableTagDisplay::Live);
         pan.draw();
-        QVERIFY(cardHit(pan.widget) != nullptr);
-        QVERIFY(hitFor(pan.widget, room) != nullptr);
-        QCOMPARE(hitFor(pan.widget, room)->kind, SpectrumWidget::RoundtableTagHit::Kind::Tag);
-        // The active one is said by the line alone.
-        int tagsOfMine = 0;
-        for (const SpectrumWidget::RoundtableTagHit& hit : pan.widget.roundtableTagHitsForTest()) {
-            if (hit.roomIds.contains(mineRoom) && hit.kind == SpectrumWidget::RoundtableTagHit::Kind::Tag) { ++tagsOfMine; }
-        }
-        QCOMPARE(tagsOfMine, 0);
+        QCOMPARE(hitFor(pan.widget, room), nullptr);
+        QVERIFY(hitFor(pan.widget, elsewhere.roomId) != nullptr);
     }
 
     void aTagWithNoClearSpotIsLeftOffNeverOverlapping()
@@ -2321,8 +2093,8 @@ private slots:
         }
     }
 
-    // NEREUS_ROUNDTABLE_CARD_CAPTURES=<dir>: the line and tags in the strip under a
-    // spectrum, by the CPU painter and the real flag chrome, offscreen.
+    // NEREUS_ROUNDTABLE_CARD_CAPTURES=<dir>: the card over a spectrum, by the CPU
+    // painter and the real flag chrome, offscreen.
     void capturesForTheBoard_data()
     {
         QTest::addColumn<QString>("scene");
@@ -2399,13 +2171,12 @@ private slots:
         pan.widget.drawFrequencyGridForTest(painter, spectrum);
         pan.widget.drawSpectrumForTest(painter, spectrum);
         pan.widget.drawFreqScaleForTest(painter, pan.widget.freqScaleRectForTest());
-        pan.widget.drawRoundtableStrip(painter, pan.widget.spectrumLayout().roundtableStripChrome);
         pan.widget.drawRoundtableTagsForTest(painter, spectrum);
         for (QWidget* child : pan.widget.findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {
             if (child->isVisible() && child != pan.widget.m_roundtableTagLayer) { child->render(&painter, child->pos()); }
         }
         painter.end();
-        const QRect crop(0, 0, pan.widget.width(), pan.widget.roundtableStripRectForTest().bottom() + 1);
+        const QRect crop(0, 0, pan.widget.width(), spectrum.bottom() + 1);
         QVERIFY(product.copy(crop).save(directory + QLatin1Char('/') + scene + QStringLiteral(".png")));
     }
 
@@ -3263,34 +3034,6 @@ private slots:
         QCOMPARE(pan.widget.roundtableCardPlacementsForTest(), placements + 1);
     }
 
-    // A link note's new words are structure: the line is placed again at the new width.
-    void aNewLinkNotePlacesTheLineAgain()
-    {
-        Pan pan;
-        const QString room = QStringLiteral("frequency:lsb-7200000");
-        RoundtableCardModel card;
-        card.hz = 7200000;
-        card.frozen = true;
-        card.note = QStringLiteral("Reconnecting");
-        pan.widget.setRoundtableTags({}, RoundtableTagDisplay::Frozen);
-        pan.widget.setRoundtableCard(card, room);
-        pan.draw();
-        const QRect before = pan.widget.roundtableStripLineForTest().line;
-        QVERIFY(!before.isNull());
-        const int placements = pan.widget.roundtableCardPlacementsForTest();
-
-        RoundtableCardModel offline = card;
-        offline.note = QStringLiteral("Offline since 14:02 UTC");
-        QVERIFY(!roundtableCardSameStructure(offline, card));
-        pan.widget.setRoundtableCard(offline, room);
-        pan.draw();
-        QCOMPARE(pan.widget.roundtableCardPlacementsForTest(), placements + 1);
-        const RoundtableStripLinePlacement after = pan.widget.roundtableStripLineForTest();
-        QVERIFY2(after.line.width() > before.width(),
-                 qPrintable(QStringLiteral("line %1 wide, was %2").arg(after.line.width()).arg(before.width())));
-        QVERIFY(lineTexts(offline, after).join(QLatin1Char('|')).contains(QStringLiteral("Offline since 14:02 UTC")));
-    }
-
     void theTurnShownIsExactThenNearestThenLatest()
     {
         CardRig rig;
@@ -3550,205 +3293,6 @@ private slots:
         model.detach();
     }
 
-    void theStripShowsWhileRoundtableIsOnInAnyLinkState()
-    {
-        QVERIFY(!roundtableStripShownFor(nullptr));
-        RoundtableModel unattached;
-        QVERIFY(!unattached.available());
-        QVERIFY(!roundtableStripShownFor(&unattached));
-        NullLink link;
-        RoundtableState state;
-        RoundtableModel model;
-        model.attachStation(&link, &state);
-        using LinkState = RoundtableModel::LinkState;
-        const QList<std::pair<LinkState, bool>> cases{
-            {LinkState::Off, false},          {LinkState::Connecting, true}, {LinkState::Live, true},
-            {LinkState::Reconnecting, true},  {LinkState::Offline, true},    {LinkState::Hidden, true}};
-        for (const auto& [linkState, shown] : cases) {
-            state.applyStationValue("linkState", static_cast<int>(linkState));
-            QCOMPARE(roundtableStripShownFor(&model), shown);
-        }
-        model.detach();
-    }
-
-    void theStripTakesItsRowFromTheWaterfallOnly()
-    {
-        SpectrumWidget widget;
-        widget.setUpdatesEnabled(false);
-        widget.resize(900, 600);
-        widget.setConnectionState(ConnectionState::Connected);
-        widget.show();
-        const SpectrumWidget::SpectrumLayout hidden = widget.spectrumLayout();
-        const QRect liveHidden = widget.waterfallLiveButtonRect(hidden.waterfallChrome);
-        QVERIFY(hidden.roundtableStrip.isNull());
-        QVERIFY(widget.roundtableStripRectForTest().isNull());
-        QCOMPARE(widget.waterfallHeightForTest(), hidden.waterfall.height());
-
-        QSignalSpy spot(&widget, &SpectrumWidget::roundtableInspectorSpotChanged);
-        widget.setRoundtableStripShown(true);
-        QVERIFY(widget.roundtableStripShown());
-        QCOMPARE(spot.size(), 1);
-        const SpectrumWidget::SpectrumLayout shown = widget.spectrumLayout();
-        QCOMPARE(shown.contentHeight, hidden.contentHeight);
-        QCOMPARE(shown.spectrum, hidden.spectrum);
-        QCOMPARE(shown.divider, hidden.divider);
-        QCOMPARE(shown.frequency, hidden.frequency);
-        QCOMPARE(shown.roundtableStrip.top(), shown.frequency.bottom() + 1);
-        QCOMPARE(shown.roundtableStrip.height(), 30);
-        QCOMPARE(shown.roundtableStrip.height(), kRoundtableStripHeight);
-        QCOMPARE(shown.roundtableStrip.left(), shown.waterfall.left());
-        QCOMPARE(shown.roundtableStrip.width(), shown.waterfall.width());
-        QCOMPARE(shown.waterfall.top(), hidden.waterfall.top() + 30);
-        QCOMPARE(shown.waterfall.height(), hidden.waterfall.height() - 30);
-        QCOMPARE(shown.waterfallChrome.top(), shown.waterfall.top());
-        QCOMPARE(shown.waterfallChrome.height(), shown.waterfall.height());
-        QCOMPARE(widget.roundtableStripRectForTest(), shown.roundtableStrip);
-        // Its background spans the whole width, the scale column too.
-        QCOMPARE(shown.roundtableStripChrome, QRect(0, shown.roundtableStrip.top(), widget.width(), 30));
-        QVERIFY(hidden.roundtableStripChrome.isNull());
-        {
-            QImage image(widget.size(), QImage::Format_ARGB32_Premultiplied);
-            image.fill(Qt::black);
-            QPainter painter(&image);
-            widget.drawRoundtableStrip(painter, shown.roundtableStripChrome);
-            painter.end();
-            const int right = widget.width() - 2;
-            QVERIFY(right > shown.roundtableStrip.right());
-            QCOMPARE(QColor(image.pixel(right, shown.roundtableStrip.center().y())).name(), QStringLiteral("#0c0c0e"));
-            QCOMPARE(QColor(image.pixel(right, shown.roundtableStrip.top())).name(), QStringLiteral("#2c2c31"));
-            QCOMPARE(QColor(image.pixel(right, shown.roundtableStrip.bottom())).name(), QStringLiteral("#2c2c31"));
-        }
-        // The image follows, as on a resize.
-        QCOMPARE(widget.waterfallHeightForTest(), shown.waterfall.height());
-        // LIVE stays in the frequency scale row.
-        QCOMPARE(widget.waterfallLiveButtonRect(shown.waterfallChrome), liveHidden);
-
-        // The current value again does nothing.
-        widget.setRoundtableStripShown(true);
-        QCOMPARE(spot.size(), 1);
-
-        widget.setRoundtableStripShown(false);
-        QCOMPARE(spot.size(), 2);
-        const SpectrumWidget::SpectrumLayout back = widget.spectrumLayout();
-        QCOMPARE(back.contentHeight, hidden.contentHeight);
-        QCOMPARE(back.spectrum, hidden.spectrum);
-        QCOMPARE(back.divider, hidden.divider);
-        QCOMPARE(back.frequency, hidden.frequency);
-        QCOMPARE(back.waterfall, hidden.waterfall);
-        QCOMPARE(back.waterfallChrome, hidden.waterfallChrome);
-        QVERIFY(back.roundtableStrip.isNull());
-        QVERIFY(back.roundtableStripChrome.isNull());
-        QCOMPARE(widget.waterfallHeightForTest(), hidden.waterfall.height());
-    }
-
-    void aWaterfallShareUnder58LeavesTheStripOut()
-    {
-        // Short enough that a 57 px share is inside the split's 10 % to 90 % range.
-        Pan pan(500);
-        const int contentH = pan.widget.spectrumLayout().contentHeight;
-        const auto shareOf = [&pan, contentH](int share) {
-            pan.widget.setSpectrumFrac((static_cast<float>(contentH - share) + 0.5f) / static_cast<float>(contentH));
-            return pan.widget.spectrumLayout();
-        };
-        QCOMPARE(kRoundtableStripMinWaterfall, 28);
-        // 58 px: the strip, and 28 px of waterfall under it.
-        const SpectrumWidget::SpectrumLayout at = shareOf(58);
-        QCOMPARE(at.spectrum.height(), contentH - 58);
-        QVERIFY(pan.widget.roundtableStripLaidOut());
-        QCOMPARE(at.roundtableStrip.height(), 30);
-        QCOMPARE(at.waterfall.height(), 28);
-        QCOMPARE(at.waterfall.top(), at.roundtableStrip.bottom() + 1);
-        QCOMPARE(pan.widget.waterfallTop(), at.waterfall.top());
-
-        // 57 px: no strip; the waterfall keeps its whole share.
-        const SpectrumWidget::SpectrumLayout under = shareOf(57);
-        QCOMPARE(under.spectrum.height(), contentH - 57);
-        QVERIFY(pan.widget.roundtableStripShown());
-        QVERIFY(!pan.widget.roundtableStripLaidOut());
-        QVERIFY(under.roundtableStrip.isNull());
-        QVERIFY(under.roundtableStripChrome.isNull());
-        QVERIFY(pan.widget.roundtableStripRectForTest().isNull());
-        QCOMPARE(under.waterfall.top(), under.frequency.bottom() + 1);
-        QCOMPARE(under.waterfall.height(), 57);
-        QCOMPARE(under.waterfall.bottom(), pan.widget.height() - 1);
-
-        // Nothing draws in a strip that is not there; the details open upward, beside the dial.
-        pan.widget.setRoundtableTags(panTags(), RoundtableTagDisplay::Live);
-        pan.widget.setRoundtableCard(talkingCard(), QStringLiteral("frequency:lsb-7200000"));
-        pan.draw();
-        QVERIFY(pan.widget.roundtableTagHitsForTest().isEmpty());
-        QVERIFY(pan.widget.roundtableStripLineForTest().line.isNull());
-        const SpectrumWidget::RoundtableInspectorSpot spot = pan.widget.roundtableInspectorSpot(0, 0);
-        QCOMPARE(spot.below.top(), under.waterfall.top());
-        const RoundtableDetailsPlacement placed
-            = placeRoundtableDetails(spot.below, spot.above, spot.anchorLeft, 300, spot.upwardAnchorLeft);
-        QVERIFY(placed.upward);
-        QCOMPARE(placed.rect.left(), spot.upwardAnchorLeft);
-        QVERIFY(!placed.rect.intersects(pan.flag->occupiedRegion().boundingRect()));
-
-        // Back to 58: the strip returns.
-        shareOf(58);
-        QVERIFY(pan.widget.roundtableStripLaidOut());
-    }
-
-    void dividerDragGivesTheSameSplitWithTheStrip()
-    {
-        SpectrumWidget widget;
-        widget.setUpdatesEnabled(false);
-        widget.resize(900, 600);
-        widget.setConnectionState(ConnectionState::Connected);
-        widget.show();
-        const auto dragTo = [&widget](int y) {
-            widget.m_spectrumFrac = 0.40f;
-            const QPoint grab(300, widget.spectrumLayout().divider.center().y());
-            QTest::mousePress(&widget, Qt::LeftButton, Qt::NoModifier, grab);
-            QMouseEvent move(QEvent::MouseMove, QPointF(300, y), widget.mapToGlobal(QPointF(300, y)),
-                             Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
-            QApplication::sendEvent(&widget, &move);
-            QTest::mouseRelease(&widget, Qt::LeftButton, Qt::NoModifier, QPoint(300, y));
-            return widget.m_spectrumFrac;
-        };
-        const float hiddenFrac = dragTo(250);
-        widget.setRoundtableStripShown(true);
-        QCOMPARE(dragTo(250), hiddenFrac);
-        QVERIFY(hiddenFrac != 0.40f);
-    }
-
-    void aPressInTheEmptyStripTunesNothing()
-    {
-        Pan pan;
-        pan.widget.setRoundtableStripShown(true);
-        const QRect strip = pan.widget.roundtableStripRectForTest();
-        QVERIFY(!strip.isNull());
-        // Straight under the dial, where the passband would take the press, and
-        // in the scale column at the strip's right-hand end, where a pan drag
-        // and a click-tune would.
-        const int dialX = pan.widget.hzToX(kPanCenterHz, pan.widget.spectrumLayout().spectrum);
-        const QPoint column(pan.widget.width() - 10, strip.center().y());
-        QVERIFY(column.x() > strip.right());
-        for (const QPoint& at : {QPoint(dialX, strip.center().y()), column}) {
-            QSignalSpy plainTune(&pan.widget, &SpectrumWidget::frequencyClicked);
-            QSignalSpy edges(&pan.widget, &SpectrumWidget::filterEdgeDragged);
-            QSignalSpy center(&pan.widget, &SpectrumWidget::centerChanged);
-            QTest::mousePress(&pan.widget, Qt::LeftButton, Qt::NoModifier, at);
-            QVERIFY(pan.widget.m_draggingFilter == SpectrumWidget::FilterEdge::None);
-            QVERIFY(!pan.widget.m_draggingVfo);
-            QVERIFY(!pan.widget.m_draggingPan);
-            QVERIFY(!pan.widget.m_draggingBandwidth);
-            QVERIFY(!pan.widget.m_draggingTimeScale);
-            QVERIFY(!pan.widget.m_draggingDivider);
-            QTest::mouseRelease(&pan.widget, Qt::LeftButton, Qt::NoModifier, at);
-            QCOMPARE(plainTune.size(), 0);
-            QCOMPARE(edges.size(), 0);
-            QCOMPARE(center.size(), 0);
-            // Hover there is neither the scale's zoom nor the waterfall's crosshair.
-            QMouseEvent hover(QEvent::MouseMove, QPointF(at), pan.widget.mapToGlobal(QPointF(at)),
-                              Qt::NoButton, Qt::NoButton, Qt::NoModifier);
-            QApplication::sendEvent(&pan.widget, &hover);
-            QCOMPARE(pan.widget.cursor().shape(), Qt::ArrowCursor);
-        }
-    }
-
     void initTestCase()
     {
         // A pan's start-up lines say nothing about the tags.
@@ -3769,7 +3313,7 @@ private slots:
             });
     }
 
-    void aPanDrawsItsTagsInTheStrip()
+    void aPanDrawsItsTagsAlongTheFootClearOfFlagsAndBandPlan()
     {
         Pan pan;
         pan.widget.setRoundtableTags(panTags(), RoundtableTagDisplay::Live);
@@ -3778,13 +3322,18 @@ private slots:
         // Mine, the quiet and doubled rooms, and one fold of five.
         QCOMPARE(hits.size(), 4);
         const QRect spec = pan.widget.roundtableTagSpectrumRectForTest();
-        const QRect strip = pan.widget.roundtableStripRectForTest();
+        const int bandH = pan.widget.bandPlanStripHeightForTest();
+        QVERIFY(bandH > 0);
+        const int bandTop = spec.bottom() + 1 - bandH;
+        const QRegion flags = pan.widget.receiverFlagRegion();
+        QVERIFY(!flags.isEmpty());
         for (const auto& hit : hits) {
             QCOMPARE(hit.rect.height(), 22);
-            QCOMPARE(hit.rect.top(), strip.top() + 4);
-            QVERIFY(hit.rect.left() >= strip.left());
-            QVERIFY(hit.rect.right() <= strip.right());
-            QVERIFY(!hit.rect.intersects(spec));
+            QVERIFY(hit.rect.left() >= spec.left());
+            QVERIFY(hit.rect.right() <= spec.right());
+            // Above the band plan, with room for the tick.
+            QCOMPARE(hit.rect.bottom() + 1, bandTop - 8);
+            QVERIFY2(!flags.intersects(hit.rect), "a tag is under a VFO flag");
         }
         const auto* fold = hitFor(pan.widget, QStringLiteral("lsb-7185100"));
         QVERIFY(fold != nullptr);
@@ -3793,137 +3342,22 @@ private slots:
         QVERIFY(!hitFor(pan.widget, QStringLiteral("lsb-7200000"))->folded);
     }
 
-    void aFlagHangingIntoTheStripMovesYourLineAndTheTags()
+    void aShortPansTagsMoveOutFromUnderTheFlag()
     {
-        // On a short spectrum the flag hangs down into the strip: tags keep clear
-        // of it, and your line goes on the dial's other side.
-        Pan pan;
-        pan.widget.setSpectrumFrac(0.10f);
-        pan.widget.updateVfoPositions();
-        const QRect strip = pan.widget.roundtableStripRectForTest();
-        QVERIFY(!strip.isNull());
-        QList<QRect> flagInStrip;
-        for (const QRect& rect : pan.widget.receiverFlagRegion()) {
-            if (rect.intersects(QRect(rect.left(), strip.top(), rect.width(), strip.height()))) {
-                flagInStrip.append(rect);
-            }
-        }
-        const QRect flagRect = pan.flag->occupiedRegion().boundingRect();
-        QVERIFY2(!flagInStrip.isEmpty(), qPrintable(QStringLiteral("flag %1..%2, strip %3..%4")
-            .arg(flagRect.top()).arg(flagRect.bottom()).arg(strip.top()).arg(strip.bottom())));
-        const int dialX = pan.widget.hzToX(7200000.0, pan.widget.roundtableTagSpectrumRectForTest());
-
+        // A pan this short has its flag over the tag row.
+        Pan pan(300);
         pan.widget.setRoundtableTags(panTags(), RoundtableTagDisplay::Live);
         pan.draw();
+        const QRegion flags = pan.widget.receiverFlagRegion();
+        const QRect spec = pan.widget.roundtableTagSpectrumRectForTest();
+        const int bandTop = spec.bottom() + 1 - pan.widget.bandPlanStripHeightForTest();
+        QVERIFY(flags.intersects(QRect(spec.left(), bandTop - 30, spec.width(), 22)));
         const auto& hits = pan.widget.roundtableTagHitsForTest();
-        QCOMPARE(hits.size(), 4);
+        QVERIFY(hits.size() >= 3);
         for (const auto& hit : hits) {
-            QVERIFY(strip.contains(hit.rect));
-            for (const QRect& rect : std::as_const(flagInStrip)) {
-                QVERIFY(hit.rect.right() < rect.left() || hit.rect.left() > rect.right());
-            }
+            QVERIFY2(!flags.intersects(hit.rect), "a tag is under a VFO flag");
         }
-
-        const QString room = QStringLiteral("frequency:lsb-7200000");
-        pan.widget.setRoundtableTags({}, RoundtableTagDisplay::Live);
-        pan.widget.setRoundtableCard(talkingCard(), room);
-        pan.draw();
-        const auto* line = cardHit(pan.widget);
-        QVERIFY(line != nullptr);
-        QVERIFY(!pan.widget.receiverFlagRegion().intersects(line->rect));
-        // The other side of the dial from the flag's part in the strip.
-        if (flagInStrip.first().center().x() > dialX) {
-            QVERIFY(line->rect.right() < dialX);
-        } else {
-            QVERIFY(line->rect.left() > dialX);
-        }
-    }
-
-    // A quiet line that shows only a link note follows a flag into the strip as
-    // a talking line does: it is drawn again, on the dial's other side.
-    void aQuietLinkNoteLineMovesAsideForAFlagInTheStrip()
-    {
-        RoundtableCardModel card;
-        card.hz = 7200000;
-        card.frozen = true;
-        card.note = QStringLiteral("Reconnecting");
-        const QString room = QStringLiteral("frequency:lsb-7200000");
-        {
-            Pan pan;
-            pan.widget.setSpectrumFrac(0.10f);
-            pan.widget.updateVfoPositions();
-            const QRect strip = pan.widget.roundtableStripRectForTest();
-            QVERIFY(!strip.isNull());
-            QList<QRect> flagInStrip;
-            for (const QRect& rect : pan.widget.receiverFlagRegion()) {
-                if (rect.intersects(QRect(rect.left(), strip.top(), rect.width(), strip.height()))) {
-                    flagInStrip.append(rect);
-                }
-            }
-            QVERIFY(!flagInStrip.isEmpty());
-            const int dialX = pan.widget.hzToX(7200000.0, pan.widget.roundtableTagSpectrumRectForTest());
-            pan.widget.setRoundtableTags({}, RoundtableTagDisplay::Frozen);
-            pan.widget.setRoundtableCard(card, room);
-            pan.draw();
-            const QRect line = pan.widget.roundtableStripLineForTest().line;
-            QVERIFY(!line.isNull());
-            QVERIFY(!pan.widget.receiverFlagRegion().intersects(line));
-            if (flagInStrip.first().center().x() > dialX) {
-                QVERIFY(line.right() < dialX);
-            } else {
-                QVERIFY(line.left() > dialX);
-            }
-        }
-#ifdef NEREUS_GPU_SPECTRUM
-        // The tag child draws the line: a flag that moves asks it to draw again.
-        class QuietSpectrum : public SpectrumWidget {
-            void paintEvent(QPaintEvent*) override {}
-        } widget;
-        class Paints : public QObject {
-        public:
-            int count = 0;
-            bool eventFilter(QObject*, QEvent* event) override {
-                if (event->type() == QEvent::Paint) { ++count; }
-                return false;
-            }
-        } paints;
-        widget.resize(1000, 700);
-        widget.setSampleRate(kPanSpanHz);
-        widget.setFrequencyRange(kPanCenterHz, kPanSpanHz);
-        widget.setConnectionState(ConnectionState::Connected);
-        widget.setRoundtableStripShown(true);
-        QVERIFY(widget.m_roundtableTagLayer);
-        widget.m_roundtableTagLayer->installEventFilter(&paints);
-        widget.setRoundtableTags({}, RoundtableTagDisplay::Frozen);
-        widget.setRoundtableCard(card, room);
-        widget.show();
-        QTRY_VERIFY(paints.count > 0);
-        QTRY_VERIFY(!widget.roundtableStripLineForTest().line.isNull());
-        const int before = paints.count;
-        widget.m_receiverFlagRegion = QRegion(QRect(-100, -100, 10, 10));
-        widget.refreshReceiverFlagRegion();
-        QTRY_VERIFY(paints.count > before);
-#endif
-    }
-
-    void aTallPansFlagLeavesYourLineUnderIt()
-    {
-        // The flag stands on the spectrum: your line takes the flag's side, as before.
-        Pan pan;
-        const QRect strip = pan.widget.roundtableStripRectForTest();
-        const QRect flagRect = pan.flag->occupiedRegion().boundingRect();
-        QVERIFY(flagRect.bottom() < strip.top());
-        const int dialX = pan.widget.hzToX(7200000.0, pan.widget.roundtableTagSpectrumRectForTest());
-        pan.widget.setRoundtableTags({}, RoundtableTagDisplay::Live);
-        pan.widget.setRoundtableCard(talkingCard(), QStringLiteral("frequency:lsb-7200000"));
-        pan.draw();
-        const auto* line = cardHit(pan.widget);
-        QVERIFY(line != nullptr);
-        if (flagRect.center().x() > dialX) {
-            QVERIFY(line->rect.left() > dialX);
-        } else {
-            QVERIFY(line->rect.right() < dialX);
-        }
+        QVERIFY(hitFor(pan.widget, QStringLiteral("lsb-7200000")) != nullptr);
     }
 
     void modernFrequencyClickReadsDetailsWithoutTuningEvenDuringTx()
@@ -4332,7 +3766,6 @@ private slots:
         widget.resize(1000, 700);
         widget.setSampleRate(kPanSpanHz);
         widget.setFrequencyRange(kPanCenterHz, kPanSpanHz);
-        widget.setRoundtableStripShown(true);
         QVERIFY(widget.m_roundtableTagLayer);
         widget.m_roundtableTagLayer->installEventFilter(&paints);
         widget.show();
@@ -4395,9 +3828,10 @@ private slots:
 #endif
     }
 
-    void thePansToolbarMovesNoTag()
+    void collapsingThePansToolbarRedrawsTheTags()
     {
-        // A short pan, its toolbar down the left side, and one tag at the left end.
+        // A short pan, so the open toolbar down the left side reaches the
+        // tag row, and one tag under it.
         Pan pan(kShortPanHeight);
         auto* toolbar = new SpectrumOverlayPanel(&pan.widget);
         toolbar->move(4, 4);
@@ -4411,6 +3845,10 @@ private slots:
         const auto* open = hitFor(pan.widget, id);
         QVERIFY(open != nullptr);
         const QRect openRect = open->rect;
+        QVERIFY2(toolbar->geometry().bottom() >= openRect.top(),
+                 qPrintable(QStringLiteral("toolbar %1 px tall, tag row at %2")
+                                .arg(toolbar->height()).arg(openRect.top())));
+        QVERIFY(openRect.left() > toolbar->geometry().right());
 
         pan.widget.clearOverlayStaticDirtyForTest();
         pan.widget.clearOverlayDynamicDirtyForTest();
@@ -4419,13 +3857,26 @@ private slots:
         QVERIFY(collapse != nullptr);
         collapse->click();
         QCOMPARE(collapsed.count(), 1);
+        QCOMPARE(collapsed.first().first().toBool(), true);
+        QVERIFY(toolbar->geometry().bottom() < openRect.top());
 #ifdef NEREUS_GPU_SPECTRUM
         QVERIFY(!pan.widget.overlayDynamicDirtyForTest());
         QVERIFY(!pan.widget.overlayStaticDirtyForTest());
 #endif
         pan.draw();
-        QCOMPARE(hitFor(pan.widget, id)->rect, openRect);
+        const auto* shut = hitFor(pan.widget, id);
+        QVERIFY(shut != nullptr);
+        QVERIFY2(shut->rect.left() < openRect.left(),
+                 qPrintable(QStringLiteral("tag at %1, was %2").arg(shut->rect.left()).arg(openRect.left())));
+
+        // Opened again, the tag moves aside again.
+        pan.widget.clearOverlayStaticDirtyForTest();
+        pan.widget.clearOverlayDynamicDirtyForTest();
         collapse->click();
+#ifdef NEREUS_GPU_SPECTRUM
+        QVERIFY(!pan.widget.overlayDynamicDirtyForTest());
+        QVERIFY(!pan.widget.overlayStaticDirtyForTest());
+#endif
         pan.draw();
         QCOMPARE(hitFor(pan.widget, id)->rect, openRect);
     }

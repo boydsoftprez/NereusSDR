@@ -66,13 +66,13 @@ TxDisplayFeed::TxDisplayFeed(RadioModel* model, TxAnalyzer* analyzer, QObject* p
     // read the final NCO origin after that synchronous setup has finished.
     connect(&m_model->transmitModel(), &TransmitModel::tuneChanged, this,
             [this](bool) {
-        if (m_keyed) {
+        if (displayActive()) {
             recompute();
         }
     }, Qt::QueuedConnection);
     if (TxSliceArbiter* arbiter = m_model->txSliceArbiter()) {
         connect(arbiter, &TxSliceArbiter::txBoundSliceChanged, this, [this](int, int) {
-            if (m_keyed) {
+            if (displayActive()) {
                 watchTransmitSlice();
                 recompute();
             }
@@ -82,13 +82,13 @@ TxDisplayFeed::TxDisplayFeed(RadioModel* model, TxAnalyzer* analyzer, QObject* p
     // is not the transmit display any more.
     connect(m_analyzer, &TxAnalyzer::txFftReady, this,
             [this](int, const QVector<float>& dbm) {
-        if (m_keyed) {
+        if (displayActive()) {
             emit traceReady(dbm);
         }
     });
     connect(m_analyzer, &TxAnalyzer::txWaterfallReady, this,
             [this](int, const QVector<float>& dbm) {
-        if (m_keyed) {
+        if (displayActive()) {
             emit waterfallReady(dbm);
         }
     });
@@ -127,7 +127,7 @@ void TxDisplayFeed::updateViewer(int id, double centreHz, double spanHz, int pix
     it->second.centreHz = centreHz - carrierHz();
     it->second.spanHz = spanHz;
     it->second.pixels = pixels;
-    if (!m_keyed || it->second.local) {
+    if (!displayActive() || it->second.local) {
         recompute();
         return;
     }
@@ -199,8 +199,28 @@ void TxDisplayFeed::onMoxStateChanged(bool keyed)
     if (m_analyzer.isNull() || keyed == m_keyed) {
         return;
     }
-    if (keyed) {
-        m_keyed = true;
+    m_keyed = keyed;
+    updateDisplayActive();
+    emit keyedChanged(keyed);
+}
+
+void TxDisplayFeed::setTxAudioCheckActive(bool on)
+{
+    if (m_txAudioCheck == on) {
+        return;
+    }
+    m_txAudioCheck = on;
+    updateDisplayActive();
+}
+
+void TxDisplayFeed::updateDisplayActive()
+{
+    const bool active = displayActive();
+    if (active == m_displayActive) {
+        return;
+    }
+    m_displayActive = active;
+    if (active) {
         // SetAnalyzer follows the queued DSP resize on the transmit lane.
         // Use its requested block size: the native readback can still hold
         // the previous mode's size until that earlier lane job completes.
@@ -213,23 +233,20 @@ void TxDisplayFeed::onMoxStateChanged(bool keyed)
         recompute();
         m_analyzer->start();
         ensureMini();
-        emit keyedChanged(true);
         return;
     }
     m_analyzer->stop();
     stopMini();
     m_remoteViewTimer.stop();
     m_remoteApplied.invalidate();
-    // Clear the clip so the next key starts from the full baseband, as the
-    // local window's fall does.
+    // Clear the clip so the next display starts from the full baseband, as
+    // the local window's fall does.
     m_analyzer->setSpectrumWindow(0, 0);
-    m_keyed = false;
     for (const QMetaObject::Connection& connection : std::as_const(m_sliceConnections)) {
         disconnect(connection);
     }
     m_sliceConnections.clear();
     m_watchedSlice.clear();
-    emit keyedChanged(false);
 }
 
 void TxDisplayFeed::watchTransmitSlice()
@@ -302,7 +319,7 @@ void TxDisplayFeed::recompute()
         view.pixels = m_analyzer->numPixels();
     }
 
-    if (m_keyed && governor != 0) {
+    if (displayActive() && governor != 0) {
         m_analyzer->setView(view.lowHz, view.highHz, view.pixels);
     }
 
@@ -313,10 +330,10 @@ void TxDisplayFeed::recompute()
     if (governorMoved) {
         emit governorChanged(governor);
     }
-    if (viewMoved && m_keyed) {
+    if (viewMoved && displayActive()) {
         emit viewChanged(view);
     }
-    if (m_keyed && m_miniAttached) { updateMiniView(); }
+    if (displayActive() && m_miniAttached) { updateMiniView(); }
 }
 
 bool TxDisplayFeed::isMiniViewer(int id) const
@@ -380,7 +397,7 @@ void TxDisplayFeed::applyMiniRxSettings()
 
 void TxDisplayFeed::ensureMini()
 {
-    if (!m_keyed || (!m_localMiniDemand && m_miniViewerIds.empty())
+    if (!displayActive() || (!m_localMiniDemand && m_miniViewerIds.empty())
         || m_miniAnalyzer || !m_model || !m_model->txChannel()
         || !m_model->transmitLane()) { return; }
     TxChannel* channel = m_model->txChannel();
@@ -399,15 +416,15 @@ void TxDisplayFeed::ensureMini()
     applyMiniRxSettings();
     connect(m_miniAnalyzer.get(), &TxAnalyzer::txFftReady, this,
             [this](int, const QVector<float>& dbm) {
-        if (m_keyed && miniReady()) { emit miniTraceReady(dbm); }
+        if (displayActive() && miniReady()) { emit miniTraceReady(dbm); }
     });
     connect(m_miniAnalyzer.get(), &TxAnalyzer::txWaterfallReady, this,
             [this](int, const QVector<float>& dbm) {
-        if (m_keyed && miniReady()) { emit miniWaterfallReady(dbm); }
+        if (displayActive() && miniReady()) { emit miniWaterfallReady(dbm); }
     });
     connect(m_miniAnalyzer.get(), &TxAnalyzer::analyzerCreated, this,
             [this, epoch](bool ready) {
-        if (!ready || epoch != m_miniEpoch || !m_keyed || !m_model
+        if (!ready || epoch != m_miniEpoch || !displayActive() || !m_model
             || !m_model->txChannel()
             || m_model->txChannel()->channelId() != m_miniChannelId
             || (!m_localMiniDemand && m_miniViewerIds.empty())) { return; }

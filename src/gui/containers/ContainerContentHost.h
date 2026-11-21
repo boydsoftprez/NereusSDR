@@ -104,9 +104,6 @@ public:
     // never keys the radio.
     void setTransmitting(bool transmitting);
     bool transmitting() const { return m_transmitting; }
-    // The scroll surface behind the entries is clear, so a floating window
-    // can show the desktop around a meter. The entries still paint themselves.
-    void setClearBackground(bool clear);
     // This window's session (radio) id. A row whose context names another
     // session stays in the receive state, as a meter item does
     // (MeterItem::setForeignSession).
@@ -163,6 +160,11 @@ private:
     ContainerDocument m_document;
     QVector<EntryRow> m_rows;
     QVector<QPointer<MeterWidget>> m_meters;
+    // A legacy gesture's blocks, committed together one event-loop turn after
+    // the release: one settings save and one reconcile for the whole group.
+    struct PendingLegacyMove { QString entryId; QRectF rect; QString record; };
+    QVector<PendingLegacyMove> m_pendingLegacyMoves;
+    bool m_legacyCommitScheduled = false;
     QVBoxLayout* m_layout = nullptr;
     QWidget* m_body = nullptr;
     QScrollArea* m_scroll = nullptr;
@@ -176,7 +178,6 @@ private:
     int m_contentMinimumWidth = -1;  // last value announced; -1 before the first
     QPointer<QMenu> m_bannerMenu;
     bool m_transmitting = false;
-    bool m_clearBackground = false;
     std::function<QString()> m_sessionIdSource;
 };
 }

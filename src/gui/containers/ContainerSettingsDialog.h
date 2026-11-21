@@ -77,6 +77,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include <QDialog>
+#include <optional>
 #include <QPair>
 #include <QUuid>
 #include <QVector>
@@ -238,6 +239,9 @@ private:
     ContentPropertyEditor* m_contentEditor=nullptr;
     QComboBox* m_meterFaceCombo=nullptr;
     QComboBox *m_headerCombo=nullptr, *m_layoutCombo=nullptr, *m_placementCombo=nullptr, *m_anchorCombo=nullptr;
+    // Set by "Restore legacy canvas": forces that layout in the next apply,
+    // because UI changes are re-read and could otherwise overwrite it.
+    std::optional<ContentLayout> m_layoutOverride;
     bool insertImported(const DocumentResult& result, bool replaceContainer);
     bool m_loadingDraft=false;
     void saveCurrentDraft();
@@ -331,10 +335,10 @@ private:
     // Phase 3G-6 block 3 commit 17: additional container-level
     // controls for full Thetis parity on the property bar.
     QCheckBox*   m_lockCheck{nullptr};
+    QCheckBox*   m_lockItemsCheck{nullptr};
     QCheckBox*   m_hideTitleCheck{nullptr};   // inverse of titleBarVisible
     QCheckBox*   m_minimisesCheck{nullptr};
     QCheckBox*   m_autoHeightCheck{nullptr};
-    QCheckBox*   m_clearFloatingCheck{nullptr};
     QCheckBox*   m_hidesWhenRxNotUsedCheck{nullptr};
     QCheckBox*   m_noControlsCheck{nullptr};
     QCheckBox*   m_highlightCheck{nullptr};

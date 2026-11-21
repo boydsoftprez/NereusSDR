@@ -692,6 +692,53 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
         auto* layer=new QSpinBox(group);layer->setObjectName("canvasLayer");layer->setRange(std::numeric_limits<int>::min(),std::numeric_limits<int>::max());layer->setValue(entry.paintOrder);fields->addRow(tr("Layer (larger is in front)"),layer);
         connect(layer,qOverload<int>(&QSpinBox::valueChanged),this,[this](int value){if(!m_geometryLocked) {m_entry.paintOrder=value;if(m_item) {m_item->setZOrder(value);}publish();}});
         auto* note=new QLabel(tr("The viewport scrolls when it is smaller than the objects. Resizing the window keeps saved object positions and sizes."),group);note->setWordWrap(true);fields->addRow(note);
+    } else if(m_policy==ContentLayout::LegacyCanvas && !entry.typeId.startsWith(QStringLiteral("applet:"))) {
+        // Legacy canvas: every entry is a block placed on a normalized canvas.
+        // Numeric fields move and resize it without dragging, which is the
+        // only way to reach an overlay lying under a larger block, and the only
+        // way to change one block's size independently of the container.
+        auto* group=new QGroupBox(tr("Canvas position and size (% of container)"),this);
+        group->setObjectName("legacyCanvasGeometry");group->setEnabled(!m_geometryLocked);
+        auto* fields=new QFormLayout(group);root->addWidget(group);
+        const QRectF rect=entry.canvasRect;
+        const double values[]{rect.x()*100.0,rect.y()*100.0,rect.width()*100.0,rect.height()*100.0};
+        const QStringList keys{"legacyCanvasX","legacyCanvasY","legacyCanvasWidth","legacyCanvasHeight"};
+        const QStringList labels{tr("X %"),tr("Y %"),tr("Width %"),tr("Height %")};
+        for(int axis=0;axis<4;++axis) {
+            auto* field=new QDoubleSpinBox(group);field->setObjectName(keys[axis]);
+            field->setDecimals(2);field->setRange(-100.0,200.0);field->setSingleStep(0.5);
+            field->setSuffix(QStringLiteral(" %"));field->setValue(values[axis]);
+            field->setKeyboardTracking(false);
+            fields->addRow(labels[axis],field);
+            connect(field,qOverload<double>(&QDoubleSpinBox::valueChanged),this,[this,axis](double value){
+                if(m_geometryLocked || m_loading) {return;}
+                QRectF geometry=m_entry.canvasRect;
+                if(geometry.isNull()) {geometry=QRectF(0.0,0.0,0.1,0.1);}
+                const double scaled=value/100.0;
+                if(axis==0) {geometry.moveLeft(scaled);}
+                if(axis==1) {geometry.moveTop(scaled);}
+                if(axis==2) {geometry.setWidth(qMax(0.02,scaled));}
+                if(axis==3) {geometry.setHeight(qMax(0.02,scaled));}
+                // Capture through the item so the geometry lands where the
+                // renderer reads it: a composite/face keeps it in properties,
+                // a plain item in overrides, and both in canvasRect.
+                if(m_item) {
+                    m_item->setRect(geometry.x(),geometry.y(),geometry.width(),geometry.height());
+                    m_entry=m_registry.captureMeterItem(*m_item,m_entry);
+                } else {
+                    m_entry.canvasRect=geometry;
+                }
+                publish();
+            });
+        }
+        auto* layer=new QSpinBox(group);layer->setObjectName("legacyCanvasLayer");
+        layer->setRange(std::numeric_limits<int>::min(),std::numeric_limits<int>::max());
+        layer->setValue(entry.paintOrder);fields->addRow(tr("Layer (larger is in front)"),layer);
+        connect(layer,qOverload<int>(&QSpinBox::valueChanged),this,[this](int value){
+            if(!m_geometryLocked) {m_entry.paintOrder=value;if(m_item) {m_item->setZOrder(value);}publish();}
+        });
+        auto* note=new QLabel(tr("Blocks keep these proportions when the container is resized. Width and height scale the block's own contents. Ctrl+click a block on the canvas to step through overlapping blocks."),group);
+        note->setWordWrap(true);fields->addRow(note);
     }
     QString reason=entry.extensions.value("unavailableReason").toString();
     if(reason.isEmpty() && !m_registry.isAvailable(entry)) { reason=m_registry.unavailableReason(entry); }

@@ -123,6 +123,11 @@ struct RadioInfo {
     // sends the version of its p2app program instead, which firmwareText()
     // leaves out.
     int firmwareBetaVersion{0};
+    // The hardware-revision byte in a Protocol 2 discovery reply (byte 22).
+    // Thetis's HwRev: bit 0x10 marks the Anvelina PRO3 24-bit audio
+    // architecture. Zero when the reply is short or the board is Protocol 1.
+    quint8 hardwareRevision{0};
+    bool supports24BitAudio() const { return (hardwareRevision & 0x10) != 0; }
     int adcCount{1};                     // Derived from boardType (1 or 2)
     int maxReceivers{4};                 // Board-dependent max simultaneous RX
     // The receiver count the radio itself reported in discovery byte 20,

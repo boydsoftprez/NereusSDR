@@ -4,9 +4,6 @@
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-07 - J.J. Boyd (KG4VCF), hot keys: VOX on or off (vox.toggle).
 //                AI-assisted implementation via Anthropic Claude Code.
-//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 13: voice.* and
-//                msg.* go to runVoiceMessage.
-//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "gui/hotkeys/HotKeyDispatcher.h"
 
@@ -376,10 +373,8 @@ void HotKeyDispatcher::execute(const HotKeyAction& action, SliceModel* slice)
             m_targets->runTransmitAction(action.id);
         } else if (action.id.startsWith(QLatin1String("cw."))) {
             m_targets->runCwMessage(action.id);
-        } else if (action.id.startsWith(QLatin1String("voice.")) || action.id.startsWith(QLatin1String("msg."))) {
-            // msg.N picks CW or voice by the transmit slice's mode, there.
-            m_targets->runVoiceMessage(action.id);
         } else {
+            // Voice messages have no entry point of their own yet.
             m_targets->runWindowAction(action.id);
         }
         break;

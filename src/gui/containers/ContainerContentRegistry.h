@@ -114,6 +114,25 @@ public:
     QSize singletonCanvasMinimum(const QString& typeId) const;
     QSize singletonCanvasSizeHint(const QString& typeId) const;
     void setAvailable(const QString& typeId, bool available, const QString& reason = {});
+    // Coalesce runtimeChanged() while many entries change at once (startup
+    // population, Reset Default Layout): listeners rebuild content on each
+    // emission, and one rebuild per change made a multi-applet window spend
+    // seconds in work it repeated and threw away. The batch emits once, when
+    // the last scope ends.
+    void beginBatch();
+    void endBatch();
+    class Batch {
+    public:
+        explicit Batch(ContainerContentRegistry* registry) : m_registry(registry)
+        {
+            if (m_registry) { m_registry->beginBatch(); }
+        }
+        ~Batch() { if (m_registry) { m_registry->endBatch(); } }
+        Batch(const Batch&) = delete;
+        Batch& operator=(const Batch&) = delete;
+    private:
+        ContainerContentRegistry* m_registry;
+    };
     bool isAvailable(const QString& typeId) const;
     QString unavailableReason(const QString& typeId) const;
     // As above, for an entry: judged on the type its content resolves to. A
@@ -194,6 +213,9 @@ private:
     QStringList m_widgetFactoryOrder;
     QWidget* m_parking = nullptr;
     quint64 m_generation = 0;
+    int m_batchDepth = 0;
+    bool m_batchPending = false;
+    void notifyRuntimeChanged();
 };
 } // namespace NereusSDR
 Q_DECLARE_METATYPE(NereusSDR::ContentEntry)

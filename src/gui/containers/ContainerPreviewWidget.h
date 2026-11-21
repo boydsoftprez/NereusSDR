@@ -26,18 +26,21 @@ public:
     ContainerPreviewWidget(ContainerContentRegistry&, MeterPoller&, QWidget* parent=nullptr);
     void setDocument(const ContainerDocument&);
     ContainerDocument seededFromStack() const;
-    ContainerDocument convertedLegacyPositions() const;
+    ContainerDocument convertedLegacyPositions(QSizeF targetExtent = {}) const;
     QRect entryBoundary(const QString&) const;
     QRectF resolvedFreeCanvasRect(const QString&) const;
     QSizeF freeCanvasMinimum(const QString&) const;
     void selectEntry(const QString&);
     const ContainerDocument& document() const { return m_document; }
+protected:
+    void resizeEvent(QResizeEvent*) override;
 signals:
     void freeCanvasGeometryRestored(const ContentEntry&);
     void freeCanvasRectEdited(const QString&,const QRectF&);
     void entrySelected(const QString&);
     void presentationRequested(MeterWidget*, const QJsonObject&);
 private:
+    void updateLegacyCanvasHeight();
     void advance(qint64 timestamp);
     // Fade on RX / TX on the widget rows: the transmit state each overlay
     // shows (one on another session's radio stays in the receive state).
@@ -45,6 +48,15 @@ private:
     QPointer<ContainerContentRegistry> m_registry;
     QPointer<MeterPoller> m_poller;
     QVBoxLayout* m_layout;
+    // A legacy Thetis canvas is drawn in the container's aspect ratio, not
+    // stretched to the dialog's width at a fixed height: text sizes scale
+    // with width, so a stretched canvas makes the rows overlap.
+    MeterWidget* m_legacyCanvas{nullptr};
+    double m_legacyAspect{0.5625};
+    // The live container's content size, so the preview is a 1:1 copy
+    // rather than a differently-scaled version of it.
+    int m_legacyWidth{0};
+    int m_legacyContentHeight{0};
     FreeCanvasSurface* m_canvas=nullptr;
     ContainerDocument m_document;
     struct Surface { QPointer<MeterWidget> widget; QJsonObject context; };

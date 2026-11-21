@@ -968,18 +968,6 @@
 //                Anthropic Claude Code.
 //   2026-11-05 - Hot keys plan Task 5: cwSoftPaddle. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
-//   2026-11-15 - Recording plan Task 3: recordingService(). J.J. Boyd
-//                (KG4VCF), AI-assisted via Anthropic Claude Code.
-//   2026-11-15 - Recording plan Task 5: recordingsFacade() and recordings(),
-//                the access by role. J.J. Boyd (KG4VCF), AI-assisted via
-//                Anthropic Claude Code.
-//   2026-11-16 - Recording plan Task 21: the Digital Spectrum Recorder's
-//                I/Q tap gate (m_dsrTap). J.J. Boyd (KG4VCF), AI-assisted
-//                via Anthropic Claude Code.
-//   2026-11-16 - Recording plan Task 22: setSliceReplay, rewind sound's
-//                switch handed to the DSP worker, and the replays it keeps
-//                alive while the worker may read them. J.J. Boyd (KG4VCF),
-//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/MoxController.h"
@@ -1005,6 +993,7 @@
 #include "core/session/StationCapabilities.h"
 #include "core/spectrum/ISpectrumSink.h"
 #include "core/TxInterlockPolicy.h"
+#include "models/RxEqModel.h"
 #include "core/TxChannel.h"  // TxChannel::RfHold (setRemoteRfHold)
 #include "core/TuneMemoryStore.h"
 #include "models/RotorCommandSink.h"
@@ -1102,6 +1091,11 @@ class AudioEngine;
 class MasterMixAudioTap;
 class WdspEngine;
 class RxDspWorker;
+class RecordingService;
+class DsrRecorder;
+class RecordingsFacade;
+class RecordingsAccess;
+class DsrReplay;
 class DspControlThread;
 class NoiseFloorTracker;
 // Remote Daemon R2 Task 12: per-slice S-meter QTimer (src/core/meters/).
@@ -1160,6 +1154,7 @@ class TxWorkerThread;
 // iPhone app plan Task 36: the remote microphone ring.
 class RemoteMicFeed;
 class TxDisplayFeed;
+class TxAudioRecorder;
 class TransmitState;
 // Stage C2 filter preset editor — user-override layer over Thetis defaults.
 class FilterPresetStore;
@@ -1219,11 +1214,6 @@ class RoundtableModel;
 class StationTciController;
 class StationTciModel;
 class StationCatController;
-class RecordingService;
-class DsrRecorder;
-class DsrReplay;
-class RecordingsFacade;
-class RecordingsAccess;
 class StationCatModel;
 class CatControl;
 class SliceOwnership;
@@ -1414,6 +1404,15 @@ public:
     // over the wire (R2 Task 18's wss session) instead of dialing one up
     // locally.
     enum class Role { Local, Remote };
+
+    // Recordings (imported feature): the Core's recording service (Role::
+    // Local only) and the facade every placement talks to.
+    RecordingService* recordingService() const { return m_recordingService.get(); }
+    RecordingsFacade* recordingsFacade() const { return m_recordingsFacade; }
+    RecordingsAccess* recordings() const { return m_recordingsAccess; }
+    // DSR rewind sound (player): the slice's replay source. Port step 1
+    // returns false (no replay yet); recording and the voice keyer do not use it.
+    bool setSliceReplay(int sliceId, std::shared_ptr<DsrReplay> replay);
 
     explicit RadioModel(QObject* parent = nullptr);
     // Remote-daemon R2 Task 4: explicit-role overload. Two constructors
@@ -1893,7 +1892,7 @@ public:
     ReceiverManager*  receiverManager()  { noteLocalDspHandOut("receiverManager"); return m_receiverManager; }
     AudioEngine*      audioEngine()      { noteLocalDspHandOut("audioEngine");     return m_audioEngine;     }
     WdspEngine*       wdspEngine()       { noteLocalDspHandOut("wdspEngine");      return m_wdspEngine;      }
-
+    RxEqModel&        rxEqModel()        { return m_rxEqModel; }
     // R-R3-23 / R-R3-36: this computer's own sound devices. The same
     // AudioEngine audioEngine() returns, handed out WITHOUT bumping the
     // local-DSP audit below. A remote window's engine is not inert for this
@@ -3649,6 +3648,17 @@ public:
     /// Task 28: the transmit display's feed, owned here; null without a TX
     /// analyzer.
     TxDisplayFeed* txDisplayFeed() const { return m_txDisplayFeed.get(); }
+
+    // TX audio recording / playback (Thetis clsAudioRecordPlayback, narrowed
+    // to the TX audio check workflow). Recordings go to the user's Music
+    // folder under NereusSDR; playback uses the default audio output.
+    bool startTxAudioRecording(QString* error = nullptr);
+    void stopTxAudioRecording();
+    bool playLastTxAudioRecording(QString* error = nullptr);
+    void stopTxAudioPlayback();
+    bool isTxAudioRecording() const;
+    bool isTxAudioPlaying() const;
+    QString lastTxAudioRecordingFile() const;
     class ClarityController* clarityController() const;
     void setClarityController(class ClarityController* c);
     bool clarityEnabled() const { return m_clarityEnabled; }
@@ -4208,27 +4218,6 @@ public:
     RoundtableState*      roundtableState()     const { return m_roundtableState; }
     RoundtableModel*      roundtableModel()     const { return m_roundtableModel; }
 
-    /// Recording plan Task 3: the Core's recordings (contact recorders,
-    /// the store, start and stop from any device). Built only by a model
-    /// that runs its own radio (Role::Local); nullptr in a remote window.
-    RecordingService*     recordingService()    const { return m_recordingService.get(); }
-    /// Recording plan Task 22, rewind sound: feeds slice `sliceId`'s
-    /// demodulator from `replay` (the Digital Spectrum Recorder's past
-    /// I/Q), or (null) from the radio again, through the DSP worker's one
-    /// switch (RxDspWorker::setSliceReplay). Main thread. False when there
-    /// is no DSP worker (no radio streaming), and nothing changes. The
-    /// replay is kept alive here until the worker can no longer read it.
-    bool setSliceReplay(int sliceId, std::shared_ptr<DsrReplay> replay);
-    /// Recording plan Task 5: the `recordings` object. On a model that runs
-    /// its own radio it follows recordingService() once published (the
-    /// Core's StationServer or the window's access publishes it); in a
-    /// remote window it reads the mirror. Never null.
-    RecordingsFacade*     recordingsFacade()    const { return m_recordingsFacade; }
-    /// Recording plan Task 5: what a window talks to for recordings:
-    /// LocalRecordingsAccess where this model runs the radio, and
-    /// RemoteRecordingsAccess in a remote window. Never null.
-    RecordingsAccess*     recordings()          const { return m_recordingsAccess; }
-
     /// Parity Task 19 (R-IOS-25): a remote window applies the Core's
     /// `spots` stream (the Core's cluster, RBN, POTA and PSK Reporter
     /// spots) into its SpotModel and Spot List, beside its own WSJT-X and
@@ -4394,6 +4383,8 @@ public:
     // in TxChannel drives fexchange2 → sendTxIq (SPSC ring) while running.
     // Wired by 3M-1a Task G.1 (bench fix: TUNE carrier now reaches the radio).
     TxChannel* txChannel() const { return m_txChannel; }
+    /// TX audio check (TX/N) is currently running the TX chain with no RF.
+    bool txAudioCheckActive() const noexcept { return m_txAudioCheckApplied; }
 
     // ── AM Mod Monitor (NereusSDR-original) ───────────────────────────────
     /// source 0 = TX I/Q leaving WDSP, 1 = PureSignal feedback receiver.
@@ -4465,6 +4456,11 @@ public:
     // Returns nullptr if WDSP has not initialised yet or sliceIndex has no
     // channel.
     RxChannel* rxChannelForSlice(int sliceIndex) const;
+
+    /// Peak (linear, 0..1) of the slice's most recent receive block, after
+    /// WDSP's RX EQ and before AF/volume. 0 when not receiving. The RX EQ
+    /// level badge reads this; no DSP object leaves the model.
+    float sliceRxAudioPeak(int sliceIndex) const;
 
     // Phase 3P-II: PGXL / TGXL / Tuner accessors.
     // PgxlConnection and TgxlConnection are QObject children of RadioModel
@@ -5011,6 +5007,11 @@ public:
     // tune power) to the step being adjusted (setup.cs:24210-24222
     // [v2.10.3.15]). Max power and use-max: nothing more.
     void applyPaEditOnAir(PaProfileAction action, int step);
+    // Recompute the current drive after a power-limit edit, so a lowered
+    // limit clamps the transmission at once instead of at the next slider
+    // move. Local session only; a remote window's limit reaches the Core
+    // through its station path.
+    void refreshDrivePower();
     // R-R3-49 (parity Task 3): the RADE applet's Reset vocoder. Clears the
     // RADE transmit vocoder of the active slice's RADE channel
     // (RadeChannel::resetTx), as the local button does. Keys nothing.
@@ -6049,6 +6050,17 @@ public:
     // in CI) but broke macOS / Windows where the option defaults OFF.
     bool isTune() const noexcept { return m_isTuning; }
 
+    /// Pulsed tune (Thetis "Tune Check" / TC): TUNE with the swept-pulse
+    /// carrier instead of a continuous tone, plus the SWR protections forced
+    /// on for as long as it is engaged.
+    /// From Thetis console.cs:54580-54612 [v2.10.3.15] chkTC_CheckedChanged:
+    ///   chkTUN.Checked = true; chkSWRProtection.Checked = true;
+    ///   chkSWRTuneProtection.Checked = true; chkWindBackPowerSWR.Checked = true;
+    ///   chkTUN.Enabled = false;   // and the pulsed tune setup
+    /// The saved protection values are restored when it is turned off.
+    bool pulseTuneEnabled() const noexcept { return m_pulseTune; }
+    void setPulseTune(bool on);
+
     // Connection
     void connectToRadio(const RadioInfo& info);
     // Same selected radio, retaining live receiver state and active selection.
@@ -6894,6 +6906,12 @@ signals:
     void rfKitEnabledChanged(bool enabled);
     // R-R3-49: isTransmitting() changed.
     void transmittingChanged(bool transmitting);
+    void txAudioRecordingChanged(bool recording);
+    void txAudioPlaybackChanged(bool playing);
+    void txAudioRecorderError(const QString& message);
+    /// TX audio check (TX/N) display state: the transmit panadapter and
+    /// waterfall are showing the processed TX chain with no RF.
+    void txAudioCheckActiveChanged(bool active);
     // ssbModFeedbackInUse() changed.
     void ssbModFeedbackInUseChanged(bool inUse);
     // RADE end-of-over callsigns: endOfOverTailActive() changed.
@@ -7240,6 +7258,9 @@ signals:
     // NereusSDR equivalent: emit signal; UI reacts with a toast or status bar message.
     // Subscribers should uncheck the TUN button and display `reason` to the user.
     void tuneRefused(const QString& reason);
+
+    /// Pulsed tune (P-T) armed or disarmed, for the keying row's button.
+    void pulseTuneChanged(bool on);
 
     /// iPhone app plan, desktop remote transmit (R-IOS-13): the Core
     /// refused a MOX, TUNE or two-tone press from this remote window (or its
@@ -8545,6 +8566,19 @@ private:
 
     // I/Q DSP worker (owned, lives on m_dspThread). Fed by a queued
     // connection from ReceiverManager::iqDataForReceiverStamped (R-R3-40).
+    // Recordings (imported feature).
+    std::unique_ptr<RecordingService> m_recordingService;
+    RecordingsFacade* m_recordingsFacade{nullptr};
+    RecordingsAccess* m_recordingsAccess{nullptr};
+    // Recording plan Task 22: the replays the DSP worker may read, by slice
+    // id. Let go when replaced on a running worker, or once teardown has
+    // joined the DSP thread.
+    // Recording plan Task 21: the Digital Spectrum Recorder's I/Q tap: what
+    // forkIqToTaps copies into (connection thread). Cleared, and any copy in
+    // progress waited for, before the service goes.
+    std::atomic<DsrRecorder*> m_dsrTap{nullptr};
+    std::atomic<int> m_dsrTapInFlight{0};
+    std::array<std::shared_ptr<DsrReplay>, 32> m_sliceReplays{};
     RxDspWorker*     m_dspWorker{nullptr};
 
     // R-R3-39: the receive lane (local role only), and what its barriers
@@ -9021,6 +9055,7 @@ private:
     class FftEnginePool*      m_fftEnginePool{nullptr};
     class TxAnalyzer*         m_txAnalyzer{nullptr};
     std::unique_ptr<TxDisplayFeed> m_txDisplayFeed;
+    std::unique_ptr<TxAudioRecorder> m_txAudioRecorder;
     QPointer<class ClarityController> m_clarityController;
     bool m_clarityEnabled{true};
     class StepAttenuatorController* m_stepAttController{nullptr};
@@ -9435,6 +9470,20 @@ private:
     //   Cite: Thetis console.cs:30010 [v2.10.3.13] — _tuning = true.
     bool m_isTuning{false};
 
+    // Pulsed tune (P-TU / Thetis TC): the row's state, and the protection
+    // settings setPulseTune(true) overrides, restored when it is turned off.
+    bool m_pulseTune{false};
+    bool m_pulseTuneSavedSwr{false};
+    bool m_pulseTuneSavedWindBack{false};
+    bool m_pulseTuneSavedDisableOnTune{false};
+
+    // A plain TUNE keys a steady carrier the amplifier must not follow, so
+    // setTune(true) turns xPA off and remembers it here; setTune(false)
+    // puts it back. P-TU (pulsed) tune does not suppress xPA.
+    bool m_tuneExtPaSuppressed{false};
+    bool m_tuneSavedExtPa{false};
+    bool m_tuneExtPaRestorePending{false};
+
     // m_lastAudioVolume: cache of the most recent value emitted by
     //   TransmitModel::audioVolumeChanged.  Used by handlePaTelemetry's
     //   wind-back re-pump (mirrors Thetis console.cs:26157 [v2.10.3.15]
@@ -9593,6 +9642,21 @@ private:
     TxChannel* m_txChannel{nullptr};
     QPointer<TxChannel> m_txEqProfileChannel;
     QList<QMetaObject::Connection> m_txEqProfileConnections;
+    // Global receive audio equalizer (RXAEQ on every slice channel).
+    RxEqModel m_rxEqModel;
+    void applyRxEqToAllChannels();
+    void applyRxEqToChannel(RxChannel* channel);
+    void scheduleRxEqApply();
+    QTimer* m_rxEqApplyTimer{nullptr};
+    // TX audio check (TX/N): runs the TX DSP chain with no RF, saving the
+    // operator's VOX/MON state so leaving the mode restores it.
+    bool m_txAudioCheckApplied{false};
+    bool m_txAudioCheckVoxSaved{false};
+    bool m_txAudioCheckMonSaved{false};
+    // Slice mute state saved while the check runs, so only the TX monitor is
+    // audible (receive audio would otherwise mix into MON).
+    QHash<int, bool> m_txAudioCheckMuteSaved;
+    void applyTxAudioCheck(bool on);
     void bindTxEqProfileChannel(TxChannel* channel);
     void replayTxEqProfile();
     QPointer<TxChannel> m_cfcProfileChannel;
@@ -9994,20 +10058,6 @@ private:
     // the Core, its publisher (destroyed first in ~RadioModel).
     StationCatModel*                      m_stationCatModel{nullptr};
     std::unique_ptr<StationCatController> m_stationCat;
-    // Recording plan Task 3: Role::Local only; see recordingService().
-    std::unique_ptr<RecordingService> m_recordingService;
-    // Recording plan Task 21: the spectrum recorder forkIqToTaps copies
-    // into (connection thread). Cleared, and any copy in progress waited
-    // for, before the service goes.
-    std::atomic<DsrRecorder*> m_dsrTap{nullptr};
-    std::atomic<int> m_dsrTapInFlight{0};
-    // Recording plan Task 22: the replays the DSP worker may read, by slice
-    // id. Let go when replaced on a running worker, or once teardown has
-    // joined the DSP thread.
-    std::array<std::shared_ptr<DsrReplay>, 32> m_sliceReplays{};
-    // Recording plan Task 5: Qt children, in every placement.
-    RecordingsFacade*                     m_recordingsFacade{nullptr};
-    RecordingsAccess*                     m_recordingsAccess{nullptr};
     CatControl*                           m_catControl{nullptr};
     // Follow-up 3: accessory requests whose refusal their page shows.
     QHash<quint32, QPointer<QObject>> m_pageShownAccessoryRequests;

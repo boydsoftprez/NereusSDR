@@ -13,8 +13,6 @@
 //                on-air reason. AI-assisted via Anthropic Claude Code.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 12: the state feed's source.
 //                AI-assisted implementation via Anthropic Claude Code.
-//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 13: voice messages and
-//                F1 to F8 (runVoiceMessage). AI-assisted via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 // What hot keys do in the real window: the same entry points the on-screen
 // controls use, so local, hosting and remote windows behave as those do.
@@ -25,9 +23,6 @@
 #include "gui/hotkeys/HotKeyTargets.h"
 
 #include <QElapsedTimer>
-#include <QList>
-#include <QMetaObject>
-#include <QPointer>
 
 class QObject;
 class QWidget;
@@ -35,7 +30,6 @@ class QWidget;
 namespace NereusSDR {
 
 class MainWindow;
-class RecordingsAccess;
 class RemoteTransmitClient;
 class SpectrumWidget;
 class VfoWidget;
@@ -43,9 +37,6 @@ class VfoWidget;
 class NEREUS_GUI_EXPORT MainWindowHotKeyTargets final : public HotKeyTargets, public HotKeyStateSource {
 public:
     explicit MainWindowHotKeyTargets(MainWindow* window);
-    ~MainWindowHotKeyTargets() override;
-    MainWindowHotKeyTargets(const MainWindowHotKeyTargets&) = delete;
-    MainWindowHotKeyTargets& operator=(const MainWindowHotKeyTargets&) = delete;
 
     SliceModel* windowSlice() const override;
     SliceModel* sliceByLetter(QChar letter) const override;
@@ -64,12 +55,6 @@ public:
     bool keyHold(bool down) override;
     void runTransmitAction(const QString& id) override;
     void runCwMessage(const QString& id) override;
-    // voice.msgN sends Mn and voice.stop stops this window's message (Escape
-    // with nothing going out says nothing). msg.N is CW message N in CW and
-    // voice message N in a voice mode.
-    void runVoiceMessage(const QString& id) override;
-    // Tests: the voice keys talk to `access` instead of the model's.
-    void setRecordingsForTest(RecordingsAccess* access);
     void setCwKeyDown(const QString& id, bool down) override;
     void toast(const QString& text) override;
     qint64 nowMs() const override;
@@ -117,12 +102,6 @@ private:
     QString remoteCwRefusal() const;
     void setRemotePaddleKey(bool isDot, bool down);
     void setStraightKeyDown(bool down);
-    RecordingsAccess* recordings() const;
-    // Why the voice keyer can't be used now (V9), empty when it can.
-    QString voiceReason() const;
-    void stopVoiceMessage();
-    // The Core's answer to this window's own press reaches the toast once.
-    void watchVoiceAnswers(RecordingsAccess* access);
 
     MainWindow* m_window;
     // The hold's key went through the hosted Core, so its release must too:
@@ -138,13 +117,6 @@ private:
     bool m_remoteDot{false};
     bool m_remoteDash{false};
     QElapsedTimer m_clock;
-    // The recordings access whose answers are watched, and whether a press
-    // here waits on one: a refusal after what was asked happened is not ours.
-    QPointer<RecordingsAccess> m_voiceAccess;
-    QPointer<RecordingsAccess> m_recordingsForTest;
-    QList<QMetaObject::Connection> m_voiceConnections;
-    bool m_voiceAwaitingAnswer{false};
-    bool m_voiceSending{false};
 };
 
 } // namespace NereusSDR

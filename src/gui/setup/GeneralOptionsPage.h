@@ -243,6 +243,12 @@ private:
     // Options group
     // From Thetis setup.designer.cs:9050-9059 [v2.10.3.13] (grpGeneralOptions)
     QCheckBox* m_chkPreventTXonDifferentBandToRX{nullptr};
+    // Intel hybrid CPU option (Thetis chkGeneralPcoresOnly): keep the
+    // process, including its audio callback threads, on the P-cores.
+    QCheckBox* m_chkPcoresOnly{nullptr};
+    // Thetis's TX audio check (TX/N): runs the TX chain with no RF; the
+    // console button in the TX applet mirrors this option.
+    QCheckBox* m_chkTxAudioCheck{nullptr};
     QSpinBox*  m_cpuMeterRateHz{nullptr};
 
     // Phase 3M-4 Task 11: PureSignal Info Bar checkboxes.

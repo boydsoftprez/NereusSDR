@@ -1,8 +1,5 @@
-// no-port-check: NereusSDR-original mixed-content projection, no radio actions.
+﻿// no-port-check: NereusSDR-original mixed-content projection, no radio actions.
 // Modification history (NereusSDR):
-//   2026-11-12 - A factory widget marked containerStackFill takes the
-//                 leftover stack height and may shrink to its minimum.
-//                 Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 //   2026-11-06 - A factory widget can report its own free canvas hint and
 //                 minimum. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
@@ -86,15 +83,15 @@
 //                 slot in Always, over the content in Arrange) replace the
 //                 20 px left gutter and its grips by J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
-//   2026-10-04 — Project native bar rows into responsive viewport allocations by
+//   2026-10-04 â€” Project native bar rows into responsive viewport allocations by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
-//   2026-10-04 — Fit stacked button groups to compact shared rows by
+//   2026-10-04 â€” Fit stacked button groups to compact shared rows by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
-//   2026-10-04 — Guard integer boundary projection while preserving legacy float
+//   2026-10-04 â€” Guard integer boundary projection while preserving legacy float
 //                 rounding and imports by J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
-//   2026-10-03 — Usable independent native control sizing by
+//   2026-10-03 â€” Usable independent native control sizing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
-//   2026-10-02 — Mixed container ownership, persistence and source routing by
+//   2026-10-02 â€” Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-22  J.J. Boyd (KG4VCF): the arrange drag's QDrag is built
 //               through ScopedChildWidget instead of on the stack, so a
@@ -118,6 +115,7 @@ Q_LOGGING_CATEGORY(lcFreeCanvas,"nereus.container.canvas")
 #include <QContextMenuEvent>
 #include <QDropEvent>
 #include <QApplication>
+#include <QElapsedTimer>
 #include <QPainter>
 #include <QTimer>
 #include <QSet>
@@ -138,6 +136,7 @@ Q_LOGGING_CATEGORY(lcFreeCanvas,"nereus.container.canvas")
 #include "gui/containers/OwnedMenu.h"
 #include <QStyle>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <algorithm>
@@ -152,18 +151,6 @@ int preferredWidgetHeight(const QWidget* widget, int width)
     const int wrapped = widget->hasHeightForWidth() ? widget->heightForWidth(width) : -1;
     const int preferred = wrapped >= 0 ? wrapped : widget->sizeHint().height();
     return qBound(widget->minimumHeight(), preferred, widget->maximumHeight());
-}
-// The scaled S-Meter dial. It takes leftover stack height and may shrink.
-bool stackFills(const QWidget* widget)
-{
-    return widget && widget->property("containerStackFill").toBool();
-}
-void addContentWidget(QVBoxLayout* layout, QWidget* widget)
-{
-    layout->addWidget(widget);
-    if (stackFills(widget)) {
-        layout->setStretch(layout->count() - 1, 1);
-    }
 }
 bool isClockFace(const MeterItem* item)
 {
@@ -245,35 +232,6 @@ void presentAvailability(QWidget* view, const ContainerContentRegistry& registry
     }
 }
 } // namespace
-void ContainerContentHost::setClearBackground(bool clear)
-{
-    if (m_clearBackground == clear) {
-        return;
-    }
-    m_clearBackground = clear;
-    setAutoFillBackground(!clear);
-    setStyleSheet(clear ? QStringLiteral("ContainerContentHost { background: transparent; }") : QString());
-    m_scroll->setAutoFillBackground(!clear);
-    m_scroll->setStyleSheet(clear ? QStringLiteral("QScrollArea { background: transparent; border: none; }")
-                                  : QString());
-    m_scroll->viewport()->setObjectName(QStringLiteral("containerScrollViewport"));
-    m_scroll->viewport()->setAutoFillBackground(!clear);
-    m_scroll->viewport()->setStyleSheet(clear
-        ? QStringLiteral("QWidget#containerScrollViewport { background: transparent; }")
-        : QString());
-    m_body->setObjectName(QStringLiteral("containerContentBody"));
-    m_body->setAutoFillBackground(!clear);
-    m_body->setStyleSheet(clear
-        ? QStringLiteral("QWidget#containerContentBody { background: transparent; }")
-        : QString());
-    if (m_canvas) {
-        m_canvas->setAutoFillBackground(!clear);
-        m_canvas->setStyleSheet(clear
-            ? QStringLiteral("QWidget#freeCanvasSurface { background: transparent; }")
-            : QString());
-    }
-}
-
 ContainerContentHost::ContainerContentHost(ContainerContentRegistry& registry, QWidget* parent)
     : QWidget(parent), m_registry(registry)
 {
@@ -336,8 +294,10 @@ ContainerContentHost::ContainerContentHost(ContainerContentRegistry& registry, Q
                        Workspace::role("text", "#dcdce1"),
                        Workspace::role("edge-light", "#38383e"),
                        Workspace::role("edge-dark", "#1f1f23")));
-        connect(this, &ContainerContentHost::reconciled, this,
-                [this]() { WorkspacePreview::themeSubtree(m_body); });
+        // The look is applied where widgets are built (the two rebuild paths
+        // below), not on every reconcile: re-theming a 145-row panel took
+        // about 280 ms per commit, including a plain block drag that created
+        // no widgets at all.
     }
 }
 ContainerContentHost::~ContainerContentHost() { releaseViews(); }
@@ -406,7 +366,7 @@ void ContainerContentHost::setBannerMenu(QMenu* menu)
     m_bannerMenu = menu;
     if (auto* existing=m_body->findChild<QPushButton*>(QStringLiteral("containerAppletsMenu"),Qt::FindDirectChildrenOnly)) { delete existing; }
     if (menu) {
-        auto* button=new QPushButton(QStringLiteral("☰"),m_body); button->setObjectName(QStringLiteral("containerAppletsMenu"));
+        auto* button=new QPushButton(QStringLiteral("â˜°"),m_body); button->setObjectName(QStringLiteral("containerAppletsMenu"));
         button->setMenu(menu); button->setFixedHeight(22); m_layout->insertWidget(0,button);
     }
     scheduleStackProjection();
@@ -440,6 +400,7 @@ bool ContainerContentHost::needsReconcile(const ContainerDocument& document) con
 }
 void ContainerContentHost::reconcile(const ContainerDocument& document)
 {
+    QElapsedTimer reconcileClock; reconcileClock.start();
     m_scroll->setHorizontalScrollBarPolicy(document.layout==ContentLayout::FreeCanvas?Qt::ScrollBarAsNeeded:Qt::ScrollBarAlwaysOff);
     if(document.layout==ContentLayout::FreeCanvas) {reconcileFreeCanvas(document);return;}
     if (!needsReconcile(document)) {
@@ -477,7 +438,7 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
                 m_layout->insertWidget(qMax(0,position),label); row.widget=label;
             }
             if (auto* label=qobject_cast<QLabel*>(row.widget.data()); label && (!view || !claim)) {
-                label->setText(entry.name + QStringLiteral(" — ") + (!claim?QStringLiteral("duplicate singleton placement; original data retained"):
+                label->setText(entry.name + QStringLiteral(" â€” ") + (!claim?QStringLiteral("duplicate singleton placement; original data retained"):
                     (m_registry.isAvailable(entry.typeId)?QStringLiteral("waiting for its live view"):m_registry.unavailableReason(entry.typeId))));
             }
             // Unavailable, a claimed view is grayed, not hidden.
@@ -489,12 +450,24 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
         updateContentMinimumWidth();
         scheduleStackProjection();
         updateGrips();
+        // The drag flag is otherwise applied only when a meter surface is
+        // created. A commit that unlocks the container (or its items) keeps
+        // the same rows, so arm or disarm them here without a rebuild.
+        const bool legacyEdit = document.layout == ContentLayout::LegacyCanvas
+            && !document.locked && !document.lockItemPositions;
+        for (auto& row : m_rows) {
+            if (auto* meter = qobject_cast<MeterWidget*>(row.widget.data())) {
+                meter->setLegacyEditEnabled(legacyEdit);
+            }
+        }
         emit reconciled();
+        qCInfo(lcContainer) << "reconcile" << m_document.id << "update"
+                            << reconcileClock.elapsed() << "ms" << document.contents.size() << "entries";
         return;
     }
     releaseViews(); m_document = document;
     if (m_bannerMenu) {
-        auto* button = new QPushButton(QStringLiteral("☰"), m_body);
+        auto* button = new QPushButton(QStringLiteral("â˜°"), m_body);
         button->setObjectName(QStringLiteral("containerAppletsMenu"));
         button->setMenu(m_bannerMenu); button->setFixedHeight(22);
         m_layout->addWidget(button);
@@ -561,7 +534,7 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
                 presentAvailability(view, m_registry, entry.typeId);
                 view->setVisible(entry.visible);
             } else {
-                auto* label = new QLabel(entry.name + QStringLiteral(" — ") +
+                auto* label = new QLabel(entry.name + QStringLiteral(" â€” ") +
                     (unique ? QStringLiteral("waiting for its live view") : QStringLiteral("duplicate singleton placement; original data retained")), m_body);
                 label->setWordWrap(true); row.widget = label; m_layout->addWidget(label);
                 row.presentationVisible = entry.visible;
@@ -572,7 +545,7 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
         // A hidden/unavailable record is still an ordered insertion boundary.
         if (!row.effectiveVisible) {
             finishRun();
-            auto* label = new QLabel(entry.name + QStringLiteral(" — ") + m_registry.unavailableReason(entry), m_body);
+            auto* label = new QLabel(entry.name + QStringLiteral(" â€” ") + m_registry.unavailableReason(entry), m_body);
             label->setWordWrap(true); row.widget = label; m_layout->addWidget(label);
             row.presentationVisible = entry.visible;
             label->setVisible(entry.visible); m_rows.append(row); continue;
@@ -587,7 +560,7 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
                 widget->setProperty(WorkspacePreview::kSkipProperty, true);
                 connectConfigNotifier(widget, entry.id);
                 attachFade(widget, effective, row.context);
-                row.widget = widget; addContentWidget(m_layout, widget);
+                row.widget = widget; m_layout->addWidget(widget);
                 widget->setVisible(row.effectiveVisible);
                 m_rows.append(row); continue;
             }
@@ -598,12 +571,72 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
             // constructor, before QRhiWidget selects its API. Configure the
             // leaf fully, then attach it to its final host before any paint.
             run = new MeterWidget(); run->setParent(m_body); runContext = row.context;
+            // Legacy canvases can be dragged while the container is unlocked;
+            // each item reports its new normalized rect so the document keeps
+            // the proportional composition.
+            run->setLegacyEditEnabled(document.layout == ContentLayout::LegacyCanvas
+                                      && !document.locked && !document.lockItemPositions);
+            connect(run, &MeterWidget::legacyContextMenuRequested, this,
+                    [this](const QString& entryId, const QPoint& position) {
+                OwnedMenu owned(this); QMenu& menu = owned.menu();
+                addEntryActions(menu, entryId);
+                if (!menu.isEmpty()) { menu.exec(position); }
+            });
+            connect(run, &MeterWidget::legacyGeometryEdited, this,
+                    [this](const QString& entryId, const QRectF& rect, const QString& record) {
+                // The gesture already shows the block where it was dropped. Take
+                // the same edit into the hosted copy, so the commit that follows
+                // finds nothing to rebuild: rebuilding the surface on every drop
+                // blanked the window and stalled the GUI (and the audio) for
+                // hundreds of milliseconds.
+                for (auto& entry : m_document.contents) {
+                    if (entry.id != entryId) { continue; }
+                    entry.canvasRect = rect;
+                    entry.config.insert(QStringLiteral("legacyRecord"), record);
+                    QJsonObject properties = entry.config.value(QStringLiteral("properties")).toObject();
+                    if (QJsonDocument::fromJson(record.toUtf8()).isObject()
+                        && properties.contains(QStringLiteral("x"))
+                        && properties.contains(QStringLiteral("w"))) {
+                        properties[QStringLiteral("x")] = rect.x();
+                        properties[QStringLiteral("y")] = rect.y();
+                        properties[QStringLiteral("w")] = rect.width();
+                        properties[QStringLiteral("h")] = rect.height();
+                        entry.config[QStringLiteral("properties")] = properties;
+                    }
+                    break;
+                }
+                // Commit after the mouse event returns: a commit reconciles the
+                // container and can replace this meter widget while it is still
+                // inside its own release handler. A move group reports each of
+                // its blocks in the same turn, so they are written together.
+                m_pendingLegacyMoves.append({entryId, rect, record});
+                if (m_legacyCommitScheduled) { return; }
+                m_legacyCommitScheduled = true;
+                QTimer::singleShot(0, this, [this] {
+                    m_legacyCommitScheduled = false;
+                    const QVector<PendingLegacyMove> moves = m_pendingLegacyMoves;
+                    m_pendingLegacyMoves.clear();
+                    if (!m_arrange || moves.isEmpty()) { return; }
+                    if (moves.size() == 1) {
+                        const auto& move = moves.first();
+                        const ArrangeResult result =
+                            m_arrange->setLegacyItem(move.entryId, move.rect, move.record);
+                        if (!result.ok) { qWarning() << "legacy move:" << result.error; }
+                        return;
+                    }
+                    QVector<LegacyItemRect> edits;
+                    edits.reserve(moves.size());
+                    for (const auto& move : moves) { edits.append({move.entryId, move.rect, move.record}); }
+                    const ArrangeResult result = m_arrange->setLegacyItems(edits);
+                    if (!result.ok) { qWarning() << "legacy move:" << result.error; }
+                });
+            });
             m_meters.append(run);
         }
         MeterItem* item = m_registry.createMeterItem(entry, run);
         if (!item) {
             finishRun();
-            auto* label = new QLabel(entry.name + QStringLiteral(" — unsupported configuration; original data retained"), this);
+            auto* label = new QLabel(entry.name + QStringLiteral(" â€” unsupported configuration; original data retained"), this);
             row.widget = label; m_layout->addWidget(label); row.presentationVisible = entry.visible;
             label->setVisible(row.presentationVisible); m_rows.append(row); continue;
         }
@@ -617,6 +650,14 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
         if(auto* bar=qobject_cast<BarPresetItem*>(item)) {bar->setContainerFace(document.config.value("meterFace").toString("Classic"));}
         item->setProperty("containerSourceContext", row.context);
         item->setProperty("containerEntryId", entry.id);
+        // Legacy drag partner: the linked entry moves with this one. The link
+        // is the same "Move together with" extension the free canvas uses.
+        if (document.layout == ContentLayout::LegacyCanvas) {
+            item->setProperty("legacyMovePartner",
+                              entry.extensions.value(QStringLiteral("moveWith")).toString());
+            item->setProperty("legacyMoveGroup",
+                              entry.extensions.value(QStringLiteral("moveGroup")).toString());
+        }
         connectItemConfigNotifier(item, entry.id);
         int height = isSingleContainerControl(item) ? singleContainerControlSize().height() : 72;
         const QSize stackSize=document.layout==ContentLayout::VerticalStack ? containerStackButtonSize(item) : QSize();
@@ -652,8 +693,14 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
         runHeight += headerGap + height; runRows.append(m_rows.size()); m_rows.append(row);
         run->addItem(item);
     }
-    finalRun = true; finishRun(); m_layout->addStretch();
+    finalRun = true; finishRun();
+    // A fixed Thetis canvas fills its container; only a stack leaves the
+    // spare height to a stretch below its rows.
+    if (document.layout != ContentLayout::LegacyCanvas) { m_layout->addStretch(); }
     m_generation = m_registry.generation(); m_materialized = true;
+    // New widgets only exist here, so this is the one place the look is
+    // applied (see the constructor).
+    WorkspacePreview::themeSubtree(m_body);
     int minimumWidth=0; for (auto* meter : meterSurfaces()) { minimumWidth=qMax(minimumWidth,meter->minimumWidth()); }
     // Workspace preview: no left gutter, so Arrange adds no width.
     const int gutter = m_arrange && !WorkspacePreview::enabled() ? 28 : 8;
@@ -664,6 +711,8 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
     scheduleStackProjection();
     updateGrips();
     emit reconciled();
+    qCInfo(lcContainer) << "reconcile" << m_document.id << "REBUILD"
+                        << reconcileClock.elapsed() << "ms" << document.contents.size() << "entries";
 }
 void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document)
 {
@@ -693,7 +742,7 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
                 // old widget here is always that label.
                 if(old && old->widget && old->widget->property("singletonTypeId").toString().isEmpty() && (!WorkspacePreview::enabled() || qobject_cast<QLabel*>(old->widget.data()))) {row.widget=old->widget;}
                 else {row.widget=new QLabel(m_canvas);}
-                if(auto* label=qobject_cast<QLabel*>(row.widget.data())) {label->setWordWrap(true);label->setText(entry.name+QStringLiteral(" — ")+(claim?tr("waiting for its live view"):tr("duplicate singleton placement; original data retained")));}
+                if(auto* label=qobject_cast<QLabel*>(row.widget.data())) {label->setWordWrap(true);label->setText(entry.name+QStringLiteral(" â€” ")+(claim?tr("waiting for its live view"):tr("duplicate singleton placement; original data retained")));}
             }
         } else if(row.effectiveVisible && m_registry.hasWidgetFactory(entry.typeId)) {
             // Per-instance widget content (workspace preview).
@@ -748,13 +797,14 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
             if(auto* bar=qobject_cast<BarPresetItem*>(row.item.data()); bar && bar->setContainerFace(document.config.value("meterFace").toString("Classic"))) {
                 if(auto* meter=qobject_cast<MeterWidget*>(row.widget.data())) {meter->invalidatePresentation(bar);}
             }
-            if(auto* meter=qobject_cast<MeterWidget*>(row.widget.data())) {m_meters.append(meter);}
+            if(row.item) {row.item->setProperty("legacyMovePartner", entry.extensions.value(QStringLiteral("moveWith")).toString());}
+            if(auto* meter=qobject_cast<MeterWidget*>(row.widget.data())) {meter->setLegacyEditEnabled(document.layout == ContentLayout::LegacyCanvas && !document.locked && !document.lockItemPositions); m_meters.append(meter);}
         }
         if(!row.widget) {
             // Workspace preview: as above, a factory widget is not the label.
             if(old && old->widget && !old->item && old->widget->property("singletonTypeId").toString().isEmpty() && (!WorkspacePreview::enabled() || qobject_cast<QLabel*>(old->widget.data()))) {row.widget=old->widget;}
             else {row.widget=new QLabel(m_canvas);}
-            if(auto* label=qobject_cast<QLabel*>(row.widget.data())) {label->setWordWrap(true);label->setText(entry.name+QStringLiteral(" — ")+m_registry.unavailableReason(entry));}
+            if(auto* label=qobject_cast<QLabel*>(row.widget.data())) {label->setWordWrap(true);label->setText(entry.name+QStringLiteral(" â€” ")+m_registry.unavailableReason(entry));}
         }
         // A singleton view is grayed when unavailable, never hidden for it.
         if(!row.widget->property("singletonTypeId").toString().isEmpty()) {presentAvailability(row.widget,m_registry,entry.typeId);}
@@ -767,7 +817,9 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
         else {delete row.widget.data();}
     }
     auto sceneDocument=document;sceneDocument.locked=document.locked || !m_arrange;
+    sceneDocument.lockItemPositions=document.lockItemPositions || !m_arrange;
     m_canvas->project(sceneDocument,views);m_generation=m_registry.generation();m_materialized=true;
+    WorkspacePreview::themeSubtree(m_body);
     updateContentMinimumWidth();
     emit reconciled();
 }
@@ -1098,11 +1150,7 @@ void ContainerContentHost::projectStackRows()
             }
         } else if (!fixedWidgets.contains(row.widget)) {
             fixedWidgets.insert(row.widget);
-            // A scaled dial's preferred height is the size it starts at.
-            // The stack minimum is its floor, so the container can shrink
-            // and the leftover height still goes to the dial.
-            fixedHeight += stackFills(row.widget) ? qMax(1, row.widget->minimumHeight())
-                                                   : preferredWidgetHeight(row.widget, usableWidth);
+            fixedHeight += preferredWidgetHeight(row.widget, usableWidth);
         }
     }
     // A stack holding one button grid and nothing else, not auto height:
@@ -1342,8 +1390,10 @@ void ContainerContentHost::updateEntryHeaders()
         return;
     }
     // A single entry's title is the container's header, so it never gets a
-    // second bar. Free canvas leaves carry their own headers.
-    const bool shown = m_materialized && m_document.layout != ContentLayout::FreeCanvas
+    // second bar. Free canvas leaves carry their own headers. A legacy
+    // canvas (a Thetis layout) places its items absolutely, so a header
+    // row above each one would push the fixed layout out of place.
+    const bool shown = m_materialized && m_document.layout == ContentLayout::VerticalStack
         && m_document.contents.size() > 1
         && (m_containerHeaderMode == HeaderMode::Shown || m_arrangeActive);
     const bool reserve = shown && entryHeaderReserve() > 0;
@@ -1473,11 +1523,11 @@ void ContainerContentHost::addEntryActions(QMenu &menu, const QString &id)
     auto *up = menu.addAction(tr("Move Up"), this, [this, id, index, invoke] {
         invoke(m_arrange->move(id, m_document.id, index - 1));
     });
-    up->setEnabled(!m_document.locked && index > 0);
+    up->setEnabled(!m_document.locked && !m_document.lockItemPositions && index > 0);
     auto *down = menu.addAction(tr("Move Down"), this, [this, id, index, invoke] {
         invoke(m_arrange->move(id, m_document.id, index + 2));
     });
-    down->setEnabled(!m_document.locked && index + 1 < m_document.contents.size());
+    down->setEnabled(!m_document.locked && !m_document.lockItemPositions && index + 1 < m_document.contents.size());
     auto *destinations = menu.addMenu(tr("Move to Container"));
     // The controller/store owns the latest destination catalog; the host carries
     // only committed presentation state and never serializes live projected rows.
@@ -1492,6 +1542,33 @@ void ContainerContentHost::addEntryActions(QMenu &menu, const QString &id)
             });
         action->setEnabled(!m_document.locked && !c.locked);
     }
+    auto *links = menu.addMenu(tr("Assign to this block"));
+    for (int j = 0; j < m_document.contents.size(); ++j) {
+        if (j == index) {
+            continue;
+        }
+        const ContentEntry &other = m_document.contents[j];
+        const QString myGroup = m_document.contents[index].extensions.value(QStringLiteral("moveGroup")).toString();
+        const bool on = (!myGroup.isEmpty()
+                         && other.extensions.value(QStringLiteral("moveGroup")).toString() == myGroup)
+            || other.extensions.value(QStringLiteral("moveWith")).toString() == id;
+        const QString otherId = other.id;
+        auto *link = links->addAction(other.name.isEmpty() ? other.id : other.name, this,
+                                      [this, id, otherId, on, invoke] {
+            invoke(m_arrange->setMoveLink(id, otherId, !on));
+        });
+        link->setCheckable(true);
+        link->setChecked(on);
+        link->setEnabled(!m_document.locked && !m_document.lockItemPositions);
+    }
+    links->setEnabled(!m_document.locked && !m_document.lockItemPositions &&
+                      m_document.contents.size() > 1);
+    // Put this block back where it was before it was first moved.
+    auto *resetPosition = menu.addAction(tr("Reset position to initial"), this,
+                                         [this, id, invoke] { invoke(m_arrange->resetEntryPosition(id)); });
+    resetPosition->setEnabled(!m_document.locked && !m_document.lockItemPositions
+                              && !m_document.contents[index].extensions
+                                      .value(QStringLiteral("_initialCanvasRect")).toArray().isEmpty());
     auto *pop =
         menu.addAction(tr("Pop Out"), this, [this, id, invoke] { invoke(m_arrange->popOut(id)); });
     pop->setEnabled(!m_document.locked);
@@ -1507,6 +1584,16 @@ void ContainerContentHost::addEntryActions(QMenu &menu, const QString &id)
 }
 void ContainerContentHost::addContentsMenu(QMenu &menu)
 {
+    // Container-wide position memory: the block positions are kept with the
+    // entries, so both survive restarts.
+    auto *resetAll = menu.addAction(tr("Reset all item positions"), this,
+                                    [this] { m_arrange->resetContainerPositions(m_document.id); });
+    auto *rememberAll = menu.addAction(tr("Remember current positions"), this,
+                                       [this] { m_arrange->rememberContainerPositions(m_document.id); });
+    const bool positionsEditable = !m_document.locked && !m_document.lockItemPositions;
+    resetAll->setEnabled(positionsEditable);
+    rememberAll->setEnabled(positionsEditable);
+    menu.addSeparator();
     auto *contents = menu.addMenu(tr("Contents"));
     for (const auto &e : m_document.contents) {
         auto *entry = contents->addMenu(e.name.isEmpty() ? e.id : e.name);
@@ -1554,7 +1641,7 @@ bool ContainerContentHost::eventFilter(QObject *watched, QEvent *event)
         }
         if (event->type() == QEvent::MouseButtonPress) {
             auto *mouse = static_cast<QMouseEvent *>(event);
-            if (mouse->button() == Qt::LeftButton && !m_document.locked) {
+            if (mouse->button() == Qt::LeftButton && !m_document.locked && !m_document.lockItemPositions) {
                 m_dragStart = mouse->position().toPoint();
                 m_pressedEntry = id;
                 return true;

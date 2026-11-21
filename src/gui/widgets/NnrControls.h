@@ -12,6 +12,7 @@
 #include <QMetaObject>
 #include <QPointer>
 #include <QWidget>
+class QTimer;
 #include <QVector>
 #include "gui/NereusGuiExport.h"
 
@@ -88,6 +89,8 @@ private:
     QLabel* m_rateLatency{nullptr};
     QLabel* m_source{nullptr};
     QLabel* m_status{nullptr};
+    QLabel* m_dspLoad{nullptr};
+    QTimer* m_loadTimer{nullptr};
     QComboBox* m_testMode{nullptr};
     QComboBox* m_outputMode{nullptr};
     QPushButton* m_applyDiagnostic{nullptr};

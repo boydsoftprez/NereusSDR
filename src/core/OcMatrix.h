@@ -195,6 +195,29 @@ public:
     // four-argument one with tune and twoTone false.
     quint8 maskFor(Band band, bool tx) const;
 
+    // ── External PA (xPA) ───────────────────────────────────────────────────
+    // Thetis's TXPinPA / RXPinPA per-pin "consider PA" flags and the console
+    // xPA button (chkExternalPA). A pin whose flag is set only closes while
+    // xPA is on:
+    //   From Thetis HPSDR/Penny.cs:319-324 [v2.10.3.15]
+    //     bool bConisderPA = TXPinPA[group, nPin];
+    //     if (!bConisderPA || (bConisderPA && pa))
+    //   From Thetis HPSDR/Penny.cs:277-282 [v2.10.3.15] (RX arm)
+    //     int nBit = !bConisderPA || (bConisderPA && pa) ? 1 : 0;
+    // Thetis keeps one flag per band group; NereusSDR tracks one per pin,
+    // as it collapses the group dimension for the pin actions.
+    bool txPinPa(int pin) const;
+    void setTxPinPa(int pin, bool on);
+    bool rxPinPa(int pin) const;
+    void setRxPinPa(int pin, bool on);
+    // The console's xPA button: true = the amp is enabled and PA-flagged
+    // pins may close.
+    bool extPaEnabled() const;
+    void setExtPaEnabled(bool on);
+    // True when at least one pin follows xPA (Thetis shows its button only
+    // then; NereusSDR keeps the button and uses this for the tooltip).
+    bool anyPinPa() const;
+
     // The OC byte UpdateExtCtrl sends: the band's RX or TX pins, then on
     // transmit each pin masked by its TX pin action against the live MOX,
     // TUNE and two-tone state, on receive by adjustForRX.
@@ -207,8 +230,9 @@ public:
     //         bits = adjustForRX(band, bandb, bits, tx, tune, twoTone, pa);
     // Thetis's callers pass tx = _mox, tune = _tuning and twoTone =
     // SetupForm.TestIMD (console.cs:29106 [v2.10.3.15]; Thetis-Enhanced
-    // (EU2AV) console.cs:29162 [@567a7ec]). NereusSDR has no
-    // "consider PA" arrays, so pa is not a parameter (see adjustForRx).
+    // (EU2AV) console.cs:29162 [@567a7ec]), and pa = chkExternalPA.Checked
+    // (the console xPA button). NereusSDR reads the xPA state and the
+    // per-pin PA flags from this object (extPaEnabled, txPinPa, rxPinPa).
     quint8 maskFor(Band band, bool tx, bool tune, bool twoTone) const;
 
     // Shared-input filters, ruling (c) 2026-09-30: a band's index as
@@ -249,6 +273,9 @@ public:
     void setMacAddress(const QString& mac);
     void load();   // hydrate from AppSettings under hardware/<mac>/oc/...
     void save();   // persist current state to AppSettings
+    /// True once load() has hydrated this identity. The panel refuses to
+    /// write pins before that (nothing to base an edit on yet).
+    bool isLoaded() const { return m_loaded; }
 
     // Clear every cell, restore Thetis init defaults
     // (pins all clear; all pin actions → MoxTuneTwoTone per Penny.cs:59)
@@ -256,6 +283,8 @@ public:
 
 signals:
     void changed();  // fires on any state mutation; UI re-reads
+    // The console xPA button's state (this window's or a remote one's).
+    void extPaEnabledChanged(bool on);
 
 private:
     static constexpr int kBandCount   = int(Band::Count);  // 14
@@ -269,7 +298,18 @@ private:
     // (group dimension collapsed: UI tracks one action per pin, not per group)
     std::array<TXPinAction, kPinCount> m_pinActions{};
 
+    // [pin] — thetis TXPinPA / RXPinPA "consider PA" flags (group collapsed).
+    std::array<bool, kPinCount> m_txPinPa{};
+    std::array<bool, kPinCount> m_rxPinPa{};
+
+    // The console xPA button (Thetis chkExternalPA.Checked).
+    bool m_extPaEnabled{false};
+
     QString m_mac;
+    // True once load() has hydrated this matrix for m_mac. save() refuses
+    // to write before that: a save on an unloaded matrix (identity changed
+    // between sessions) used to overwrite the saved pattern with all-false.
+    bool m_loaded{false};
 
     // Guards m_pins / m_pinActions. Connection thread reads (maskFor,
     // pinEnabled, pinAction) take a read lock; GUI-thread writes (setPin,
@@ -284,7 +324,7 @@ private:
     // Penny.cs adjustForTXAction / adjustForRX over the stored actions.
     // Callers hold m_lock for reading.
     quint8 adjustForTxAction(quint8 bits, bool tx, bool tune, bool twoTone) const;
-    static quint8 adjustForRx(quint8 bits);
+    quint8 adjustForRx(quint8 bits) const;
 
     // Persistence slug for a TXPinAction value
     static QString actionSlug(TXPinAction action);

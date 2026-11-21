@@ -219,9 +219,12 @@ private:
     QComboBox* m_usbBcdFormat{nullptr};
     QCheckBox* m_usbBcdInvert{nullptr};
 
-    // External PA
-    QComboBox* m_extPaModel{nullptr};
-    QSpinBox*  m_biasDelayMs{nullptr};
+    // External PA (xPA): per-pin "consider PA" flags, as Thetis's
+    // chkPin1TXPAHF ... chkPin7TXPAHF / chkPin1RXPAHF ... group (setup.cs:
+    // 21835-21865, per band group; NereusSDR keeps one row of each).
+    QLabel* m_xpaNote{nullptr};
+    std::array<QCheckBox*, kPinCount> m_txPinPaChecks{};
+    std::array<QCheckBox*, kPinCount> m_rxPinPaChecks{};
 
     // Live OC pin state LEDs: [pinIdx 0-6]
     std::array<QFrame*, kPinCount> m_leds{};

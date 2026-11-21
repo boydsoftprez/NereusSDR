@@ -214,6 +214,7 @@ public:
     bool rxOutOnTx() const { return m_values.rxOutOnTx; }
     bool ext1OutOnTx() const { return m_values.ext1OutOnTx; }
     bool ext2OutOnTx() const { return m_values.ext2OutOnTx; }
+    bool autoRxBypass() const { return m_values.autoRxBypass; }
     bool rxOutOverride() const { return m_values.rxOutOverride; }
 
     /// One band's antenna; the band's default for a band outside 160 m .. XVTR.
@@ -238,6 +239,7 @@ public:
     void setBlockTxAnt3(bool on);
     void setExt1OutOnTx(bool on);
     void setExt2OutOnTx(bool on);
+    void setAutoRxBypass(bool on);
     void setRxOutOverride(bool on);
 
     /// One band's edit: the band alone through a band edit sender (a remote
@@ -257,6 +259,7 @@ signals:
     void rxOutOnTxChanged(bool on);
     void ext1OutOnTxChanged(bool on);
     void ext2OutOnTxChanged(bool on);
+    void autoRxBypassChanged(bool on);
     void rxOutOverrideChanged(bool on);
     /// An edit the gate refused, with its plain reason.
     void editRejected(const QString& reason);
@@ -281,6 +284,7 @@ private:
         bool rxOutOnTx{false};
         bool ext1OutOnTx{false};
         bool ext2OutOnTx{false};
+        bool autoRxBypass{false};
         bool rxOutOverride{false};
     };
 

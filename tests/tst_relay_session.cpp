@@ -64,12 +64,6 @@
 //               display codec v2 at its start, and the display frames it
 //               delivers are version 2 (DisplayVersionTap). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
-//   2026-11-16: aClosedSessionEndsTheWaitWithItsReason holds the Core's
-//               end shut, so its handshake cannot finish before the 1 ms
-//               deadline. On a loaded runner Qt's event loop held that
-//               timer back while other events kept arriving, and the whole
-//               sign-in finished first. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
-//               Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -863,12 +857,7 @@ private slots:
         SettingsProxy proxy;
         StationClient window(&remote, &proxy);
         window.setDeviceIdentity(key, QStringLiteral("Shack MacBook"));
-        // Forces the close: the Core's end never reports open within the
-        // test, so it never sends its hello and no sign-in can finish. A
-        // 1 ms deadline alone did not force it: Qt's event loop can hold a
-        // timer back while other events keep arriving, and on a loaded
-        // runner the whole sign-in finished before the timer ran.
-        DataChannelTransport::setAnswererOpenDelayForTest(600000);
+        // Forces the close: no sign-in finishes in a millisecond.
         window.setHandshakeDeadlineMs(1);
         QString why;
         qint64 elapsedMs = -1;

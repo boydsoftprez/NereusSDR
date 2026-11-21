@@ -26,6 +26,9 @@
 //              AI-assisted via OpenAI Codex.
 // 2026-10-04 - Native Linux HUP observation by J.J. Boyd (KG4VCF),
 //              AI-assisted via OpenAI Codex; NereusSDR-original mechanics.
+// 2026-11-07 - Assert DTR/RTS on open, as Thetis SDRSerialPortII.cs:83-84,
+//              so PTT and key interfaces supplied from those lines return
+//              their CTS/DSR state. J.J. Boyd (KG4VCF), AI-assisted.
 #include "CatSerialTransport.h"
 #include "CatSettings.h"
 #include "core/LogCategories.h"
@@ -125,6 +128,21 @@ public:
             || port->dataBits() != bits || port->stopBits() != stops
             || port->flowControl() != QSerialPort::NoFlowControl) {
             error = "Serial driver did not accept the configured format"; port->close(); return false;
+        }
+        // From Thetis CAT/SDRSerialPortII.cs:83-84 [v2.10.3.15]
+        //   commPort.RtsEnable = true; // hack for soft rock ptt
+        //   commPort.DtrEnable = true; // set dtr off
+        // Thetis asserts both output lines whenever it opens a serial port.
+        // Many PTT interfaces take their supply from RTS or DTR and return
+        // the keyed state on CTS or DSR; with the supply off, the sampled
+        // input pins never change. This is output assertion only, separate
+        // from the CTS/DSR input sampling above. Best effort, as upstream:
+        // an adapter that cannot drive a line still carries CAT bytes.
+        const bool dtr = port->setDataTerminalReady(true);
+        const bool rts = port->setRequestToSend(true);
+        if (!dtr || !rts) {
+            qCWarning(lcCat) << "Serial CAT: DTR/RTS assertion refused:" << port->errorString();
+            port->clearError();
         }
         port->setReadBufferSize(64 * 1024);
 #if defined(Q_OS_LINUX)

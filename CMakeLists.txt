@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(NereusSDR VERSION 2026.11.1 LANGUAGES C CXX)
+project(NereusSDR VERSION 2026.11.19 LANGUAGES C CXX)
 
 if(APPLE)
     enable_language(OBJCXX)
@@ -7,7 +7,7 @@ if(APPLE)
     set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
 endif()
 
-# ── ccache compiler launcher (2026-07-25) ──────────────────────────────
+# ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ ccache compiler launcher (2026-07-25) ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
 # CI has always configured ccache explicitly; local dev machines never
 # had it wired at all. Auto-detect and use it when present so branch
 # switches and reconfigures stop paying full compile cost (measured:
@@ -19,7 +19,7 @@ endif()
 #
 # PREREQUISITE: ccache needs `sloppiness=pch_defines,time_macros` or it
 # bypasses every TU compiled with -include-pch, which here is nearly all
-# of them (see the §PCH block later in this file).  The symptom is a
+# of them (see the Ãƒâ€šÃ‚Â§PCH block later in this file).  The symptom is a
 # cheerful "ccache enabled" followed by a 0% hit rate.  Set it once with:
 #     ccache --set-config sloppiness=pch_defines,time_macros
 # CI does this in its "Configure ccache" step; see docs/development/
@@ -31,7 +31,7 @@ if(CCACHE_PROGRAM AND NOT DEFINED CMAKE_CXX_COMPILER_LAUNCHER)
 endif()
 # Report the resulting state, not the branch taken above. The set() calls
 # populate the CMake cache, so on every reconfigure after the first the
-# `NOT DEFINED` guard is false — reporting from inside that branch would
+# `NOT DEFINED` guard is false ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â reporting from inside that branch would
 # claim "not in use" on every run but the first, while ccache was in fact
 # working the whole time.
 if(CMAKE_CXX_COMPILER_LAUNCHER)
@@ -42,6 +42,14 @@ endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# The generated moc compilation units for the large Qt classes exceed the
+# default object-file section limit in Debug builds (MSVC C1128).  /bigobj is
+# harmless in Release and keeps the Visual Studio Debug configuration buildable.
+if(MSVC)
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/bigobj>)
+endif()
+
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
@@ -75,7 +83,16 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # backend (third_party dsound.h) depends on LPWAVEFORMATEX which lives in
 # mmreg.h / mmsystem.h, both of which WIN32_LEAN_AND_MEAN excludes.
 if(WIN32)
-    add_compile_definitions(NOMINMAX)
+    # NOMINMAX is applied per target to our own code (see
+    # nereus_define_nominmax below), not globally: the vendored PortAudio and
+    # WDSP C sources need windows.h's min/max macros, and a global /DNOMINMAX
+    # plus their /UNOMINMAX produced a D9025 "overriding" warning on every
+    # build of those targets.
+    if(MSVC)
+        # usrsctp (libdatachannel's SCTP) sign-extends a uint32_t with ~;
+        # C4319 is informational and comes from that vendored C.
+        string(APPEND CMAKE_C_FLAGS " /wd4319")
+    endif()
 endif()
 
 # macOS: ensure Homebrew lib/include paths are in the search path
@@ -178,11 +195,11 @@ find_package(Qt6 QUIET COMPONENTS SerialPort)
 # WebSockets does above. Developer builds may leave it out.
 option(NEREUS_REQUIRE_SERIALPORT "Fail configure when Qt6::SerialPort is missing" OFF)
 if(Qt6SerialPort_FOUND)
-    message(STATUS "Qt6::SerialPort found — serial PTT/CW support enabled")
+    message(STATUS "Qt6::SerialPort found ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â serial PTT/CW support enabled")
 elseif(NEREUS_REQUIRE_SERIALPORT)
     message(FATAL_ERROR "Qt6::SerialPort not found and NEREUS_REQUIRE_SERIALPORT is ON")
 else()
-    message(STATUS "Qt6::SerialPort not found — serial PTT/CW support disabled")
+    message(STATUS "Qt6::SerialPort not found ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â serial PTT/CW support disabled")
 endif()
 
 # iPhone app Task 16 (D36): on Linux the Core advertises itself over Bonjour
@@ -200,7 +217,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 # --------------------------------------------------------------------------
-# zlib (Phase 3M-3a-ii follow-up — gzip+base64url envelope helper for
+# zlib (Phase 3M-3a-ii follow-up ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â gzip+base64url envelope helper for
 # the parametric-EQ blob round-trip with Thetis profile storage)
 # --------------------------------------------------------------------------
 # Hard-required because ParaEqEnvelope is in the always-on TX pipeline.
@@ -209,7 +226,7 @@ endif()
 # Linux:  distro package zlib1g-dev / zlib-devel
 # Windows MinGW: Qt's bundled mingw_64 toolchain has no findable zlib (ci.yml
 #   Windows job hits "Could NOT find ZLIB (missing: ZLIB_LIBRARY ...)" at
-#   configure time). Vendor zlib via FetchContent on Windows only — same
+#   configure time). Vendor zlib via FetchContent on Windows only ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â same
 #   approach the PortAudio block below uses for its dep.
 if(WIN32)
     include(FetchContent)
@@ -225,7 +242,7 @@ if(WIN32)
         # the conventional ZLIB::ZLIB name so call sites stay portable.
         add_library(ZLIB::ZLIB ALIAS zlibstatic)
     endif()
-    message(STATUS "zlib (vendored via FetchContent) — Windows MinGW build")
+    message(STATUS "zlib (vendored via FetchContent) ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Windows MinGW build")
 else()
     find_package(ZLIB REQUIRED)
     message(STATUS "zlib ${ZLIB_VERSION_STRING} found at ${ZLIB_INCLUDE_DIRS}")
@@ -519,7 +536,7 @@ if(DEFINED OPENSSL_ROOT_DIR)
 endif()
 
 # --------------------------------------------------------------------------
-# PortAudio v19 (Phase 3O VAX — PortAudioBus fallback for IAudioBus)
+# PortAudio v19 (Phase 3O VAX ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â PortAudioBus fallback for IAudioBus)
 # --------------------------------------------------------------------------
 include(FetchContent)
 
@@ -544,12 +561,12 @@ set(PA_BUILD_SHARED OFF CACHE BOOL "PortAudio static" FORCE)
 set(PA_BUILD_STATIC ON  CACHE BOOL "PortAudio static" FORCE)
 set(PA_USE_ASIO    OFF CACHE BOOL "PortAudio ASIO host API, forced OFF: NereusSDR hosts ASIO itself" FORCE)
 
-# Linux audio backends — force ON so the static PortAudio actually contains
+# Linux audio backends ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â force ON so the static PortAudio actually contains
 # the host-API modules. PortAudio's CMake nominally auto-detects ALSA/JACK
 # via find_package, but the FetchContent path in 19.7.0 silently gives them
 # empty defaults if the option() calls fire before the auto-detect block.
 # Without these forces the resulting libportaudio.a has zero host APIs and
-# Pa_GetHostApiCount() returns 0 → all device dropdowns empty → no audio.
+# Pa_GetHostApiCount() returns 0 ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ all device dropdowns empty ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ no audio.
 if(UNIX AND NOT APPLE)
     set(PA_USE_ALSA ON CACHE BOOL "PortAudio ALSA host API" FORCE)
     set(PA_USE_JACK ON CACHE BOOL "PortAudio JACK host API" FORCE)
@@ -580,14 +597,10 @@ endif()
 # PortAudio's Windows host APIs (pa_win_ds.c, pa_win_wasapi.c, pa_win_wdmks.c)
 # call windows.h's min / max macros directly. The global NOMINMAX above
 # strips those macros, leading to MinGW link errors against libportaudio.a.
-# Undef NOMINMAX for portaudio_static only — same surgical pattern used for
+# Undef NOMINMAX for portaudio_static only ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â same surgical pattern used for
 # wdsp_static in third_party/wdsp/CMakeLists.txt.
-if(WIN32 AND TARGET portaudio_static)
-    target_compile_options(portaudio_static PRIVATE
-        $<$<C_COMPILER_ID:MSVC>:/UNOMINMAX>
-        $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNOMINMAX>
-    )
-endif()
+# NOMINMAX is applied only to Nereus targets, so these sources see the
+# macros naturally; no /UNOMINMAX is needed (and none is passed).
 
 # --------------------------------------------------------------------------
 # Dependency archive pins (URL and SHA-256) and the optional directory of
@@ -598,7 +611,7 @@ endif()
 include(cmake/NereusDependencyArchives.cmake)
 
 # --------------------------------------------------------------------------
-# FFTW3 (for client-side FFT — spectrum and waterfall)
+# FFTW3 (for client-side FFT ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â spectrum and waterfall)
 # --------------------------------------------------------------------------
 find_package(PkgConfig QUIET)
 if(WIN32)
@@ -669,11 +682,11 @@ if(WIN32)
         if(EXISTS "${FFTW3_ROOT}/lib/libfftw3f-3.a")
             list(APPEND FFTW3_LIBRARIES "${FFTW3_ROOT}/lib/libfftw3f-3.a")
             set(FFTW3F_DLL "${FFTW3_ROOT}/bin/libfftw3f-3.dll")
-            message(STATUS "FFTW3F (float) found — FFTEngine enabled")
+            message(STATUS "FFTW3F (float) found ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â FFTEngine enabled")
         elseif(EXISTS "${FFTW3_ROOT}/bin/libfftw3f-3.dll")
             list(APPEND FFTW3_LIBRARIES "${FFTW3_ROOT}/bin/libfftw3f-3.dll")
             set(FFTW3F_DLL "${FFTW3_ROOT}/bin/libfftw3f-3.dll")
-            message(STATUS "FFTW3F (float) found — FFTEngine enabled (DLL direct)")
+            message(STATUS "FFTW3F (float) found ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â FFTEngine enabled (DLL direct)")
         endif()
     else()
         message(STATUS "FFTW3 not found at ${FFTW3_ROOT}. Client-side FFT disabled.")
@@ -720,13 +733,13 @@ else()
     endif()
 endif()
 if(FFTW3_FOUND)
-    message(STATUS "FFTW3 found — client-side FFT enabled")
+    message(STATUS "FFTW3 found ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â client-side FFT enabled")
     # Also find fftw3f (single-precision) for FFTEngine display FFT
     if(NOT WIN32)
         find_library(FFTW3F_LIB fftw3f HINTS ${FFTW3_LIBRARY_DIRS})
         if(FFTW3F_LIB)
             list(APPEND FFTW3_LIBRARIES ${FFTW3F_LIB})
-            message(STATUS "FFTW3F (float) found — FFTEngine enabled")
+            message(STATUS "FFTW3F (float) found ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â FFTEngine enabled")
         endif()
         # R-R3-39: WDSP's FFT planning runs on more than one thread (the
         # receive DSP lane and the transmit side), so WdspEngine makes
@@ -751,7 +764,7 @@ if(FFTW3_FOUND)
             # Ahead of libfftw3, which it depends on (matters for static
             # archives only).
             list(PREPEND FFTW3_LIBRARIES ${FFTW3_THREADS_LIB})
-            message(STATUS "FFTW3 threads found — thread-safe FFT planner: ${FFTW3_THREADS_LIB}")
+            message(STATUS "FFTW3 threads found ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â thread-safe FFT planner: ${FFTW3_THREADS_LIB}")
         else()
             message(FATAL_ERROR
                 "libfftw3_threads not found beside libfftw3. WDSP plans FFTs on "
@@ -823,58 +836,11 @@ if(FFTW3_FOUND)
         APPEND PROPERTY COMPILE_DEFINITIONS
         "NEREUS_FFTW3_HEADER=\"${NEREUS_FFTW3_HEADER}\"")
 else()
-    message(STATUS "FFTW3 not found — client-side FFT disabled")
+    message(STATUS "FFTW3 not found ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â client-side FFT disabled")
 endif()
 
 # --------------------------------------------------------------------------
-# LAME (libmp3lame), the MP3 encoder for recordings on the Core
-# (src/core/recordings/AudioFileWriter.cpp). Optional: without it
-# AudioFileWriter::mp3Available() is false and recordings are WAV.
-# Linked as a shared library only (LGPL-2.0-or-later; see
-# docs/attribution/LAME-PROVENANCE.md and LGPL-COMPLIANCE.md).
-#   macOS:   Homebrew lame (brew install lame).
-#   Linux:   libmp3lame-dev (runtime libmp3lame0).
-#   Windows: MSYS2 mingw-w64-x86_64-lame; LAME_ROOT names the folder with
-#            include/lame/lame.h, lib/ and bin/libmp3lame-0.dll. The MSVC
-#            release build makes lib/mp3lame.lib from the DLL's exports.
-# NEREUS_WITH_LAME=OFF builds without it. The Intel macOS release row
-# builds LAME 3.100 from source for x86_64 and names it with LAME_ROOT.
-# MP3 decoding never uses LAME: minimp3 (third_party/minimp3) is the one
-# decoder on every platform.
-# --------------------------------------------------------------------------
-option(NEREUS_WITH_LAME "Build MP3 recording with LAME when it is found" ON)
-set(LAME_FOUND FALSE)
-if(NEREUS_WITH_LAME)
-    set(_lame_hints "")
-    if(DEFINED LAME_ROOT)
-        list(APPEND _lame_hints "${LAME_ROOT}")
-    endif()
-    find_path(LAME_INCLUDE_DIR lame/lame.h HINTS ${_lame_hints} PATH_SUFFIXES include)
-    # Shared library names first: never the static libmp3lame.a.
-    if(WIN32)
-        find_library(LAME_LIBRARY NAMES mp3lame.lib libmp3lame.dll.a mp3lame
-            HINTS ${_lame_hints} PATH_SUFFIXES lib)
-    elseif(APPLE)
-        find_library(LAME_LIBRARY NAMES libmp3lame.dylib mp3lame
-            HINTS ${_lame_hints} PATH_SUFFIXES lib)
-    else()
-        find_library(LAME_LIBRARY NAMES libmp3lame.so mp3lame
-            HINTS ${_lame_hints} PATH_SUFFIXES lib)
-    endif()
-    if(LAME_INCLUDE_DIR AND LAME_LIBRARY)
-        set(LAME_FOUND TRUE)
-        if(WIN32)
-            find_file(LAME_DLL NAMES libmp3lame-0.dll libmp3lame.dll
-                HINTS ${_lame_hints} PATH_SUFFIXES bin NO_DEFAULT_PATH)
-        endif()
-        message(STATUS "LAME found: ${LAME_LIBRARY} (MP3 recordings on)")
-    else()
-        message(STATUS "LAME not found: recordings are WAV only")
-    endif()
-endif()
-
-# --------------------------------------------------------------------------
-# libpipewire-0.3 — optional native Linux audio bridge (Phase 3O PipeWire).
+# libpipewire-0.3 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â optional native Linux audio bridge (Phase 3O PipeWire).
 # Detection-only here; actual PipeWire sources land behind NEREUS_HAVE_PIPEWIRE
 # in follow-up tasks. If the dev package is absent the Linux audio path stays
 # on the existing pactl / LinuxPipeBus FIFO route.
@@ -882,9 +848,9 @@ endif()
 if(UNIX AND NOT APPLE)
     pkg_check_modules(PIPEWIRE libpipewire-0.3>=0.3.50)
     if(PIPEWIRE_FOUND)
-        message(STATUS "PipeWire ${PIPEWIRE_VERSION} — native Linux audio bridge enabled")
+        message(STATUS "PipeWire ${PIPEWIRE_VERSION} ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â native Linux audio bridge enabled")
     else()
-        message(STATUS "libpipewire-0.3 >= 0.3.50 not found — Linux audio limited to pactl path")
+        message(STATUS "libpipewire-0.3 >= 0.3.50 not found ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Linux audio limited to pactl path")
     endif()
     # libpulse: the PulseAudio engine (native audio plan Task 11, R-AUD-31):
     # one Linux build carries both engines and the sound server that answers
@@ -914,16 +880,28 @@ if(ENABLE_WDSP)
     set(WDSP_DIR ${CMAKE_SOURCE_DIR}/third_party/wdsp)
     if(EXISTS "${WDSP_DIR}/src/comm.h")
         set(WDSP_FOUND TRUE)
-        message(STATUS "WDSP found — DSP engine enabled")
+        message(STATUS "WDSP found ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â DSP engine enabled")
     else()
         set(WDSP_FOUND FALSE)
-        message(STATUS "WDSP not found at ${WDSP_DIR} — DSP engine disabled (stub mode)")
+        message(STATUS "WDSP not found at ${WDSP_DIR} ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â DSP engine disabled (stub mode)")
     endif()
 endif()
 
 # On Windows, generate FFTW3 import library from .def if .lib is missing
 if(WIN32 AND FFTW3_FOUND AND NOT EXISTS "${FFTW3_ROOT}/lib/fftw3.lib")
+    # `find_program(lib.exe)` only works from a Visual Studio Developer
+    # prompt. CMake already resolved the MSVC librarian as CMAKE_AR when it
+    # configured the C++ toolchain, so a clean checkout (and a GitHub clone)
+    # can generate the import library from a normal shell too.
     find_program(MSVC_LIB lib.exe)
+    if(NOT MSVC_LIB AND CMAKE_AR)
+        set(MSVC_LIB "${CMAKE_AR}")
+    endif()
+    if(NOT MSVC_LIB AND CMAKE_LINKER)
+        get_filename_component(_msvc_tool_dir "${CMAKE_LINKER}" DIRECTORY)
+        find_program(MSVC_LIB lib.exe HINTS "${_msvc_tool_dir}" NO_DEFAULT_PATH)
+        unset(_msvc_tool_dir)
+    endif()
     if(MSVC_LIB)
         execute_process(
             COMMAND ${MSVC_LIB} /def:${FFTW3_ROOT}/lib/libfftw3-3.def
@@ -932,7 +910,18 @@ if(WIN32 AND FFTW3_FOUND AND NOT EXISTS "${FFTW3_ROOT}/lib/fftw3.lib")
             RESULT_VARIABLE LIB_RESULT
         )
         if(LIB_RESULT EQUAL 0)
-            set(FFTW3_LIBRARIES "${FFTW3_ROOT}/lib/fftw3.lib")
+            # Replace the direct-DLL entry with the generated import library,
+            # keeping the float FFTW archive that was appended above. Setting
+            # the whole list here would drop it and leave the float symbols
+            # unresolved at link time.
+            list(REMOVE_ITEM FFTW3_LIBRARIES "${FFTW3_ROOT}/bin/libfftw3-3.dll")
+            list(PREPEND FFTW3_LIBRARIES "${FFTW3_ROOT}/lib/fftw3.lib")
+            if(EXISTS "${FFTW3_ROOT}/lib/libfftw3f-3.a")
+                list(APPEND FFTW3_LIBRARIES "${FFTW3_ROOT}/lib/libfftw3f-3.a")
+            elseif(EXISTS "${FFTW3_ROOT}/bin/libfftw3f-3.dll")
+                list(APPEND FFTW3_LIBRARIES "${FFTW3_ROOT}/bin/libfftw3f-3.dll")
+            endif()
+            list(REMOVE_DUPLICATES FFTW3_LIBRARIES)
             message(STATUS "Generated FFTW3 import library")
         endif()
     else()
@@ -949,7 +938,7 @@ if(WIN32 AND FFTW3_FOUND AND NOT EXISTS "${FFTW3_ROOT}/lib/fftw3.lib")
 endif()
 
 # --------------------------------------------------------------------------
-# GPU-accelerated spectrum/waterfall (QRhi — requires Qt 6.7+)
+# GPU-accelerated spectrum/waterfall (QRhi ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â requires Qt 6.7+)
 #
 # History: v0.1.1 shipped a Windows installer that silently disabled
 # GPU spectrum because this block used `message(STATUS)` fallbacks when
@@ -964,7 +953,7 @@ endif()
 #   2. Captures a specific reason string when either component is
 #      missing so the error message can point the user at the fix.
 #   3. Promotes the fallback to FATAL_ERROR when the caller opted in
-#      to GPU spectrum (the default) — silently shipping a CPU-only
+#      to GPU spectrum (the default) ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â silently shipping a CPU-only
 #      binary is the exact footgun that caused v0.1.1. Users who
 #      genuinely want the CPU path must pass -DNEREUS_GPU_SPECTRUM=OFF
 #      explicitly to acknowledge it.
@@ -986,7 +975,6 @@ if(NEREUS_GPU_SPECTRUM)
         # a single, context-rich failure message below instead of
         # multiple cryptic find_package warnings.
         find_package(Qt6 QUIET COMPONENTS ShaderTools GuiPrivate)
-        find_package(Qt6 QUIET COMPONENTS WidgetsPrivate)
 
         # Belt-and-braces detection: accept either the _FOUND variable
         # or the imported target. install-qt-action on Windows has
@@ -1003,7 +991,7 @@ if(NEREUS_GPU_SPECTRUM)
         endif()
 
         if(_nereus_have_shadertools AND _nereus_have_guiprivate)
-            message(STATUS "QRhi support enabled — GPU spectrum/waterfall active")
+            message(STATUS "QRhi support enabled ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â GPU spectrum/waterfall active")
         else()
             set(_nereus_gpu_fail_reason "Qt6 private modules missing:")
             if(NOT _nereus_have_shadertools)
@@ -1145,27 +1133,6 @@ set(CORE_SOURCES
     src/core/session/media/WaveformCodec.cpp
     src/core/audio/WaveformPublisher.cpp
     src/core/audio/WaveformHistory.cpp
-    # Recordings on the Core: WAV and MP3 files.
-    src/core/recordings/AudioFileWriter.cpp
-    src/core/recordings/AudioFileReader.cpp
-    # The recording store, its names, disks and settings.
-    src/core/recordings/RecordingNames.cpp
-    src/core/recordings/RecordingStore.cpp
-    src/core/recordings/RecordingDisks.cpp
-    src/core/recordings/RecordingSettings.cpp
-    # The contact recorder and the recording service.
-    src/core/recordings/ContactRecorder.cpp
-    src/core/recordings/RecordingService.cpp
-    src/core/recordings/RecordingPlayer.cpp
-    # A recording on the air: the transmitter's input while it goes out.
-    src/core/recordings/OnAirSource.cpp
-    # The voice keyer: M1 to M8, which key the radio by themselves.
-    src/core/recordings/VoiceKeyer.cpp
-    # The Digital Spectrum Recorder: every receiver's I/Q in one ring file.
-    src/core/recordings/dsr/DsrRingFile.cpp
-    src/core/recordings/dsr/DsrRecorder.cpp
-    # Rewind sound: a slice fed from the ring file (recording plan Task 22).
-    src/core/recordings/dsr/DsrReplay.cpp
     src/core/RadeChannel.cpp
     src/core/RadeV2Feature.cpp
     src/core/RadeRxWorker.cpp
@@ -1314,7 +1281,9 @@ set(CORE_SOURCES
     src/core/audio/PortAudioBus.cpp
     src/core/audio/QAudioSinkAdapter.cpp
     src/core/audio/RealtimeAudioPriority.cpp
+    src/core/audio/TxAudioRecorder.cpp
     src/core/platform/ThreadPlacement.cpp
+    src/core/platform/HybridCpu.cpp
     src/core/audio/TxMicSource.cpp
     src/core/audio/VirtualCableDetector.cpp
     src/core/safety/BandPlanGuard.cpp
@@ -1708,8 +1677,6 @@ list(APPEND CORE_SOURCES
     # R-R3-49 / R-IOS-18: the Core's PA Gain profiles for a phone.
     src/core/session/PaProfilesFacade.cpp
     src/core/session/BandStackFacade.cpp
-    # Recording plan Task 5 (recordingsVersion 1): the Core's recordings.
-    src/core/session/RecordingsFacade.cpp
     # iPhone app Task 25 (D41): the unbuilt features list the catalogue's
     # tools read (the desktop's hide helpers stay in src/gui).
     src/core/UnbuiltFeatureList.cpp
@@ -1780,12 +1747,12 @@ list(APPEND CORE_SOURCES
     src/core/session/media/DualPathAudio.cpp
 )
 
-# CoreAudioHalBus — macOS-only IAudioBus implementation bridging to the
+# CoreAudioHalBus ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â macOS-only IAudioBus implementation bridging to the
 # NereusSDRVAX HAL plugin via POSIX shared memory. The header is
 # cross-platform-safe (falls through to error stubs off macOS) but the .cpp
 # pulls in <sys/mman.h> / shm_open, so only compile it on Apple targets.
 #
-# MacMicPermission — Objective-C++ helper that calls
+# MacMicPermission ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Objective-C++ helper that calls
 # AVCaptureDevice.requestAccessForMediaType:AVMediaTypeAudio at app launch so
 # macOS surfaces the microphone permission dialog deterministically (issue
 # #203). Without it, the prompt only fires as a side effect of opening a
@@ -1805,13 +1772,13 @@ if(APPLE)
         src/core/audio/CoreAudioInputStream.cpp)
 endif()
 
-# LinuxPipeBus — Linux-only IAudioBus implementation bridging to PulseAudio /
+# LinuxPipeBus ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Linux-only IAudioBus implementation bridging to PulseAudio /
 # PipeWire virtual audio nodes via named FIFOs and pactl module-pipe-source /
 # module-pipe-sink. The header compiles on all platforms (falls through to
 # error stubs off Linux) but the .cpp uses mkfifo / QProcess(pactl), so only
 # compile it on Linux targets. Phase 3O Sub-Phase 6 Task 6.1.
 #
-# LinuxAudioBackend — pure detection logic for the PipeWire-native bridge.
+# LinuxAudioBackend ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â pure detection logic for the PipeWire-native bridge.
 # Uses only Qt + std (no PipeWire symbols) so it is NOT gated on
 # PIPEWIRE_FOUND. Linux-only because the whole decision tree is dead code
 # on macOS / Windows (which have their own IAudioBus impls).
@@ -1840,6 +1807,7 @@ endif()
 
 set(MODEL_SOURCES
     src/models/RadioModel.cpp
+    src/models/RxEqModel.cpp
     src/models/CwKeyerController.cpp
     src/models/RxDspWorker.cpp
     src/models/ReceiverDspLoadSampler.cpp
@@ -1852,10 +1820,6 @@ set(MODEL_SOURCES
     src/models/bandstack/BandStackCommand.cpp
     src/models/bandstack/LocalBandStackAccess.cpp
     src/models/bandstack/RemoteBandStackAccess.cpp
-    # Recording plan Task 5: what a window talks to for recordings.
-    src/models/recordings/RecordingsAccess.h
-    src/models/recordings/LocalRecordingsAccess.cpp
-    src/models/recordings/RemoteRecordingsAccess.cpp
     src/models/BandPlanManager.cpp
     src/models/PureSignalSettings.cpp
     src/models/PureSignalSettings.h
@@ -1864,6 +1828,7 @@ set(MODEL_SOURCES
     src/models/MeterModel.cpp
     src/models/TransmitModel.cpp
     src/models/FilterPresetStore.cpp
+    src/models/FrequencyMemoryStore.cpp
     src/models/NotchModel.cpp
     src/models/SpotModel.cpp
     src/models/SpotModeResolver.cpp
@@ -1877,6 +1842,12 @@ set(MODEL_SOURCES
 set(GUI_SOURCES
     src/gui/GuiApplication.cpp
     src/gui/GuiApplication.h
+    src/gui/HelperApps.cpp
+    src/gui/HelperApps.h
+    src/gui/HfAutoMmio.cpp
+    src/gui/HfAutoMmio.h
+    src/gui/ScriptRunner.cpp
+    src/gui/ScriptRunner.h
     src/gui/MainWindow.cpp
     src/gui/TxHeldIndicator.cpp
     src/gui/TxHeldIndicator.h
@@ -1981,6 +1952,8 @@ set(GUI_SOURCES
     src/gui/instruments/InstrumentSpine.h
     src/gui/instruments/InstrumentStyle.h
     src/gui/instruments/LongpathContent.cpp
+    src/gui/instruments/HelperContent.h
+    src/gui/instruments/HelperContent.cpp
     src/gui/instruments/LongpathContent.h
     src/gui/instruments/SMeterDialContent.cpp
     src/gui/instruments/SMeterDialContent.h
@@ -1997,6 +1970,8 @@ set(GUI_SOURCES
     src/gui/widgets/ProfileRail.h
     src/gui/widgets/ProfileRailDock.cpp
     src/gui/widgets/ProfileRailDock.h
+    src/gui/widgets/LimitSlider.cpp
+    src/gui/widgets/LimitSlider.h
     src/gui/RelayBar.cpp
     src/gui/SMeterWidget.cpp
     src/gui/VintageMeterFace.cpp
@@ -2007,7 +1982,6 @@ set(GUI_SOURCES
     src/gui/VaxFirstRunDialog.cpp
     src/gui/VaxFirstRunCheck.cpp
     src/gui/SpectrumWidget.cpp
-    src/gui/SpectrumIntelPresent.cpp
     src/gui/WaterfallImpulseBlanker.cpp
     src/gui/WheelStepAccumulator.cpp
     src/gui/hotkeys/HotKeyDispatcher.cpp
@@ -2085,24 +2059,6 @@ set(GUI_SOURCES
     src/gui/widgets/RadioSpeakerWidget.h
     src/gui/widgets/VfoStyles.h
     src/gui/widgets/VfoWidget.cpp
-    src/gui/recordings/FlagRecordPlay.cpp
-    src/gui/recordings/FlagRecordPlay.h
-    src/gui/recordings/RevealFile.cpp
-    src/gui/recordings/RevealFile.h
-    src/gui/recordings/RecordingsPanel.cpp
-    src/gui/recordings/RecordingsPanel.h
-    src/gui/recordings/RecordingsWindow.cpp
-    src/gui/recordings/RecordingsWindow.h
-    src/gui/recordings/LocalMicClipRecorder.cpp
-    src/gui/recordings/LocalMicClipRecorder.h
-    src/gui/recordings/VoiceButton.cpp
-    src/gui/recordings/VoiceButton.h
-    src/gui/recordings/DsrHoursMap.cpp
-    src/gui/recordings/DsrHoursMap.h
-    src/gui/recordings/DsrSaveBox.cpp
-    src/gui/recordings/DsrSaveBox.h
-    src/gui/recordings/DsrRewindLink.cpp
-    src/gui/recordings/DsrRewindLink.h
     src/gui/widgets/MetricLabel.cpp
     src/gui/widgets/MetricLabel.h
     src/gui/widgets/SystemTile.cpp
@@ -2199,9 +2155,13 @@ set(GUI_SOURCES
     src/gui/containers/ContainerSourceAdapter.cpp
     src/gui/containers/LegacyContainerImporter.h
     src/gui/containers/LegacyContainerImporter.cpp
+    src/gui/containers/ThetisContainerFile.h
+    src/gui/containers/ThetisContainerFile.cpp
     src/gui/containers/ContainerWorkspaceStore.h
     src/gui/containers/ContainerWorkspaceStore.cpp
     src/gui/containers/ContainerWidget.cpp
+    src/gui/containers/HfAutoControls.h
+    src/gui/containers/HfAutoControls.cpp
     src/gui/containers/WorkspaceHeader.h
     src/gui/containers/WorkspaceHeader.cpp
     src/gui/containers/EdgeDockStrip.h
@@ -2389,11 +2349,9 @@ set(GUI_SOURCES
     src/gui/setup/ThisCorePage.cpp
     src/gui/setup/CoresSetupPage.cpp
     src/gui/setup/RfKitPage.cpp
+    src/gui/setup/StationHelperOptions.h
+    src/gui/setup/StationHelperOptions.cpp
     src/gui/setup/RotorSetupPage.cpp
-    # Recording plan Task 8: Setup > Cores > Recordings.
-    src/gui/setup/RecordingsSetupPage.cpp
-    # Recording plan Task 26: Setup > Cores > Digital Spectrum Recorder.
-    src/gui/setup/DsrSetupPage.cpp
     src/gui/setup/TciLogWindow.cpp
     src/gui/setup/HotKeySetupPages.cpp
     src/gui/setup/KeyboardMapWidget.cpp
@@ -2421,6 +2379,7 @@ set(GUI_SOURCES
     src/gui/applets/TxPowerSection.cpp
     src/gui/applets/TxVoxSection.cpp
     src/gui/applets/TxEqDialog.cpp
+    src/gui/applets/RxEqDialog.cpp
     src/gui/applets/TxCfcDialog.cpp
     src/gui/applets/PhoneCwApplet.cpp
     src/gui/applets/PhoneCwSectionContent.cpp
@@ -2438,7 +2397,6 @@ set(GUI_SOURCES
     src/gui/applets/DiversityApplet.cpp
     src/gui/applets/CwxApplet.cpp
     src/gui/applets/DvkApplet.cpp
-    src/gui/applets/VoiceKeyerApplet.cpp
     src/gui/applets/CatApplet.cpp
     src/gui/applets/AccessoryReadouts.cpp
     src/gui/applets/TunerApplet.cpp
@@ -2462,9 +2420,6 @@ if(APPLE)
     list(APPEND GUI_SOURCES src/gui/bandstack/BandStackReducedMotion.mm)
     set_source_files_properties(src/gui/bandstack/BandStackReducedMotion.mm
         PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
-    # The Intel present path talks to AppKit. The rest of the file is C++.
-    set_source_files_properties(src/gui/SpectrumIntelPresent.cpp
-        PROPERTIES LANGUAGE OBJCXX SKIP_PRECOMPILE_HEADERS ON)
 endif()
 # RtMidi: desktop only, never NereusCore or nereusd (R-HK-18). On Linux it needs
 # ALSA (found above); without it the build has no MIDI support and the device
@@ -2473,7 +2428,8 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR ALSA_FOUND)
     set(NEREUS_RTMIDI_AVAILABLE TRUE)
     list(APPEND GUI_SOURCES third_party/rtmidi/RtMidi.cpp)
     set_source_files_properties(third_party/rtmidi/RtMidi.cpp PROPERTIES
-        COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>"
+        # No /w override: it collided with the target's /W3 (D9025). These
+        # vendored files compile warning-clean at the default level.
         SKIP_PRECOMPILE_HEADERS ON
         SKIP_AUTOGEN ON)
 else()
@@ -2507,7 +2463,8 @@ if(NEREUS_HIDAPI_AVAILABLE)
     set(NEREUS_HIDAPI_SOURCE third_party/hidapi/${NEREUS_HIDAPI_PLATFORM}/hid.c)
     list(APPEND GUI_SOURCES ${NEREUS_HIDAPI_SOURCE})
     set_source_files_properties(${NEREUS_HIDAPI_SOURCE} PROPERTIES
-        COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>"
+        # No /w override: it collided with the target's /W3 (D9025). These
+        # vendored files compile warning-clean at the default level.
         INCLUDE_DIRECTORIES
             "${CMAKE_SOURCE_DIR}/third_party/hidapi/hidapi;${CMAKE_SOURCE_DIR}/third_party/hidapi/${NEREUS_HIDAPI_PLATFORM}"
         SKIP_PRECOMPILE_HEADERS ON
@@ -2537,7 +2494,7 @@ qt_add_resources(CORE_RESOURCES resources/bandplans.qrc resources/pairing.qrc re
     resources/cat.qrc resources/cty.qrc)
 
 # --------------------------------------------------------------------------
-# App icon (per-platform) — from main (PR #11)
+# App icon (per-platform) ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â from main (PR #11)
 # --------------------------------------------------------------------------
 set(APP_ICON_SOURCES "")
 if(APPLE)
@@ -2609,6 +2566,10 @@ if(NEREUSSDR_LTO_AVAILABLE)
         ${CORE_RESOURCES}
     )
     target_compile_definitions(NereusCore_LTO PUBLIC NEREUS_CORE_STATIC)
+    if(MSVC)
+        target_compile_definitions(NereusCore_LTO PRIVATE
+            _SILENCE_CXX20_OLD_SHARED_PTR_ATOMIC_SUPPORT_DEPRECATION_WARNING)
+    endif()
     add_library(NereusGui_LTO OBJECT
         ${GUI_SOURCES}
         ${RESOURCES}
@@ -2629,16 +2590,71 @@ endif()
 # explicit import/export annotations. Windows keeps automatic exports for
 # the remaining functions and the application-private GUI DLL.
 foreach(_nereus_shared_target NereusCore NereusSDRLib)
+    # A fixed export list (the Release list) instead of automatic exports.
+    # Debug's iterator-checked STL instantiates ~98k symbols, over LINK's
+    # 65,535 import-member limit; the explicit annotations and the fixed
+    # list cover the cross-DLL API in every configuration.
     set_target_properties(${_nereus_shared_target} PROPERTIES
-        WINDOWS_EXPORT_ALL_SYMBOLS ON)
+        WINDOWS_EXPORT_ALL_SYMBOLS OFF)
+    if(MSVC)
+        set(_nereus_export_stem
+            "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/exports/${_nereus_shared_target}")
+        # DFNR is optional. When its library is absent, DeepFilterFilter.cpp
+        # and the two RxChannel forwarding setters are not compiled, so the
+        # fixed export list must not ask LINK for their symbols. Keep the
+        # rest of the list (other dfnr* methods are always compiled), and
+        # leave NereusSDRLib's list untouched. The DFNR option block below
+        # decides availability later, so test the library here directly.
+        set(_nereus_dfnr_compiled OFF)
+        if((NOT DEFINED ENABLE_DFNR OR ENABLE_DFNR)
+           AND (EXISTS "${CMAKE_SOURCE_DIR}/third_party/deepfilter/lib/windows-x86_64/deepfilter.dll.lib"
+                OR EXISTS "${CMAKE_SOURCE_DIR}/third_party/deepfilter/lib/windows-x86_64/deepfilter.lib"))
+            set(_nereus_dfnr_compiled ON)
+        endif()
+        if(NOT _nereus_dfnr_compiled AND _nereus_shared_target STREQUAL "NereusCore")
+            set(_nereus_export_dir "${CMAKE_CURRENT_BINARY_DIR}/exports")
+            file(MAKE_DIRECTORY "${_nereus_export_dir}")
+            foreach(_nereus_export_cfg Release MinSizeRel)
+                set(_nereus_export_src
+                    "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/exports/NereusCore.${_nereus_export_cfg}.def")
+                if(EXISTS "${_nereus_export_src}")
+                    file(STRINGS "${_nereus_export_src}" _nereus_export_lines)
+                    list(FILTER _nereus_export_lines EXCLUDE
+                         REGEX "DeepFilterFilter|setDfnrAttenLimit@RxChannel|setDfnrPostFilterBeta@RxChannel")
+                    string(REPLACE ";" "\n" _nereus_export_text "${_nereus_export_lines}")
+                    file(WRITE "${_nereus_export_dir}/NereusCore.${_nereus_export_cfg}.def"
+                         "${_nereus_export_text}\n")
+                endif()
+            endforeach()
+            set(_nereus_export_stem "${_nereus_export_dir}/NereusCore")
+        endif()
+        target_link_options(${_nereus_shared_target} PRIVATE
+            "$<$<CONFIG:Debug>:/DEF:${_nereus_export_stem}.Release.def>"
+            "$<$<CONFIG:Release>:/DEF:${_nereus_export_stem}.Release.def>"
+            "$<$<CONFIG:RelWithDebInfo>:/DEF:${_nereus_export_stem}.Release.def>"
+            "$<$<CONFIG:MinSizeRel>:/DEF:${_nereus_export_stem}.MinSizeRel.def>")
+        # MinSizeRel has its own list: the Release list names inline template
+        # instantiations the smaller build elides, so it is the Release list
+        # minus those, pruned from the linker's unresolved set.
+        # The fixed export list and the explicit __declspec(dllexport)
+        # annotations name some vtables twice. LINK uses the first
+        # specification, which is the intended one; keep the log readable.
+        target_link_options(${_nereus_shared_target} PRIVATE /IGNORE:4197)
+        # WidebandFftEngine keeps the free atomic_* overloads for libc++
+        # builds without atomic<shared_ptr<T>>; MSVC's deprecation of them is
+        # not a portability problem here.
+        target_compile_definitions(${_nereus_shared_target} PRIVATE
+            _SILENCE_CXX20_OLD_SHARED_PTR_ATOMIC_SUPPORT_DEPRECATION_WARNING)
+    endif()
     # MSVC's command-line default emits unreferenced inline COMDATs, which
     # autoexport turns into import-library members (77,416 Core exports
     # exceeded LINK's 65,535-member limit in the Windows release build).
     # Remove those definitions before CMake scans the objects. This option
     # is ineffective with /Od or /GL; it does not resolve a Debug limit.
     # https://learn.microsoft.com/en-us/cpp/build/reference/zc-inline-remove-unreferenced-comdat
-    target_compile_options(${_nereus_shared_target} PRIVATE
-        "$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/Zc:inline>")
+    if(MSVC)
+        target_compile_options(${_nereus_shared_target} PRIVATE /Zc:inline)
+    endif()
     if(MINGW)
         target_link_options(${_nereus_shared_target} PRIVATE
             "-Wl,--export-all-symbols")
@@ -2694,7 +2710,7 @@ set_target_properties(NereusSDR PROPERTIES
     MACOSX_BUNDLE_GUI_IDENTIFIER "com.boydsoftprez.NereusSDR"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
     MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
-    MACOSX_BUNDLE_COPYRIGHT "© 2026 J.J. Boyd (KG4VCF); GPL port of Thetis (ramdor/Thetis) and mi0bot/OpenHPSDR-Thetis; descends from FlexRadio PowerSDR lineage. GPLv3."
+    MACOSX_BUNDLE_COPYRIGHT "Ãƒâ€šÃ‚Â© 2026 J.J. Boyd (KG4VCF); GPL port of Thetis (ramdor/Thetis) and mi0bot/OpenHPSDR-Thetis; descends from FlexRadio PowerSDR lineage. GPLv3."
 )
 
 # macOS: packaging/macos/Info.plist.in is the bundle's Info.plist template.
@@ -2784,6 +2800,37 @@ if(WIN32)
         src/core/audio/cmasio.cpp)
     target_link_libraries(nereus-audio-capture PRIVATE asiosdk_host)
     target_compile_definitions(nereus-audio-capture PRIVATE NEREUS_CAPTURE_HELPER_ASIO)
+endif()
+
+# --------------------------------------------------------------------------
+# thetis-dat-bridge -- .NET Framework helper that packs/unpacks the
+# Base64( gzip( BinaryFormatter( Dictionary<string,string> ) ) ) envelope
+# Thetis uses for one container per .dat file.  Only the envelope; the
+# semantic mapping stays in NereusSDR.  Windows-only and optional: without
+# the C# compiler NereusSDR still builds and saves native .nscontainer files.
+# --------------------------------------------------------------------------
+if(WIN32)
+    find_program(NEREUS_CSC_EXE NAMES csc.exe
+        PATHS "C:/Windows/Microsoft.NET/Framework64/v4.0.30319"
+              "C:/Windows/Microsoft.NET/Framework/v4.0.30319"
+        NO_DEFAULT_PATH)
+    if(NEREUS_CSC_EXE)
+        # csc.exe rejects forward slashes in a source path (it opens
+        # "<cwd>\\<basename>" instead), so hand it native paths.
+        file(TO_NATIVE_PATH "${CMAKE_BINARY_DIR}/thetis-dat-bridge.exe" _bridge_out)
+        file(TO_NATIVE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/tools/thetis-dat-bridge/ThetisDatBridge.cs" _bridge_src)
+        # POST_BUILD, not a custom target: the Visual Studio generator turns a
+        # custom target's command-line .cs path into a source input relative
+        # to the build folder.
+        add_custom_command(TARGET NereusSDR POST_BUILD
+            COMMAND "${NEREUS_CSC_EXE}" /nologo /target:exe
+                    "/out:${_bridge_out}"
+                    "${_bridge_src}"
+            COMMENT "Building thetis-dat-bridge")
+        message(STATUS "Thetis .dat bridge: ${_bridge_out}")
+    else()
+        message(STATUS "Thetis .dat bridge: csc.exe not found (native containers only)")
+    endif()
 endif()
 # The desktop app always carries the helper built from the same revision.
 add_dependencies(NereusSDR nereus-audio-capture)
@@ -2919,15 +2966,6 @@ function(nereus_apply_core_deps target)
         target_include_directories(${target} PUBLIC ${FFTW3_INCLUDE_DIRS})
         target_link_libraries(${target} PUBLIC ${FFTW3_LIBRARIES})
         target_compile_definitions(${target} PUBLIC HAVE_FFTW3)
-    endif()
-
-    # Recordings: LAME encodes MP3 when found (NEREUS_HAVE_LAME); minimp3,
-    # header only, decodes it. Their headers reach only the two files that
-    # include them (set below the function), so a Homebrew or MSYS2 include
-    # folder never sits on the path of the rest of the Core.
-    if(LAME_FOUND)
-        target_link_libraries(${target} PRIVATE ${LAME_LIBRARY})
-        target_compile_definitions(${target} PRIVATE NEREUS_HAVE_LAME)
     endif()
 
     # R2 Task 17: OpenSSL libcrypto for CertificateStore. PUBLIC so it
@@ -3080,12 +3118,6 @@ function(nereus_apply_gui_deps target)
     if(APPLE)
         target_link_libraries(${target} PUBLIC "-framework Cocoa")
     endif()
-    # Intel waterfall present reads QWidgetRepaintManager. The header is
-    # private; the core library does not need it.
-    if(TARGET Qt6::WidgetsPrivate)
-        target_link_libraries(${target} PRIVATE Qt6::WidgetsPrivate)
-        target_compile_definitions(${target} PRIVATE NEREUS_HAVE_WIDGETS_PRIVATE)
-    endif()
     # Qt6::Widgets and Qt6::GuiPrivate are NOT listed here: both are
     # NereusCore dependencies for now (see the comments in
     # nereus_apply_core_deps()), and NereusGui/NereusGui_LTO see them
@@ -3225,7 +3257,7 @@ endif()
 add_subdirectory(third_party/r8brain)
 
 # --------------------------------------------------------------------------
-# DeepFilterNet3 DFNR — pre-built neural noise reduction library (MIT/Apache-2.0)
+# DeepFilterNet3 DFNR ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â pre-built neural noise reduction library (MIT/Apache-2.0)
 # Sub-epic C-1. Library is built by ./setup-deepfilter.sh (external to CMake
 # because the Rust build is slow + needs rustc). If the lib is absent at
 # configure time, ENABLE_DFNR falls back to OFF.
@@ -3264,10 +3296,10 @@ if(ENABLE_DFNR)
         set(DFNR_LIB "${DFNR_LIB_DIR}/libdeepfilter.a")
     endif()
     if(EXISTS ${DFNR_LIB})
-        message(STATUS "DFNR (DeepFilterNet3) enabled — ${DFNR_LIB}")
+        message(STATUS "DFNR (DeepFilterNet3) enabled ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â ${DFNR_LIB}")
     else()
         set(ENABLE_DFNR OFF)
-        message(STATUS "DFNR (DeepFilterNet3) disabled — library not found at ${DFNR_LIB} "
+        message(STATUS "DFNR (DeepFilterNet3) disabled ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â library not found at ${DFNR_LIB} "
                        "(run ./setup-deepfilter.sh before cmake to enable)")
     endif()
 endif()
@@ -3333,8 +3365,8 @@ if(ENABLE_DFNR)
 endif()
 
 # --------------------------------------------------------------------------
-# MNR — macOS Accelerate (vDSP) spectral noise reduction (Sub-epic C-1, Task 11).
-# Native Apple framework — no external build script or dependencies.
+# MNR ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â macOS Accelerate (vDSP) spectral noise reduction (Sub-epic C-1, Task 11).
+# Native Apple framework ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â no external build script or dependencies.
 # --------------------------------------------------------------------------
 option(ENABLE_MNR "Enable MNR Apple Accelerate noise reduction (macOS only)" ON)
 if(ENABLE_MNR AND APPLE)
@@ -3343,64 +3375,10 @@ if(ENABLE_MNR AND APPLE)
     message(STATUS "MNR (Apple Accelerate) enabled")
 elseif(ENABLE_MNR)
     set(ENABLE_MNR OFF)
-    message(STATUS "MNR (Apple Accelerate) disabled — macOS only")
+    message(STATUS "MNR (Apple Accelerate) disabled ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â macOS only")
 endif()
 
-# The recordings files' third-party headers, as SYSTEM-style -isystem paths
-# would not be per source: minimp3 on both, lame.h on the writer. Without the
-# shared precompiled header, so the extra include paths do not differ from
-# the ones it was built with.
-set_source_files_properties(
-    ${CMAKE_SOURCE_DIR}/src/core/recordings/AudioFileReader.cpp
-    PROPERTIES INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party/minimp3"
-               SKIP_PRECOMPILE_HEADERS ON)
-if(LAME_FOUND)
-    # When lame.h sits in one of the compiler's own include directories
-    # (libmp3lame-dev on Linux puts it in /usr/include), it is reachable
-    # already, and naming that directory again moves it ahead of libstdc++'s
-    # wrappers and breaks their #include_next <math.h>. Add the path only
-    # when it is somewhere else: Homebrew, MSYS2, a source-built LAME_ROOT.
-    get_filename_component(_lame_include_real "${LAME_INCLUDE_DIR}" REALPATH)
-    set(_lame_include_is_implicit FALSE)
-    foreach(_implicit_dir IN LISTS CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES)
-        get_filename_component(_implicit_real "${_implicit_dir}" REALPATH)
-        if(_implicit_real STREQUAL _lame_include_real)
-            set(_lame_include_is_implicit TRUE)
-        endif()
-    endforeach()
-    if(_lame_include_is_implicit)
-        set_source_files_properties(
-            ${CMAKE_SOURCE_DIR}/src/core/recordings/AudioFileWriter.cpp
-            PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
-    else()
-        set_source_files_properties(
-            ${CMAKE_SOURCE_DIR}/src/core/recordings/AudioFileWriter.cpp
-            PROPERTIES INCLUDE_DIRECTORIES "${LAME_INCLUDE_DIR}"
-                       SKIP_PRECOMPILE_HEADERS ON)
-    endif()
-endif()
 nereus_apply_core_deps(NereusCore)
-# NereusCore.dll imports LAME's DLL on Windows, so without it beside the
-# Core, NereusSDR.exe, nereusd.exe and every test that loads the Core fail
-# to start (0xc0000135). Copy it next to NereusCore.dll, where the programs
-# live and where ctest's PATH points the tests (path_list_prepend of the
-# library directory in tests/CMakeLists.txt). Same pattern as rade.dll and
-# deepfilter.dll above. MSYS2's libmp3lame-0.dll in turn imports
-# libmpg123-0.dll from the same bin folder, so that comes too when it is
-# there; the release build's staged LAME folder has no such file.
-if(WIN32 AND LAME_FOUND AND LAME_DLL)
-    get_filename_component(_lame_dll_dir "${LAME_DLL}" DIRECTORY)
-    find_file(LAME_MPG123_DLL NAMES libmpg123-0.dll
-        HINTS "${_lame_dll_dir}" NO_DEFAULT_PATH)
-    set(_lame_runtime_dlls "${LAME_DLL}")
-    if(LAME_MPG123_DLL)
-        list(APPEND _lame_runtime_dlls "${LAME_MPG123_DLL}")
-    endif()
-    add_custom_command(TARGET NereusCore POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${_lame_runtime_dlls} "$<TARGET_FILE_DIR:NereusCore>"
-        COMMENT "Copying LAME's DLL next to NereusCore.dll")
-endif()
 nereus_apply_gui_deps(NereusSDRLib)
 target_link_libraries(NereusSDRLib PUBLIC NereusCore)
 
@@ -3610,7 +3588,7 @@ endif()
 #
 # ccache must be configured with sloppiness=pch_defines,time_macros for
 # PCH'd compiles to be cacheable; CI sets this in the "Configure ccache"
-# step. Local builds inherit ccache's defaults — fine for clean builds,
+# step. Local builds inherit ccache's defaults ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â fine for clean builds,
 # may have lower hit rates on incremental until ~/.config/ccache/ccache.conf
 # matches CI.
 # --------------------------------------------------------------------------
@@ -3651,6 +3629,13 @@ if(NEREUS_USE_PCH)
         set_target_properties(${_pch_target} PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
     endforeach()
     if(MSVC)
+        # The PCH bakes [[deprecated]] attributes into its <memory>/<atomic>
+        # declarations, so the silence macro must be defined for the PCH
+        # target as well as for the DLLs that consume it.
+        target_compile_definitions(nereus_library_pch PRIVATE
+            _SILENCE_CXX20_OLD_SHARED_PTR_ATOMIC_SUPPORT_DEPRECATION_WARNING)
+        target_compile_definitions(nereus_test_pch PRIVATE
+            _SILENCE_CXX20_OLD_SHARED_PTR_ATOMIC_SUPPORT_DEPRECATION_WARNING)
         target_compile_options(nereus_library_pch PRIVATE /W3 /Zc:__cplusplus
             "$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/Zc:inline>")
     else()
@@ -4041,7 +4026,7 @@ endif()
 
 # Bundle third-party license notices + NereusSDR's LICENSE into release artifacts.
 # LICENSE-DUAL-LICENSING is shipped alongside LICENSE because Thetis maintains
-# both at project root and GPL §1 "keep intact all notices that refer to this
+# both at project root and GPL Ãƒâ€šÃ‚Â§1 "keep intact all notices that refer to this
 # License" extends to every license-related file upstream, not only the main
 # LICENSE text. A binary recipient obtaining the source is owed both files.
 install(DIRECTORY packaging/third-party-licenses/
@@ -4077,14 +4062,14 @@ if(NEREUS_BUILD_TESTS)
 endif()
 
 # --------------------------------------------------------------------------
-# macOS HAL Audio Server Plug-In (Phase 3O VAX — Sub-Phase 5)
+# macOS HAL Audio Server Plug-In (Phase 3O VAX ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Sub-Phase 5)
 #
 # Builds NereusSDRVAX.driver, a standalone CoreAudio HAL plugin that
 # exposes 4 virtual RX devices ("NereusSDR VAX 1..4") plus 1 TX device
 # ("NereusSDR TX"). Off by default because the plugin pulls libASPL via
 # FetchContent and its preferred build is a separate cmake tree
-# (`cmake -B build-hal -S hal-plugin`) — see docs/architecture/
-# 2026-04-19-vax-design.md §8.1. Enable here only when you want the
+# (`cmake -B build-hal -S hal-plugin`) ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â see docs/architecture/
+# 2026-04-19-vax-design.md Ãƒâ€šÃ‚Â§8.1. Enable here only when you want the
 # driver target wired into the main configure for IDE integration.
 # --------------------------------------------------------------------------
 option(NEREUSSDR_BUILD_HAL_PLUGIN "Build macOS CoreAudio HAL Audio Server plug-in" OFF)
@@ -4124,3 +4109,103 @@ if(APPLE)
         VERBATIM
     )
 endif()
+
+# --------------------------------------------------------------------------
+# NOMINMAX for our own targets only. windows.h's min/max macros break std::min/std::max in our C++ sources, so
+# every Nereus target defines NOMINMAX. The vendored PortAudio and WDSP C
+# sources call those macros directly, so they must NOT get the define; keeping
+# it per target (instead of add_compile_definitions) removes the /D + /U
+# "overriding" warning those targets used to emit on every rebuild.
+if(WIN32)
+    foreach(_nereus_nominmax_target
+            NereusCore NereusSDRLib NereusCore_LTO NereusGui_LTO
+            NereusSDR nereusd nereus-audio-capture
+            nereus-media-probe nereus-opus-bench-codec
+            nereus-nnr-bench nereus-nnr-bench-relaxed
+            nereus_library_pch nereus_test_pch)
+        if(TARGET ${_nereus_nominmax_target})
+            target_compile_definitions(${_nereus_nominmax_target} PRIVATE NOMINMAX)
+        endif()
+    endforeach()
+endif()
+
+# usrsctp (libdatachannel's SCTP) deliberately complements a 32-bit value into
+# a 64-bit one; C4319 is informational and comes from that vendored C. Silence
+# it on the target itself so a clean build has no third-party noise.
+if(MSVC AND TARGET usrsctp)
+    target_compile_options(usrsctp PRIVATE /wd4319)
+endif()
+
+# --------------------------------------------------------------------------
+# Recordings, voice keyer and Digital Spectrum Recorder
+# --------------------------------------------------------------------------
+# Added as explicit source lists so the base targets' lists stay untouched;
+# the whole feature can be seen (and reviewed) in one place.
+set(NEREUS_RECORDINGS_CORE_SOURCES
+    src/core/recordings/AudioFileReader.cpp
+    src/core/recordings/AudioFileWriter.cpp
+    src/core/recordings/ContactRecorder.cpp
+    src/core/recordings/OnAirSource.cpp
+    src/core/recordings/RecordingDisks.cpp
+    src/core/recordings/RecordingNames.cpp
+    src/core/recordings/RecordingPlayer.cpp
+    src/core/recordings/RecordingService.cpp
+    src/core/recordings/RecordingSettings.cpp
+    src/core/recordings/RecordingStore.cpp
+    src/core/recordings/VoiceKeyer.cpp
+    src/core/recordings/dsr/DsrRecorder.cpp
+    src/core/recordings/dsr/DsrReplay.cpp
+    src/core/recordings/dsr/DsrRingFile.cpp
+    src/core/session/RecordingsFacade.cpp
+    src/models/recordings/LocalRecordingsAccess.cpp
+    src/models/recordings/RemoteRecordingsAccess.cpp
+    src/models/recordings/RecordingsAccess.h
+)
+target_sources(NereusCore PRIVATE ${NEREUS_RECORDINGS_CORE_SOURCES})
+target_include_directories(NereusCore PRIVATE ${CMAKE_SOURCE_DIR}/third_party/minimp3)
+
+set(NEREUS_RECORDINGS_GUI_SOURCES
+    src/gui/recordings/DsrHoursMap.cpp
+    src/gui/recordings/DsrRewindLink.cpp
+    src/gui/recordings/DsrSaveBox.cpp
+    src/gui/recordings/FlagRecordPlay.cpp
+    src/gui/recordings/FlagRecordPlay.h
+    src/gui/recordings/LocalMicClipRecorder.cpp
+    src/gui/applets/VoiceKeyerApplet.cpp
+    src/gui/recordings/VoiceButton.cpp
+    src/gui/recordings/RecordingsPanel.cpp
+    src/gui/recordings/RecordingsWindow.cpp
+    src/gui/recordings/RevealFile.cpp
+    src/gui/setup/RecordingsSetupPage.cpp
+    src/gui/setup/DsrSetupPage.cpp
+)
+target_sources(NereusSDRLib PRIVATE ${NEREUS_RECORDINGS_GUI_SOURCES})
+
+# --------------------------------------------------------------------------
+# Windows MSI target
+# --------------------------------------------------------------------------
+# In Visual Studio select Release and build the NereusSDR-MSI target, or:
+#   cmake --build build-vs --config Release --target NereusSDR-MSI
+# It stages bin\<Config>, runs windeployqt, verifies DLL imports, then
+# harvests the tree into WiX and links
+# bin\Installers\NereusSDR-<version>-Windows-x64.msi.
+if(WIN32)
+    find_program(NEREUS_POWERSHELL_EXECUTABLE NAMES powershell)
+    if(NEREUS_POWERSHELL_EXECUTABLE)
+        add_custom_target(NereusSDR-MSI
+            COMMAND "${NEREUS_POWERSHELL_EXECUTABLE}"
+                    -NoProfile -ExecutionPolicy Bypass
+                    -File "${CMAKE_SOURCE_DIR}/packaging/windows/build-msi.ps1"
+                    -BuildDir "${CMAKE_BINARY_DIR}"
+                    -Config "$<CONFIG>"
+                    -Version "${PROJECT_VERSION}"
+                    -MsiVersion "1.11.2"
+                    -OutFile "${CMAKE_SOURCE_DIR}/bin/Installers/NereusSDR-${PROJECT_VERSION}-Windows-x64.msi"
+            DEPENDS NereusSDR NereusSDRLib NereusCore nereusd nereus-audio-capture
+            VERBATIM)
+        if(TARGET rade)
+            add_dependencies(NereusSDR-MSI rade)
+        endif()
+    endif()
+endif()
+

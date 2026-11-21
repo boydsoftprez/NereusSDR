@@ -451,6 +451,9 @@ public:
     // The connect watchdog's budget and the established stream's silence
     // timeout: the values setSilenceTimeoutsForTest() replaces. Every build
     // sees them, as the member initializers below use them.
+    // 2 s: a radio that has just been powered up can need longer, but the
+    // startup auto-connect retries sooner with a shorter budget, so it comes
+    // up as soon as the radio is ready.
     static constexpr int kConnectTimeoutMs = 2000;
     static constexpr int kEstablishedSilenceTimeoutMs = 3000;
 

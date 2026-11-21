@@ -218,7 +218,7 @@ float max_star(float x, float y)
     }
     else if (absdiff > 2.45 && absdiff <= 3.5)
     {
-        logXY = 0.048;
+        logXY = 0.048f;
     }
 
     return maxXY + logXY;

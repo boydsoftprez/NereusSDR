@@ -240,6 +240,8 @@
 #include "core/PaTelemetryScaling.h"
 #include "core/RadioConnection.h"
 #include "core/RadioStatus.h"
+#include "core/mmio/ExternalVariableEngine.h"
+#include "core/mmio/MmioEndpoint.h"
 #include "core/StepAttenuatorFacade.h"
 #include "core/session/IStationLink.h"
 #include "core/session/TransmitStateFacade.h"
@@ -253,6 +255,7 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDialog>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QGridLayout>
@@ -271,6 +274,13 @@
 #include <QVBoxLayout>
 
 #include <cmath>
+#include <algorithm>
+
+#include <QLoggingCategory>
+#include <QElapsedTimer>
+#include <QHideEvent>
+
+Q_LOGGING_CATEGORY(lcPaAutoCal, "nereus.setup.pacal")
 
 namespace NereusSDR {
 
@@ -463,7 +473,7 @@ PaGainByBandPage::PaGainByBandPage(RadioModel* model, QWidget* parent)
         // applyCapabilityVisibility() / autoCalibrateCheckForTest() have a
         // non-null target in the model-less path.
         m_autoCalibrateCheck = new QCheckBox(
-            QStringLiteral("Auto-Calibrate (sweep)"), this);
+            QStringLiteral("Auto-Calibrate Sequence"), this);
         m_autoCalibrateCheck->setVisible(true);
         // D4 test seam: create m_bypassPaSettingsCheck so
         // applyCapabilityVisibility() / bypassPaSettingsCheckForTest() have a
@@ -615,6 +625,12 @@ PaGainByBandPage::PaGainByBandPage(RadioModel* model, QWidget* parent)
         const int drivePct = (step + 1) * 10;
         auto* lbl = new QLabel(QStringLiteral("%1%").arg(drivePct), gainGroup);
         lbl->setAlignment(Qt::AlignCenter);
+        // Thetis parity: with Use Max these are percentages of the band's
+        // Max W (the cell tooltip shows the watts); without it they are points
+        // on the 0-100 drive scale.
+        lbl->setToolTip(QStringLiteral(
+            "Trim point at %1% of the band's Max W when Use Max is on "
+            "(otherwise %1 on the 0-100 drive scale).").arg(drivePct));
         grid->addWidget(lbl, row, kAdjustColumnFirst + step);
     }
     auto* hdrMax = new QLabel(QStringLiteral("Max W"), gainGroup);
@@ -708,93 +724,287 @@ PaGainByBandPage::PaGainByBandPage(RadioModel* model, QWidget* parent)
     gainFrame->setWidget(gainGroup);
     contentLayout()->insertWidget(contentLayout()->count() - 1, gainFrame);
 
-    // ── Bottom: chkAutoPACalibrate + auto-cal sub-panel (Phase 7 of #167) ─
-    // From Thetis chkAutoPACalibrate setup.designer.cs:49084 [v2.10.3.13]
-    // and chkAutoPACalibrate_CheckedChanged setup.cs:15683-15698
-    // [v2.10.3.13] (panel toggle).  Sub-panel mirrors panelAutoPACalibrate
-    // setup.designer.cs:49094-49119 [v2.10.3.13]: target watts spinbox
-    // (udPACalPower), Calibrate button (here: Cancel — Phase 7 starts the
-    // sweep on checkbox toggle, not on button click, since Thetis runs
-    // the state machine on a worker thread; NereusSDR drives it from the
-    // GUI thread via QTimer).
+    // ── Bottom: "Auto-Calibrate Sequence" + per-band panel (2026-11-17) ──
+    // One band at a time. The checkbox only reveals the panel; Start keys
+    // TUNE, measures FWD and trims that band's base Gain until it is within
+    // -1/+2 W of Max W (capped at 100 W). The nine trim points are manual and
+    // are not touched.
     m_autoCalibrateCheck = new QCheckBox(
-        QStringLiteral("Auto-Calibrate (sweep)"), this);
+        QStringLiteral("Auto-Calibrate Sequence"), this);
     m_autoCalibrateCheck->setToolTip(QStringLiteral(
-        "Enable the per-band auto-calibration sweep.  Sweep iterates HF "
-        "bands x drive levels (10/20/.../90), engages TUNE, reads FWD "
-        "power, and writes the gain delta into the active profile."));
+        "Measure one band's PA Gain. You key TUNE into a dummy load; the "
+        "panel reads the selected meter, suggests a Gain correction, and only "
+        "Apply changes it. It does not key, change bands or touch the nine "
+        "trim points."));
     contentLayout()->insertWidget(contentLayout()->count() - 1,
                                    m_autoCalibrateCheck);
 
-    // NereusSDR-spin: m_autoCalPanel ships 4 of Thetis's 17 panelAutoPACalibrate
-    // sub-controls. Per-band selectors (chkPA160..chkPA6), radPACalAllBands /
-    // radPACalSelBands, chkBypassANANPASettings, and explicit btnPAGainCalibration
-    // are deferred follow-ups (see pa-calibration-hotfix.md §6 + remediation
-    // backlog F1). Auto-cal currently sweeps unconditional 11 HF bands.
-    //
-    // From Thetis panelAutoPACalibrate setup.designer.cs:49094-49299 [v2.10.3.13].
-    //
-    // Sub-panel: status / progress / cancel / target watts.  Hidden until
-    // the user ticks chkAutoPACalibrate (Thetis panelAutoPACalibrate.Visible
-    // = false at construction; setup.designer.cs:49119 [v2.10.3.13]).
-    m_autoCalPanel = new QGroupBox(QStringLiteral("Auto-Cal Sweep"), this);
+    m_autoCalPanel = new QGroupBox(
+        QStringLiteral("Auto-Calibrate Sequence"), this);
     m_autoCalPanel->setVisible(false);
     auto* autoCalForm = new QFormLayout(m_autoCalPanel);
 
-    // Per STYLEGUIDE.md: status text in muted-italic uses the kTextScale
-    // shade (matches placeholder bodies above and gauge tick labels in
-    // their normal/disabled state).
+    m_autoCalWarning = new QLabel(
+        QStringLiteral("Dummy load only. Hold TUNE while measuring; nothing "
+                       "keys automatically. Apply writes the Gain."),
+        m_autoCalPanel);
+    m_autoCalWarning->setWordWrap(true);
+    m_autoCalWarning->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-weight: bold; font-size: 12px; }")
+            .arg(Style::kRedBorder));
+    autoCalForm->addRow(m_autoCalWarning);
+
+    m_autoCalConfirm = new QCheckBox(
+        QStringLiteral("Dummy load connected"), m_autoCalPanel);
+    autoCalForm->addRow(m_autoCalConfirm);
+
+    m_autoCalBandCombo = new QComboBox(m_autoCalPanel);
+    {
+        const std::array<Band, 11> bands = {
+            Band::Band160m, Band::Band80m, Band::Band60m, Band::Band40m,
+            Band::Band30m,  Band::Band20m, Band::Band17m, Band::Band15m,
+            Band::Band12m,  Band::Band10m, Band::Band6m,
+        };
+        for (Band b : bands) {
+            m_autoCalBandCombo->addItem(bandLabel(b), static_cast<int>(b));
+        }
+    }
+    autoCalForm->addRow(QStringLiteral("Band:"), m_autoCalBandCombo);
+
+    // The reading source: the radio's own meter or a WaveNode channel. The
+    // helper sends fwdpwr1..4 / refpwr1..4 (WN_DemoDlg.cpp), so PWRn here is
+    // the WaveNode's PWRn input, in watts.
+    m_autoCalSourceCombo = new QComboBox(m_autoCalPanel);
+    m_autoCalSourceCombo->addItem(QStringLiteral("Anvelina FWD (radio)"), 0);
+    for (int n = 1; n <= 4; ++n) {
+        m_autoCalSourceCombo->addItem(
+            QStringLiteral("WaveNode PWR%1").arg(n), n);
+    }
+    m_autoCalSource = AppSettings::instance()
+                          .value(QStringLiteral("PaAutoCal/PowerSource"), 0)
+                          .toInt();
+    {
+        const int idx = m_autoCalSourceCombo->findData(m_autoCalSource);
+        if (idx >= 0) { m_autoCalSourceCombo->setCurrentIndex(idx); }
+    }
+    m_autoCalSourceCombo->setToolTip(QStringLiteral(
+        "Which forward-power reading the sequence trusts. WaveNode PWRn is "
+        "the helper's fwdpwrN input, in watts."));
+    autoCalForm->addRow(QStringLiteral("Read power:"), m_autoCalSourceCombo);
+    connect(m_autoCalSourceCombo,
+            QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int) {
+        m_autoCalSource = m_autoCalSourceCombo->currentData().toInt();
+        AppSettings::instance().setValue(
+            QStringLiteral("PaAutoCal/PowerSource"), m_autoCalSource);
+        updateAutoCalTargets();
+    });
+
+    // Safety: the operator keys TUNE, but the panel watches it. A keyed
+    // carrier beyond the selected time is unkeyed for them, and anything over
+    // 100 W (or target + 10 W) is unkeyed at once.
+    m_autoCalTimeoutCombo = new QComboBox(m_autoCalPanel);
+    for (int seconds : { 5, 10, 15, 20, 30, 60 }) {
+        m_autoCalTimeoutCombo->addItem(
+            QStringLiteral("%1 s").arg(seconds), seconds);
+    }
+    {
+        const int saved = AppSettings::instance()
+                              .value(QStringLiteral("PaAutoCal/KeyLimitSec"), 10)
+                              .toInt();
+        const int idx = m_autoCalTimeoutCombo->findData(saved);
+        if (idx >= 0) { m_autoCalTimeoutCombo->setCurrentIndex(idx); }
+    }
+    m_autoCalTimeoutCombo->setToolTip(QStringLiteral(
+        "Safety: if TUNE/MOX stays keyed longer than this, the panel unkeys "
+        "it. Also unkeys above 100 W or target + 10 W."));
+    autoCalForm->addRow(QStringLiteral("Key limit:"), m_autoCalTimeoutCombo);
+    connect(m_autoCalTimeoutCombo,
+            QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int) {
+        AppSettings::instance().setValue(
+            QStringLiteral("PaAutoCal/KeyLimitSec"),
+            m_autoCalTimeoutCombo->currentData().toInt());
+    });
+
+    m_autoCalToleranceCombo = new QComboBox(m_autoCalPanel);
+    m_autoCalToleranceCombo->addItem(QStringLiteral("-1 / +2 W"), 0);
+    m_autoCalToleranceCombo->addItem(QStringLiteral("+/- 1 W"), 1);
+    m_autoCalToleranceCombo->addItem(QStringLiteral("+/- 2 W"), 2);
+    m_autoCalToleranceCombo->addItem(QStringLiteral("+/- 5 W"), 3);
+    {
+        const int saved = AppSettings::instance()
+                              .value(QStringLiteral("PaAutoCal/Tolerance"), 0)
+                              .toInt();
+        const int idx = m_autoCalToleranceCombo->findData(saved);
+        if (idx >= 0) { m_autoCalToleranceCombo->setCurrentIndex(idx); }
+    }
+    m_autoCalToleranceCombo->setToolTip(QStringLiteral(
+        "How close to Max W counts as done. The default is -1 W / +2 W; the "
+        "panel shows IN TOLERANCE when a measurement lands inside it."));
+    autoCalForm->addRow(QStringLiteral("Tolerance:"),
+                        m_autoCalToleranceCombo);
+    connect(m_autoCalToleranceCombo,
+            QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int) {
+        AppSettings::instance().setValue(
+            QStringLiteral("PaAutoCal/Tolerance"),
+            m_autoCalToleranceCombo->currentData().toInt());
+        updateAutoCalTargets();
+    });
+
+    m_autoCalWatchdog = new QTimer(this);
+    m_autoCalWatchdog->setInterval(250);
+    connect(m_autoCalWatchdog, &QTimer::timeout,
+            this, &PaGainByBandPage::onAutoCalWatchdog);
+
     m_autoCalStatusLabel = new QLabel(QStringLiteral("Idle"), m_autoCalPanel);
     m_autoCalStatusLabel->setStyleSheet(QStringLiteral(
         "QLabel { color: %1; font-style: italic; }").arg(Style::kTextScale));
     autoCalForm->addRow(QStringLiteral("Status:"), m_autoCalStatusLabel);
 
-    // TODO: add Style::kProgressBar once defined — for now the dark-page
-    // QProgressBar inherits no rules from applyDarkPageStyle (no rule
-    // exists for QProgressBar in StyleConstants.h yet). Native rendering
-    // is acceptable as a fallback; revisit when a follow-up adds a
-    // styled progress-bar block to StyleConstants.
     m_autoCalProgressBar = new QProgressBar(m_autoCalPanel);
     m_autoCalProgressBar->setRange(0, 100);
     m_autoCalProgressBar->setValue(0);
     autoCalForm->addRow(QStringLiteral("Progress:"), m_autoCalProgressBar);
 
-    // Target watts spinbox (Thetis udPACalPower setup.designer.cs:49155-
-    // 49186 [v2.10.3.13] — 1..100 W range, 1 W increment).
-    m_autoCalTargetSpin = new QDoubleSpinBox(m_autoCalPanel);
-    m_autoCalTargetSpin->setRange(1.0, 1500.0);
-    m_autoCalTargetSpin->setSingleStep(1.0);
-    m_autoCalTargetSpin->setDecimals(0);
-    m_autoCalTargetSpin->setValue(m_autoCalTargetWatts);
-    m_autoCalTargetSpin->setToolTip(QStringLiteral(
-        "Target watts for the auto-cal sweep.  Each step drives the "
-        "radio at this power and adjusts the per-step gain delta to "
-        "hit it."));
-    connect(m_autoCalTargetSpin,
-            QOverload<double>::of(&QDoubleSpinBox::valueChanged),
-            this, [this](double w) {
-                m_autoCalTargetWatts = w;
-            });
-    autoCalForm->addRow(QStringLiteral("Target watts:"), m_autoCalTargetSpin);
+    // Read-only: the target is the band's Max W, capped at 100 W.
+    m_autoCalTargetLabel = new QLabel(QStringLiteral("100 W (limit)"),
+                                      m_autoCalPanel);
+    m_autoCalTargetLabel->setToolTip(QStringLiteral(
+        "Target = this band's Max W, or the 100 W limit when no Max W/Use Max "
+        "is set."));
+    m_autoCalTargetLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: 11px; font-weight: bold; }")
+            .arg(Style::kTitleText));
+    autoCalForm->addRow(QStringLiteral("Target watts:"),
+                        m_autoCalTargetLabel);
 
-    m_autoCalCancelButton = new QPushButton(QStringLiteral("Cancel"),
-                                            m_autoCalPanel);
-    m_autoCalCancelButton->setToolTip(QStringLiteral(
-        "Cancel the in-progress auto-cal sweep.  In-flight band's drive-"
-        "step adjusts written so far are kept; future bands are skipped."));
-    connect(m_autoCalCancelButton, &QPushButton::clicked, this, [this]() {
-        if (m_autoCalibrateCheck && m_autoCalibrateCheck->isChecked()) {
-            // Toggling unchecks fires onAutoCalibrateToggled(false) which
-            // dispatches into cancelAutoCal.
-            m_autoCalibrateCheck->setChecked(false);
+    m_autoCalGainSpin = new QDoubleSpinBox(m_autoCalPanel);
+    m_autoCalGainSpin->setRange(38.8, 100.0);
+    m_autoCalGainSpin->setSingleStep(0.1);
+    m_autoCalGainSpin->setDecimals(1);
+    m_autoCalGainSpin->setToolTip(QStringLiteral(
+        "Base PA Gain for the selected band: the Max W / 100 W setpoint "
+        "adjustment. The nine trim points above are separate and are not "
+        "changed here."));
+    autoCalForm->addRow(QStringLiteral("PA Gain (dB):"), m_autoCalGainSpin);
+
+    m_autoCalModeLabel = new QLabel(
+        QStringLiteral("Mode: Base Gain (Max W)"), m_autoCalPanel);
+    m_autoCalModeLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: 10px; }").arg(Style::kTextScale));
+    autoCalForm->addRow(QStringLiteral("Mode:"), m_autoCalModeLabel);
+    connect(m_autoCalGainSpin,
+            QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
+            [this](double value) { setAutoCalGainFromSpin(value); });
+
+    auto* steps = new QLabel(
+        QStringLiteral("Steps: 1) dummy load  2) drive to maximum (Max W, "
+                       "100 W limit)  3) key TUNE  4) Measure  5) Apply."),
+        m_autoCalPanel);
+    steps->setWordWrap(true);
+    steps->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: 10px; }").arg(Style::kTextScale));
+    autoCalForm->addRow(steps);
+
+    m_autoCalCountdownLabel = new QLabel(QStringLiteral("Key time: --"),
+                                         m_autoCalPanel);
+    m_autoCalCountdownLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: 10px; }").arg(Style::kTextScale));
+    autoCalForm->addRow(m_autoCalCountdownLabel);
+
+    auto* autoCalButtons = new QHBoxLayout;
+    m_autoCalStartButton = new QPushButton(QStringLiteral("Measure"),
+                                           m_autoCalPanel);
+    m_autoCalStartButton->setToolTip(QStringLiteral(
+        "Read the selected meter while you hold TUNE. It does not key or "
+        "change bands."));
+    m_autoCalTuneButton = new QPushButton(QStringLiteral("TUNE"),
+                                          m_autoCalPanel);
+    m_autoCalTuneButton->setCheckable(true);
+    m_autoCalTuneButton->setToolTip(QStringLiteral(
+        "Key TUNE (dummy load only). The key-limit and 100 W watchdog unkey "
+        "it automatically."));
+    connect(m_autoCalTuneButton, &QPushButton::toggled, this,
+            [this](bool on) {
+        if (m_autoCalTuneUpdating) { return; }
+        if (RadioModel* const radio = this->model()) {
+            radio->setTune(on);
         }
     });
-    autoCalForm->addRow(m_autoCalCancelButton);
+    m_autoCalApplyButton = new QPushButton(QStringLiteral("Apply"),
+                                           m_autoCalPanel);
+    m_autoCalApplyButton->setToolTip(QStringLiteral(
+        "Write the suggested Gain correction for this band."));
+    m_autoCalCancelButton = new QPushButton(QStringLiteral("Clear"),
+                                            m_autoCalPanel);
+    m_autoCalCancelButton->setToolTip(QStringLiteral(
+        "Drop the suggestion without changing the Gain."));
+    autoCalButtons->addWidget(m_autoCalStartButton);
+    autoCalButtons->addWidget(m_autoCalTuneButton);
+    autoCalButtons->addWidget(m_autoCalApplyButton);
+    autoCalButtons->addWidget(m_autoCalCancelButton);
+    m_autoCalLinearButton = new QPushButton(QStringLiteral("PA Bnd Ln"),
+                                            m_autoCalPanel);
+    m_autoCalLinearButton->setToolTip(QStringLiteral(
+        "PA Band Linearization. Run Auto-Calibrate Sequence for this band "
+        "first. Highlights this band's 10 % group; pick a point to set the "
+        "tune slider there, then TUNE, Measure, Apply."));
+    autoCalButtons->addWidget(m_autoCalLinearButton);
+    autoCalButtons->addStretch();
+    autoCalForm->addRow(autoCalButtons);
+    connect(m_autoCalLinearButton, &QPushButton::clicked,
+            this, &PaGainByBandPage::openLinearizationPopup);
 
     contentLayout()->insertWidget(contentLayout()->count() - 1, m_autoCalPanel);
 
+    m_autoCalStartButton->setEnabled(false);
+    m_autoCalApplyButton->setEnabled(false);
+    m_autoCalCancelButton->setEnabled(false);
+
     connect(m_autoCalibrateCheck, &QCheckBox::toggled,
             this, &PaGainByBandPage::onAutoCalibrateToggled);
+    connect(m_autoCalStartButton, &QPushButton::clicked,
+            this, &PaGainByBandPage::startAutoCal);
+    connect(m_autoCalApplyButton, &QPushButton::clicked,
+            this, &PaGainByBandPage::applyAutoCalSuggestion);
+    connect(m_autoCalCancelButton, &QPushButton::clicked,
+            this, &PaGainByBandPage::stopAutoCal);
+    connect(m_autoCalConfirm, &QCheckBox::toggled, this,
+            [this](bool) { updateAutoCalTargets(); });
+    connect(m_autoCalBandCombo,
+            QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int) {
+        // A pending measurement belongs to the old band: put its drive and
+        // limits back before the new band is examined.
+        if (m_linearizeDialog) { m_linearizeDialog->close(); }
+        stopAutoCal();
+        updateAutoCalTargets();
+    });
+
+    // Follow the radio: moving to another band selects it here (and restores
+    // a pending measurement first), so the target always matches the TX band.
+    if (model) {
+        connect(model, &RadioModel::transmitBandChanged, this, [this, model] {
+            if (!m_autoCalPanel || !m_autoCalPanel->isVisible()
+                || !m_autoCalBandCombo) {
+                return;
+            }
+            SliceModel* const tx = model->txBoundSlice();
+            if (!tx) { return; }
+            const int idx =
+                m_autoCalBandCombo->findData(static_cast<int>(tx->band()));
+            if (idx < 0 || m_autoCalBandCombo->currentIndex() == idx) {
+                return;
+            }
+            stopAutoCal();
+            if (m_linearizeDialog) { m_linearizeDialog->close(); }
+            const QSignalBlocker block(m_autoCalBandCombo);
+            m_autoCalBandCombo->setCurrentIndex(idx);
+            updateAutoCalTargets();
+        });
+    }
 
     // ── chkBypassANANPASettings (D4: ANAN-G2E port) ──────────────────────
     // From Thetis setup.cs:19921 [v2.10.3.15] //N1GP G2E added:
@@ -841,13 +1051,6 @@ PaGainByBandPage::PaGainByBandPage(RadioModel* model, QWidget* parent)
                     loadProfileIntoUi(*p);
                 }
             });
-
-    // Subscribe to RadioStatus::powerChanged so the auto-cal state machine
-    // can capture live FWD readings while sweeping.  The slot short-circuits
-    // when the state machine is Idle / not collecting, so connecting
-    // unconditionally is safe (no spurious side effects on normal RX/TX).
-    connect(&model->radioStatus(), &RadioStatus::powerChanged,
-            this, &PaGainByBandPage::onFwdPowerSample);
 
     // ── chkBypassANANPASettings ↔ TransmitModel::paSettingsBypass (D4) ───
     // From Thetis setup.cs:19921 [v2.10.3.15] //N1GP G2E added.
@@ -1342,6 +1545,9 @@ void PaGainByBandPage::loadProfileIntoUi(const PaProfile& profile)
 
     m_updatingFromProfile = false;
 
+    // Per-band watt targets for the nine trim points (Use Max decides).
+    refreshAdjustTargets();
+
     // Mirrors Thetis updatePAControls at setup.cs:22884-22905 [v2.10.3.13]:
     // group title rewrites to "<profile> - PA Gain By Band (dB)" so the user
     // sees which profile's values they're editing.
@@ -1645,6 +1851,45 @@ void PaGainByBandPage::applyEditOnAir(Band band, bool adjust, int step)
     }
 }
 
+void PaGainByBandPage::applyCeilingEditOnAir(Band band)
+{
+    RadioModel* const radio = model();
+    if (radio && radio->ownsLocalDsp() && radio->paOnAirNow()
+        && static_cast<int>(band) == radio->paOnAirBandIndex()) {
+        radio->applyPaEditOnAir(RadioModel::PaProfileAction::SetMaxPower, -1);
+    }
+}
+
+void PaGainByBandPage::refreshAdjustTargets()
+{
+    const PaProfile* active =
+        m_paProfileManager ? m_paProfileManager->activeProfile() : nullptr;
+    if (!active) { return; }
+
+    for (int n = 0; n < kPaBandCount; ++n) {
+        const Band band = static_cast<Band>(n);
+        const double maxW = static_cast<double>(active->getMaxPower(band));
+        const bool useMax = active->getMaxPowerUse(band) && maxW > 0.5;
+        for (int step = 0; step < kColAdjustCount; ++step) {
+            QDoubleSpinBox* spin = m_adjustSpins[n][step];
+            if (!spin) { continue; }
+            const int pct = (step + 1) * 10;
+            spin->setToolTip(
+                useMax
+                    ? tr("Trim at %1% of %2's %3 W max (%4 W). "
+                         "Positive adds output, negative reduces it.")
+                          .arg(pct)
+                          .arg(bandLabel(band))
+                          .arg(maxW, 0, 'f', 0)
+                          .arg(pct * maxW / 100.0, 0, 'f', 1)
+                    : tr("Trim at %1% of the 0-100 drive scale for %2. "
+                         "Positive adds output, negative reduces it.")
+                          .arg(pct)
+                          .arg(bandLabel(band)));
+        }
+    }
+}
+
 void PaGainByBandPage::onMaxPowerChanged(Band band, double watts)
 {
     if (m_updatingFromProfile || !m_paProfileManager) { return; }
@@ -1655,6 +1900,9 @@ void PaGainByBandPage::onMaxPowerChanged(Band band, double watts)
     PaProfile mutated = *active;
     mutated.setMaxPower(band, static_cast<float>(watts));
     m_paProfileManager->saveProfile(active->name(), mutated);
+    applyCeilingEditOnAir(band);
+    refreshAdjustTargets();
+    updateAutoCalTargets();
 }
 
 void PaGainByBandPage::onUseMaxPowerToggled(Band band, bool use)
@@ -1667,6 +1915,9 @@ void PaGainByBandPage::onUseMaxPowerToggled(Band band, bool use)
     PaProfile mutated = *active;
     mutated.setMaxPowerUse(band, use);
     m_paProfileManager->saveProfile(active->name(), mutated);
+    applyCeilingEditOnAir(band);
+    refreshAdjustTargets();
+    updateAutoCalTargets();
 }
 
 // ── Phase 7 of #167: auto-cal sweep state machine ────────────────────────────
@@ -1747,323 +1998,1082 @@ constexpr int kAutoCalSettleMs = 200;
 
 }  // namespace
 
+// ---------------------------------------------------------------------------
+// Per-band PA Gain auto-calibration (2026-11-17)
+//
+// One band at a time. Start keys TUNE into a dummy load, reads the radio's
+// forward power, and trims that band's BASE Gain until the output sits within
+// -1 W / +2 W of Max W (capped at 100 W), then unkeys. The nine 10 % trim
+// cells stay manual and are not touched. Thetis's CalibratePAGain does the
+// same base-gain correction per band (console.cs:10228-10387 [v2.10.3.13]);
+// this port keeps the operator's dummy-load confirmation, uses the existing
+// TUNE path and restores the drive state afterwards.
+// ---------------------------------------------------------------------------
+
+namespace {
+constexpr int    kAutoCalMaxTries     = 8;      // gain corrections per run
+constexpr int    kAutoCalRetuneWaitMs = 1500;   // after a band change
+constexpr int    kAutoCalKeySettleMs  = 2000;   // after keying TUNE
+constexpr int    kAutoCalStepWaitMs   = 1000;   // between corrections
+constexpr double kAutoCalMaxTargetW   = 100.0;  // never calibrate above 100 W
+constexpr double kAutoCalUnderW       = 1.0;    // -1 W
+constexpr double kAutoCalOverW        = 2.0;    // +2 W
+constexpr double kAutoCalGainMin      = 38.8;   // the Gain spin's floor
+constexpr double kAutoCalGainMax      = 100.0;
+
+// The WaveNode helper's endpoint: its four-char id first, then its name.
+MmioEndpoint* waveNodeEndpointForCal()
+{
+    ExternalVariableEngine& engine = ExternalVariableEngine::instance();
+    if (MmioEndpoint* endpoint = engine.endpointByFourChar(QStringLiteral("Zjjg"))) {
+        return endpoint;
+    }
+    for (MmioEndpoint* endpoint : engine.endpoints()) {
+        if (endpoint
+            && endpoint->name().contains(QStringLiteral("WaveNode"),
+                                         Qt::CaseInsensitive)) {
+            return endpoint;
+        }
+    }
+    return nullptr;
+}
+}  // namespace
+
+double PaGainByBandPage::readAutoCalForwardWatts()
+{
+    if (m_autoCalSource <= 0) {
+        return model() ? model()->radioStatus().forwardPowerWatts() : 0.0;
+    }
+    if (MmioEndpoint* endpoint = waveNodeEndpointForCal()) {
+        const QVariant value = endpoint->valueForName(
+            QStringLiteral("fwdpwr%1").arg(m_autoCalSource));
+        if (value.isValid()) { return value.toDouble(); }
+    }
+    return 0.0;
+}
+
+double PaGainByBandPage::readAutoCalReflectedWatts()
+{
+    if (m_autoCalSource <= 0) {
+        return model() ? model()->radioStatus().reflectedPowerWatts() : 0.0;
+    }
+    if (MmioEndpoint* endpoint = waveNodeEndpointForCal()) {
+        const QVariant value = endpoint->valueForName(
+            QStringLiteral("refpwr%1").arg(m_autoCalSource));
+        if (value.isValid()) { return value.toDouble(); }
+    }
+    return 0.0;
+}
+
+Band PaGainByBandPage::selectedAutoCalBand() const
+{
+    if (m_autoCalBandCombo) {
+        return static_cast<Band>(m_autoCalBandCombo->currentData().toInt());
+    }
+    return m_autoCalBand;
+}
+
+void PaGainByBandPage::updateAutoCalTargets()
+{
+    if (!m_autoCalBandCombo || !m_autoCalTargetLabel || !m_autoCalStatusLabel
+        || !m_autoCalStartButton || !m_autoCalConfirm) {
+        return;
+    }
+
+    const Band band = selectedAutoCalBand();
+    m_autoCalBand = band;
+    m_autoCalCurrentBand = band;
+
+    double maxWatts = 0.0;
+    bool useMax = false;
+    if (m_paProfileManager) {
+        if (const PaProfile* profile = m_paProfileManager->activeProfile()) {
+            useMax = profile->getMaxPowerUse(band);
+            maxWatts = static_cast<double>(profile->getMaxPower(band));
+        }
+    }
+    const bool capped = maxWatts > kAutoCalMaxTargetW;
+    if (capped) { maxWatts = kAutoCalMaxTargetW; }
+    // Never blank: no Max W (or Use Max off) targets the 100 W limit.
+    const bool haveBandMax = useMax && maxWatts > 0.5;
+    const double bandTarget = haveBandMax ? maxWatts : kAutoCalMaxTargetW;
+    const bool linear = m_autoCalLinearPoint >= 0;
+    const int linearPercent = linear ? (m_autoCalLinearPoint + 1) * 10 : 100;
+    const double shownTarget =
+        linear ? linearPercent * bandTarget / 100.0 : bandTarget;
+    m_autoCalTargetWatts = shownTarget;
+
+    if (linear) {
+        m_autoCalTargetLabel->setText(
+            QStringLiteral("%1 W (%2 % of Max W)")
+                .arg(shownTarget, 0, 'f', 1).arg(linearPercent));
+    } else {
+        m_autoCalTargetLabel->setText(
+            haveBandMax
+                ? QStringLiteral("%1 W (Max W%2)")
+                      .arg(shownTarget, 0, 'f', 0)
+                      .arg(capped ? QStringLiteral(", capped") : QString())
+                : QStringLiteral("100 W (limit, no Max W)"));
+    }
+
+    // The panel's manual control follows the selected band.
+    if (m_autoCalGainSpin && m_paProfileManager) {
+        if (const PaProfile* profile = m_paProfileManager->activeProfile()) {
+            m_autoCalUpdatingGain = true;
+            m_autoCalGainSpin->setValue(
+                profile->getGainForBand(band, /*driveValue=*/-1));
+            m_autoCalUpdatingGain = false;
+        }
+    }
+
+    const bool ready = m_autoCalConfirm->isChecked() && !m_autoCalRunning;
+    m_autoCalStartButton->setEnabled(ready);
+    if (m_autoCalRunning) { return; }
+
+    QString text;
+    if (!m_autoCalConfirm->isChecked()) {
+        text = QStringLiteral("Confirm the dummy load to enable Measure.");
+    } else {
+        const QString source = m_autoCalSource <= 0
+            ? QStringLiteral("radio FWD")
+            : QStringLiteral("WaveNode PWR%1").arg(m_autoCalSource);
+        double tolUnder = kAutoCalUnderW;
+        double tolOver = kAutoCalOverW;
+        autoCalTolerance(&tolUnder, &tolOver);
+        const QString tolText = (tolUnder == tolOver)
+            ? QStringLiteral("+/- %1 W").arg(tolUnder, 0, 'f', 1)
+            : QStringLiteral("-%1/+%2 W")
+                  .arg(tolUnder, 0, 'f', 0).arg(tolOver, 0, 'f', 0);
+        text = QStringLiteral("Ready: %1, target %2 W%3 on %4, tol %5.")
+                   .arg(bandLabel(band))
+                   .arg(shownTarget, 0, 'f', 0)
+                   .arg(haveBandMax ? QStringLiteral(" (Max W)")
+                                    : QStringLiteral(" (limit)"))
+                   .arg(source)
+                   .arg(tolText);
+    }
+    m_autoCalStatusLabel->setText(text);
+    m_autoCalStatusLabel->setStyleSheet(
+        QStringLiteral("QLabel { color: %1; font-style: italic; }")
+            .arg(Style::kTextScale));
+}
+
 void PaGainByBandPage::onAutoCalibrateToggled(bool checked)
 {
-    // Mirrors Thetis chkAutoPACalibrate_CheckedChanged at setup.cs:15683-
-    // 15698 [v2.10.3.13]: panel visibility tied to the checkbox, plus
-    // captures the active-profile name so cancel can restore it.
     if (m_autoCalProgrammaticToggle) {
-        // Programmatic uncheck (e.g. abortAutoCal / completeAutoCal flipping
-        // the checkbox OFF) — already handled the cleanup, just hide the
-        // panel and bail.
         if (m_autoCalPanel) { m_autoCalPanel->setVisible(false); }
         return;
     }
 
+    if (m_autoCalPanel) { m_autoCalPanel->setVisible(checked); }
+    if (m_autoCalWatchdog) {
+        if (checked) {
+            m_autoCalWatchdog->start();
+        } else {
+            // Closing the panel must not leave a TUNE it started on.
+            if (m_autoCalTuneButton && m_autoCalTuneButton->isChecked()) {
+                if (RadioModel* const radio = model()) {
+                    radio->setTune(false);
+                }
+                m_autoCalTuneUpdating = true;
+                m_autoCalTuneButton->setChecked(false);
+                m_autoCalTuneUpdating = false;
+            }
+            m_autoCalWatchdog->stop();
+            m_autoCalKeyClock.invalidate();
+            restoreAutoCalDrive();
+        }
+    }
     if (checked) {
-        if (m_autoCalPanel) { m_autoCalPanel->setVisible(true); }
-        startAutoCal();
+        // Open on the band the radio is transmitting on, so a Max W set on
+        // that band is the target. The operator may change it afterwards.
+        if (m_autoCalBandCombo && model()) {
+            if (SliceModel* const tx = model()->txBoundSlice()) {
+                const int idx = m_autoCalBandCombo->findData(
+                    static_cast<int>(tx->band()));
+                if (idx >= 0
+                    && m_autoCalBandCombo->currentIndex() != idx) {
+                    const QSignalBlocker block(m_autoCalBandCombo);
+                    m_autoCalBandCombo->setCurrentIndex(idx);
+                }
+            }
+        }
+        if (!m_autoCalRunning) {
+            m_autoCalState = AutoCalState::Idle;
+            if (m_autoCalProgressBar) { m_autoCalProgressBar->setValue(0); }
+            updateAutoCalTargets();
+        }
     } else {
-        cancelAutoCal();
-        if (m_autoCalPanel) { m_autoCalPanel->setVisible(false); }
+        // Hiding the panel also drops any suggestion; nothing is keyed.
+        stopAutoCal();
     }
 }
-
-void PaGainByBandPage::onAutoCalSettle()
-{
-    // Settle timer fired without a real telemetry reading arriving.  In
-    // production this would mean the radio isn't transmitting — bail
-    // gracefully (no advance).  Tests use simulateBandFwdReadingForTest
-    // to inject deterministic readings instead of waiting on the timer.
-    if (m_autoCalState == AutoCalState::SettlingStep) {
-        m_autoCalState = AutoCalState::ReadingPower;
-        refreshAutoCalUi();
-    }
-}
-
-void PaGainByBandPage::onFwdPowerSample(double fwdW, double /*revW*/,
-                                        double /*swr*/)
-{
-    // Only consume samples when the state machine is actively waiting for
-    // one.  All other RX/TX traffic is ignored — the state machine sees
-    // exactly the readings tagged for it.
-    if (m_autoCalState != AutoCalState::SettlingStep
-        && m_autoCalState != AutoCalState::ReadingPower) {
-        return;
-    }
-
-    // Safety check first: if observed exceeds band_max * 1.1, abort.
-    if (!autoCalSafetyCheck(fwdW, m_autoCalCurrentBand)) {
-        abortAutoCal(QStringLiteral(
-            "Observed %1 W on %2 exceeded safety ceiling. Aborted.")
-            .arg(fwdW, 0, 'f', 1)
-            .arg(bandLabel(m_autoCalCurrentBand)));
-        return;
-    }
-
-    // Capture: write the gain delta + advance.
-    writeAutoCalGainAdjust(m_autoCalCurrentBand,
-                           m_autoCalCurrentDriveStep, fwdW);
-    advanceAutoCalStep();
-}
-
-// ---------------------------------------------------------------------------
-// State-machine helpers
-// ---------------------------------------------------------------------------
 
 void PaGainByBandPage::startAutoCal()
 {
-    if (!m_paProfileManager) {
-        return;  // no profile manager → no sweep
+    // MEASURE ONLY. The operator holds TUNE/MOX on a dummy load. This sets the
+    // drive to 100 % so the reading is the Max W / 100 W setpoint, reads the
+    // selected source, restores the operator's drive, and suggests a base-Gain
+    // correction. Nothing keys, changes band or loops.
+    RadioModel* const radio = model();
+    const PaProfile* profile =
+        m_paProfileManager ? m_paProfileManager->activeProfile() : nullptr;
+    if (!radio || !profile || !m_autoCalConfirm
+        || !m_autoCalConfirm->isChecked()) {
+        return;
     }
 
-    // Initialise sweep cursor.
-    m_autoCalCurrentBand = Band::Band160m;
-    m_autoCalCurrentDriveStep = 0;
-    m_autoCalState = AutoCalState::Initializing;
+    const Band band = selectedAutoCalBand();
+    SliceModel* const txSlice = radio->txBoundSlice();
+    if (!txSlice || txSlice->band() != band) {
+        m_autoCalStatusLabel->setText(
+            QStringLiteral("Tune the radio to %1 before measuring.")
+                .arg(bandLabel(band)));
+        m_autoCalStatusLabel->setStyleSheet(
+            QStringLiteral("QLabel { color: %1; font-style: italic; }")
+                .arg(Style::kRedBorder));
+        return;
+    }
+    if (!radio->isTune() && !radio->transmitModel().isMox()) {
+        m_autoCalStatusLabel->setText(
+            QStringLiteral("Key TUNE (dummy load), then press Measure."));
+        m_autoCalStatusLabel->setStyleSheet(
+            QStringLiteral("QLabel { color: %1; font-style: italic; }")
+                .arg(Style::kTextScale));
+        return;
+    }
 
-    // Lazy-instantiate settle timer.
+    const bool useMax = profile->getMaxPowerUse(band);
+    const double bandMax = static_cast<double>(profile->getMaxPower(band));
+    m_autoCalBand = band;
+    m_autoCalCurrentBand = band;
+    m_autoCalCurrentDriveStep = m_autoCalLinearPoint >= 0 ? m_autoCalLinearPoint : 0;
+
+    const bool linear = m_autoCalLinearPoint >= 0;
+    const int percent = linear ? (m_autoCalLinearPoint + 1) * 10 : 100;
+    const double maxW = (useMax && bandMax > 0.5)
+        ? std::min(bandMax, kAutoCalMaxTargetW) : kAutoCalMaxTargetW;
+    m_autoCalTargetWatts = linear
+        ? percent * maxW / 100.0
+        : maxW;
+    m_autoCalHasSuggestion = false;
+    m_autoCalInTolerance = false;
+    m_autoCalApplyButton->setEnabled(false);
+
+    // Snapshot the operator's drive once; repeated Measure keeps the 100 %
+    // drive and the original snapshot until Apply/Clear/close restores it.
+    TransmitModel& tx = radio->transmitModel();
+    if (!m_autoCalSavedValid) {
+        m_autoCalSavedPower = tx.power();
+        m_autoCalSavedTunePower = tx.tunePowerForBand(band);
+        m_autoCalSavedTuneSource = static_cast<int>(tx.tuneDrivePowerSource());
+        m_autoCalSavedPowerLimit = tx.limitPowerForBand(band);
+        m_autoCalSavedTuneLimit = tx.limitTunePowerForBand(band);
+        m_autoCalSavedBand = band;
+        m_autoCalSavedValid = true;
+    }
+
+    // A slider limit below 100 % would clamp the reading below Max W, so
+    // lift both limits for the measurement and put them back afterwards.
+    tx.setPowerLimit(100);
+    tx.setTunePowerLimit(100);
+
+    switch (tx.tuneDrivePowerSource()) {
+    case DrivePowerSource::DriveSlider:
+        tx.setPower(percent);
+        break;
+    case DrivePowerSource::TuneSlider:
+        tx.setTunePowerForBand(band, percent);
+        break;
+    case DrivePowerSource::Fixed:
+        // The fixed tune value cannot be driven through the slider, so use
+        // the drive slider for this reading. The saved source and its fixed
+        // value are restored afterwards.
+        tx.setTuneDrivePowerSource(DrivePowerSource::DriveSlider);
+        tx.setPower(percent);
+        break;
+    }
+    radio->refreshDrivePower();
+    // Re-assert after the drive change: a band/power path can put the stored
+    // trackbar limits back, and they would clamp the reading below Max W.
+    tx.setPowerLimit(100);
+    tx.setTunePowerLimit(100);
+    radio->refreshDrivePower();
+    qCInfo(lcPaAutoCal) << "measure start: power" << tx.power()
+                        << "tunePower" << tx.tunePowerForBand(band)
+                        << "source" << static_cast<int>(tx.tuneDrivePowerSource())
+                        << "limits" << tx.powerLimit() << tx.tunePowerLimit();
+
     if (!m_autoCalSettleTimer) {
         m_autoCalSettleTimer = new QTimer(this);
         m_autoCalSettleTimer->setSingleShot(true);
-        m_autoCalSettleTimer->setInterval(kAutoCalSettleMs);
         connect(m_autoCalSettleTimer, &QTimer::timeout,
-                this, &PaGainByBandPage::onAutoCalSettle);
+                this, &PaGainByBandPage::onAutoCalMeasureReady);
     }
-
-    // Read current target watts from the spinbox (user may have edited).
-    if (m_autoCalTargetSpin) {
-        m_autoCalTargetWatts = m_autoCalTargetSpin->value();
-    }
-
-    // Transition into SettlingStep.  In production the settle timer fires
-    // after kAutoCalSettleMs; tests use simulateBandFwdReadingForTest which
-    // bypasses the timer and drives readings synchronously.
-    m_autoCalState = AutoCalState::SettlingStep;
-    if (m_autoCalSettleTimer) {
-        m_autoCalSettleTimer->start();
-    }
-    refreshAutoCalUi();
+    m_autoCalStatusLabel->setText(
+        QStringLiteral("Drive at %1 %% (%2 W); settling...")
+            .arg(percent)
+            .arg(m_autoCalTargetWatts, 0, 'f', 1));
+    m_autoCalStatusLabel->setStyleSheet(
+        QStringLiteral("QLabel { color: %1; font-style: italic; }")
+            .arg(Style::kTextScale));
+    m_autoCalSettleTimer->start(1500);
 }
 
-void PaGainByBandPage::cancelAutoCal()
+void PaGainByBandPage::onAutoCalMeasureReady()
 {
-    // Mirrors Thetis CalibratePAGain end-label cleanup at console.cs:10352-
-    // 10377 [v2.10.3.13]: stop MOX, restore exciter signal, close progress.
-    // NereusSDR's variant is simpler since the GUI thread holds the state.
-    if (m_autoCalSettleTimer && m_autoCalSettleTimer->isActive()) {
-        m_autoCalSettleTimer->stop();
+    const double fwd = readAutoCalForwardWatts();
+    const double ref = readAutoCalReflectedWatts();
+    const Band band = m_autoCalBand;
+    const double target = m_autoCalTargetWatts;
+
+    if (RadioModel* const radio = model()) {
+        TransmitModel& tx = radio->transmitModel();
+        qCInfo(lcPaAutoCal) << "measure drive: power" << tx.power()
+                            << "tunePower" << tx.tunePowerForBand(band)
+                            << "source" << static_cast<int>(tx.tuneDrivePowerSource())
+                            << "limits" << tx.powerLimit() << tx.tunePowerLimit();
     }
-    m_autoCalState = AutoCalState::Halting;
-    refreshAutoCalUi();
 
-    // Clear the cursor; no partial profile writes have happened on the
-    // current (band, step) pair since writes only go in via
-    // writeAutoCalGainAdjust *after* a reading lands.
-    m_autoCalCurrentBand = Band::Band160m;
-    m_autoCalCurrentDriveStep = 0;
-    m_autoCalState = AutoCalState::Idle;
-    refreshAutoCalUi();
-}
+    qCInfo(lcPaAutoCal) << "measure: band" << static_cast<int>(band)
+                        << "source" << m_autoCalSource
+                        << "fwd" << fwd << "ref" << ref << "target" << target;
 
-void PaGainByBandPage::advanceAutoCalStep()
-{
-    ++m_autoCalCurrentDriveStep;
-    if (m_autoCalCurrentDriveStep >= kAutoCalDriveSteps) {
-        // All 9 steps for this band done — move to next band.
-        advanceAutoCalBand();
+    const auto warn = [this](const QString& text) {
+        m_autoCalStatusLabel->setText(text);
+        m_autoCalStatusLabel->setStyleSheet(
+            QStringLiteral("QLabel { color: %1; font-style: italic; }")
+                .arg(Style::kRedBorder));
+    };
+    const auto info = [this](const QString& text) {
+        m_autoCalStatusLabel->setText(text);
+        m_autoCalStatusLabel->setStyleSheet(
+            QStringLiteral("QLabel { color: %1; font-style: italic; }")
+                .arg(Style::kTextScale));
+    };
+
+    if (ref > std::max(2.0, target * 0.15) || fwd > target + 10.0) {
+        warn(QStringLiteral("Refused: %1 W forward, %2 W reflected.")
+                 .arg(fwd, 0, 'f', 1).arg(ref, 0, 'f', 1));
         return;
     }
-    // Re-arm settle timer for next step.
-    m_autoCalState = AutoCalState::SettlingStep;
-    if (m_autoCalSettleTimer) {
-        m_autoCalSettleTimer->start();
-    }
-    refreshAutoCalUi();
-}
-
-void PaGainByBandPage::advanceAutoCalBand()
-{
-    // Find the index of the current band in the HF list.
-    int currentIdx = -1;
-    for (int i = 0; i < static_cast<int>(kAutoCalHfBands.size()); ++i) {
-        if (kAutoCalHfBands[i] == m_autoCalCurrentBand) {
-            currentIdx = i;
-            break;
-        }
-    }
-    if (currentIdx < 0
-        || currentIdx + 1 >= static_cast<int>(kAutoCalHfBands.size())) {
-        // No more bands — sweep complete.
-        completeAutoCal();
+    if (fwd <= 0.1) {
+        warn(QStringLiteral("No forward power from the selected source."));
         return;
     }
-    m_autoCalCurrentBand = kAutoCalHfBands[currentIdx + 1];
-    m_autoCalCurrentDriveStep = 0;
-    m_autoCalState = AutoCalState::SettlingStep;
-    if (m_autoCalSettleTimer) {
-        m_autoCalSettleTimer->start();
+
+    double tolUnder = kAutoCalUnderW;
+    double tolOver = kAutoCalOverW;
+    autoCalTolerance(&tolUnder, &tolOver);
+    if (fwd >= target - tolUnder && fwd <= target + tolOver) {
+        const QString tolText = (tolUnder == tolOver)
+            ? QStringLiteral("+/- %1 W").arg(tolUnder, 0, 'f', 1)
+            : QStringLiteral("-%1/+%2 W")
+                  .arg(tolUnder, 0, 'f', 0).arg(tolOver, 0, 'f', 0);
+        m_autoCalStatusLabel->setText(
+            QStringLiteral("IN TOLERANCE: %1 W (target %2 W, %3)")
+                .arg(fwd, 0, 'f', 1)
+                .arg(target, 0, 'f', 0)
+                .arg(tolText));
+        m_autoCalStatusLabel->setStyleSheet(
+            QStringLiteral("QLabel { color: %1; font-weight: bold; "
+                           "font-style: italic; }")
+                .arg(Style::kGreenText));
+        // Nothing to change, but Apply finishes the procedure and restores
+        // the operator's drive; Clear discards it the same way.
+        m_autoCalInTolerance = true;
+        m_autoCalApplyButton->setEnabled(true);
+        m_autoCalCancelButton->setEnabled(true);
+        return;
     }
-    refreshAutoCalUi();
+
+    // Adaptive step: assertive far from target, damped close to it.
+    const double dbError = wattsToDbm(fwd) - wattsToDbm(target);
+    const double absDb = std::fabs(dbError);
+    double factor = 1.0;
+    if (absDb <= 1.0) {
+        factor = 0.45;
+    } else if (absDb <= 3.0) {
+        factor = 0.7;
+    } else if (absDb <= 6.0) {
+        factor = 0.9;
+    }
+    double stepDb = std::clamp(dbError * factor, -12.0, 12.0);
+    if (std::fabs(stepDb) < 0.1) {
+        stepDb = std::copysign(0.1, dbError == 0.0 ? 1.0 : dbError);
+    }
+
+    m_autoCalPendingDb = stepDb;
+    m_autoCalPendingBand = band;
+    m_autoCalHasSuggestion = true;
+    m_autoCalInTolerance = false;
+    m_autoCalApplyButton->setEnabled(true);
+    m_autoCalCancelButton->setEnabled(true);
+
+    const QString action = stepDb >= 0.0
+        ? QStringLiteral("raise") : QStringLiteral("lower");
+    info(QStringLiteral("%1 W at 100%%: %2 Gain by %3 dB, then Apply.")
+             .arg(fwd, 0, 'f', 1)
+             .arg(action)
+             .arg(std::fabs(stepDb), 0, 'f', 2));
 }
 
-void PaGainByBandPage::completeAutoCal()
+void PaGainByBandPage::restoreAutoCalDrive()
 {
-    // Persist the final profile state through PaProfileManager.  The
-    // per-step writeAutoCalGainAdjust calls have already been saving each
-    // delta; this is the final-clear save for any pending state.
-    if (m_paProfileManager) {
-        const PaProfile* active = m_paProfileManager->activeProfile();
-        if (active) {
-            m_paProfileManager->saveProfile(active->name(), *active);
+    if (!m_autoCalSavedValid) { return; }
+    m_autoCalSavedValid = false;
+    RadioModel* const radio = model();
+    if (!radio) { return; }
+    TransmitModel& tx = radio->transmitModel();
+    tx.setTuneDrivePowerSource(
+        static_cast<DrivePowerSource>(m_autoCalSavedTuneSource));
+    tx.setTunePowerForBand(m_autoCalSavedBand, m_autoCalSavedTunePower);
+    tx.setPowerForBand(m_autoCalSavedBand, m_autoCalSavedPower);
+    const Band current =
+        radio->txBoundSlice() ? radio->txBoundSlice()->band()
+                              : m_autoCalSavedBand;
+    if (current == m_autoCalSavedBand) {
+        tx.setPower(m_autoCalSavedPower);
+        tx.setPowerLimit(m_autoCalSavedPowerLimit);
+        tx.setTunePowerLimit(m_autoCalSavedTuneLimit);
+        radio->refreshDrivePower();
+    }
+    qCInfo(lcPaAutoCal) << "restore: band" << static_cast<int>(m_autoCalSavedBand)
+                        << "power" << m_autoCalSavedPower
+                        << "tune" << m_autoCalSavedTunePower
+                        << "limits" << m_autoCalSavedPowerLimit
+                        << m_autoCalSavedTuneLimit
+                        << "readback power" << tx.power()
+                        << "stored" << tx.powerForBand(m_autoCalSavedBand)
+                        << "tune" << tx.tunePowerForBand(m_autoCalSavedBand)
+                        << "limits" << tx.powerLimit() << tx.tunePowerLimit();
+}
+
+void PaGainByBandPage::refreshLinearHighlight()
+{
+    clearLinearHighlight();
+    if (m_autoCalLinearPoint < 0) { return; }
+    const int band = static_cast<int>(m_autoCalLinearBand);
+    if (band < 0 || band >= kPaBandCount) { return; }
+    const QString style = QStringLiteral(
+        "QDoubleSpinBox { background: #102830; border: 1px solid #00b4d8; }");
+    for (int step = 0; step < kColAdjustCount; ++step) {
+        if (m_adjustSpins[band][step]) {
+            m_adjustSpins[band][step]->setStyleSheet(style);
         }
     }
+}
 
-    if (m_autoCalSettleTimer && m_autoCalSettleTimer->isActive()) {
-        m_autoCalSettleTimer->stop();
-    }
-
-    m_autoCalState = AutoCalState::Completed;
-    refreshAutoCalUi();
-
-    // Auto-uncheck the chkAutoPACalibrate so the user can re-launch a fresh
-    // sweep.  Programmatic flag prevents the toggled slot from re-firing
-    // cancelAutoCal.
-    if (m_autoCalibrateCheck && m_autoCalibrateCheck->isChecked()) {
-        m_autoCalProgrammaticToggle = true;
-        m_autoCalibrateCheck->setChecked(false);
-        m_autoCalProgrammaticToggle = false;
+void PaGainByBandPage::clearLinearHighlight()
+{
+    for (int band = 0; band < kPaBandCount; ++band) {
+        for (int step = 0; step < kColAdjustCount; ++step) {
+            if (m_adjustSpins[band][step]) {
+                m_adjustSpins[band][step]->setStyleSheet(QString());
+            }
+        }
     }
 }
 
-void PaGainByBandPage::abortAutoCal(const QString& reason)
+void PaGainByBandPage::refreshLinearPointButtons()
 {
-    if (m_autoCalSettleTimer && m_autoCalSettleTimer->isActive()) {
-        m_autoCalSettleTimer->stop();
+    if (m_linearPointButtons.isEmpty() || !m_paProfileManager) { return; }
+    const PaProfile* profile = m_paProfileManager->activeProfile();
+    if (!profile) { return; }
+    const Band band = selectedAutoCalBand();
+    double maxW = profile->getMaxPowerUse(band)
+        ? static_cast<double>(profile->getMaxPower(band)) : kAutoCalMaxTargetW;
+    if (maxW > kAutoCalMaxTargetW) { maxW = kAutoCalMaxTargetW; }
+    if (maxW <= 0.5) { maxW = kAutoCalMaxTargetW; }
+    const int count = std::min(static_cast<int>(m_linearPointButtons.size()),
+                               static_cast<int>(kColAdjustCount));
+    for (int step = 0; step < count; ++step) {
+        const int percent = (step + 1) * 10;
+        const double watts = percent * maxW / 100.0;
+        if (QPushButton* button = m_linearPointButtons[step]) {
+            button->setText(
+                QStringLiteral("%1 %  (%2 W)")
+                    .arg(percent)
+                    .arg(watts, 0, 'f', 1));
+        }
+        if (step < m_linearAdjustSpins.size()) {
+            if (QDoubleSpinBox* spin = m_linearAdjustSpins[step]) {
+                m_updatingFromProfile = true;
+                spin->setValue(profile->getAdjust(band, step));
+                m_updatingFromProfile = false;
+            }
+        }
     }
-    m_autoCalState = AutoCalState::Aborted;
+    if (m_linearBaseGainSpin) {
+        m_autoCalUpdatingGain = true;
+        m_linearBaseGainSpin->setValue(
+            profile->getGainForBand(band, /*driveValue=*/-1));
+        m_autoCalUpdatingGain = false;
+    }
+}
+
+void PaGainByBandPage::openLinearizationPopup()
+{
+    if (m_linearizeDialog) {
+        m_linearizeDialog->show();
+        m_linearizeDialog->raise();
+        return;
+    }
+    if (!m_paProfileManager) { return; }
+    const PaProfile* profile = m_paProfileManager->activeProfile();
+    if (!profile) { return; }
+
+    const Band band = selectedAutoCalBand();
+    m_autoCalLinearBand = band;
+    refreshLinearHighlight();
+
+    auto* dialog = new QDialog(this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle(
+        QStringLiteral("PA Band Linearization - %1").arg(bandLabel(band)));
+    dialog->setMinimumWidth(460);
+    auto* layout = new QVBoxLayout(dialog);
+
+    auto* note = new QLabel(
+        QStringLiteral("Run Auto-Calibrate Sequence for this band first.\n"
+                       "Pick a 10 % point: the tune slider is set there. Then "
+                       "TUNE, Measure and Apply here. Base Gain returns to the "
+                       "Max W point. Clear restores the original drive."),
+        dialog);
+    note->setWordWrap(true);
+    layout->addWidget(note);
+
+    auto* baseRow = new QHBoxLayout;
+    baseRow->addWidget(new QLabel(QStringLiteral("PA Gain (base):"), dialog));
+    m_linearBaseGainSpin = new QDoubleSpinBox(dialog);
+    m_linearBaseGainSpin->setRange(38.8, 100.0);
+    m_linearBaseGainSpin->setSingleStep(0.1);
+    m_linearBaseGainSpin->setDecimals(1);
+    m_linearBaseGainSpin->setToolTip(QStringLiteral(
+        "Base PA Gain for the selected band (Max W setpoint)."));
+    connect(m_linearBaseGainSpin,
+            QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
+            [this](double value) { setAutoCalGainFromSpin(value); });
+    baseRow->addWidget(m_linearBaseGainSpin);
+    baseRow->addStretch();
+    layout->addLayout(baseRow);
+
+    auto* base = new QPushButton(QStringLiteral("Base Gain (Max W)"), dialog);
+    connect(base, &QPushButton::clicked, this, [this] {
+        selectLinearPoint(-1);
+        refreshLinearPointButtons();
+    });
+    layout->addWidget(base);
+
+    auto* grid = new QGridLayout;
+    m_linearPointButtons.clear();
+    m_linearAdjustSpins.clear();
+    for (int step = 0; step < kColAdjustCount; ++step) {
+        auto* box = new QWidget(dialog);
+        auto* boxLayout = new QVBoxLayout(box);
+        boxLayout->setContentsMargins(0, 0, 0, 0);
+        boxLayout->setSpacing(2);
+
+        auto* button = new QPushButton(box);
+        connect(button, &QPushButton::clicked, this, [this, step] {
+            selectLinearPoint(step);
+            refreshLinearPointButtons();
+        });
+        boxLayout->addWidget(button);
+
+        auto* spin = new QDoubleSpinBox(box);
+        spin->setRange(-10.0, 10.0);
+        spin->setSingleStep(0.1);
+        spin->setDecimals(1);
+        spin->setButtonSymbols(QAbstractSpinBox::UpDownArrows);
+        spin->setToolTip(QStringLiteral(
+            "Trim for this point, in dB. Positive adds output (the opposite "
+            "of the base Gain)."));
+        connect(spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                this, [this, step](double value) {
+            const Band band = selectedAutoCalBand();
+            onAdjustChanged(band, step, value);
+            // Mirror into the table cell; the dialog spin is a second view of
+            // the same profile value.
+            const int idx = static_cast<int>(band);
+            if (idx >= 0 && idx < kPaBandCount && m_adjustSpins[idx][step]) {
+                m_updatingFromProfile = true;
+                m_adjustSpins[idx][step]->setValue(value);
+                m_updatingFromProfile = false;
+            }
+        });
+        boxLayout->addWidget(spin);
+
+        m_linearPointButtons.append(button);
+        m_linearAdjustSpins.append(spin);
+        grid->addWidget(box, step / 3, step % 3);
+    }
+    layout->addLayout(grid);
+
+    auto* status = new QLabel(QStringLiteral("Pick a point."), dialog);
+    status->setWordWrap(true);
+    layout->addWidget(status);
+
+    auto* actions = new QHBoxLayout;
+    auto* tune = new QPushButton(QStringLiteral("TUNE"), dialog);
+    tune->setCheckable(true);
+    auto* measure = new QPushButton(QStringLiteral("Measure"), dialog);
+    auto* apply = new QPushButton(QStringLiteral("Apply"), dialog);
+    auto* clear = new QPushButton(QStringLiteral("Clear"), dialog);
+    actions->addWidget(tune);
+    actions->addWidget(measure);
+    actions->addWidget(apply);
+    actions->addWidget(clear);
+    layout->addLayout(actions);
+    apply->setEnabled(false);
+    clear->setEnabled(false);
+
+    auto* close = new QPushButton(QStringLiteral("Close"), dialog);
+    layout->addWidget(close);
+
+    connect(tune, &QPushButton::toggled, this, [this](bool on) {
+        if (RadioModel* const radio = model()) { radio->setTune(on); }
+    });
+    connect(measure, &QPushButton::clicked,
+            this, &PaGainByBandPage::startAutoCal);
+    connect(apply, &QPushButton::clicked, this, [this] {
+        applyAutoCalSuggestion();
+        refreshLinearPointButtons();
+    });
+    connect(clear, &QPushButton::clicked, this, [this] {
+        stopAutoCal();
+        refreshLinearPointButtons();
+    });
+    connect(close, &QPushButton::clicked, dialog, &QDialog::close);
+    connect(dialog, &QDialog::finished, this, [this] {
+        stopAutoCal();
+        m_linearPointButtons.clear();
+        m_linearAdjustSpins.clear();
+        m_linearBaseGainSpin = nullptr;
+        m_linearizeDialog = nullptr;
+    });
+
+    // Mirror the panel: TUNE state, status text and the Apply/Clear enables.
+    auto* timer = new QTimer(dialog);
+    timer->setInterval(250);
+    connect(timer, &QTimer::timeout, dialog,
+            [this, tune, status, apply, clear] {
+        if (!m_autoCalStatusLabel) { return; }
+        if (RadioModel* const radio = model()) {
+            const bool on = radio->isTune();
+            if (tune->isChecked() != on) {
+                const QSignalBlocker block(tune);
+                tune->setChecked(on);
+            }
+        }
+        if (status->text() != m_autoCalStatusLabel->text()) {
+            status->setText(m_autoCalStatusLabel->text());
+        }
+        status->setStyleSheet(m_autoCalStatusLabel->styleSheet());
+        if (m_autoCalApplyButton) {
+            apply->setEnabled(m_autoCalApplyButton->isEnabled());
+        }
+        if (m_autoCalCancelButton) {
+            clear->setEnabled(m_autoCalCancelButton->isEnabled());
+        }
+        // Keep the arrow spins in step with the table (edits from either).
+        if (const PaProfile* profile = m_paProfileManager
+                ? m_paProfileManager->activeProfile() : nullptr) {
+            const Band band = selectedAutoCalBand();
+            if (m_linearBaseGainSpin && !m_linearBaseGainSpin->hasFocus()) {
+                m_autoCalUpdatingGain = true;
+                m_linearBaseGainSpin->setValue(
+                    profile->getGainForBand(band, /*driveValue=*/-1));
+                m_autoCalUpdatingGain = false;
+            }
+            const int count = std::min(
+                static_cast<int>(m_linearAdjustSpins.size()),
+                static_cast<int>(kColAdjustCount));
+            for (int step = 0; step < count; ++step) {
+                QDoubleSpinBox* spin = m_linearAdjustSpins[step];
+                if (!spin || spin->hasFocus()) { continue; }
+                m_updatingFromProfile = true;
+                spin->setValue(profile->getAdjust(band, step));
+                m_updatingFromProfile = false;
+            }
+        }
+    });
+    timer->start();
+
+    m_linearizeDialog = dialog;
+    refreshLinearPointButtons();
+    dialog->show();
+}
+
+
+void PaGainByBandPage::selectLinearPoint(int step)
+{
+    if (!m_paProfileManager) { return; }
+    const PaProfile* profile = m_paProfileManager->activeProfile();
+    if (!profile) { return; }
+
+    const Band band = selectedAutoCalBand();
+    m_autoCalLinearBand = band;
+
+    double maxW = profile->getMaxPowerUse(band)
+        ? static_cast<double>(profile->getMaxPower(band)) : kAutoCalMaxTargetW;
+    if (maxW > kAutoCalMaxTargetW) { maxW = kAutoCalMaxTargetW; }
+    if (maxW <= 0.5) { maxW = kAutoCalMaxTargetW; }
+
+    if (step < 0) {
+        m_autoCalLinearPoint = -1;
+        clearLinearHighlight();
+        if (m_autoCalModeLabel) {
+            m_autoCalModeLabel->setText(
+                QStringLiteral("Mode: Base Gain (Max W)"));
+        }
+        m_autoCalTargetWatts = maxW;
+        if (m_autoCalTargetLabel) {
+            m_autoCalTargetLabel->setText(
+                QStringLiteral("%1 W (Max W)").arg(maxW, 0, 'f', 0));
+        }
+        restoreAutoCalDrive();
+        return;
+    }
+
+    const int percent = (step + 1) * 10;
+    const double target = percent * maxW / 100.0;
+    m_autoCalLinearPoint = step;
+    m_autoCalTargetWatts = target;
+    m_autoCalHasSuggestion = false;
+    m_autoCalInTolerance = false;
+    if (m_autoCalApplyButton) { m_autoCalApplyButton->setEnabled(false); }
+    if (m_autoCalCancelButton) { m_autoCalCancelButton->setEnabled(false); }
+    if (m_autoCalModeLabel) {
+        m_autoCalModeLabel->setText(
+            QStringLiteral("Mode: %1 % (%2 W) trim")
+                .arg(percent).arg(target, 0, 'f', 1));
+    }
+    if (m_autoCalTargetLabel) {
+        m_autoCalTargetLabel->setText(
+            QStringLiteral("%1 W (%2 % of Max W)")
+                .arg(target, 0, 'f', 1).arg(percent));
+    }
+    refreshLinearHighlight();
+
+    RadioModel* const radio = model();
+    if (!radio) { return; }
+    TransmitModel& tx = radio->transmitModel();
+    if (!m_autoCalSavedValid) {
+        m_autoCalSavedPower = tx.power();
+        m_autoCalSavedTunePower = tx.tunePowerForBand(band);
+        m_autoCalSavedTuneSource = static_cast<int>(tx.tuneDrivePowerSource());
+        m_autoCalSavedPowerLimit = tx.limitPowerForBand(band);
+        m_autoCalSavedTuneLimit = tx.limitTunePowerForBand(band);
+        m_autoCalSavedBand = band;
+        m_autoCalSavedValid = true;
+    }
+    tx.setPowerLimit(100);
+    tx.setTunePowerLimit(100);
+    switch (tx.tuneDrivePowerSource()) {
+    case DrivePowerSource::DriveSlider:
+        tx.setPower(percent);
+        break;
+    case DrivePowerSource::TuneSlider:
+        tx.setTunePowerForBand(band, percent);
+        break;
+    case DrivePowerSource::Fixed:
+        tx.setTuneDrivePowerSource(DrivePowerSource::DriveSlider);
+        tx.setPower(percent);
+        break;
+    }
+    radio->refreshDrivePower();
     if (m_autoCalStatusLabel) {
-        m_autoCalStatusLabel->setText(reason);
-        // Per STYLEGUIDE.md: error text uses the danger/red palette shade.
-        // Style::kRedBorder (#ff4444) is the canonical "danger / over-limit"
-        // color shared with gauge red zones and TX-overload badges.
-        m_autoCalStatusLabel->setStyleSheet(QStringLiteral(
-            "QLabel { color: %1; font-weight: bold; }").arg(Style::kRedBorder));
-    }
-    // Auto-uncheck so user can re-attempt.
-    if (m_autoCalibrateCheck && m_autoCalibrateCheck->isChecked()) {
-        m_autoCalProgrammaticToggle = true;
-        m_autoCalibrateCheck->setChecked(false);
-        m_autoCalProgrammaticToggle = false;
+        m_autoCalStatusLabel->setText(
+            QStringLiteral("Point set: %1 % (%2 W). Key TUNE, then Measure.")
+                .arg(percent).arg(target, 0, 'f', 1));
+        m_autoCalStatusLabel->setStyleSheet(
+            QStringLiteral("QLabel { color: %1; font-style: italic; }")
+                .arg(Style::kTextScale));
     }
 }
 
-bool PaGainByBandPage::autoCalSafetyCheck(double observedWatts, Band band) const
-{
-    // Mirrors the safety-margin Thetis applies via the max_pwr[] check
-    // implicitly in console.cs:10289 ptbPWR.Value = Math.Min(...).
-    // NereusSDR makes the safety check explicit: observed > band_max * 1.1
-    // aborts the sweep.
-    const double ceiling = autoCalBandMaxWatts(band) * 1.1;
-    return observedWatts <= ceiling;
-}
-
-void PaGainByBandPage::writeAutoCalGainAdjust(Band band, int driveStep,
-                                              double observedWatts)
+void PaGainByBandPage::applyAutoCalGain(double dbError, Band band)
 {
     if (!m_paProfileManager) { return; }
     const PaProfile* active = m_paProfileManager->activeProfile();
     if (!active) { return; }
 
-    // Mirrors Thetis console.cs:10319-10336 [v2.10.3.13]:
-    //   if (Math.Abs(watts - target) > 2)
-    //   {
-    //       float diff_dBm = (float)Math.Round(
-    //           (WattsTodBm(watts) - WattsTodBm((double)target)), 3);
-    //       SetupForm.SetBypassGain(bands[i], g + diff_dBm);
-    //   }
-    //
-    // NereusSDR maps to PaProfile::setAdjust because the per-step adjust
-    // matrix is the per-drive-level finetune (as opposed to setBypassGain
-    // which writes the base row only).  This matches the Phase 7 brief's
-    // intent: "iterates HF bands x drive levels, writes new gain values
-    // into the active profile".
-    const double diffDbm = wattsToDbm(observedWatts)
-                           - wattsToDbm(m_autoCalTargetWatts);
+    const double current = active->getGainForBand(band, /*driveValue=*/-1);
+    const double next =
+        std::clamp(current + dbError, kAutoCalGainMin, kAutoCalGainMax);
 
     PaProfile mutated = *active;
-    // Negative sign: too-much output -> increase the gain table (reduces
-    // future audio_volume so the radio outputs less); too-little output
-    // -> decrease the gain table.  This matches Thetis sign convention
-    // (g + diff_dBm where diff > 0 when observed > target; the gain table
-    // is then larger which gets subtracted from target_dBm yielding a
-    // smaller audio_volume).
-    mutated.setAdjust(band, driveStep, static_cast<float>(diffDbm));
+    mutated.setGainForBand(band, static_cast<float>(next));
     m_paProfileManager->saveProfile(active->name(), mutated);
+    qCInfo(lcPaAutoCal) << "gain:" << current << "->" << next
+                        << "dbErr" << dbError << "band" << static_cast<int>(band);
+
+    if (m_autoCalGainSpin) {
+        m_autoCalUpdatingGain = true;
+        m_autoCalGainSpin->setValue(next);
+        m_autoCalUpdatingGain = false;
+    }
+
+    const int idx = static_cast<int>(band);
+    if (idx >= 0 && idx < kPaBandCount && m_gainSpins[idx]) {
+        m_updatingFromProfile = true;
+        m_gainSpins[idx]->setValue(next);
+        m_updatingFromProfile = false;
+    }
+    if (RadioModel* const radio = model()) { radio->refreshDrivePower(); }
+}
+
+void PaGainByBandPage::autoCalTolerance(double* under, double* over) const
+{
+    const int mode = m_autoCalToleranceCombo
+        ? m_autoCalToleranceCombo->currentData().toInt() : 0;
+    switch (mode) {
+    case 1:  *under = 1.0; *over = 1.0; break;
+    case 2:  *under = 2.0; *over = 2.0; break;
+    case 3:  *under = 5.0; *over = 5.0; break;
+    default: *under = kAutoCalUnderW; *over = kAutoCalOverW; break;
+    }
+}
+
+void PaGainByBandPage::setAutoCalGainFromSpin(double gainDb)
+{
+    if (m_autoCalUpdatingGain || !m_paProfileManager) { return; }
+    const PaProfile* active = m_paProfileManager->activeProfile();
+    if (!active) { return; }
+
+    const Band band = selectedAutoCalBand();
+    const double clamped =
+        std::clamp(gainDb, kAutoCalGainMin, kAutoCalGainMax);
+
+    PaProfile mutated = *active;
+    mutated.setGainForBand(band, static_cast<float>(clamped));
+    m_paProfileManager->saveProfile(active->name(), mutated);
+    qCInfo(lcPaAutoCal) << "manual gain:" << clamped
+                        << "band" << static_cast<int>(band);
+
+    const int idx = static_cast<int>(band);
+    if (idx >= 0 && idx < kPaBandCount && m_gainSpins[idx]) {
+        m_updatingFromProfile = true;
+        m_gainSpins[idx]->setValue(clamped);
+        m_updatingFromProfile = false;
+    }
+    if (RadioModel* const radio = model()) { radio->refreshDrivePower(); }
+    if (m_autoCalStatusLabel) {
+        m_autoCalStatusLabel->setText(
+            QStringLiteral("PA Gain %1 dB for %2 (Max W setpoint).")
+                .arg(clamped, 0, 'f', 1)
+                .arg(bandLabel(band)));
+        m_autoCalStatusLabel->setStyleSheet(
+            QStringLiteral("QLabel { color: %1; font-style: italic; }")
+                .arg(Style::kTextScale));
+    }
+}
+
+void PaGainByBandPage::onAutoCalWatchdog()
+{
+    RadioModel* const radio = model();
+    if (!radio) { return; }
+
+    // Follow the radio's TX band even when a memory recall retunes the slice
+    // without a band-button event. Restores a pending measurement first.
+    if (m_autoCalPanel && m_autoCalPanel->isVisible() && m_autoCalBandCombo) {
+        if (SliceModel* const tx = radio->txBoundSlice()) {
+            const int idx = m_autoCalBandCombo->findData(
+                static_cast<int>(tx->band()));
+            if (idx >= 0 && m_autoCalBandCombo->currentIndex() != idx) {
+                if (m_linearizeDialog) { m_linearizeDialog->close(); }
+                stopAutoCal();
+                const QSignalBlocker block(m_autoCalBandCombo);
+                m_autoCalBandCombo->setCurrentIndex(idx);
+                updateAutoCalTargets();
+            }
+        }
+    }
+
+    const bool tune = radio->isTune();
+    const bool mox = radio->transmitModel().isMox();
+
+    // Keep the panel's TUNE button in step with the real key state (the main
+    // TUNE button and the watchdog's own unkey both change it).
+    if (m_autoCalTuneButton && m_autoCalTuneButton->isChecked() != tune) {
+        m_autoCalTuneUpdating = true;
+        m_autoCalTuneButton->setChecked(tune);
+        m_autoCalTuneUpdating = false;
+    }
+
+    if (!tune && !mox) {
+        m_autoCalKeyClock.invalidate();
+        if (m_autoCalCountdownLabel) {
+            m_autoCalCountdownLabel->setText(QStringLiteral("Key time: --"));
+        }
+        return;
+    }
+    if (!m_autoCalKeyClock.isValid()) { m_autoCalKeyClock.start(); }
+
+    const int limitSec = m_autoCalTimeoutCombo
+        ? m_autoCalTimeoutCombo->currentData().toInt() : 10;
+    if (m_autoCalCountdownLabel) {
+        m_autoCalCountdownLabel->setText(
+            QStringLiteral("Key time: %1 s / %2 s")
+                .arg(m_autoCalKeyClock.elapsed() / 1000.0, 0, 'f', 1)
+                .arg(limitSec));
+    }
+    const double fwd = readAutoCalForwardWatts();
+
+    // Live ceiling for the band being transmitted, not the panel's last
+    // target: a stale 25 W target must not cap a legitimate 50 W tune.
+    double bandMax = 0.0;
+    bool useMax = false;
+    if (m_paProfileManager) {
+        if (const PaProfile* profile = m_paProfileManager->activeProfile()) {
+            Band band = m_autoCalBand;
+            if (SliceModel* const tx = radio->txBoundSlice()) {
+                band = tx->band();
+            }
+            useMax = profile->getMaxPowerUse(band);
+            bandMax = static_cast<double>(profile->getMaxPower(band));
+        }
+    }
+    const double cap = (useMax && bandMax > 0.5)
+        ? std::min(100.0, bandMax + 10.0)
+        : 100.0;
+
+    QString reason;
+    if (fwd > cap) {
+        reason = QStringLiteral("Safety unkey: %1 W (cap %2 W).")
+                     .arg(fwd, 0, 'f', 1).arg(cap, 0, 'f', 0);
+    } else if (m_autoCalKeyClock.hasExpired(limitSec * 1000)) {
+        reason = QStringLiteral("Safety unkey: keyed over %1 s.").arg(limitSec);
+    }
+    if (reason.isEmpty()) { return; }
+
+    if (tune) { radio->setTune(false); }
+    if (mox) { radio->transmitModel().setMox(false); }
+    m_autoCalKeyClock.invalidate();
+    restoreAutoCalDrive();
+    if (m_autoCalStatusLabel) {
+        m_autoCalStatusLabel->setText(reason);
+        m_autoCalStatusLabel->setStyleSheet(
+            QStringLiteral("QLabel { color: %1; font-style: italic; }")
+                .arg(Style::kRedBorder));
+    }
+    qCWarning(lcPaAutoCal) << reason;
+}
+
+void PaGainByBandPage::applyAutoCalSuggestion()
+{
+    const bool linear = m_autoCalLinearPoint >= 0;
+
+    if (m_autoCalInTolerance) {
+        m_autoCalInTolerance = false;
+        m_autoCalHasSuggestion = false;
+        if (m_autoCalApplyButton) { m_autoCalApplyButton->setEnabled(false); }
+        if (m_autoCalCancelButton) { m_autoCalCancelButton->setEnabled(false); }
+        if (linear) {
+            // Keep the drive at the point so the next point or a re-measure
+            // is one click away; Clear/Base Gain restores the original.
+            if (m_autoCalStatusLabel) {
+                m_autoCalStatusLabel->setText(QStringLiteral(
+                    "In tolerance: trim unchanged. Pick another point or Clear."));
+                m_autoCalStatusLabel->setStyleSheet(
+                    QStringLiteral("QLabel { color: %1; font-style: italic; }")
+                        .arg(Style::kGreenText));
+            }
+            return;
+        }
+        // Base Gain: nothing to change; restore the drive.
+        restoreAutoCalDrive();
+        if (m_autoCalStatusLabel) {
+            m_autoCalStatusLabel->setText(
+                QStringLiteral("In tolerance: Gain unchanged; drive restored."));
+            m_autoCalStatusLabel->setStyleSheet(
+                QStringLiteral("QLabel { color: %1; font-style: italic; }")
+                    .arg(Style::kGreenText));
+        }
+        return;
+    }
+    if (!m_autoCalHasSuggestion) { return; }
+
+    if (linear && m_paProfileManager) {
+        // Adjust is subtracted from Gain, so the sign is the opposite of the
+        // base-Gain step: too much output lowers the trim.
+        const int step = m_autoCalLinearPoint;
+        const Band band = m_autoCalPendingBand;
+        if (const PaProfile* active = m_paProfileManager->activeProfile()) {
+            const double current = active->getAdjust(band, step);
+            const double next = std::clamp(
+                current - m_autoCalPendingDb, -10.0, 10.0);
+            PaProfile mutated = *active;
+            mutated.setAdjust(band, step, static_cast<float>(next));
+            m_paProfileManager->saveProfile(active->name(), mutated);
+            const int bandIdx = static_cast<int>(band);
+            if (bandIdx >= 0 && bandIdx < kPaBandCount
+                && m_adjustSpins[bandIdx][step]) {
+                m_updatingFromProfile = true;
+                m_adjustSpins[bandIdx][step]->setValue(next);
+                m_updatingFromProfile = false;
+            }
+            if (RadioModel* const radio = model()) {
+                radio->refreshDrivePower();
+            }
+            if (m_autoCalStatusLabel) {
+                m_autoCalStatusLabel->setText(
+                    QStringLiteral("Applied %1 dB to the %2 % trim. "
+                                   "Measure again or pick another point.")
+                        .arg(next - current, 0, 'f', 2)
+                        .arg((step + 1) * 10));
+                m_autoCalStatusLabel->setStyleSheet(
+                    QStringLiteral("QLabel { color: %1; font-style: italic; }")
+                        .arg(Style::kTextScale));
+            }
+        }
+        m_autoCalHasSuggestion = false;
+        if (m_autoCalApplyButton) { m_autoCalApplyButton->setEnabled(false); }
+        if (m_autoCalCancelButton) { m_autoCalCancelButton->setEnabled(false); }
+        return;
+    }
+
+    applyAutoCalGain(m_autoCalPendingDb, m_autoCalPendingBand);
+    restoreAutoCalDrive();
+    m_autoCalHasSuggestion = false;
+    if (m_autoCalApplyButton) { m_autoCalApplyButton->setEnabled(false); }
+    if (m_autoCalCancelButton) { m_autoCalCancelButton->setEnabled(false); }
+    if (m_autoCalStatusLabel) {
+        m_autoCalStatusLabel->setText(
+            QStringLiteral("Applied %1 dB to %2. Measure again.")
+                .arg(m_autoCalPendingDb, 0, 'f', 2)
+                .arg(bandLabel(m_autoCalPendingBand)));
+        m_autoCalStatusLabel->setStyleSheet(
+            QStringLiteral("QLabel { color: %1; font-style: italic; }")
+                .arg(Style::kTextScale));
+    }
+}
+
+void PaGainByBandPage::stopAutoCal()
+{
+    // "Clear": drop the suggestion and leave linearization, restoring the
+    // band's original drive/limits. Nothing is keyed, so nothing to unkey.
+    restoreAutoCalDrive();
+    m_autoCalHasSuggestion = false;
+    m_autoCalInTolerance = false;
+    m_autoCalPendingDb = 0.0;
+    m_autoCalLinearPoint = -1;
+    clearLinearHighlight();
+    if (m_autoCalModeLabel) {
+        m_autoCalModeLabel->setText(QStringLiteral("Mode: Base Gain (Max W)"));
+    }
+    if (m_autoCalApplyButton) { m_autoCalApplyButton->setEnabled(false); }
+    if (m_autoCalCancelButton) { m_autoCalCancelButton->setEnabled(false); }
+    updateAutoCalTargets();
 }
 
 void PaGainByBandPage::refreshAutoCalUi()
 {
-    if (!m_autoCalStatusLabel || !m_autoCalProgressBar) { return; }
-
-    QString status;
-    int progressPercent = 0;
-    bool error = false;
-    switch (m_autoCalState) {
-        case AutoCalState::Idle:
-            status = QStringLiteral("Idle");
-            progressPercent = 0;
-            break;
-        case AutoCalState::Initializing:
-            status = QStringLiteral("Initializing...");
-            break;
-        case AutoCalState::SweepingBand:
-        case AutoCalState::SettlingStep:
-        case AutoCalState::ReadingPower:
-        case AutoCalState::AdvancingStep: {
-            const int drivePct = (m_autoCalCurrentDriveStep + 1) * 10;
-            status = QStringLiteral("Calibrating %1 at %2%% drive")
-                         .arg(bandLabel(m_autoCalCurrentBand))
-                         .arg(drivePct);
-            // Total steps = 11 HF bands * 9 drive steps = 99.
-            int currentIdx = 0;
-            for (int i = 0; i < static_cast<int>(kAutoCalHfBands.size()); ++i) {
-                if (kAutoCalHfBands[i] == m_autoCalCurrentBand) {
-                    currentIdx = i;
-                    break;
-                }
-            }
-            const int stepCount = currentIdx * kAutoCalDriveSteps
-                                  + m_autoCalCurrentDriveStep;
-            progressPercent = (stepCount * 100)
-                              / (static_cast<int>(kAutoCalHfBands.size())
-                                 * kAutoCalDriveSteps);
-            break;
-        }
-        case AutoCalState::AdvancingBand:
-            status = QStringLiteral("Advancing to next band...");
-            break;
-        case AutoCalState::Halting:
-            status = QStringLiteral("Halting...");
-            break;
-        case AutoCalState::Completed:
-            status = QStringLiteral("Sweep complete.");
-            progressPercent = 100;
-            break;
-        case AutoCalState::Aborted:
-            // abortAutoCal already set the label to the reason string;
-            // don't overwrite.
-            return;
-    }
-
-    m_autoCalStatusLabel->setText(status);
-    if (!error) {
-        // Per STYLEGUIDE.md: muted-italic status restores the kTextScale
-        // shade (matches the auto-cal panel's idle-state look).
-        m_autoCalStatusLabel->setStyleSheet(QStringLiteral(
-            "QLabel { color: %1; font-style: italic; }").arg(Style::kTextScale));
-    }
-    m_autoCalProgressBar->setValue(progressPercent);
+    // The sequence updates its own labels; this keeps the page's UI seam
+    // coherent when called while idle.
+    if (!m_autoCalStatusLabel) { return; }
+    if (!m_autoCalRunning) { updateAutoCalTargets(); }
 }
 
 double PaGainByBandPage::autoCalBandMaxWatts(Band band) const
@@ -2080,53 +3090,33 @@ double PaGainByBandPage::autoCalBandMaxWatts(Band band) const
     return defaultMaxWattsForModelBand(m_connectedModel, band);
 }
 
-#ifdef NEREUS_BUILD_TESTS
-
-void PaGainByBandPage::simulateBandFwdReadingForTest(Band band, int driveStep,
-                                                     double watts)
+void PaGainByBandPage::hideEvent(QHideEvent* event)
 {
-    // Test seam: bypass the live RadioStatus path + settle timer.  Drives
-    // the state machine deterministically by:
-    //   1) cursor must match (band, driveStep) — otherwise no-op (the
-    //      state machine has already advanced past or hasn't reached it).
-    //   2) state must be Settling/Reading — otherwise no-op (sweep idle).
-    //   3) call into onFwdPowerSample directly.
-    if (m_autoCalState != AutoCalState::SettlingStep
-        && m_autoCalState != AutoCalState::ReadingPower) {
-        return;
+    if (m_linearizeDialog) { m_linearizeDialog->close(); }
+    // Setup closing (or this page hidden) must not leave a measurement's
+    // 100 % drive or lifted limits behind.
+    stopAutoCal();
+    if (m_autoCalTuneButton && m_autoCalTuneButton->isChecked()) {
+        if (RadioModel* const radio = model()) { radio->setTune(false); }
+        m_autoCalTuneUpdating = true;
+        m_autoCalTuneButton->setChecked(false);
+        m_autoCalTuneUpdating = false;
     }
-    if (m_autoCalCurrentBand != band
-        || m_autoCalCurrentDriveStep != driveStep) {
-        return;
-    }
-    // Stop the settle timer so we don't race a real fire.
-    if (m_autoCalSettleTimer && m_autoCalSettleTimer->isActive()) {
-        m_autoCalSettleTimer->stop();
-    }
-    onFwdPowerSample(watts, /*revW=*/0.0, /*swr=*/1.0);
+    QWidget::hideEvent(event);
 }
 
-void PaGainByBandPage::completeAutoCalForTest()
+PaGainByBandPage::~PaGainByBandPage()
 {
-    // Synchronous fast-forward: inject target-watts readings at every
-    // (band, step) pair until the state machine reaches Completed.  Used
-    // by the completion / HF-only test cases.
-    int safetyTicks = 11 * kAutoCalDriveSteps + 5;  // a couple of slack
-    while (m_autoCalState != AutoCalState::Completed
-           && m_autoCalState != AutoCalState::Aborted
-           && m_autoCalState != AutoCalState::Idle
-           && safetyTicks-- > 0) {
-        const Band band = m_autoCalCurrentBand;
-        const int step = m_autoCalCurrentDriveStep;
-        if (!isAutoCalBand(band)) {
-            // Should never happen — sweep is HF-only by construction.
-            break;
+    // Never leave a carrier on or a measurement drive behind.
+    if (m_autoCalSettleTimer) { m_autoCalSettleTimer->stop(); }
+    restoreAutoCalDrive();
+    if (m_autoCalRunning) {
+        if (RadioModel* const radio = model()) {
+            radio->setTune(false);
         }
-        simulateBandFwdReadingForTest(band, step, m_autoCalTargetWatts);
+        m_autoCalRunning = false;
     }
 }
-
-#endif  // NEREUS_BUILD_TESTS
 
 // ── Wiring helpers ───────────────────────────────────────────────────────────
 

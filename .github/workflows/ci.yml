@@ -484,7 +484,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             cmake ninja-build pkg-config g++ mold \
-            libgl1-mesa-dev libfftw3-dev libmp3lame-dev libasound2-dev libudev-dev libjack-jackd2-dev \
+            libgl1-mesa-dev libfftw3-dev libasound2-dev libudev-dev libjack-jackd2-dev \
             libpipewire-0.3-dev libpulse-dev libssl-dev \
             autoconf automake libtool wget \
             python3-websockets python3-cryptography \
@@ -783,7 +783,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             cmake ninja-build pkg-config g++ mold ccache \
-            libgl1-mesa-dev libfftw3-dev libmp3lame-dev \
+            libgl1-mesa-dev libfftw3-dev \
             libasound2-dev libudev-dev libjack-jackd2-dev \
             libpipewire-0.3-dev libpulse-dev \
             libssl-dev \
@@ -829,8 +829,7 @@ jobs:
           # declaring the dependency this build actually has, the same
           # way fftw already is declared.
           # ccache: see "Restore compiler cache" below.
-          # lame: the MP3 encoder for recordings (docs/attribution/LAME-PROVENANCE.md).
-          brew install qt@6 ninja fftw openssl@3 autoconf automake libtool wget ccache lame
+          brew install qt@6 ninja fftw openssl@3 autoconf automake libtool wget ccache
 
       # ------------------------------------------------------------------
       # Windows dependencies
@@ -916,7 +915,7 @@ jobs:
         with:
           msystem: MINGW64
           update: true
-          install: mingw-w64-x86_64-openssl mingw-w64-x86_64-ccache mingw-w64-x86_64-lame
+          install: mingw-w64-x86_64-openssl mingw-w64-x86_64-ccache
 
       # Fix round 2 assertions kept exactly as they were (reviewer judged
       # them correct): a directory existing is not proof it is usable.
@@ -1192,8 +1191,7 @@ jobs:
             ${CCACHE_BIN:+-DNEREUS_USE_PCH=OFF} \
             -DNEREUS_BUILD_TESTS=ON \
             -DNEREUS_GPU_SPECTRUM=ON \
-            -DOPENSSL_ROOT_DIR="$OPENSSL_ROOT_DIR" \
-            -DLAME_ROOT="$OPENSSL_ROOT_DIR"
+            -DOPENSSL_ROOT_DIR="$OPENSSL_ROOT_DIR"
 
       # ------------------------------------------------------------------
       # Build
@@ -1227,38 +1225,6 @@ jobs:
             Linux)   cmake --build build -j"$(nproc)" --target all all_tests ;;
             macOS)   cmake --build build -j"$(sysctl -n hw.ncpu)" ;;
             Windows) cmake --build build -j"$NUMBER_OF_PROCESSORS" --target all tst_wasapi_notifier_lifetime tst_wasapi_policy tst_audio_device_catalog tst_station_foreign_lock tst_station_handover ;;
-          esac
-
-      # Recordings plan Task 1, decision check V10: whether the LAME this leg
-      # links exports LAME's own MP3 decoder (hip_decode_init, hip_decode).
-      # NereusSDR decodes with minimp3 on every platform either way
-      # (docs/attribution/LAME-PROVENANCE.md); this prints the evidence, and
-      # fails only when the leg found no LAME at all.
-      - name: LAME exports
-        if: env.HEAVY == 'true'
-        shell: bash
-        run: |
-          lib=$(sed -n 's/^LAME_LIBRARY:FILEPATH=//p' build/CMakeCache.txt)
-          echo "LAME_LIBRARY=${lib}"
-          if [ -z "$lib" ] || [ "$lib" = "LAME_LIBRARY-NOTFOUND" ]; then
-            echo "::error::CMake found no LAME on this leg, so MP3 recordings are off."
-            exit 1
-          fi
-          case "$RUNNER_OS" in
-            Linux)
-              real=$(readlink -f "$lib")
-              echo "library: $real"
-              nm -D --defined-only "$real" | grep -E ' (hip_decode|lame_encode)' || true ;;
-            macOS)
-              real=$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$lib")
-              echo "library: $real"
-              nm -gU "$real" | grep -E ' _(hip_decode|lame_encode)' || true ;;
-            Windows)
-              dll=$(sed -n 's/^LAME_DLL:FILEPATH=//p' build/CMakeCache.txt)
-              echo "library: $dll"
-              # Qt's MinGW objdump: MSYS2 here has no binutils installed.
-              objdump="$(cygpath -u "$IQTA_TOOLS")/mingw1310_64/bin/objdump.exe"
-              "$objdump" -p "$dll" | grep -E 'DLL Name|hip_decode|lame_encode' || true ;;
           esac
 
       # Every libcrypto or libssl the built binaries link must be openssl@3's
@@ -1697,7 +1663,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             cmake ninja-build pkg-config g++ mold ccache \
-            libgl1-mesa-dev libfftw3-dev libmp3lame-dev \
+            libgl1-mesa-dev libfftw3-dev \
             libasound2-dev libudev-dev libjack-jackd2-dev \
             libpipewire-0.3-dev libpulse-dev \
             libssl-dev \
@@ -1917,7 +1883,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             cmake ninja-build pkg-config g++ mold ccache \
-            libgl1-mesa-dev libfftw3-dev libmp3lame-dev \
+            libgl1-mesa-dev libfftw3-dev \
             libasound2-dev libudev-dev libjack-jackd2-dev \
             libpipewire-0.3-dev libpulse-dev \
             libssl-dev

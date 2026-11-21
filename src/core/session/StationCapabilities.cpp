@@ -7,9 +7,6 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-11-15: Recording plan Task 5: recordingsVersion, after bandStackVersion and before
-//               txSsbModMonitorVersion, for a peer that declared recordings.
-//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05: Band stack plan Task 4: bandStackVersion, after nnrLoadWarningVersion and before
 //               coreBuildInfo, for a peer that declared bandStack.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -667,13 +664,6 @@ QList<MirrorUpdate> StationCapabilities::toUpdates() const
     if (bandStackVersion > 0) {
         updates.append(intEntry("bandStackVersion", bandStackVersion));
     }
-    // Recording plan Task 5: the `recordings` object and the recordings.*
-    // verbs, after bandStackVersion and before the entries every peer gets,
-    // only for a peer that declared recordings; any other peer is sent no
-    // entry.
-    if (recordingsVersion > 0) {
-        updates.append(intEntry("recordingsVersion", recordingsVersion));
-    }
     // SSB Mod Monitor: after every other entry and before coreBuildInfo
     // (which stays last), so no entry a peer already reads moves. Omitted at
     // 0, and sent only in the minor-11 block.
@@ -708,7 +698,6 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
     int displayCodecEntries = 0;
     int stationRoundtableEntries = 0;
     int bandStackEntries = 0;
-    int recordingsEntries = 0;
     int stationCatEntries = 0;
     int radioSpeakerEntries = 0;
     int coreSpeakerEntries = 0;
@@ -769,15 +758,6 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
                 && u.value.typeId() == QMetaType::LongLong) {
                 const qlonglong version = u.value.toLongLong();
                 caps.bandStackVersion = version > 0 && version <= 65535
-                    ? static_cast<int>(version) : 0;
-            }
-        } else if (u.name == "recordingsVersion") {
-            // Recording plan Task 5: one entry, an Int64 of 1 or more.
-            if (++recordingsEntries == 1 && u.ordinal == 0
-                && u.kind == MirrorWireKind::Int64
-                && u.value.typeId() == QMetaType::LongLong) {
-                const qlonglong version = u.value.toLongLong();
-                caps.recordingsVersion = version > 0 && version <= 65535
                     ? static_cast<int>(version) : 0;
             }
         } else if (u.name == "rxMeterStampsVersion") {

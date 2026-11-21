@@ -224,6 +224,42 @@ volRow->addWidget(m_monitorVolumeValue);
 
 vbox->addLayout(volRow);
 
+// REC / PLAY / STOP for the processed TX audio. Recording taps the TX
+// chain's monitor audio, so it works with MON on or off; playback uses the
+// default output for comparison while adjusting EQ/CFC.
+auto* recRow = new QHBoxLayout;
+recRow->setSpacing(2);
+
+m_recBtn = new QPushButton(QStringLiteral("REC"), this);
+m_recBtn->setCheckable(true);
+m_recBtn->setFixedHeight(22);
+m_recBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+m_recBtn->setStyleSheet(Style::buttonBaseStyle() + Style::redCheckedStyle());
+m_recBtn->setAccessibleName(QStringLiteral("Record TX audio"));
+m_recBtn->setToolTip(QStringLiteral(
+    "Record the processed transmit audio (mic > EQ > CFC > leveler > ALC) "
+    "to a WAV file in Music/NereusSDR."));
+recRow->addWidget(m_recBtn, 1);
+
+m_playBtn = new QPushButton(QStringLiteral("PLAY"), this);
+m_playBtn->setFixedHeight(22);
+m_playBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+m_playBtn->setStyleSheet(Style::buttonBaseStyle());
+m_playBtn->setAccessibleName(QStringLiteral("Play last TX audio recording"));
+m_playBtn->setToolTip(QStringLiteral(
+    "Play the last TX audio recording on this computer's default output."));
+recRow->addWidget(m_playBtn, 1);
+
+m_stopBtn = new QPushButton(QStringLiteral("STOP"), this);
+m_stopBtn->setFixedHeight(22);
+m_stopBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+m_stopBtn->setStyleSheet(Style::buttonBaseStyle());
+m_stopBtn->setAccessibleName(QStringLiteral("Stop TX audio recording or playback"));
+m_stopBtn->setToolTip(QStringLiteral("Stop recording or playback."));
+recRow->addWidget(m_stopBtn, 1);
+
+vbox->addLayout(recRow);
+
 // The parts a container copy hides and orders (SectionParts).
 m_parts.add(QStringLiteral("mon"), QStringLiteral("MON button"), 0, {m_monBtn});
 m_parts.add(QStringLiteral("speakers"), QStringLiteral("Speakers button"), 0, {m_monSpeakersBtn});
@@ -231,6 +267,9 @@ m_parts.add(QStringLiteral("phones"), QStringLiteral("Phones button"), 0, {m_mon
 m_parts.add(QStringLiteral("notice"), QStringLiteral("Silent-monitor notice"), -1, {m_monOutputNotice});
 m_parts.add(QStringLiteral("volume"), QStringLiteral("Monitor volume"), -1,
             {volLbl, m_monitorVolumeSlider, m_monitorVolumeValue});
+m_parts.add(QStringLiteral("rec"), QStringLiteral("Record button"), -1, {m_recBtn});
+m_parts.add(QStringLiteral("play"), QStringLiteral("Play button"), -1, {m_playBtn});
+m_parts.add(QStringLiteral("stop"), QStringLiteral("Stop button"), -1, {m_stopBtn});
 }
 
 // R-R3-45: the MON output pair shows the choice; clicking the checked one

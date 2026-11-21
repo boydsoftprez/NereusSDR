@@ -126,6 +126,9 @@ public:
     QLabel*      outputNotice() const { return m_monOutputNotice; }
     QSlider*     volumeSlider() const { return m_monitorVolumeSlider; }
     QLabel*      volumeValue() const { return m_monitorVolumeValue; }
+    QPushButton* recordButton() const { return m_recBtn; }
+    QPushButton* playButton() const { return m_playBtn; }
+    QPushButton* stopButton() const { return m_stopBtn; }
 
     // R-R3-45: show the MON output choice (true = headphones) without
     // writing it back, then refresh the notice.
@@ -163,6 +166,9 @@ private:
     QLabel*      m_monOutputNotice = nullptr;
     QSlider*     m_monitorVolumeSlider = nullptr;
     QLabel*      m_monitorVolumeValue = nullptr;
+    QPushButton* m_recBtn = nullptr;
+    QPushButton* m_playBtn = nullptr;
+    QPushButton* m_stopBtn = nullptr;
 
     bool m_headphonesAvailable = false;
     bool m_headphonesEnabled   = false;

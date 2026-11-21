@@ -2,17 +2,11 @@
 // Modification history (NereusSDR):
 //   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 5.
 //                AI-assisted implementation via Anthropic Claude Code.
-//   2026-11-15 - J.J. Boyd (KG4VCF), hosted Linux CI: the test runs as four
-//                ctest entries (main() deals the functions), each case still
-//                on its own window. AI-assisted via Anthropic Claude Code.
-//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 13: F3 (msg.3) in CW
-//                is CW message 3. AI-assisted via Anthropic Claude Code.
 // no-port-check: NereusSDR-original test.
 // CW messages and the comma, period and slash keys on real local, hosting and
 // remote windows. A fake connection's key line stands in for the radio.
 #include <QtTest/QtTest>
 
-#include <QApplication>
 #include <QLoggingCategory>
 #include <QScopeGuard>
 #include <QSignalSpy>
@@ -20,7 +14,6 @@
 #include <QTemporaryDir>
 
 #include <memory>
-#include <optional>
 
 #include "UnusedLoopbackPort.h"
 #include "core/AppSettings.h"
@@ -38,7 +31,6 @@
 #include "core/session/StationClient.h"
 #include "core/session/StationServer.h"
 #include "core/SliceOwnership.h"
-#include "TestFunctionGroups.h"
 #include "fakes/RemoteWindowHarness.h"
 #include "gui/DesktopStationController.h"
 #include "gui/MainWindow.h"
@@ -637,23 +629,6 @@ private slots:
         QVERIFY(!w.model->cwxSender()->isSending());
     }
 
-    // Recording plan Task 13 (design V8): in CW, F3 is CW message 3.
-    void inCwTheMessageKeySendsTheCwMessage()
-    {
-        LocalWindow w;
-        w.press(QStringLiteral("msg.3"));
-        QVERIFY(toastShown(w.window, QString::fromLatin1(kCwxMemoryEmptyText).arg(3)));
-        QVERIFY(!w.model->cwxSender()->isSending());
-
-        w.model->transmitModel().setCwxMemory3(QStringLiteral("CQ TEST"));
-        pump();
-        CwxSender* const sender = w.model->cwxSender();
-        w.press(QStringLiteral("msg.3"));
-        QTRY_VERIFY(sender->isSending());
-        w.press(kStop);
-        QTRY_VERIFY(!sender->isSending());
-    }
-
     void onlyAKeysOwnRefusalIsToasted()
     {
         LocalWindow w;
@@ -1052,31 +1027,5 @@ private slots:
     }
 };
 
-int main(int argc, char** argv)
-{
-    QApplication app(argc, argv);
-    app.setAttribute(Qt::AA_Use96Dpi, true);
-    TestHotKeyCw test;
-    QTEST_SET_MAIN_SOURCE_PATH
-    // Hosted Linux CI, 2026-11-15: every case builds its own window, and the
-    // whole run took 92 to 102 s of ctest's 120 s on a 4-core runner. The
-    // functions go in turn, in declaration order, to tst_hot_key_cw (the rest),
-    // _part2, _part3 and _part4 (tests/CMakeLists.txt), so a new function
-    // lands in one with no list to edit. Each case still builds its own
-    // window.
-    constexpr int kEntries = 4;
-    QList<NereusSDR::TestFunctionGroups::Group> groups{
-        {QStringLiteral("part2"), {}}, {QStringLiteral("part3"), {}}, {QStringLiteral("part4"), {}}};
-    int index = 0;
-    for (const QString& name : NereusSDR::TestFunctionGroups::testFunctions(test.metaObject())) {
-        // Every fourth stays in the rest, so the rest is never empty.
-        const int slot = index++ % kEntries;
-        if (slot > 0) {
-            groups[slot - 1].entries.append(name);
-        }
-    }
-    const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
-        test.metaObject(), app.arguments(), "NEREUS_HOT_KEY_CW_GROUP", groups);
-    return arguments ? QTest::qExec(&test, *arguments) : 1;
-}
+QTEST_MAIN(TestHotKeyCw)
 #include "tst_hot_key_cw.moc"

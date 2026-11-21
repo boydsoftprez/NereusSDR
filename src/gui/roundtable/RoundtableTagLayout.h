@@ -7,9 +7,9 @@
 // Roundtable on the panadapter and the VFO flag (design 11.2, U4, U7, U8,
 // U10; mockups placement.html and the tag and flag parts of board.html).
 //
-// Panadapter tags: one per room in the Roundtable strip under the frequency
-// scale, each the state glyph, the talker's callsign (or Unknown, Double,
-// Quiet) and the member count. layoutRoundtableTags() is the pure part: where each tag
+// Panadapter tags: one per room along the foot of the spectrum, each the
+// state glyph, the talker's callsign (or Unknown, Double, Quiet) and the
+// member count. layoutRoundtableTags() is the pure part: where each tag
 // goes across the pan and which ones fold.
 //
 //   - Tags that would overlap form a group. A group's tags that can sit
@@ -31,23 +31,6 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-11-16: Review fixes: kRoundtableStripMinWaterfall, the line's
-//               RoundtableStripLineSide, an upward anchor for
-//               placeRoundtableDetails and paintRoundtableDetailsBacking.
-//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
-//   2026-11-16: The details open over the waterfall, under the strip:
-//               placeRoundtableDetails, RoundtableDetailsPlacement,
-//               kRoundtableDetailsMinBelow. placeRoundtableInspector and
-//               kRoundtableInspectorMinStretch are gone. J.J. Boyd (KG4VCF),
-//               AI-assisted via Anthropic Claude Code.
-//   2026-11-16: Your frequency's line in the strip replaces the card on the
-//               spectrum: placeRoundtableStripLine, paintRoundtableStripLine,
-//               roundtableStripLineParts. placeRoundtableCard, paintRoundtableCard
-//               and RoundtableCardPlacement are gone. J.J. Boyd (KG4VCF),
-//               AI-assisted via Anthropic Claude Code.
-//   2026-11-16: The Roundtable strip between the frequency scale and the
-//               waterfall: kRoundtableStripHeight, roundtableStripShownFor.
-//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-03: The view of another frequency: RoundtableViewModel,
 //               paintRoundtableView and its text (overlay design D22, D23).
 //               RoundtableCardModel::onFrequency, RoundtableCardRow::label.
@@ -206,19 +189,6 @@ NEREUS_GUI_EXPORT QList<RoundtableTag> roundtableTagsFor(const RoundtableModel* 
 /// everything, D21); Live otherwise.
 NEREUS_GUI_EXPORT RoundtableTagDisplay roundtableTagDisplayFor(const RoundtableModel* model);
 
-/// How tall the Roundtable strip is: the row between the frequency scale and
-/// the waterfall that holds your frequency's line and the tags.
-inline constexpr int kRoundtableStripHeight = 30;
-/// The least waterfall the strip leaves under it. When the waterfall's share
-/// (its height before the strip comes out) is under kRoundtableStripHeight +
-/// this, the strip is not laid out and the waterfall keeps its whole share.
-inline constexpr int kRoundtableStripMinWaterfall = 28;
-
-/// Whether the pans show the Roundtable strip: Roundtable is available and its
-/// link is anything but Off (Connecting, Reconnecting, Offline, Hidden and Live
-/// all show it). False without a model.
-NEREUS_GUI_EXPORT bool roundtableStripShownFor(const RoundtableModel* model);
-
 /// Where a reading sits on a card's meter, the flag's S scale: -121 dBm is
 /// empty and -33 dBm is full (overlay design D11).
 NEREUS_GUI_EXPORT double roundtableMeterFraction(double dbm);
@@ -269,40 +239,44 @@ struct RoundtableCardModel {
 /// words of a note. Such a change moves nothing and redraws in place (D14).
 NEREUS_GUI_EXPORT bool roundtableCardSameStructure(const RoundtableCardModel& a, const RoundtableCardModel& b);
 
-/// The inspector's width on the desktop pan (overlay design D34; strip design 5).
+/// Where the card goes on the desktop pan (overlay design D16). card is null
+/// when no stretch of the pan has room. rows is how many reading rows fit, at
+/// most 5, and moreRows the rest (D19). beside is true when the far side of the
+/// flag had no room and the card came back on the near side.
+struct RoundtableCardPlacement {
+    QRect card;
+    int rows = 0;
+    int moreRows = 0;
+    bool beside = false;
+};
+
+/// Pure. `pan` is the area the card may use, its bottom the foot the card stands
+/// on; `dialX` is the active slice's dial; `flags` are every flag and control on
+/// the pan, each kept clear from pan top to foot. `fm` is the metrics of the
+/// card's name font (12 px bold). Only structure moves the card: signal values,
+/// ages and the clock change nothing here (D14).
+NEREUS_GUI_EXPORT RoundtableCardPlacement placeRoundtableCard(const RoundtableCardModel& card, const QRect& pan,
+                                                              int dialX, const QVector<QRect>& flags,
+                                                              bool flagFlipped, const QFontMetrics& fm);
+
+/// The inspector's width, and the narrowest stretch it takes, on the desktop pan
+/// (overlay design D34, D37; overlay.js placeIns).
 inline constexpr int kRoundtableInspectorWidth = 300;
+inline constexpr int kRoundtableInspectorMinStretch = 260;
 
 /// How tall the fade over a cut body is: never more than half of it, so a short
 /// body's rows stay readable.
 NEREUS_GUI_EXPORT int roundtableViewFadeHeight(int bodyHeight);
 
-/// The details' gap to the strip above and the waterfall's foot below.
-inline constexpr int kRoundtableDetailsGap = 4;
-/// Under this much room over the waterfall, the details may open upward.
-inline constexpr int kRoundtableDetailsMinBelow = 140;
-
-/// Where the details stand with the strip (design V4, V5). Pure. `below` is the
-/// waterfall area the details may cover (already cut clear of the time strip on
-/// its right edge); `above` is the spectrum from its top to the divider's
-/// top edge. `anchorLeft` is the left edge to line up with (your line's
-/// left when it is drawn, else dialX + 8, or dialX - 8 - width when the flag
-/// side says left). `height` is what the details want. They hang from
-/// below.top() + 4, cut to below.bottom() - 4, 300 wide or the area's width if
-/// narrower, left clamped into the area. When below has under 140 px of room
-/// (below.height() - 8 < 140) and above has more room than below, they stand on
-/// above's bottom edge instead, cut to above's height. `upward` reports which.
-/// Upward they line up with `upwardAnchorLeft` when given, else `anchorLeft`.
-struct RoundtableDetailsPlacement {
-    QRect rect;
-    bool upward = false;
-};
-NEREUS_GUI_EXPORT RoundtableDetailsPlacement placeRoundtableDetails(
-    const QRect& below, const QRect& above, int anchorLeft, int height,
-    std::optional<int> upwardAnchorLeft = std::nullopt);
-
-/// An opaque base under the details' frame at `rect`, for details standing
-/// over the spectrum, where a flag may be under them.
-NEREUS_GUI_EXPORT void paintRoundtableDetailsBacking(QPainter& p, const QRect& rect);
+/// Where the inspector stands (overlay design D34, D37). Pure. `pan` is the
+/// spectrum from its top to the foot line, its bottom the foot. `height` is what
+/// the inspector wants, cut to the pan. `flags` and `flagFlipped` as
+/// placeRoundtableCard. It takes the stretch nearest the dial, past the flag if one
+/// has room, narrower than 300 only in a stretch that is, and sits at the stretch's
+/// edge unless the dial lies inside it. With no stretch at least 260 wide it stays
+/// open at the pan's left edge, over the flag. Null only for an empty pan.
+NEREUS_GUI_EXPORT QRect placeRoundtableInspector(const QRect& pan, int dialX, const QVector<QRect>& flags,
+                                                 bool flagFlipped, int height);
 
 /// A reading in the chosen format: "dBm", "S-units" or "Both".
 NEREUS_GUI_EXPORT QString roundtableSignalText(double dbm, const QString& format);
@@ -310,57 +284,12 @@ NEREUS_GUI_EXPORT QString roundtableSignalText(double dbm, const QString& format
 /// The card's state color, for its border and the tick to the dial (D15).
 NEREUS_GUI_EXPORT QColor roundtableCardColor(const RoundtableCardModel& card);
 
-/// Where your frequency's line sits in the strip. line is null when the card
-/// has nothing to show (Kind::Quiet with no note) or no side has room for the
-/// head. readings is how many reading rows are drawn, moreReadings the rest.
-struct RoundtableStripLinePlacement {
-    QRect line;
-    int readings = 0;
-    int moreReadings = 0;
-    bool operator==(const RoundtableStripLinePlacement&) const = default;
-};
-
-/// Pure (strip design 3, 4; the board's placeStrip). `strip` is the strip's
-/// rect, `dialX` the active slice's dial, `flagFlipped` true when its flag hangs
-/// left of the dial. The line is 24 px high, 3 px under the strip's top, beside
-/// the dial on the flag's far side when it fits there or that side is the
-/// roomier, else on the near side; readings drop from the end, behind
-/// "+N more", until it fits. It depends only on the card's structure and the
-/// widths of its texts in `device`'s fonts: each reading is its call's width
-/// plus a value column as wide as the format's widest words (-121 dBm or
-/// -33 dBm) and an age column for two digits and the unit, at least 78 px, and
-/// the clock and a last talker's "Last heard" take their widest two digits, so
-/// new readings, ages and clocks move nothing.
-/// With `side` Left or Right the line goes on that side of the dial only,
-/// readings dropping until it fits, and is null when not even the head fits
-/// there (a flag hanging into the strip on the other side).
-enum class RoundtableStripLineSide { Either, Left, Right };
-NEREUS_GUI_EXPORT RoundtableStripLinePlacement placeRoundtableStripLine(
-    const RoundtableCardModel& card, const QRect& strip, int dialX, bool flagFlipped,
-    const QString& format, const QPaintDevice* device,
-    RoundtableStripLineSide side = RoundtableStripLineSide::Either);
-
-/// Draws the line where `placed` says: the rail, the head, the clock, each
-/// reading with its meter, then "+N more". `dimmed` is true while you are
-/// hidden; `open` while the inspector shows your own frequency.
-NEREUS_GUI_EXPORT void paintRoundtableStripLine(
-    QPainter& p, const RoundtableCardModel& card, const RoundtableStripLinePlacement& placed,
-    const QString& format, bool dimmed, bool open);
-
-/// Where paintRoundtableStripLine draws each piece of a placed line, in the
-/// line's coordinates. Null rects for what the line does not show. Each reading
-/// is its text row and the meter under it; the meter is its bottom 3 px.
-struct RoundtableStripLineParts {
-    QRect head;               // the glyph and who
-    QVector<QRect> names;     // a double's names, side by side
-    QRect clock;
-    QRect note;               // the link's note, a last talker's ended note
-    QVector<QRect> readings;
-    QRect more;               // "+N more"
-};
-NEREUS_GUI_EXPORT RoundtableStripLineParts roundtableStripLineParts(
-    const RoundtableCardModel& card, const RoundtableStripLinePlacement& placed, const QString& format,
-    const QPaintDevice* device);
+/// Draws the card where `placed` says (D10, D11, D13, D15). `format` is the
+/// signal format, `fm` the metrics given to placeRoundtableCard, `dimmed` is
+/// true while you are hidden.
+NEREUS_GUI_EXPORT void paintRoundtableCard(QPainter& p, const RoundtableCardModel& card,
+                                           const RoundtableCardPlacement& placed, const QString& format,
+                                           const QFontMetrics& fm, bool dimmed);
 
 /// Fills `rect` with `on`/`off` stripes at 135 degrees, as the board's
 /// repeating gradients: `onWidth` and `offWidth` along the gradient, in pixels.
