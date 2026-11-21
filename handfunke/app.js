@@ -11,6 +11,7 @@ import { Mikrofon, mikrofonMoeglich } from './mikrofon.js';
 import { Sammelstelle, zeileLesen, befundLesen, zeitKurz, dupeSatz }
   from './logbuch.js';
 import { spotLesen, marken, trefferBei, trefferAufSchrift } from './spots.js';
+import { Sendetasten, SENDEN, TUNE, ablehnText } from './sendetaste.js';
 import { Zeichenbremse } from './ton-vorrang.js';
 import { bildIstAlt } from './aufwachen.js';
 import { standLesen, zustandText, fehlerText as rotorFehlerText,
@@ -46,6 +47,13 @@ const FILTER = {
   digi:  [[1000, '1.0k'], [1500, '1.5k'], [2400, '2.4k'], [3000, '3.0k']],
   am:    [[5000, '5.0k'], [8000, '8.0k'], [10000, '10k'], [16000, '16k']],
 };
+
+// ── Sendefreigabe: der Riegel im Quelltext ──────────────────────────────────
+//
+// FALSE, bis Martin im Chat ausdruecklich freigibt (erste Sendung nur an der
+// Dummy-Last, nie an der Antenne). Solange false, ist die Seite so tot wie
+// zuvor: keine Entsicherung, kein `trx:…,true`, kein `tune:…,true`.
+const SENDEN_FREIGABE = false;
 
 const state = {
   trx: 0,
@@ -2842,7 +2850,8 @@ function schleife(t) {
     txEl.innerHTML = sendetGerade
       ? (link.st.tune ? 'STATION STIMMT AB <small>EMPFÄNGER STUMM</small>'
                       : 'STATION SENDET <small>EMPFÄNGER STUMM</small>')
-      : 'SENDEN <small>NUR IN DER APP</small>';
+      : (SENDEN_FREIGABE ? 'SENDEN <small>HALTEN</small>'
+                         : 'SENDEN <small>NUR IN DER APP</small>');
   }
   requestAnimationFrame(schleife);
 }
@@ -2976,4 +2985,78 @@ zeichneBedienung();
                                      : 'NIMMT AUF …';
     meldung.className = sp >= 0.99 ? 'mikmeldung warn' : 'mikmeldung';
   }, 100);
+}
+
+
+// ── Die Haltetasten: SENDEN und TUNE ───────────────────────────────────────
+//
+// Entwurf 1 (Haltetaste), gewaehlt 2026-10-04: Druecken tastet, Loslassen
+// loest. Es gibt keinen Sendezustand ohne Finger. Die Logik steht in
+// sendetaste.js und ist dort geprueft (pruefe-sendetaste.mjs); hier nur
+// die Verdrahtung. Der Ton kommt vom Mac, das Telefon tastet nur.
+//
+// Ohne SENDEN_FREIGABE passiert hier NICHTS: die Entsicherung bleibt
+// verborgen, beide Tasten behalten `.locked` (pointer-events:none).
+{
+  const tx = $('tx'), tune = $('tune'), sicher = $('txsicher');
+  const taste = new Sendetasten({
+    freigegeben: SENDEN_FREIGABE,
+    sende: (cmd) => { if (link.ws && link.ws.readyState === 1) { link.send(cmd); return true; }
+                      return false; },
+  });
+  const jetzt = () => performance.now();
+
+  const zeigen = () => {
+    const scharf = taste.entsichert(jetzt());
+    sicher.classList.toggle('scharf', scharf);
+    sicher.textContent = scharf ? 'SCHARF' : 'ENTSICHERN';
+    for (const el of [tx, tune]) { el.classList.toggle('locked', !scharf); }
+    const h = taste.halten;
+    tx.classList.toggle('haelt', !!h && h.art === SENDEN);
+    tune.classList.toggle('haelt', !!h && h.art === TUNE);
+  };
+
+  const loesen = () => { taste.loslassen(jetzt()); zeigen(); };
+
+  if (taste.moeglich) {
+    sicher.hidden = false;
+    tx.innerHTML = 'SENDEN <small>HALTEN</small>';
+    tune.innerHTML = 'TUNE <small>HALTEN</small>';
+    sicher.addEventListener('click', () => {
+      if (taste.entsichert(jetzt())) { taste.verriegeln(); } else { taste.entsichern(jetzt()); }
+      zeigen();
+    });
+
+    const halten = (el, art) => {
+      el.addEventListener('pointerdown', (ev) => {
+        ev.preventDefault();
+        try { el.setPointerCapture(ev.pointerId); } catch (_) { /* egal */ }
+        taste.druecken(art, state.trx, jetzt());
+        zeigen();
+      });
+      // Jeder Weg, auf dem der Finger weg ist, loest.
+      for (const t of ['pointerup', 'pointercancel', 'lostpointercapture', 'contextmenu']) {
+        el.addEventListener(t, (ev) => { ev.preventDefault(); loesen(); });
+      }
+    };
+    halten(tx, SENDEN);
+    halten(tune, TUNE);
+
+    // Niemand mehr da, der loslassen koennte: Hintergrund, Sperren, Wegwischen.
+    document.addEventListener('visibilitychange', () => { if (document.hidden) { loesen(); } });
+    window.addEventListener('pagehide', loesen);
+    window.addEventListener('blur', loesen);
+    // Leitung weg -> verriegeln. Der Server loest selbst beim Trennen.
+    link.addEventListener('state', () => {
+      if (!(link.ws && link.ws.readyState === 1)) { taste.verbindungWeg(); zeigen(); }
+    });
+    // Lehnt der Server ab, wird geloest und der Grund gesagt.
+    link.addEventListener('txfehler', (e) => {
+      taste.loslassen(0); taste.verriegeln(); zeigen();
+      const m = $('mikmeldung');
+      if (m) { m.className = 'mikmeldung warn';
+               m.textContent = 'SENDEN ABGELEHNT \u2014 ' + ablehnText(e.detail && e.detail.text); }
+    });
+    setInterval(() => { if (taste.takt(jetzt())) { zeigen(); } }, 250);
+  }
 }

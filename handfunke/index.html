@@ -213,6 +213,9 @@ body{padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
 </div>
 
 <div class="txrow">
+  <!-- Entsicherung. Bleibt verborgen, solange SENDEN_FREIGABE in app.js auf
+       false steht — dann ist die Seite so tot wie bisher. -->
+  <button class="txsicher" id="txsicher" type="button" hidden>ENTSICHERN</button>
   <div class="tx locked" id="tx">SENDEN <small>NUR IN DER APP</small></div>
   <div class="tune locked" id="tune">TUNE <small>NUR IN DER APP</small></div>
 </div>

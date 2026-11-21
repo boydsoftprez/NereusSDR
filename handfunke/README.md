@@ -26,6 +26,23 @@ beides allein am `trx:`-Weg, und ein vom Netz getasteter Träger blieb
 stehen, wenn der Client verschwand. Diese Zusage stand hier also schon,
 bevor sie stimmte; jetzt hält sie.
 
+## Die Haltetasten (seit 2026-11-21, ab Werk AUS)
+
+SENDEN und TUNE sind als **Haltetasten** gebaut (Martins Wahl vom 2026-10-04):
+Drücken tastet (`trx:N,true` / `tune:N,true`), Loslassen löst. Die Logik steht
+in `sendetaste.js`, geprüft von `pruefe-sendetaste.mjs`.
+
+* **Zwei Riegel.** Im Quelltext `SENDEN_FREIGABE` (`app.js`) — steht auf
+  `false`, bis Martin im Chat freigibt; dann ist die Seite so tot wie vorher.
+  Dazu die Entsicherung auf der Seite (ENTSICHERN → SCHARF, verfällt nach 15 s).
+* **Kein Sendezustand ohne Finger.** Es löst: Loslassen, `pointercancel`,
+  Verlust des Zeigers, Seite im Hintergrund, `pagehide`, Fokusverlust,
+  Ablehnung durch den Server und eine eigene Grenze von 60 s. Bricht die
+  Leitung ab, löst der Server (Besitzer, Wachhund, Sendezeit-Deckel
+  180 s) — diese Zusagen bleiben unverändert.
+* SENDEN und TUNE schließen einander aus. Der Ton kommt vom Mac.
+* Erste Sendung nur an der Dummy-Last.
+
 ## Aufbau
 
 | Datei           | Aufgabe |

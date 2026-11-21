@@ -8,14 +8,16 @@
   --measured:#d8a55f; --amber-dim:#6b5630;  /* gemessen */
   --ok:#6fa384; --warn:#a8853f; --danger:#a86b6d;
   --tx-top:#a87a3c; --tx-bot:#8a6a30; --tx-border:#c2924f; --tx-text:#17130a;
+  /* Das Orange des Plus am Mac (kPlusTop/Bottom/Border): fuer alles Antippbare in Orange */
+  --plus-top:#f0b44c; --plus-bot:#d18f2a; --plus-border:#f5c56a;
   --tune-top:#7a5a2c; --tune-bot:#634c24; --tune-border:#9a763c;
   /* Panadapter-Flaeche: Longpaths app-bg, Wert fuer Wert (StyleConstants.h
      kAppBg). Die blaue Fassung steht eine Zeile tiefer -- siehe
      WASSERFALL_BLAU in app.js. */
   --pan-bg:#08080a; --trace:#c2924f; --grid:#8a8f96; --grid-text:#9aa0a8;
   --glass-btn-top:#222227; --glass-btn-bot:#141417;
-  --glass-sel-top:#2f5f92; --glass-sel-bot:#1e3d5f;
-  --glass-sel-border:#3d78b0; --glass-sel-text:#dbe9f8;
+  --glass-sel-top:#131317; --glass-sel-bot:#0d0d10;
+  --glass-sel-border:#55555e; --glass-sel-text:#f0f0f4;
   --badge-info:#161e27;
   --light:rgba(255,255,255,.07);       /* kGlassLightAlpha 18/255 */
   --shade:rgba(0,0,0,.63);             /* kGlassShadeAlpha 160/255 */
@@ -185,7 +187,7 @@ header .rate{font-size:var(--f-caption);color:var(--text-inactive)}
 .meter .row{display:flex;align-items:center;gap:8px;margin-bottom:5px}
 .meter .val{margin-left:auto;font-family:var(--mono);font-size:var(--f-small);
             color:var(--measured);text-shadow:0 0 12px rgba(216,165,95,.3)}
-.bar{height:10px;border-radius:6px;background:#040507;
+.bar{height:10px;border-radius:6px;background:var(--inset);
      border:1px solid rgba(0,0,0,.8);position:relative;overflow:hidden;
      box-shadow:inset 0 2px 5px rgba(0,0,0,.85)}
 .bar i{position:absolute;inset:1px auto 1px 1px;border-radius:5px;
@@ -210,20 +212,18 @@ header .rate{font-size:var(--f-caption);color:var(--text-inactive)}
   /* Entwurf B: feste Grauwerte statt Weissschleier, dazu ein sichtbarer
      Rahmen. Hoehe 36 -> 38, weil die Flaeche durch den engeren Radius
      optisch schrumpft und der Finger nichts verlieren darf. */
-  background:linear-gradient(180deg,#242429 0%,#141417 100%);
+  background:linear-gradient(180deg,var(--glass-btn-top) 0%,var(--glass-btn-bot) 100%);
   border:1px solid #33333a;border-radius:8px;
   box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 1px 2px rgba(0,0,0,.5);
   position:relative;
 }
 .chip::after{content:"";position:absolute;left:0;right:0;top:-4px;bottom:-4px}
 .chip.on{
-  /* Entwurf B: das Blau von kGlassSel (#2f5f92/#1e3d5f/#3d78b0), also genau
-     die Werte, mit denen am Pult eine Auswahl leuchtet. */
-  background:linear-gradient(180deg,#2f5f92 0%,#1e3d5f 100%);
-  border-color:#3d78b0;color:var(--glass-sel-text);
-  box-shadow:0 0 0 1px rgba(61,120,176,.35),
-             0 2px 8px rgba(47,95,146,.35),
-             inset 0 1px 0 rgba(255,255,255,.14);
+  /* Auswahl als Mulde wie am Mac (kGlassSel*, seit 2026-11-02 kein Auswahl-Blau;
+     Martins Wahl 2026-11-21, docs/design/2026-11-21-app-auswahl-mulde). */
+  background:linear-gradient(180deg,#131317 0%,#0d0d10 100%);
+  border-color:#55555e;color:#f0f0f4;
+  box-shadow:inset 0 2px 5px rgba(0,0,0,.85),0 0 0 1px rgba(85,85,94,.35);
 }
 .chip.more{flex:0 0 38px;color:var(--text3)}
 /* Zustandsschalter bleiben leise — quietCheckedStyle: im Feld darf genau
@@ -235,7 +235,7 @@ header .rate{font-size:var(--f-caption);color:var(--text-inactive)}
 .sliders{margin:10px 12px 0;padding:10px 12px;display:flex;flex-direction:column;gap:12px}
 .sl{display:flex;align-items:center;gap:10px}
 .sl .caps{flex:0 0 30px}
-.sl .track{flex:1;height:5px;border-radius:3px;background:#040507;
+.sl .track{flex:1;height:5px;border-radius:3px;background:var(--inset);
   border:1px solid rgba(0,0,0,.8);position:relative;
   box-shadow:inset 0 1px 3px rgba(0,0,0,.9)}
 .sl .track i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;
@@ -300,6 +300,27 @@ header .rate{font-size:var(--f-caption);color:var(--text-inactive)}
   color:var(--text-inactive);box-shadow:inset 0 1px 0 var(--light);
 }
 
+/* ── Haltetaste: Entsicherung + gedrueckt ──────────────────────────────
+   Nur sichtbar, wenn die Seite ueberhaupt senden darf (SENDEN_FREIGABE).
+   Entsichert = die Tasten verlieren .locked und werden zu den grossen
+   Messingtasten; gedrueckt = eingedrueckt (versenkt), wie jede Taste am Mac.
+   Kein Rot: Messing ist die Sendefarbe. */
+.txsicher{
+  flex:0 0 84px;height:36px;border-radius:11px;cursor:pointer;
+  background:linear-gradient(#222227,#141417);border:1px solid #33333a;
+  color:var(--text-secondary,#a8a8ae);font:600 var(--f-caption)/1 inherit;
+  letter-spacing:.1em;box-shadow:inset 0 1px 0 var(--light),0 1px 0 rgba(0,0,0,.45);
+}
+.txsicher[hidden]{display:none}
+.txsicher.scharf{height:58px;color:var(--measured);border-color:var(--amber-dim);
+  background:rgba(107,86,48,.20)}
+.tx,.tune{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;
+  touch-action:none}
+.tx.haelt,.tune.haelt{
+  transform:translateY(1px);
+  background:linear-gradient(var(--tx-bot),#6e5426);
+  box-shadow:inset 0 3px 7px rgba(0,0,0,.6)}
+
 /* ── Die Station sendet ──────────────────────────────────────────────────
    Dieselbe Zeile, dieselbe Geometrie, nur in Messing: an dieser Stelle
    steht sonst "SENDEN / NUR IN DER APP", und genau dort schaut man hin,
@@ -340,8 +361,8 @@ footer .warn{color:var(--warn)}
    Jetzt steht da ein Knopf, und er verschwindet, sobald der Ton laeuft. */
 .tonAn{
   flex:none;height:24px;padding:0 11px;border-radius:12px;
-  background:linear-gradient(var(--tune-top),var(--tune-bot));
-  border:1px solid var(--tune-border);color:#1a150c;
+  background:linear-gradient(var(--plus-top),var(--plus-bot));
+  border:1px solid var(--plus-border);color:#1a150c;
   font:700 var(--f-caption)/1 inherit;letter-spacing:.1em;
   box-shadow:inset 0 1px 0 rgba(255,255,255,.18),0 2px 0 rgba(0,0,0,.45);
 }
@@ -356,8 +377,8 @@ footer .warn{color:var(--warn)}
    bleibt dem Gemessenen vorbehalten, und die drei automatischen Zeilen
    sind genau das — gemessene Werte vom Geraet, keine Eingabe. */
 .logAuf{height:28px;padding:0 11px;border-radius:9px;
-  border:1px solid var(--amber-dim);background:rgba(107,86,48,.22);
-  color:var(--measured);font:600 var(--f-caption)/1 inherit;
+  border:1px solid var(--plus-bot);background:rgba(209,143,42,.18);
+  color:var(--plus-top);font:600 var(--f-caption)/1 inherit;
   letter-spacing:.13em;flex:none}
 #qsoBlatt{position:fixed;inset:0;z-index:11;display:none;align-items:center;
   justify-content:center;padding:0 22px;
@@ -372,7 +393,7 @@ footer .warn{color:var(--warn)}
 /* Eingefasst wie die Regler-Bahnen: tief eingelassen, damit man sieht,
    dass man hineinschreibt. */
 #qsoRuf{width:100%;box-sizing:border-box;height:58px;border-radius:12px;text-align:center;
-  background:#040507;border:1px solid rgba(0,0,0,.8);color:var(--text);
+  background:var(--inset);border:1px solid rgba(0,0,0,.8);color:var(--text);
   font:600 30px/1 var(--mono);letter-spacing:.09em;
   box-shadow:inset 0 2px 6px rgba(0,0,0,.85);text-transform:uppercase}
 #qsoRuf::placeholder{color:var(--text-inactive);font-weight:500;
@@ -388,7 +409,7 @@ footer .warn{color:var(--warn)}
 #qsoBlatt .rstfeld label{font-size:var(--f-caption);letter-spacing:.11em;
   color:var(--text3);text-transform:uppercase;text-align:center}
 #qsoBlatt .rstfeld input{width:100%;box-sizing:border-box;height:44px;border-radius:11px;text-align:center;
-  background:#040507;border:1px solid rgba(0,0,0,.8);color:var(--text);
+  background:var(--inset);border:1px solid rgba(0,0,0,.8);color:var(--text);
   font:600 19px/1 var(--mono);box-shadow:inset 0 2px 5px rgba(0,0,0,.85)}
 #qsoBlatt .rstfeld input:focus{outline:none;border-color:var(--accent)}
 #qsoBlatt .automatisch{display:flex;flex-direction:column;gap:3px;
