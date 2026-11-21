@@ -293,7 +293,8 @@ private slots:
             QCOMPARE(s->minimumWidth(), s->maximumWidth());
             QVERIFY(s->minimumWidth() == kSafetySlotWidthPx
                     || s->minimumWidth() == kOverloadSlotWidthPx
-                    || s->minimumWidth() == kTxSlotWidthPx);
+                    || s->minimumWidth() == kTxSlotWidthPx
+                    || s->minimumWidth() == kMicSlotWidthPx);
         }
     }
 
@@ -342,6 +343,16 @@ private slots:
                  "ON AIR passt in den alten 60-px-Platz -- dann braucht es "
                  "den eigenen Platz nicht mehr, und dieser Test darf zurueck");
 
+        // Der Mikrofon-Platz (2026-11-20): sein breitester Zustand ist
+        // der Alarm "NO MIC", mit Punkt davor.
+        StatusBadge mic;
+        mic.setSvgIcon(QStringLiteral(":/icons/badge-dot.svg"));
+        mic.setLabel(QStringLiteral("NO MIC"));
+        mic.setVariant(StatusBadge::Variant::Warn);
+        mic.ensurePolished();
+        QVERIFY2(mic.sizeHint().width() <= kMicSlotWidthPx,
+                 qPrintable(QStringLiteral("NO MIC badge needs %1 px, slot is %2")
+                                .arg(mic.sizeHint().width()).arg(kMicSlotWidthPx)));
     }
 };
 

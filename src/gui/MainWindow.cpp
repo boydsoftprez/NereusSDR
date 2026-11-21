@@ -449,6 +449,7 @@ warren@wpratt.com
 #include "widgets/MasterOutputWidget.h"
 #include "widgets/StationBlock.h"
 #include "widgets/StatusBadge.h"
+#include "MikroAusfallText.h"
 #include "widgets/AdcOverloadBadge.h"
 #include "widgets/OverflowChip.h"
 #include "widgets/SystemTile.h"
@@ -14179,6 +14180,27 @@ void MainWindow::buildMenuBar()
 // setVisible() no longer represents "inactive" once a badge lives in a
 // permanently allocated slot.
 
+void MainWindow::aktualisiereMikroPlatz()
+{
+    if (m_micStatusBadge == nullptr) {
+        return;
+    }
+    const AudioEngine* ae = m_radioModel->audioEngine();
+    const bool pc = m_radioModel->transmitModel().micSource() == MicSource::Pc;
+    const bool ausgefallen = pc && ae != nullptr && ae->pcMikrofonAusgefallen();
+    m_micStatusBadge->setLabel(ausgefallen ? QStringLiteral("NO MIC")
+                                           : QStringLiteral("MIC"));
+    m_micStatusBadge->setVariant(ausgefallen ? StatusBadge::Variant::Warn
+                                             : StatusBadge::Variant::Off);
+    m_micStatusBadge->setToolTip(ausgefallen
+        ? MikroAusfall::tooltip(ae->pcMikrofonName(), ae->pcMikrofonAusgefallenUm())
+              + QStringLiteral("\n\nClick: Setup \u2192 Audio \u2192 TX Input.")
+        : (pc ? tr("PC microphone \u2014 delivering audio.\n"
+                   "Lights up if it stops (e.g. unplugged).")
+              : tr("Mic source is not the PC microphone \u2014 nothing to watch here.")));
+    dimSafetyBadge(m_micStatusBadge, ausgefallen);
+}
+
 void MainWindow::dimSafetyBadge(QWidget* w, bool active)
 {
     auto* fx = qobject_cast<QGraphicsOpacityEffect*>(w->graphicsEffect());
@@ -15134,6 +15156,34 @@ void MainWindow::buildStatusBar()
     m_txStatusBadge->setVariant(StatusBadge::Variant::Off);
     m_txStatusBadge->setToolTip(tr("Receive (MOX off)"));
 
+    // ── Platz "MIC": das PC-Mikrofon liefert nicht mehr (2026-11-20) ────
+    //
+    // Am 20.11. verschwand das USB-Mikrofon vom Mac; Longpath merkte es
+    // nicht, und eine Sendung waere stumm hinausgegangen. Der Betreiber
+    // hat Entwurf A + B gewaehlt: dieser Platz ist B. Er steht immer in
+    // der Leiste, auch wenn das TX-Feld nicht im Blick ist, und ist matt
+    // wie OVL, solange nichts ist -- reserviert, damit sich beim Alarm
+    // nichts verschiebt. Bernstein (Variant::Warn), kein Rot: Rot bleibt
+    // fuer Senden und die SWR-Grenze.
+    m_micStatusBadge = new StatusBadge(barWidget);
+    m_micStatusBadge->setObjectName(QStringLiteral("micStatusBadge"));
+    m_micStatusBadge->setSvgIcon(QStringLiteral(":/icons/badge-dot.svg"));
+    m_micStatusBadge->setCursor(Qt::PointingHandCursor);
+    connect(m_micStatusBadge, &StatusBadge::clicked, this, [this]() {
+        auto* dialog = new SetupDialog(m_radioModel, this);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        wireSetupDialog(dialog);
+        dialog->selectPage(QStringLiteral("TX Input"));
+        dialog->show();
+    });
+    aktualisiereMikroPlatz();
+    if (AudioEngine* ae = m_radioModel->audioEngine()) {
+        connect(ae, &AudioEngine::pcMikrofonAusfallGeaendert,
+                this, [this](bool) { aktualisiereMikroPlatz(); });
+    }
+    connect(&m_radioModel->transmitModel(), &TransmitModel::micSourceChanged,
+            this, [this](MicSource) { aktualisiereMikroPlatz(); });
+
     // ── Reserved safety slots (design §4.5) ──────────────────────────────
     // Every slot is permanently allocated. Only the badge inside changes.
     // The old code inserted the overload badge BETWEEN the PA and TX badges
@@ -15163,6 +15213,7 @@ void MainWindow::buildStatusBar()
     // The alarm gets a slot sized to its own content, not to its
     // neighbours. PA and TX stay narrow and learnable by position.
     addSlot(m_adcOvlBadge, kOverloadSlotWidthPx);
+    addSlot(m_micStatusBadge, kMicSlotWidthPx);
     addSlot(m_txStatusBadge, kTxSlotWidthPx);
     hbox->addWidget(m_safetyGroup);
 

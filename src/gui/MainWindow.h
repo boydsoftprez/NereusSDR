@@ -2108,6 +2108,11 @@ private:
     QPointer<class StatusToast> m_txInhibitToast;
     StatusBadge* m_paStatusBadge{nullptr};
     StatusBadge* m_txStatusBadge{nullptr};
+    // Platz "MIC" (2026-11-20, Entwurf B): matt, solange das PC-Mikrofon
+    // liefert oder gar nicht gewaehlt ist; "NO MIC" in Bernstein, wenn es
+    // ausfaellt. Gegenstueck zur Fusszeile im TX-Feld.
+    StatusBadge* m_micStatusBadge{nullptr};
+    void aktualisiereMikroPlatz();
     // Reserved safety slot group. Registered at rung 0 (never folds).
     QWidget* m_safetyGroup{nullptr};
     // Inactive slots dim rather than collapse, so geometry never moves

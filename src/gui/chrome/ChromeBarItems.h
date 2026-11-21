@@ -37,6 +37,11 @@ inline constexpr int kOverloadSlotWidthPx = 88;
 /// Linux-Schrift setzt "ON AIR" mit Symbol auf 81 (CI, 2026-09-21),
 /// daher 84 -- der Platz muss die breiteste Plattform fassen.
 inline constexpr int kTxSlotWidthPx = 84;
+/// Der Mikrofon-Platz (2026-11-20): "NO MIC" mit Punkt-Symbol, gleich
+/// lang wie "ON AIR" -- darum dieselbe Breite. Steht zwischen ADC OVL und
+/// ON AIR, matt solange das PC-Mikrofon liefert (oder gar nicht gewaehlt
+/// ist), in Bernstein, wenn es ausfaellt.
+inline constexpr int kMicSlotWidthPx = 84;
 
 /// Every widget the banner registers. Any member may be null; registration
 /// skips nulls. In production every SKU currently constructs chain1

@@ -143,6 +143,7 @@
 #include <portaudio.h>
 
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QStandardPaths>
 #include <QTimer>
 
@@ -221,6 +222,17 @@ void waitForTapQuiescence(std::atomic<unsigned>& busy)
 AudioEngine::AudioEngine(QObject* parent)
     : QObject(parent)
 {
+    // Aufsicht ueber das PC-Mikrofon (2026-11-20), siehe pruefePcMikrofon.
+    // Laeuft nur zwischen start() und stop(). Die Uhr ist monoton: ein
+    // Verstellen der Systemzeit darf keinen Ausfall vortaeuschen.
+    m_mikroTakt = new QTimer(this);
+    m_mikroTakt->setInterval(250);
+    connect(m_mikroTakt, &QTimer::timeout, this, [this]() {
+        static QElapsedTimer uhr;
+        if (!uhr.isValid()) { uhr.start(); }
+        pruefePcMikrofon(uhr.elapsed());
+    });
+
     // ── Driftausgleich am Lautsprecherweg (#131, 2026-10-06) ─────────────
     //
     // AB WERK AUS. Ein neuer Umtaster im Hoerweg einer laufenden Station
@@ -526,6 +538,7 @@ void AudioEngine::start()
     ensureSpeakersOpen();
     qCInfo(lcAudio) << "[AudioStart:Step] 2/7 Mikrofon (TX-Eingang)";
     ensureTxInputOpen();
+    m_mikroTakt->start();
 
     // Sub-Phase 8.5: eagerly construct platform-native VAX RX buses + the
     // VAX TX virtual bus on macOS / Linux so coreaudiod / pactl publish the
@@ -622,7 +635,51 @@ void AudioEngine::stop()
         return;
     }
     m_running = false;
+    // Ton aus: die Aufsicht hoert auf, und eine stehende Warnung geht mit
+    // (der Waechter meldet ohne laufenden Ton "unbeteiligt").
+    m_mikroTakt->stop();
+    pruefePcMikrofon(0);
     qCInfo(lcAudio) << "AudioEngine stopped";
+}
+
+QString AudioEngine::pcMikrofonName() const
+{
+    return AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/TxInput")).deviceName;
+}
+
+void AudioEngine::pruefePcMikrofon(qint64 jetztMs)
+{
+    Audio::MikrofonWaechter::Probe p;
+    p.pcMikrofonGewaehlt = m_micSourceWantsPc.load(std::memory_order_acquire);
+    p.tonLaeuft = m_running || m_tonLaeuftFuerTest;
+    p.eingangOffen = m_txInputBus != nullptr && m_txInputBus->isOpen();
+    p.nsSeitRueckruf = p.eingangOffen ? m_txInputBus->nsSinceLastCallback() : -1;
+
+    m_mikroWaechter.pruefe(p, jetztMs);
+    const bool aus = pcMikrofonAusgefallen();
+    if (aus == m_mikroAusfallGemeldet) {
+        return;
+    }
+    m_mikroAusfallGemeldet = aus;
+    m_mikroAusgefallenUm = aus ? QDateTime::currentDateTime() : QDateTime();
+
+    const QString name = pcMikrofonName().isEmpty()
+        ? QStringLiteral("system default input") : pcMikrofonName();
+    if (aus) {
+        if (m_mikroWaechter.grund() == Audio::MikrofonWaechter::Grund::KeinGeraet) {
+            qCWarning(lcAudio).noquote()
+                << "PC mic selected but no input is open (" << name
+                << ") — transmitting now would send silence";
+        } else {
+            qCWarning(lcAudio).noquote()
+                << "PC mic stopped delivering audio (" << name << ", no capture"
+                << "callback for" << (p.nsSeitRueckruf / 1000000) << "ms)"
+                << "— device unplugged? Transmitting now would send silence";
+        }
+    } else {
+        qCInfo(lcAudio).noquote() << "PC mic delivering audio again (" << name << ")";
+    }
+    emit pcMikrofonAusfallGeaendert(aus);
 }
 
 // ---------------------------------------------------------------------------

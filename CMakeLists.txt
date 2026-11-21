@@ -531,6 +531,7 @@ set(CORE_SOURCES
     src/core/CrashReportDigest.cpp
     src/core/LogDatei.cpp
     src/core/audio/BusMitFrist.cpp
+    src/core/audio/MikrofonWaechter.cpp
     src/core/audio/AudioRateMatcher.cpp
     src/core/audio/RxRatenAngleich.cpp
     src/core/LogbookDatei.cpp

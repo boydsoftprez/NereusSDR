@@ -423,6 +423,9 @@ private:
 
     // 0. Mic-source badge (J.3 Phase 3M-1b) — read-only label above the gauges.
     QLabel*  m_micSourceBadge = nullptr;
+    // Fusszeile "PC mic": Quelle, und beim Ausfall des PC-Mikrofons die
+    // Warnung (2026-11-20, Entwurf A). Die eine Stelle, die den Text setzt.
+    void aktualisiereMikroAbzeichen();
     // 1. Forward Power gauge
     HGauge*  m_fwdPowerGauge  = nullptr;
     // 2. SWR gauge

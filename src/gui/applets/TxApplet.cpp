@@ -165,9 +165,11 @@
 #include "TxCfcDialog.h"
 #include "NyiOverlay.h"
 #include "gui/HGauge.h"
+#include "gui/MikroAusfallText.h"
 #include "gui/StyleConstants.h"
 #include "gui/ComboStyle.h"
 #include "gui/widgets/DexpPeakMeter.h"
+#include "core/AudioEngine.h"
 #include "core/audio/CompositeTxMicRouter.h"
 #include "core/MicProfileManager.h"
 #include "core/MoxController.h"
@@ -1495,16 +1497,13 @@ void TxApplet::wireControls()
     // Phase 3M-1b J.3. Read-only: updates badge text on signal, no user interaction.
     // "PC mic" for MicSource::Pc, "Radio mic" for MicSource::Radio, "VAX" for MicSource::Vax.
     connect(&tx, &TransmitModel::micSourceChanged,
-            this, [this](MicSource source) {
-        QString text;
-        switch (source) {
-            case MicSource::Radio: text = QStringLiteral("Radio mic"); break;
-            case MicSource::Vax:   text = QStringLiteral("VAX");       break;
-            case MicSource::Pc:
-            default:               text = QStringLiteral("PC mic");    break;
-        }
-        m_micSourceBadge->setText(text);
-    });
+            this, [this](MicSource) { aktualisiereMikroAbzeichen(); });
+    // Ausfall des PC-Mikrofons (2026-11-20): die Tonmaschine meldet nur
+    // Wechsel; der Text steht in aktualisiereMikroAbzeichen().
+    if (AudioEngine* ae = m_model->audioEngine()) {
+        connect(ae, &AudioEngine::pcMikrofonAusfallGeaendert,
+                this, [this](bool) { aktualisiereMikroAbzeichen(); });
+    }
 
     // ── Phase 3M-1c J.1 ─ TX Profile combo wiring ────────────────────────────
     // User-driven currentTextChanged → MicProfileManager::setActiveProfile.
@@ -1670,6 +1669,51 @@ void TxApplet::refreshTxFilterStatusLabel()
         m_model->transmitModel().filterDisplayText(mode));
 }
 
+// ── Fusszeile: Mikrofonquelle, und der Ausfall des PC-Mikrofons ────────
+//
+// 2026-11-20, 13:00:24: das USB-Mikrofon verschwand vom Mac, Longpath
+// hing am weg gewesenen Geraet, und das stand nur im Protokoll. Der
+// Betreiber hat Entwurf A + B gewaehlt: hier, wo die Quelle ohnehin
+// genannt wird, wird "PC mic" zur Warnung -- in Bernstein, der
+// Warnfarbe des Hauses, nicht in Rot (Rot heisst im TX-Feld nur SWR).
+// Das Gegenstueck ist der Platz "MIC" in der unteren Leiste
+// (MainWindow::aktualisiereMikroPlatz).
+void TxApplet::aktualisiereMikroAbzeichen()
+{
+    if (m_micSourceBadge == nullptr || m_model == nullptr) {
+        return;
+    }
+    const MicSource quelle = m_model->transmitModel().micSource();
+    const AudioEngine* ae = m_model->audioEngine();
+    const bool ausgefallen = quelle == MicSource::Pc
+        && ae != nullptr && ae->pcMikrofonAusgefallen();
+
+    if (ausgefallen) {
+        m_micSourceBadge->setText(QStringLiteral("\u25CF PC mic \u2014 no signal"));
+        m_micSourceBadge->setStyleSheet(QStringLiteral(
+            "QLabel { color: %1; font-size: %2px; font-weight: bold; }")
+            .arg(QLatin1String(Style::kAmberText)).arg(Style::kFontCaption));
+        m_micSourceBadge->setToolTip(MikroAusfall::tooltip(
+            ae->pcMikrofonName(), ae->pcMikrofonAusgefallenUm()));
+        return;
+    }
+
+    QString text;
+    switch (quelle) {
+        case MicSource::Radio: text = QStringLiteral("Radio mic"); break;
+        case MicSource::Vax:   text = QStringLiteral("VAX");       break;
+        case MicSource::Pc:
+        default:               text = QStringLiteral("PC mic");    break;
+    }
+    m_micSourceBadge->setText(text);
+    m_micSourceBadge->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: %2px; }")
+        .arg(QLatin1String(Style::kTextScale)).arg(Style::kFontCaption));
+    m_micSourceBadge->setToolTip(QStringLiteral(
+        "Active microphone source: PC mic or Radio mic.\n"
+        "Change via Setup \u2192 Transmit \u2192 Mic Source."));
+}
+
 void TxApplet::syncFromModel()
 {
     if (!m_model) { return; }
@@ -1775,16 +1819,7 @@ void TxApplet::syncFromModel()
     }
 
     // Mic-source badge (J.3 Phase 3M-1b; extended to 3-way in Phase 3M-VAX-toggle)
-    if (m_micSourceBadge) {
-        QString text;
-        switch (tx.micSource()) {
-            case MicSource::Radio: text = QStringLiteral("Radio mic"); break;
-            case MicSource::Vax:   text = QStringLiteral("VAX");       break;
-            case MicSource::Pc:
-            default:               text = QStringLiteral("PC mic");    break;
-        }
-        m_micSourceBadge->setText(text);
-    }
+    aktualisiereMikroAbzeichen();
 
     // MOX / TUNE button state
     if (mox) {
