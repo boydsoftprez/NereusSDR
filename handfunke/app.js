@@ -123,6 +123,11 @@ function bildSpanneHz(rueckfall) {
 function eigenerHost() {
   const h = location.hostname;
   if (!h || h === 'localhost' || h === '127.0.0.1') { return ''; }
+  // Kommt die Seite vom Vermittler, ist dieser Rechner NICHT Longpath. Wer
+  // ihn trotzdem als "eigenen Rechner" nimmt, schwenkt nach fuenf Sekunden
+  // von der Fernverbindung auf rv.longpath.at:50001 um und reisst sie damit
+  // mitten im Aufbau ab (am 2026-11-21 so gemessen: clientLeft nach 4 s).
+  if (dienstVomOrt()) { return ''; }
   return h;
 }
 
@@ -364,6 +369,27 @@ async function koppelnTippen() {
 }
 
 $('koppelknopf').addEventListener('click', koppelnTippen);
+
+// Den Schluessel dieses Telefons zeigen, damit er von Hand an die Station
+// gehen kann. Er ist oeffentlich (der Teil, der zur Station gehoert) -- der
+// private Teil verlaesst das Telefon nie. Nur in einem sicheren Kontext, nur
+// wenn die Seite von einem Vermittler kommt (dort geht der Tipp-Weg nicht).
+if (window.isSecureContext && window.crypto?.subtle && dienstVomOrt()) {
+  $('schluesselknopf').style.display = '';
+}
+$('schluesselknopf').addEventListener('click', async () => {
+  const t = $('schluesseltext');
+  try {
+    const { geraeteschluessel } = await import('./fernzugriff.js');
+    t.value = (await geraeteschluessel()).schluesselText;
+    t.style.display = '';
+    t.focus(); t.select();
+    try { await navigator.clipboard.writeText(t.value); } catch (e) {}
+  } catch (e) {
+    $('koppelmeldung').style.color = 'var(--warn)';
+    $('koppelmeldung').textContent = 'Der Schlüssel ließ sich nicht erzeugen.';
+  }
+});
 
 // Einmal beim Laden nachsehen, ob gerade ein Fenster offen ist.
 koppelLage().then((l) => {

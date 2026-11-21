@@ -282,6 +282,14 @@ body{padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
           background:transparent;border:1px solid var(--line);
           color:var(--text2)">Dieses Telefon koppeln</button>
   <div class="fehler" id="koppelmeldung" style="color:var(--text3)"></div>
+  <!-- Wenn die Seite vom Vermittler kommt, erreicht sie die Koppelstelle des
+       Mac nicht. Dann wird der Schluessel dieses Telefons gezeigt und von
+       Hand an die Station gegeben (fuehren.py --koppeln). -->
+  <button id="schluesselknopf" style="display:none;margin-top:10px;
+          background:transparent;border:1px solid var(--line);
+          color:var(--text2)">Schlüssel dieses Telefons zeigen</button>
+  <textarea id="schluesseltext" readonly rows="4" style="display:none;width:100%;
+          border-radius:11px;padding:10px;font-size:var(--f-small);word-break:break-all"></textarea>
 </div>
 
 <!-- ton-kern.js zuerst: app.js braucht TonKern fuer den Rueckfall auf

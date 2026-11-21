@@ -77,6 +77,31 @@ function kannOpus() {
   return typeof AudioDecoder !== 'undefined' && typeof AudioData !== 'undefined';
 }
 
+// ── TURN-Zugangsdaten, aufgehoben ───────────────────────────────────────────
+//
+// Der Vermittler gibt TURN-Zugangsdaten erst in der Antwort auf eine
+// Einfuehrung heraus (Abschnitt 8) -- ein Browser sammelt seine Kandidaten
+// aber schon beim Anlegen des Angebots, also BEVOR sie da sind, und kann
+// einen TURN-Weg nachtraeglich nur mit einem neuen Angebot (ICE-Neustart)
+// aufnehmen, den es hier nicht gibt. Die Zugangsdaten gelten 24 Stunden und
+// sind an die Station gebunden; darum werden sie aufgehoben und der NAECHSTE
+// Versuch geht damit los (genauso macht es die Station). Im Mobilfunk hinter
+// CGNAT ist das der Unterschied zwischen "kommt durch" und "nie".
+const TURN_RESERVE_S = 600;
+
+function turnLesen(stationId) {
+  try {
+    const t = JSON.parse(localStorage.getItem('handfunke.turn.' + stationId) || 'null');
+    if (t && t.urls && t.expires - Date.now() / 1000 > TURN_RESERVE_S) { return t; }
+  } catch (e) { /* kein Speicher: dann eben ohne */ }
+  return null;
+}
+
+function turnMerken(stationId, turn) {
+  try { localStorage.setItem('handfunke.turn.' + stationId, JSON.stringify(turn)); }
+  catch (e) { /* siehe oben */ }
+}
+
 // ── Der Geraeteschluessel ───────────────────────────────────────────────────
 
 const DB = 'longpath-fernzugriff';
@@ -202,6 +227,12 @@ export class FernLeitung extends EventTarget {
     if (hallo.type !== 'hello') { throw new Error(`erst kam ${hallo.type}, nicht hello`); }
 
     const stun = (hallo.stun || []).map((u) => ({ urls: u }));
+    const aufgehoben = turnLesen(this.stationId);
+    this._mitTurn = !!aufgehoben;
+    if (aufgehoben) {
+      stun.push({ urls: aufgehoben.urls, username: aufgehoben.username,
+                  credential: aufgehoben.password });
+    }
     const pc = new RTCPeerConnection({ iceServers: stun, iceCandidatePoolSize: 0 });
     this._pc = pc;
 
@@ -250,18 +281,16 @@ export class FernLeitung extends EventTarget {
       // Die TURN-Zugangsdaten kommen hier an. Sie jetzt noch zu setzen
       // hat Wirkung: der Browser sammelt danach weiter und findet den
       // Relay-Weg, auch wenn direkt und STUN nichts ergeben haben.
+      //
+      // Nachtraeglich setzen hilft dem laufenden Versuch NICHT: ohne neues
+      // Angebot sammelt der Browser keine TURN-Kandidaten mehr. Darum werden
+      // sie aufgehoben, und lief dieser Versuch ohne sie, kommt nach ein paar
+      // Sekunden ein zweiter, der sie von Anfang an hat.
       if (m.turn && m.turn.urls) {
-        try {
-          const kfg = pc.getConfiguration();
-          kfg.iceServers = (kfg.iceServers || []).concat([{
-            urls: m.turn.urls,
-            username: m.turn.username,
-            credential: m.turn.password,
-          }]);
-          pc.setConfiguration(kfg);
-          pc.restartIce?.();
-        } catch (e) {
-          console.warn('TURN liess sich nicht nachtragen:', e);
+        turnMerken(this.stationId, m.turn);
+        if (!this._mitTurn && !this._zweiter) {
+          this._zweiter = true;
+          this._zweiterTimer = setTimeout(() => this._nocheinmal(), 6000);
         }
       }
       await pc.setRemoteDescription({ type: 'answer', sdp: m.answer });
@@ -281,6 +310,23 @@ export class FernLeitung extends EventTarget {
           : `die Einfuehrung endete: ${m.code}`));
       }
     }
+  }
+
+  /** Den Versuch verwerfen und noch einmal beginnen, jetzt mit TURN. */
+  _nocheinmal() {
+    // Steht ICE schon (nur die Anmeldung laeuft noch), wird nichts verworfen.
+    if (this._angemeldet || this.readyState === 3
+        || this._pc?.connectionState === 'connected') { return; }
+    // Die alten Handler duerfen die Leitung nicht mehr schliessen.
+    if (this._kanal) { this._kanal.onclose = null; this._kanal.onerror = null; }
+    if (this._tonkanal) { this._tonkanal.onmessage = null; }
+    if (this._ws) { this._ws.onclose = null; this._ws.onmessage = null; }
+    try { this._kanal?.close(); } catch (e) {}
+    try { this._tonkanal?.close(); } catch (e) {}
+    try { this._pc?.close(); } catch (e) {}
+    try { this._ws?.close(); } catch (e) {}
+    this._pc = this._kanal = this._tonkanal = this._ws = null;
+    this._los();
   }
 
   _verdrahte(kanal, ich) {
@@ -317,6 +363,7 @@ export class FernLeitung extends EventTarget {
       this.ton = m.ton || 'roh';
       if (this.ton === 'opus') { this._richteOpusEin(); }
       this._angemeldet = true;
+      clearTimeout(this._zweiterTimer);
       this.readyState = 1;          // OPEN
       this.weg = await this._welcherWeg();
       // Der Dienst hat seine Arbeit getan. Ihn jetzt zu schliessen ist
@@ -453,6 +500,7 @@ export class FernLeitung extends EventTarget {
 
   _zu(code, grund) {
     if (this.readyState === 3) { return; }
+    clearTimeout(this._zweiterTimer);
     this.readyState = 3;            // CLOSED
     try { this._kanal?.close(); } catch (e) {}
     try { this._pc?.close(); } catch (e) {}
