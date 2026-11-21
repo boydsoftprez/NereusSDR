@@ -372,7 +372,7 @@ koppelLage().then((l) => {
   }
 });
 
-$('verbinden').addEventListener('click', () => starten($('adresse').value));
+$('verbinden').addEventListener('click', () => { blattVonHand = false; starten($('adresse').value); });
 $('adresse').addEventListener('keydown', (e) => { if (e.key === 'Enter') starten($('adresse').value); });
 $('adresse').value = gespeichert() || (eigenerHost() ? eigenerHost() + ':' + PORT_TCI : '');
 $('token').value = tokenLesen();
@@ -2588,12 +2588,28 @@ setInterval(() => {
     //
     // Es gibt keinen Weg, das Blatt absichtlich zu oeffnen; es erscheint nur
     // bei einem Abriss. Darum ist Zumachen bei `ready` immer richtig.
-    if ($('koppeln').classList.contains('an')) {
+    // Nicht zumachen, wenn der Bediener das Blatt selbst geoeffnet hat
+    // (Tipp auf den Namen oben links): er tippt dort gerade ein Token.
+    if ($('koppeln').classList.contains('an') && !blattVonHand) {
       $('koppeln').classList.remove('an');
       $('fehler').textContent = '';
     }
   }
 }, 1000);
+
+// Das Eingabeblatt gezielt oeffnen -- ein Tipp auf den Namen oben links.
+// Bisher kam es nur nach einem Abriss von selbst und ging bei `ready` von
+// selbst wieder zu; wer ein neues Token eintragen wollte, bekam es nie
+// zu fassen, weil die Seite zwischendurch neu verband (2026-11-21).
+let blattVonHand = false;
+$('station').addEventListener('click', () => {
+  blattVonHand = true;
+  $('koppeln').classList.add('an');
+  $('adresse').value = gespeichert() || $('adresse').value;
+  $('token').value = tokenLesen();
+  $('fehler').textContent = 'Neues Token eintragen und auf Verbinden tippen.';
+  $('token').focus();
+});
 
 // Warum es nicht klappt — in einem Satz, den man auf einem Telefon lesen kann.
 //
