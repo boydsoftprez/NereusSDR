@@ -141,6 +141,15 @@ body{padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
 </div>
 
 <div class="meter schicht">
+  <div class="gauge" aria-label="S-Meter">
+    <svg viewBox="0 0 132 62" aria-hidden="true">
+      <path d="M14 56 A52 52 0 0 1 118 56" fill="none" stroke="#2c2c31" stroke-width="2"/>
+      <g id="gaugeStriche"></g>
+      <line id="gaugeNadel" x1="66" y1="60" x2="66" y2="14" stroke="#ee9a34" stroke-width="2" stroke-linecap="round"/>
+      <circle cx="66" cy="60" r="3" fill="#ee9a34"/>
+    </svg>
+    <div><div class="sval" id="sval">—</div><div class="sdb" id="sdb"></div></div>
+  </div>
   <div class="row">
     <span class="caps">Signal</span>
     <span class="val" id="smeter">—</span>
@@ -190,7 +199,7 @@ body{padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
      dieselbe Entscheidung wie bei der Sendetaste: ein Tipp, der sofort
      einen Mast dreht, ist in einer Hosentasche eine schlechte Idee. -->
 <div class="feld schicht rotor" id="rotorFeld" hidden>
-  <div class="caps">Rotor</div>
+  <div class="caps rotorKopf" id="rotorKopf"><span>Rotor</span><b id="rotorKopfGrad"></b><span class="chev" id="rotorChev">▸</span></div>
   <div class="rotorreihe">
     <svg id="rotorScheibe" class="scheibe" viewBox="-110 -110 220 220"
          aria-label="Rotorscheibe, antippen waehlt eine Richtung">
@@ -239,6 +248,7 @@ body{padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
   <span id="fussStatus">—</span>
   <span id="fussBild"></span>
   <span id="fussTon"></span>
+  <span id="onAir">● on air</span>
 </footer>
 
 <div id="qsy">

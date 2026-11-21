@@ -14,7 +14,7 @@
   /* Panadapter-Flaeche: Longpaths app-bg, Wert fuer Wert (StyleConstants.h
      kAppBg). Die blaue Fassung steht eine Zeile tiefer -- siehe
      WASSERFALL_BLAU in app.js. */
-  --pan-bg:#08080a; --trace:#c2924f; --grid:#8a8f96; --grid-text:#9aa0a8;
+  --pan-bg:#000000; --trace:#c2924f; --grid:#8a8f96; --grid-text:#9aa0a8;
   --glass-btn-top:#222227; --glass-btn-bot:#141417;
   --glass-sel-top:#131317; --glass-sel-bot:#0d0d10;
   --glass-sel-border:#55555e; --glass-sel-text:#f0f0f4;
@@ -558,3 +558,82 @@ footer .warn{color:var(--warn)}
   box-shadow:inset 0 1px 0 rgba(255,255,255,.2),0 2px 6px rgba(0,0,0,.55)}
 .rotor .rotorDreh:disabled{opacity:.4;border-color:var(--border);
   background:rgba(18,19,23,.6);color:var(--text-inactive);box-shadow:none}
+
+
+/* ═══ Mac-Look, Layout „Ein Schirm" (2026-11-21) ══════════════════════════
+   Martins Wahl: Layout 1 aus docs/design/handfunke-entwuerfe/
+   2026-11-21-layout-v3, nach dem Bildschirmfoto von Mac-Longpath.
+   Alles darunter ueberschreibt die Glasfassung weiter oben:
+     * Grund schwarz, Panels flach mit duennem Rand
+     * Knoepfe FLACH dunkel mit duennem Rand, kein Glanzverlauf
+     * Auswahl = orange gefuellte Pille mit dunkler Schrift
+     * Frequenz gross und orange, Spektrum blau/cyan (app.js)
+     * Regler: schmale Rinne, kleiner blau umrandeter Griff
+     * S-Meter als Zeigerinstrument, Sendeleiste fest unten, schmale Fusszeile
+   Messing bleibt der Sendetaste. Die Haltetasten (sendetaste.js) sind
+   unveraendert und ab Werk gesperrt. */
+:root{--or:#f0a82c;--orT:#ee9a34;--orD:#b87a2a;--flat:#131316;--flatB:#2c2c31}
+body{background:#040405;background-attachment:scroll}
+body::after{content:"";flex:none;height:104px}
+.schicht{background:#060608;border:1px solid #1f1f23;box-shadow:none}
+.caps{letter-spacing:.2em}
+.chip{background:var(--flat);border:1px solid var(--flatB);box-shadow:none;
+  color:#c4c4ca;border-radius:8px}
+.chip.on{background:var(--or);border-color:#f6c25e;color:#1a1205;
+  font-weight:700;box-shadow:none}
+.chip.quiet.on{background:var(--badge-info);border-color:var(--accent);
+  color:#cfe0f2;font-weight:400}
+.logAuf,.tonAn,.tune,.txsicher{background:var(--flat);border:1px solid var(--flatB);
+  color:#a6a6ac;box-shadow:none}
+.tune small{color:#7e7e85;opacity:1}
+.txsicher.scharf{background:var(--or);border-color:#f6c25e;color:#1a1205;font-weight:700}
+.vfo .hz{background:none;border:0;box-shadow:none;padding:0;color:var(--orT);
+  text-shadow:none}
+.vfo .hz .khz{color:var(--orT)}
+.vfo .hz .dez{color:var(--orD)}
+.vfo .unit,.vfo .b{color:var(--orD)}
+.scope{border:1px solid #1f1f23;box-shadow:none;background:#000}
+/* Wasserfall niedriger, damit alles auf EINEN Schirm passt */
+#wf{height:104px}
+.durchlass{background:rgba(255,255,255,.10)}
+/* Regler */
+.sl .track{height:3px;background:#1a1a1e;border:0;box-shadow:none}
+.sl .track i{background:#2c4f72;box-shadow:none}
+.sl .track b{width:12px;height:16px;margin:-8px 0 0 -6px;border-radius:5px;
+  background:#0c0c0e;border:1.5px solid #4a7ba8;box-shadow:none}
+.sl .v{color:#dcdce1}
+.sliders{flex-direction:row;gap:16px;margin-top:8px;padding:8px 12px}
+.sliders .sl{flex:1}
+.sliders .sl .v{display:none}
+/* dichter */
+header{height:32px}
+.vfo .hz{font-size:36px}
+.meter{margin:6px 12px 0;padding:6px 12px 7px}
+.feld{margin-top:8px;padding:6px 12px 8px}
+/* S-Meter: Zeigerinstrument; Zahlen und Balken bleiben im DOM (app.js
+   schreibt sie), nur das Instrument wird gezeigt. */
+.meter .row,.meter .bar,.meter .ticks{display:none}
+.gauge{display:flex;align-items:center;gap:12px;margin-top:-4px}
+.gauge svg{width:104px;height:49px;flex:none}
+.gauge .sval{font:700 26px/1 var(--mono);color:var(--orT)}
+.gauge .sdb{font:var(--f-small)/1 var(--mono);color:var(--orD);margin-top:4px}
+/* Rotor: eine Zeile, die Scheibe klappt auf */
+#rotorFeld .rotorKopf{display:flex;align-items:center;gap:10px;cursor:pointer;margin:0}
+#rotorFeld .rotorKopf b{font:600 var(--f-sub)/1 var(--mono);color:var(--text);letter-spacing:0}
+#rotorFeld .rotorKopf .chev{margin-left:auto;color:#6b6b71}
+#rotorFeld:not(.offen) .rotorreihe{display:none}
+#rotorFeld.offen .rotorKopf{margin-bottom:8px}
+/* Sendeleiste fest unten, Fusszeile darunter */
+.txrow{position:fixed;left:0;right:0;bottom:26px;margin:0;padding:12px 12px 4px;
+  z-index:5;background:linear-gradient(rgba(4,4,5,0),#040405 28%)}
+footer{position:fixed;left:0;right:0;bottom:0;height:24px;margin:0;z-index:6;
+  background:#040405;border-top:1px solid #1a1a1e;padding:0 12px;gap:8px}
+footer span{font-weight:600;letter-spacing:.03em;white-space:nowrap}
+footer #onAir{margin-left:auto;color:#6b6b71}
+footer #onAir.an{color:var(--tx-border)}
+/* Mikrofonpruefung: eine schmale Zeile statt eines grossen Knopfs */
+.mikrow{margin:8px 12px 0;gap:4px}
+.mikhalt{height:40px;padding:0 10px}
+.mikhalt b{font-size:var(--f-small)}
+.mikhalt small{font-size:var(--f-caption)}
+.mikhalt{background:var(--flat);border-color:var(--flatB);box-shadow:none}

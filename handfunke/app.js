@@ -755,10 +755,11 @@ document.documentElement.dataset.wasserfall = WASSERFALL_BLAU ? 'blau' : 'longpa
 // Longpath, SpectrumWidget.cpp mutedStops: app-bg / panel / border /
 // text-inactive / instrument-glow-hi / measured / instrument-face, an den
 // Stellen 0 / .30 / .48 / .64 / .78 / .92 / 1.
-const STOPS_LONGPATH = [[0,[8,8,10]],[.30,[12,12,14]],[.48,[44,44,49]],[.64,[88,88,94]],
-                        [.78,[129,123,92]],[.92,[216,165,95]],[1,[242,242,236]]];
-const STOPS_BLAU     = [[0,[13,17,23]],[.18,[24,36,49]],[.34,[38,62,88]],[.50,[104,100,82]],
-                        [.68,[172,133,83]],[.86,[214,164,95]],[1,[244,244,238]]];
+// Mac-Look (2026-11-21, Foto von Mac-Longpath): Wasserfall blau -> cyan ->
+// gruen -> gelb; kein Rot, kein Orange im Bild.
+const STOPS_LONGPATH = [[0,[0,0,40]],[.22,[0,18,130]],[.42,[0,90,225]],[.58,[0,195,240]],
+                        [.74,[30,222,100]],[.90,[222,232,40]],[1,[255,255,232]]];
+const STOPS_BLAU     = STOPS_LONGPATH;
 const STOPS = WASSERFALL_BLAU ? STOPS_BLAU : STOPS_LONGPATH;
 
 // Flaechen aus EINER Quelle: die Panadapter-Flaeche steht im Stilblatt
@@ -1005,7 +1006,7 @@ function zeichneBild() {
   }
 
   const g = panCtx.createLinearGradient(0, 0, 0, H);
-  g.addColorStop(0, 'rgba(194,146,79,.22)'); g.addColorStop(1, 'rgba(194,146,79,0)');
+  g.addColorStop(0, 'rgba(0,150,255,.62)'); g.addColorStop(1, 'rgba(0,70,190,.28)');
   panCtx.beginPath(); panCtx.moveTo(0, H);
   for (let x = 0; x < W; x++) panCtx.lineTo(x, y(spitze[x]));
   panCtx.lineTo(W, H); panCtx.closePath(); panCtx.fillStyle = g; panCtx.fill();
@@ -1015,7 +1016,7 @@ function zeichneBild() {
     const yy = y(spitze[x]);
     x ? panCtx.lineTo(x, yy) : panCtx.moveTo(x, yy);
   }
-  panCtx.strokeStyle = '#c2924f'; panCtx.lineWidth = 1; panCtx.stroke();
+  panCtx.strokeStyle = '#8fd8ff'; panCtx.lineWidth = 1.5; panCtx.stroke();
 
   panCtx.fillStyle = '#9aa0a8'; panCtx.font = '9px ui-monospace,Menlo,monospace';
   for (let i = 0; i <= 3; i++) {
@@ -3075,4 +3076,38 @@ zeichneBedienung();
     });
     setInterval(() => { if (taste.takt(jetzt())) { zeigen(); } }, 250);
   }
+}
+
+
+// ── Mac-Look: Zeigerinstrument, Rotorzeile, ON AIR ──────────────────────────
+// Die Zahlen schreibt weiter die Schleife oben nach #smeter/#sbar/#rotorGrad;
+// hier werden sie nur in das neue Instrument uebersetzt. Kein zweiter Weg zu
+// den Messwerten, damit beide Anzeigen nie auseinanderlaufen.
+{
+  const striche = $('gaugeStriche');
+  for (let i = 0; i <= 8; i++) {
+    const w = (-62 + i * 15.5) * Math.PI / 180;
+    const l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    l.setAttribute('x1', (66 + 46 * Math.sin(w)).toFixed(1));
+    l.setAttribute('y1', (60 - 46 * Math.cos(w)).toFixed(1));
+    l.setAttribute('x2', (66 + 54 * Math.sin(w)).toFixed(1));
+    l.setAttribute('y2', (60 - 54 * Math.cos(w)).toFixed(1));
+    l.setAttribute('stroke', i > 6 ? '#a86b6d' : '#7e7e85');
+    l.setAttribute('stroke-width', '1.5');
+    striche.appendChild(l);
+  }
+  const rotorFeld = $('rotorFeld');
+  $('rotorKopf').addEventListener('click', () => {
+    const offen = rotorFeld.classList.toggle('offen');
+    $('rotorChev').textContent = offen ? '▾' : '▸';
+  });
+  setInterval(() => {
+    const t = ($('smeter').textContent || '—').split('·');
+    $('sval').textContent = (t[0] || '—').trim();
+    $('sdb').textContent = (t[1] || '').trim();
+    const w = parseFloat($('sbar').style.width) || 0;
+    $('gaugeNadel').setAttribute('transform', 'rotate(' + (-62 + 1.24 * w) + ' 66 60)');
+    $('rotorKopfGrad').textContent = ($('rotorGrad').textContent || '').trim();
+    $('onAir').classList.toggle('an', !!(link.ready && (link.st.mox || link.st.tune)));
+  }, 250);
 }
