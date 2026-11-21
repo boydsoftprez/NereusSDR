@@ -511,6 +511,22 @@ constexpr auto kInstrumentLimit   = "#a86b6d";  // wo es zu viel wird
 // Theme-Datei die Kurve getrennt vom übrigen Bernstein setzen kann —
 // nur ihr Ausgangston ist jetzt der Messwert-Ton.
 constexpr auto kSpectrumTrace     = "#c2924f";  // Kurve und Füllung
+
+// ── Durchlass in den Farbschemata des Panadapters (2026-11-21) ──────────
+//
+// PanColourScheme in SpectrumWidget: je Schema eine Flaechenfarbe (als
+// Verlauf gemalt, unten kraeftiger) und eine Kantenfarbe. Am echten Bild
+// des Betreibers entworfen, werkzeug/entwuerfe-pan-ft8-look-2026-11-21.
+constexpr auto kPassbandFt8Amber   = "#e8862e";
+constexpr auto kPassbandFt8Edge    = "#f0a050";
+constexpr auto kPassbandBrass      = "#a88a5c";
+constexpr auto kPassbandBrassEdge  = "#c2924f";   // = kSpectrumTrace
+constexpr auto kPassbandTeal       = "#2fa58a";
+constexpr auto kPassbandTealEdge   = "#5fc8ac";
+constexpr auto kPassbandSlate      = "#6a88a8";
+constexpr auto kPassbandSlateEdge  = "#8aa4c0";
+constexpr auto kPassbandNight      = "#8a6a3a";
+constexpr auto kPassbandNightEdge  = "#7a5e36";
 constexpr auto kSpectrumGrid      = "#8a8f96";  // Gitterlinien (Alpha im Code)
 constexpr auto kSpectrumGridText  = "#9aa0a8";  // Frequenz- und dBm-Skala
 

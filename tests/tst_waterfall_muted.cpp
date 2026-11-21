@@ -240,7 +240,12 @@ private slots:
         QCOMPARE(static_cast<int>(WfColorScheme::Custom),      6);
         QCOMPARE(static_cast<int>(WfColorScheme::ClarityBlue), 7);
         QCOMPARE(static_cast<int>(WfColorScheme::Muted),       8);
-        QCOMPARE(static_cast<int>(WfColorScheme::Count),       9);
+        // 2026-11-21: Farbschemata des Panadapters, angehaengt.
+        QCOMPARE(static_cast<int>(WfColorScheme::SlateBlue),   9);
+        QCOMPARE(static_cast<int>(WfColorScheme::Night),      10);
+        QCOMPARE(static_cast<int>(WfColorScheme::Ft8Amber),   11);
+        QCOMPARE(static_cast<int>(WfColorScheme::Teal),       12);
+        QCOMPARE(static_cast<int>(WfColorScheme::Count),      13);
     }
 
     void theOtherSchemesAreUntouched()

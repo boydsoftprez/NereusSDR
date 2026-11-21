@@ -235,6 +235,31 @@ enum class WfColorScheme : int {
     // gespeichert, und eine Einfügung in der Mitte würde bei jedem
     // Anwender das Schema verschieben.
     Muted,
+    // 2026-11-21, fuer die Farbschemata des Panadapters (PanColourScheme):
+    // Schwarz ueber Schiefer nach hellem Grau, und ein Nachtwasserfall,
+    // der nie heller als dunkles Bernstein wird. Angehaengt, siehe oben.
+    SlateBlue,
+    Night,
+    Ft8Amber,    // 2026-11-21, wie der Streifen im FT8-Fenster
+    Teal,        // 2026-11-21, Tuerkis-Gruen
+    Count
+};
+
+// Farbschema des Panadapters (2026-11-21, Betreiber zu den Entwurfs-
+// blaettern werkzeug/entwuerfe-pan-ft8-look-2026-11-21: „s2,s4,s5 - alles
+// als option!", „vor allem in der bandwidth"). Ein Schema bestimmt den
+// Durchlass (Empfang und -- mit „TX passband in RX colour" -- Senden) und
+// den Wasserfall. Die Spur bleibt Messwert in ihrer Farbe; nur Night
+// dimmt sie. Standard = wie bisher, die eigene Wasserfall-Palette gilt.
+// Als int gespeichert (DisplayColourScheme), also nur anhaengen; die
+// Reihenfolge im Menue steht davon getrennt in PanadapterApplet.
+enum class PanColourScheme : int {
+    Standard = 0,
+    Brass,       // S2 Messing, gedaempft (Wasserfall = Muted)
+    SlateBlue,   // S4 Graublau, ruhig
+    Night,       // S5 Nacht
+    Ft8Amber,    // S1 FT8 Bernstein (Betreiber: „na dann nehme dazu")
+    Teal,        // S3 Tuerkis-Gruen
     Count
 };
 
@@ -919,6 +944,20 @@ public:
     // ab Werk an, je Pan gespeichert (DisplayTxPassbandLikeRx).
     void setTxPassbandLikeRx(bool on);
     bool txPassbandLikeRx() const { return m_txDurchlassWieRx; }
+    // Farbschema, siehe PanColourScheme.
+    void setColourScheme(PanColourScheme s);
+    PanColourScheme colourScheme() const { return m_farbschema; }
+    // Die Wasserfall-Palette, die wirklich gemalt wird: bei Standard die
+    // eigene (wfColorScheme), sonst die des Schemas. Die eigene bleibt
+    // gespeichert und gilt wieder, sobald Standard gewaehlt wird.
+    WfColorScheme effectiveWfColorScheme() const;
+    // Die Spurfarbe, wie sie gemalt wird (Night: gedimmt).
+    QColor traceColourForPaint() const;
+    // Pruefstand: den Durchlass in `r` fuellen, wie es drawVfoMarker tut.
+    void paintPassbandFillForTest(QPainter& p, const QRectF& r) const
+    {
+        fuelleDurchlass(p, r);
+    }
     // Haelt das Widget gerade das Empfangsbild (Senden oder Nachlauf)?
     bool haeltEmpfangsbild() const;
     // Zeigt es beim Senden den Empfangsdurchlass und den schmalen
@@ -3563,6 +3602,9 @@ private:
     // Empfangsbild beim Senden halten, siehe setHoldReceivePictureOnTx().
     bool    m_haltBildBeimSenden{true};
     bool    m_txDurchlassWieRx{true};
+    PanColourScheme m_farbschema{PanColourScheme::Standard};
+    // Durchlass in der Farbe des Schemas (Standard: m_rxFilterColor flach).
+    void fuelleDurchlass(QPainter& p, const QRectF& r) const;
     qint64  m_sendeEndeMs{0};        // Ende der letzten Sendung (Nachlauf)
     quint64 m_wfZeilenGeschrieben{0};
     // TX attenuator cal offset — applied as an additional dBm shift during TX.

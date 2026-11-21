@@ -8734,6 +8734,11 @@ longpath_add_test(tst_panadapter_schaerfe)
 #   Zweiton-Test und Abwahl bleiben live. Gegenprobe gefahren.
 longpath_add_test(tst_panadapter_beim_senden)
 
+# tst_panadapter_farbschema (2026-11-21): Betreiber „s2,s4,s5 - alles als
+#   option!" -- Farbschemata Messing/Graublau/Nacht im Zahnrad, Durchlass
+#   und Wasserfall gemeinsam, Spur nur bei Nacht gedimmt. Gegenprobe gefahren.
+longpath_add_test(tst_panadapter_farbschema)
+
 # ── Weiche Kante und Hof: die Zusage "beide aus = wie vorher" (2026-10-08) ──
 # tst_kurven_streifen: `Kurve::baue` entscheidet, aus wie vielen Baendern die
 #   GPU die Kurve zeichnet. Die Vorgabe beider Schalter ist AUS, und sie taugt

@@ -539,9 +539,67 @@ static const WfGradientStop* mutedStops(int& count)
     return stops;
 }
 
+// ── Graublau und Nacht (2026-11-21) ─────────────────────────────────
+//
+// Fuer die Farbschemata des Panadapters (PanColourScheme), am echten Bild
+// des Betreibers entworfen (werkzeug/entwuerfe-pan-ft8-look-2026-11-21,
+// Blaetter S4/S5). Beide wie Muted: das Rauschen verschwindet im
+// Schwarz, erst darueber kommt Farbe.
+//
+// Graublau: Schiefer nach hellem Grau -- Signale erkennt man an der
+// Helligkeit, nicht an der Farbe.
+static const WfGradientStop kSlateBlueStops[] = {
+    {0.00f, 0x05, 0x05, 0x07},
+    {0.28f, 0x05, 0x05, 0x07},
+    {0.45f, 0x16, 0x1c, 0x26},
+    {0.62f, 0x34, 0x46, 0x5a},
+    {0.80f, 0x6a, 0x84, 0xa0},
+    {0.93f, 0xa8, 0xbc, 0xd2},
+    {1.00f, 0xdd, 0xe4, 0xec},
+};
+// Nacht: nie heller als dunkles Bernstein -- blendet im dunklen Shack
+// nicht, die Signale bleiben erkennbar.
+static const WfGradientStop kNightStops[] = {
+    {0.00f, 0x03, 0x03, 0x03},
+    {0.30f, 0x03, 0x03, 0x03},
+    {0.50f, 0x1c, 0x12, 0x0a},
+    {0.70f, 0x3c, 0x26, 0x14},
+    {0.88f, 0x62, 0x42, 0x1f},
+    {1.00f, 0x7a, 0x55, 0x30},
+};
+
+// FT8 Bernstein: dieselbe Rampe wie der Streifen im FT8-Fenster
+// (Ft8Wasserfall::rechneSpektrum: r = 255·min(1,1,6v), g = 170·min(1,1,2v),
+// b = 70·v), nur dass hier das Rauschen erst bei einem Viertel der Spanne
+// liegt statt bei null -- darunter bleibt es schwarz.
+static const WfGradientStop kFt8AmberStops[] = {
+    {0.00f, 0x05, 0x05, 0x07},
+    {0.25f, 0x05, 0x05, 0x07},
+    {0.40f, 0x52, 0x29, 0x0e},
+    {0.55f, 0xa3, 0x52, 0x1c},
+    {0.72f, 0xff, 0x8a, 0x2c},
+    {0.85f, 0xff, 0xaa, 0x3a},
+    {1.00f, 0xff, 0xaa, 0x46},
+};
+// Tuerkis-Gruen: Schwarz ueber Petrol nach Mint -- die Farbfamilie des
+// Empfangsdurchlasses, ohne Regenbogen.
+static const WfGradientStop kTealStops[] = {
+    {0.00f, 0x05, 0x05, 0x07},
+    {0.28f, 0x05, 0x05, 0x07},
+    {0.45f, 0x0e, 0x2c, 0x28},
+    {0.62f, 0x21, 0x70, 0x5f},
+    {0.80f, 0x4f, 0xb8, 0x9b},
+    {0.93f, 0x9f, 0xe0, 0xc8},
+    {1.00f, 0xe0, 0xf4, 0xec},
+};
+
 const WfGradientStop* wfSchemeStops(WfColorScheme scheme, int& count)
 {
     switch (scheme) {
+    case WfColorScheme::Ft8Amber:    return pick(kFt8AmberStops, count);
+    case WfColorScheme::Teal:        return pick(kTealStops, count);
+    case WfColorScheme::SlateBlue:   return pick(kSlateBlueStops, count);
+    case WfColorScheme::Night:       return pick(kNightStops, count);
     case WfColorScheme::Muted:       return mutedStops(count);
     case WfColorScheme::Enhanced:    return pick(kEnhancedStops, count);
     case WfColorScheme::Spectran:    return pick(kSpectranStops, count);
@@ -1207,6 +1265,9 @@ void SpectrumWidget::loadSettings()
     m_wfStopOnTx = readBool(QStringLiteral("WaterfallStopOnTx"), false);
     m_haltBildBeimSenden = readBool(QStringLiteral("DisplayHoldRxPictureOnTx"), true);
     m_txDurchlassWieRx   = readBool(QStringLiteral("DisplayTxPassbandLikeRx"), true);
+    m_farbschema = static_cast<PanColourScheme>(qBound(
+        0, readInt(QStringLiteral("DisplayColourScheme"), 0),
+        static_cast<int>(PanColourScheme::Count) - 1));
     m_wfOpacity          = readInt(QStringLiteral("DisplayWfOpacity"), 100);
     m_wfUpdatePeriodMs   = readInt(QStringLiteral("DisplayWfUpdatePeriodMs"), 30);
 
@@ -1510,6 +1571,7 @@ void SpectrumWidget::saveSettings()
               m_haltBildBeimSenden ? QStringLiteral("True") : QStringLiteral("False"));
     s.setValue(settingsKey(QStringLiteral("DisplayTxPassbandLikeRx"), m_panIndex),
               m_txDurchlassWieRx ? QStringLiteral("True") : QStringLiteral("False"));
+    writeInt(QStringLiteral("DisplayColourScheme"), static_cast<int>(m_farbschema));
     writeInt(QStringLiteral("DisplayWfOpacity"), m_wfOpacity);
     writeInt(QStringLiteral("DisplayWfUpdatePeriodMs"), m_wfUpdatePeriodMs);
     s.setValue(settingsKey(QStringLiteral("DisplayWaterfallHistoryMs"), m_panIndex),
@@ -3114,6 +3176,113 @@ void SpectrumWidget::setTxPassbandLikeRx(bool on)
     markOverlayDirty();
     update();
     scheduleSettingsSave();
+}
+
+// ── Farbschemata des Panadapters (2026-11-21) ─────────────────────────
+//
+// Betreiber zu den Blaettern werkzeug/entwuerfe-pan-ft8-look-2026-11-21:
+// „s2,s4,s5 - alles als option!", und vorher „vor allem in der
+// bandwidth", dann zu S1/S3 „na dann nehme dazu" -- also alle fuenf.
+// Ein Schema setzt Durchlass und Wasserfall gemeinsam; die
+// Spur bleibt Messwert (Hausstil: warm = gemessen), nur Night dimmt sie.
+// TX-Streifen, Bandkante und SWR-Anzeige gehen ein Schema nichts an.
+namespace {
+struct Durchlassfarbe {
+    QColor flaeche;      // Verlauf: unten alphaUnten, oben alphaOben
+    float  alphaUnten;
+    float  alphaOben;
+    QColor kante;
+};
+// Kanten deckend genug, um auf jeder Spur zu stehen.
+QColor kante(const char* hex)
+{
+    QColor c(hex);
+    c.setAlpha(190);
+    return c;
+}
+
+Durchlassfarbe durchlassFuer(PanColourScheme s)
+{
+    switch (s) {
+    case PanColourScheme::Brass:
+        return {QColor(Style::kPassbandBrass), 0.20f, 0.03f, kante(Style::kPassbandBrassEdge)};
+    case PanColourScheme::SlateBlue:
+        return {QColor(Style::kPassbandSlate), 0.32f, 0.08f, kante(Style::kPassbandSlateEdge)};
+    case PanColourScheme::Night:
+        return {QColor(Style::kPassbandNight), 0.20f, 0.04f, kante(Style::kPassbandNightEdge)};
+    case PanColourScheme::Ft8Amber:
+        return {QColor(Style::kPassbandFt8Amber), 0.48f, 0.14f, kante(Style::kPassbandFt8Edge)};
+    case PanColourScheme::Teal:
+        return {QColor(Style::kPassbandTeal), 0.36f, 0.10f, kante(Style::kPassbandTealEdge)};
+    case PanColourScheme::Standard:
+    case PanColourScheme::Count:
+        break;
+    }
+    return {};
+}
+// Nacht: die Spur auf gut die Haelfte (Blatt S5).
+constexpr float kNachtSpur = 0.55f;
+}
+
+void SpectrumWidget::setColourScheme(PanColourScheme s)
+{
+    if (m_farbschema == s) { return; }
+    m_farbschema = s;
+    scheduleSettingsSave();
+    markOverlayDirty();
+    // Den sichtbaren Wasserfall neu einfaerben, wie setWfColorScheme.
+    rebuildWaterfallViewport();
+#ifdef LONGPATH_GPU_SPECTRUM
+    m_dss3dNeedsUpload = true;
+#endif
+    update();
+}
+
+WfColorScheme SpectrumWidget::effectiveWfColorScheme() const
+{
+    switch (m_farbschema) {
+    case PanColourScheme::Brass:     return WfColorScheme::Muted;
+    case PanColourScheme::SlateBlue: return WfColorScheme::SlateBlue;
+    case PanColourScheme::Night:     return WfColorScheme::Night;
+    case PanColourScheme::Ft8Amber:  return WfColorScheme::Ft8Amber;
+    case PanColourScheme::Teal:      return WfColorScheme::Teal;
+    case PanColourScheme::Standard:
+    case PanColourScheme::Count:
+        break;
+    }
+    return m_wfColorScheme;
+}
+
+QColor SpectrumWidget::traceColourForPaint() const
+{
+    if (m_farbschema != PanColourScheme::Night) { return m_fillColor; }
+    QColor c = m_fillColor;
+    c.setRgbF(c.redF() * kNachtSpur, c.greenF() * kNachtSpur,
+              c.blueF() * kNachtSpur, c.alphaF());
+    return c;
+}
+
+void SpectrumWidget::fuelleDurchlass(QPainter& p, const QRectF& r) const
+{
+    if (r.width() <= 0.0 || r.height() <= 0.0) { return; }
+    if (m_farbschema == PanColourScheme::Standard) {
+        p.fillRect(r, m_rxFilterColor);
+        return;
+    }
+    const Durchlassfarbe f = durchlassFuer(m_farbschema);
+    QLinearGradient verlauf(QPointF(0.0, r.top()), QPointF(0.0, r.bottom()));
+    QColor oben(f.flaeche);
+    oben.setAlphaF(f.alphaOben);
+    QColor unten(f.flaeche);
+    unten.setAlphaF(f.alphaUnten);
+    verlauf.setColorAt(0.0, oben);
+    verlauf.setColorAt(1.0, unten);
+    p.fillRect(r, QBrush(verlauf));
+    p.save();
+    p.setPen(QPen(f.kante, 1.0));
+    p.drawLine(QPointF(r.left() + 0.5, r.top()), QPointF(r.left() + 0.5, r.bottom()));
+    p.drawLine(QPointF(r.right() - 0.5, r.top()), QPointF(r.right() - 0.5, r.bottom()));
+    p.restore();
 }
 
 bool SpectrumWidget::zeigtSendestreifen() const
@@ -4750,15 +4919,15 @@ void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& specRect)
         if (m_gradientEnabled) {
             QLinearGradient grad(QPointF(0, specRect.top()),
                                  QPointF(0, specRect.bottom()));
-            QColor topCol = m_fillColor;
+            QColor topCol = traceColourForPaint();
             topCol.setAlphaF(qBound(0.0f, m_fillAlpha, 1.0f));
-            QColor botCol = m_fillColor;
+            QColor botCol = traceColourForPaint();
             botCol.setAlphaF(0.0f);
             grad.setColorAt(0.0, topCol);
             grad.setColorAt(1.0, botCol);
             p.fillPath(fillPath, QBrush(grad));
         } else {
-            QColor fill = m_fillColor;
+            QColor fill = traceColourForPaint();
             fill.setAlphaF(m_fillAlpha * 0.4f);
             p.fillPath(fillPath, fill);
         }
@@ -4785,7 +4954,7 @@ void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& specRect)
     // From Thetis Display.cs:5376 [v2.10.3.13] DrawLine(previousPoint, point, lineBrush, ...)
     // -- a polyline through display-pixel points.  We use m_fillColor for
     // consistency with AetherSDR style.
-    QPen tracePen(m_fillColor, m_lineWidth);
+    QPen tracePen(traceColourForPaint(), m_lineWidth);
     p.setPen(tracePen);
     p.drawPolyline(points.data(), n);
 
@@ -6590,7 +6759,7 @@ void SpectrumWidget::rebuildWaterfallViewport()
         if (!src) { continue; }
         auto* dst = reinterpret_cast<QRgb*>(m_waterfall.scanLine(y));
         for (int x = 0; x < w; ++x) {
-            dst[x] = waterfallColorForIntensity(src[x], m_wfColorScheme, m_wfLowColor);
+            dst[x] = waterfallColorForIntensity(src[x], effectiveWfColorScheme(), m_wfLowColor);
         }
     }
 
@@ -7382,7 +7551,7 @@ void SpectrumWidget::zeigeFremdeWasserfallzeile(const QVector<float>& intensitae
         const float stufe = std::clamp((wert - schwarz) / spanne,
                                        0.0f, 1.0f);
         stufen[x] = static_cast<quint8>(std::lround(stufe * 255.0f));
-        scanline[x] = waterfallColorForIntensityF(stufe, m_wfColorScheme,
+        scanline[x] = waterfallColorForIntensityF(stufe, effectiveWfColorScheme(),
                                                   m_wfLowColor);
     }
 
@@ -7738,7 +7907,7 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& wfPixelsDbm)
                                             m_wfActiveHighThreshold,
                                             m_wfBlackLevel, m_wfColorGain);
         level[x] = static_cast<quint8>(std::lround(f * 255.0f));
-        scanline[x] = waterfallColorForIntensityF(f, m_wfColorScheme, m_wfLowColor);
+        scanline[x] = waterfallColorForIntensityF(f, effectiveWfColorScheme(), m_wfLowColor);
     }
 
     // ── Sub-epic E: mirror the just-written row into the history ring ───
@@ -7772,7 +7941,7 @@ QRgb SpectrumWidget::dbmToRgb(float dbm) const
     // setClarityWaterfallThresholds().  Persistent values stay clean.
     return waterfallColor(dbm, m_wfActiveLowThreshold,
                           m_wfActiveHighThreshold,
-                          m_wfBlackLevel, m_wfColorGain, m_wfColorScheme);
+                          m_wfBlackLevel, m_wfColorGain, effectiveWfColorScheme());
 }
 
 // ── Zwei Hälften statt einer ─────────────────────────────────────────
@@ -8067,7 +8236,7 @@ void SpectrumWidget::drawSliceMarker(QPainter& p, const QRect& specRect,
         // Spectrum passband fill — Plan 4 D9b: user-pickable m_rxFilterColor.
         // Previously hardcoded AetherSDR cyan alpha=35/25; now single user colour.
         if (specHeightClipped > 0 && !overSurface) {
-            p.fillRect(xLo, specRect.top(), fW, specHeightClipped, m_rxFilterColor);
+            fuelleDurchlass(p, QRectF(xLo, specRect.top(), fW, specHeightClipped));
         }
 
         // Waterfall passband fill — hell, siehe oben.
@@ -8693,7 +8862,7 @@ void SpectrumWidget::paintDurchlassLupe(QPainter& p, const QRect& specRect)
     // Durchlass und VFO wie im Hauptbild (dieselbe Farbe des Betreibers).
     const qreal xa = xVon(m_vfoHz + std::min(m_filterLowHz, m_filterHighHz));
     const qreal xe = xVon(m_vfoHz + std::max(m_filterLowHz, m_filterHighHz));
-    p.fillRect(QRectF(xa, flaeche.top(), xe - xa, flaeche.height()), m_rxFilterColor);
+    fuelleDurchlass(p, QRectF(xa, flaeche.top(), xe - xa, flaeche.height()));
 
     // Kurve: bei mehr Bins als Punkten je Spalte das Maximum.
     QPainterPath kurve;
@@ -8721,10 +8890,10 @@ void SpectrumWidget::paintDurchlassLupe(QPainter& p, const QRect& specRect)
     fuellung.lineTo(kurve.currentPosition().x(), flaeche.bottom());
     fuellung.lineTo(kurve.elementAt(0).x, flaeche.bottom());
     fuellung.closeSubpath();
-    QColor fuell(m_fillColor);
+    QColor fuell(traceColourForPaint());
     fuell.setAlpha(70);
     p.fillPath(fuellung, fuell);
-    QColor linie(m_fillColor);
+    QColor linie(traceColourForPaint());
     linie.setAlpha(230);
     p.setPen(QPen(linie, 1.0));
     p.setBrush(Qt::NoBrush);
@@ -14105,9 +14274,10 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
         const float cal = m_dbmCalOffset + normalizeShiftDb();
 
         // Flat-mode colour picked from m_fillColor.
-        const float flatR = m_fillColor.redF();
-        const float flatG = m_fillColor.greenF();
-        const float flatB = m_fillColor.blueF();
+        const QColor spurFarbe = traceColourForPaint();   // Night: gedimmt
+        const float flatR = spurFarbe.redF();
+        const float flatG = spurFarbe.greenF();
+        const float flatB = spurFarbe.blueF();
 
         // ── Trace-line ribbon geometry, 2026-08-26 ──────────────────────
         //
@@ -14453,7 +14623,7 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             const float floorDbm = std::round(floorBase * 2.0f) / 2.0f;
             const float rangeDb = m_dynamicRange;
             const quint64 paletteToken =
-                (static_cast<quint64>(m_wfColorScheme) << 32)
+                (static_cast<quint64>(effectiveWfColorScheme()) << 32)
                 ^ static_cast<quint64>(m_wfLowColor.rgba());
             // Reuses the classic waterfall's own palette (not a second,
             // separately-maintained one) so the 3D surface always matches
@@ -14478,7 +14648,7 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             auto palette = [this, farbFloorDbm, rangeDb](float dbm) -> QRgb {
                 const float f = rangeDb > 0.0f
                     ? qBound(0.0f, (dbm - farbFloorDbm) / rangeDb, 1.0f) : 0.0f;
-                return waterfallColorForIntensityF(f, m_wfColorScheme, m_wfLowColor);
+                return waterfallColorForIntensityF(f, effectiveWfColorScheme(), m_wfLowColor);
             };
             // 0.70 -- AetherSDR's fixed default zCurve (m_dssZCurve).
             const QImage& dssImg = m_dss.image(dssPx, 0, floorDbm, rangeDb, 0.70f,

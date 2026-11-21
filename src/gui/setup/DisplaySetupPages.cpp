@@ -2138,7 +2138,11 @@ void WaterfallDefaultsPage::buildUI()
         // Die Reihenfolge muss WfColorScheme entsprechen — der Index
         // dieser Liste IST der gespeicherte Wert. Anhängen, nie
         // einfügen.
-        tr("Muted")                      // 2026-08-15, folgt dem Theme
+        tr("Muted"),                     // 2026-08-15, folgt dem Theme
+        tr("Slate blue"),                // 2026-11-21, Farbschemata
+        tr("Night"),                     // 2026-11-21, Farbschemata
+        tr("FT8 amber"),                 // 2026-11-21, Farbschemata
+        tr("Teal green")                 // 2026-11-21, Farbschemata
     });
     // Thetis: setup.designer.cs:34110 (comboColorPalette) — rewritten
     // Thetis original: "Sets the color scheme"

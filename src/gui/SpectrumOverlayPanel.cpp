@@ -1023,7 +1023,11 @@ void SpectrumOverlayPanel::buildDisplayFlyout()
             QStringLiteral("LinLog"),    QStringLiteral("LinRad"),
             QStringLiteral("Custom"),
             QStringLiteral("Clarity Blue"),
-            tr("Muted")
+            tr("Muted"),
+            tr("Slate blue"),
+            tr("Night"),
+            tr("FT8 amber"),
+            tr("Teal green")
         });
         grid->addWidget(m_colorSchemeCmb, row, 2, 1, 2);
         connect(m_colorSchemeCmb, QOverload<int>::of(&QComboBox::currentIndexChanged),

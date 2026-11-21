@@ -35,7 +35,7 @@ private slots:
         // Zwei Tests, die dieselbe Zahl festnageln, heißt: beim nächsten
         // Schema fällt wieder einer davon um, und man sucht in der
         // falschen Datei.
-        QCOMPARE(static_cast<int>(WfColorScheme::Count), 9);
+        QCOMPARE(static_cast<int>(WfColorScheme::Count), 13);  // +SlateBlue, Night, Ft8Amber, Teal (2026-11-21)
     }
 
     void clarityBlue_gradientIsMonotonicAndSpansZeroToOne()

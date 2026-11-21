@@ -19,6 +19,7 @@
 // =================================================================
 
 #include "gui/PanadapterApplet.h"
+#include <QActionGroup>
 #include <QFileDialog>
 #include <QImage>
 #include <QMessageBox>
@@ -1032,6 +1033,38 @@ QMenu* PanadapterApplet::buildDisplayMenu(QObject* parent)
                              "strip on top marks the TX range. Off: orange TX area."));
         connect(gruen, &QAction::toggled, m_spectrum,
                 &SpectrumWidget::setTxPassbandLikeRx);
+
+        // Farbschema (2026-11-21, Betreiber: „s2,s4,s5 - alles als
+        // option!", dann „na dann nehme dazu" fuer S1/S3): Durchlass und
+        // Wasserfall gemeinsam, Vorgabe Standard. Hier in der Reihenfolge
+        // der Blaetter, nicht in der des gespeicherten Werts.
+        QMenu* schemata = menu->addMenu(tr("Colour scheme"));
+        auto* gruppe = new QActionGroup(schemata);
+        gruppe->setExclusive(true);
+        const struct { PanColourScheme s; const char* name; const char* tipp; } liste[] = {
+            {PanColourScheme::Standard,  QT_TR_NOOP("Standard"),
+             QT_TR_NOOP("Passband and waterfall as set in Setup.")},
+            {PanColourScheme::Ft8Amber,  QT_TR_NOOP("FT8 amber"),
+             QT_TR_NOOP("Amber-orange passband, waterfall like the FT8 window.")},
+            {PanColourScheme::Brass,     QT_TR_NOOP("Brass (muted)"),
+             QT_TR_NOOP("Brass passband, waterfall from black over grey into brass.")},
+            {PanColourScheme::Teal,      QT_TR_NOOP("Teal green"),
+             QT_TR_NOOP("Teal-green passband, waterfall from black over petrol to mint.")},
+            {PanColourScheme::SlateBlue, QT_TR_NOOP("Slate blue"),
+             QT_TR_NOOP("Quiet slate-blue passband, waterfall from black over slate to light grey.")},
+            {PanColourScheme::Night,     QT_TR_NOOP("Night"),
+             QT_TR_NOOP("For the evening: everything darker, trace dimmed, waterfall never brighter than dark amber.")},
+        };
+        for (const auto& e : liste) {
+            QAction* act = schemata->addAction(tr(e.name));
+            act->setToolTip(tr(e.tipp));
+            act->setCheckable(true);
+            act->setChecked(m_spectrum->colourScheme() == e.s);
+            gruppe->addAction(act);
+            const PanColourScheme s = e.s;
+            connect(act, &QAction::triggered, m_spectrum,
+                    [this, s]() { m_spectrum->setColourScheme(s); });
+        }
         menu->addSeparator();
     }
 
