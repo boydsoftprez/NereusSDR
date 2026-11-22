@@ -430,7 +430,9 @@ void TstTransmitModelProperties::coreOffersTransmitSettingsVersion4()
     QVERIFY(s.client->transmitSettingsAvailable(15));
     // 16 since the CW settings are on `transmit` (tst_cw_settings).
     QVERIFY(s.client->transmitSettingsAvailable(16));
-    QVERIFY(!s.client->transmitSettingsAvailable(17));
+    // 17 since a remote window imports one transmit profile (txProfile.import).
+    QVERIFY(s.client->transmitSettingsAvailable(17));
+    QVERIFY(!s.client->transmitSettingsAvailable(18));
 }
 
 // R-R3-49 (parity Task 5): the version 5 properties, after txAlcDecay in

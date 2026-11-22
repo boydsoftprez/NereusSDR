@@ -2059,6 +2059,8 @@ const QList<ReasonSource>& reasonSources()
           QStringLiteral("selectTxProfileForStation"),
           QStringLiteral("saveTxProfileForStation"),
           QStringLiteral("deleteTxProfileForStation"),
+          // transmitSettingsVersion 17: txProfile.import.
+          QStringLiteral("importTxProfileForStation"),
           QStringLiteral("resetRadeVocoderForStation"),
           // R-R3-49 / R-IOS-18: the paProfile verbs.
           QStringLiteral("paProfileActionForStation"),

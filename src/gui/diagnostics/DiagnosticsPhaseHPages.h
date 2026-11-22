@@ -35,10 +35,14 @@
 //   2026-10-08 - Import All Settings' picker, question and result are
 //                 overridable, as Export's are, for tests. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-22 - ExportImportConfigPage is exported from the GUI DLL so a
+//                 test can watch its txProfilePageRequested signal.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #pragma once
 
+#include "gui/NereusGuiExport.h"
 #include "gui/SetupPage.h"
 
 #include <QByteArray>
@@ -109,7 +113,7 @@ private:
 };
 
 // Diagnostics → Export / Import Config (Phase H, functional).
-class ExportImportConfigPage : public SetupPage {
+class NEREUS_GUI_EXPORT ExportImportConfigPage : public SetupPage {
     Q_OBJECT
 public:
     explicit ExportImportConfigPage(RadioModel* model = nullptr, QWidget* parent = nullptr);

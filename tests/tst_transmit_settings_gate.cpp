@@ -259,7 +259,8 @@ void TstTransmitSettingsGate::coreOffersTransmitSettingsVersion()
     // settings are taken on the air as a local window takes them, 14 since
     // Prevent TX'ing on a different band became the Core's setting, 15 since
     // a remote window edits the CFC bands (cfcProfile), 16 since the CW
-    // settings are on `transmit`.
+    // settings are on `transmit`, 17 since a remote window imports one
+    // transmit profile (txProfile.import).
     QCOMPARE(s.server->buildCapabilities().transmitSettingsVersion,
              kTransmitSettingsTxProfileFileVersion);
     QCOMPARE(s.client->capabilities().transmitSettingsVersion,
@@ -281,7 +282,8 @@ void TstTransmitSettingsGate::coreOffersTransmitSettingsVersion()
     QVERIFY(s.client->transmitSettingsAvailable(14));
     QVERIFY(s.client->transmitSettingsAvailable(15));
     QVERIFY(s.client->transmitSettingsAvailable(16));
-    QVERIFY(!s.client->transmitSettingsAvailable(17));
+    QVERIFY(s.client->transmitSettingsAvailable(17));
+    QVERIFY(!s.client->transmitSettingsAvailable(18));
     QVERIFY(StationServer::isTransmitSettingKeyAcceptedOffAir(
         QStringLiteral("DspOptionsBufferSizePhoneTx")));
     QVERIFY(StationServer::isTransmitSettingKeyAcceptedOffAir(

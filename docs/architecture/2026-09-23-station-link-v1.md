@@ -1261,7 +1261,7 @@ table.
 | `pairingVersion` | 1 |
 | `stationCatalogVersion` | 1 |
 | `displayExtrasVersion` | 4 |
-| `transmitSettingsVersion` | 16 |
+| `transmitSettingsVersion` | 17 |
 | `bandSelectVersion` | 1 |
 | `meterReadingsVersion` | 1 |
 | `dspInfoVersion` | 1 |
@@ -6626,6 +6626,7 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `txProfile.select` | `name` utf8 | `transmitSettingsVersion` | 3 | 11 |
 | `txProfile.save` | `name` utf8 | `transmitSettingsVersion` | 3 | 11 |
 | `txProfile.delete` | `name` utf8 | `transmitSettingsVersion` | 3 | 11 |
+| `txProfile.import` | `name` utf8, `keysJson` utf8 | `transmitSettingsVersion` | 17 | 11 |
 | `rade.resetVocoder` | none | `transmitSettingsVersion` | 3 | 11 |
 | `txEq.setCurve` | `curveJson` utf8 | `txEqCurveVersion` | 2 | 11 |
 | `txEq.resetCurve` | none | `txEqCurveVersion` | 2 | 11 |
