@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // Modification history (NereusSDR):
 // 2026-11-15: New. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-22: a new RXL reading builds the slices no more. J.J. Boyd (KG4VCF),
+// AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -134,13 +136,16 @@ struct RxlFlagShotTests {
         ])))
         #expect(await ShotWait.until { main.slices.entries.first?.rxlOn == true })
         #expect(await ShotWait.until { main.slices.rxlLifts.lifts[0] == -5 })
-        // A new reading changes the readings, never the flag's entry.
+        // A new reading changes the readings, never the flag's entry, and
+        // the slices are not built again for it (a meter reading).
         let before = main.slices.entries
+        let rebuilds = main.slices.rebuildCountForTesting
         mirror.apply(.delta(LinkMessage.Delta(key: "slice:0", properties: [
             .init(ordinal: 162, name: "rxLevelerGainDb", value: .f64(7.2)),
         ])))
         #expect(await ShotWait.until { main.slices.rxlLifts.lifts[0] == 7 })
         #expect(main.slices.entries == before)
+        #expect(main.slices.rebuildCountForTesting == rebuilds)
         // CW: RXL leaves the audio alone, so the flag has no line.
         let cw = try #require(main.slices.catalog?.modes.first { $0.label == "CWU" })
         mirror.apply(.delta(LinkMessage.Delta(key: "slice:0", properties: [

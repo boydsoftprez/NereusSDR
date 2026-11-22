@@ -14,6 +14,9 @@
 // 2026-11-15: each flag's RXL line (Entry.rxlOn) and its live reading
 // (rxlLifts, apart from the entries). J.J. Boyd (KG4VCF), AI-assisted via
 // Claude Code.
+// 2026-11-22: the live RXL gain is a meter reading: a new one refreshes
+// rxlLifts from the readings and no longer builds the slices again. J.J. Boyd
+// (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -159,10 +162,12 @@ final class BandSlicesModel: ObservableObject {
     /// The slice properties the Core's meter pump writes each tick
     /// (`isRxMeterReading` and `meterReadingNs` in
     /// src/core/session/StationClient.cpp). ``rebuild()`` reads none of
-    /// them, so a change in these alone only refreshes ``readings``.
+    /// them, so a change in these alone only refreshes ``readings``. The
+    /// live RXL gain (`rxLevelerGainDb`, written on the same tick) is one
+    /// too: it refreshes ``rxlLifts``.
     static let meterProperties: Set<String> = [
         "signalStrengthDbm", "signalPeakDbm", "signalAverageDbm", "adcPeakDbfs", "adcAverageDbfs",
-        "agcGainDb", "agcPeakDb", "agcAverageDb", "meterReadingNs",
+        "agcGainDb", "agcPeakDb", "agcAverageDb", "meterReadingNs", "rxLevelerGainDb",
     ]
 
     /// Who controls a slice this band shows (R-IOS-42, D115).
@@ -209,6 +214,11 @@ final class BandSlicesModel: ObservableObject {
     @Published private(set) var entries: [Entry] = []
     /// The live RXL readings of the slices whose flag has the RXL line.
     let rxlLifts = RxlLiftReadings()
+    /// The slices whose flag has the RXL line, as ``rebuild()`` last found
+    /// them; ``refreshReadings()`` reads their live gain.
+    private var rxlSliceIds: Set<Int> = []
+    /// How many times the slices were built again (tests only).
+    private(set) var rebuildCountForTesting = 0
     @Published private(set) var activeSliceId: Int?
 
     // MARK: Showing another slice's band (R-IOS-42, JJ's rulings of 2026-09-30)
@@ -1403,22 +1413,29 @@ final class BandSlicesModel: ObservableObject {
         return true
     }
 
-    /// Reads every mirrored slice's signal readings, published when one moved.
+    /// Reads every mirrored slice's signal readings, published when one
+    /// moved, and the live RXL gain of the slices with the RXL line.
     private func refreshReadings() {
         var next: [Int: Reading] = [:]
+        var lifts: [Int: Double] = [:]
         for object in store.objects(ofClass: Self.sliceClass) {
             if let id = Self.sliceId(object) {
                 next[id] = Reading(object)
+                if rxlSliceIds.contains(id) {
+                    lifts[id] = object["rxLevelerGainDb"]?.number ?? 0
+                }
             }
         }
         if next != readings.bySlice {
             readings.bySlice = next
         }
+        rxlLifts.offer(lifts)
     }
 
     private func rebuild() {
+        rebuildCountForTesting += 1
         var next: [Entry] = []
-        var nextLifts: [Int: Double] = [:]
+        var nextRxlSlices = Set<Int>()
         var nextActive: Int?
         var anyActive: Int?
         let radeStatus = sendsRadeStatus
@@ -1479,8 +1496,8 @@ final class BandSlicesModel: ObservableObject {
                                     && (access[id] == nil || access[id]?.incarnation == $0.identity.incarnation) } ?? false
                                 : id == 0 && object["diversityEnabled"]?.flag == true,
                               rxlOn: Self.rxlLift(object, modeLabel: modeLabel) != nil))
-            if let lift = Self.rxlLift(object, modeLabel: modeLabel) {
-                nextLifts[id] = lift
+            if Self.rxlLift(object, modeLabel: modeLabel) != nil {
+                nextRxlSlices.insert(id)
             }
             if offShownPans, next.last?.listening == true {
                 // Another device's slice stays where its controller put it.
@@ -1499,8 +1516,8 @@ final class BandSlicesModel: ObservableObject {
         next.sort { $0.id < $1.id }
         // The readings first: whatever wakes on the new slices reads them
         // already in step.
+        rxlSliceIds = nextRxlSlices
         refreshReadings()
-        rxlLifts.offer(nextLifts)
         if next != entries {
             entries = next
         }
