@@ -22126,6 +22126,13 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
         m_alexController.setMacAddress(radioIdentity);
         m_alexController.load();
 
+        // "Rx Bypass on Tx Auto" follows the live xPA flag. Apply it once
+        // here as well: the OC matrix may already have loaded before this
+        // Alex state, so its extPaEnabledChanged signal will not fire again.
+        if (m_alexController.autoRxBypass()) {
+            m_alexController.setExt2OutOnTx(m_ocMatrix.extPaEnabled());
+        }
+
         // Load per-MAC Apollo accessory state (present/filter/tuner bools).
         // Phase 3P-F Task 5a.
         m_apolloController.setMacAddress(radioIdentity);

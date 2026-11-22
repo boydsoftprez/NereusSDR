@@ -617,6 +617,11 @@ void AlexController::load()
     emit ext2OutOnTxChanged(m_ext2OutOnTx);
     emit rxOutOverrideChanged(m_rxOutOverride);
     emit useTxAntForRxChanged(m_useTxAntForRx);
+    // The "Rx Bypass on Tx Auto" link lives in RadioModel: it sets Ext 2 on
+    // TX from the live xPA flag when this signal fires. Emit it here too, or
+    // a saved auto setting is restored into the checkbox but never applied
+    // to the relay (xPA may already be on and will not change again).
+    emit autoRxBypassChanged(m_autoRxBypass);
     for (int b = 0; b < kBandCount; ++b) { emit antennaChanged(bandFromPerBandStateSlot(b)); }
 }
 

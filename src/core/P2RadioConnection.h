@@ -1290,6 +1290,11 @@ private:
     };
     AlexState m_alex;
 
+    // Thetis's SetAntBits sends one CmdHighPriority immediately with run only
+    // (PTT=0) so the Alex relay word lands before the keyed/TR packet. The
+    // Anvelina BYPS relay needs that first packet; see setAntennaRouting().
+    bool m_relayOnlyPacket{false};
+
     // Build Alex0 and Alex1 32-bit register values from current state.
     quint32 buildAlex0() const;
     quint32 buildAlex1() const;

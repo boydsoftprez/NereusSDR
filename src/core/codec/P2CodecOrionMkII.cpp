@@ -488,7 +488,14 @@ quint32 P2CodecOrionMkII::buildAlex0(const CodecContext& ctx) const
     //           prbpfilter->_TR_Relay = bit & 0x1;
     //       prbpfilter->_trx_status = prbpfilter->_TR_Relay; // TXRX_STATUS
     //       prbpfilter2->_trx_status = prbpfilter->_TR_Relay; // TXRX_STATUS for Alex1
-    if (ctx.mox && !ctx.txPaDisabled) {
+    // Anvelina Pro 3 bench capture (2026-11-21): Thetis's Alex0 word while
+    // keyed is 0x01401C00 with the RX bypass on. It does NOT carry bit 27
+    // (_TR_Relay) or bit 18 (_trx_status) in Alex0; Thetis puts the TR status
+    // in Alex1 only. Setting them here routed the RX path away from BYPS and
+    // the PureSignal feedback read zero. Keep them for the other boards the
+    // G2E fix needed.
+    if (ctx.mox && !ctx.txPaDisabled
+        && ctx.model != HPSDRModel::ANVELINAPRO3) {
         reg |= (1u << 27);  // _TR_Relay   (ALEX_TX_RELAY)
         reg |= (1u << 18);  // _trx_status (ALEX_PS_BIT)
     }
@@ -587,6 +594,14 @@ quint32 P2CodecOrionMkII::buildAlex0(const CodecContext& ctx) const
     if (ctx.alexHpfBits & 0x10) { reg |= (1u << 6);  }  // 1.5 MHz
     if (ctx.alexHpfBits & 0x20) { reg |= (1u << 12); }  // Bypass
     if (ctx.alexHpfBits & 0x40) { reg |= (1u << 3);  }  // 6M preamp
+
+    // Anvelina Pro 3: the BYPS / PureSignal feedback path needs the HPF
+    // bypassed, or the feedback is filtered away and calcc sees zero. Force
+    // bit 12 while PureSignal is running on this board so the operator does
+    // not have to remember the two HPF Bypass checkboxes.
+    if (ctx.model == HPSDRModel::ANVELINAPRO3 && ctx.puresignalRun && ctx.mox) {
+        reg |= (1u << 12);
+    }
 
     return reg;
 }

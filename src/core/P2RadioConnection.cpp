@@ -1930,6 +1930,15 @@ void P2RadioConnection::setAntennaRouting(AntennaRouting r)
                           << "rxOut=" << m_alex.rxOut
                           << "running=" << m_running;
     if (m_running) {
+        // Thetis's SetAntBits sends CmdHighPriority at once. On a keyed
+        // transition it goes out with PTT=0 (the relay word), then the normal
+        // keyed/TR packet follows. The Anvelina BYPS relay latches on that
+        // first word, so send it here before the normal packet.
+        if (m_mox.load()) {
+            m_relayOnlyPacket = true;
+            sendCmdHighPriority();
+            m_relayOnlyPacket = false;
+        }
         sendCmdHighPriority();
     }
 }
@@ -4481,6 +4490,13 @@ CodecContext P2RadioConnection::buildCodecContext() const
     ctx.p2Running  = m_running;
     // The transmit cut (2026-10-15) reads as unkeyed on the wire.
     ctx.p2PttOut   = wireMox() ? 1 : 0;    // 3M-1a E.7: was m_tx[0].pttOut (latent bug)
+    // Thetis's SetAntBits sends CmdHighPriority once with run only (PTT=0)
+    // immediately after updating the Alex relay bits, then the normal keyed
+    // packet follows. The Anvelina BYPS relay latches on that first word;
+    // sending only the keyed packet leaves the RX bypass relay where it was.
+    if (m_relayOnlyPacket) {
+        ctx.p2PttOut = 0;
+    }
     // CW transmit (2026-10-26): the key bits read 0 while the transmit is
     // cut, as the PTT bit does.
     const bool cut = cwOutputSuppressed();
@@ -4503,6 +4519,12 @@ CodecContext P2RadioConnection::buildCodecContext() const
     // had a gap that this commit closes.
     ctx.mox        = wireMox();
     ctx.trxRelay   = m_trxRelay;
+
+    if (m_relayOnlyPacket) {
+        ctx.puresignalRun = false;
+        ctx.mox = false;
+        ctx.trxRelay = false;
+    }
 
     // ADC / DAC counts
     ctx.p2NumAdc   = m_numAdc;
