@@ -14,6 +14,7 @@ import { spotLesen, marken, trefferBei, trefferAufSchrift } from './spots.js';
 import { Sendetasten, SENDEN, TUNE, ablehnText } from './sendetaste.js';
 import { Zeichenbremse } from './ton-vorrang.js';
 import { bildIstAlt } from './aufwachen.js';
+import { desktopStarten } from './desktop.js';
 import { standLesen, zustandText, fehlerText as rotorFehlerText,
          peilungAus, Sicherung as RotorSicherung,
          DREHT } from './rotor.js';
@@ -1793,7 +1794,7 @@ $('zoomRaus').addEventListener('click', () => spanneStufe(+1));
 // sein um die frequenz um +/- 100 zu verschieben". Wischen trifft auf ein
 // paar hundert Hertz genau — fuer das letzte Stueck auf eine Station ist das
 // zu grob, und das Eintippblatt ist dafuer zu umstaendlich.
-const kFeinHz = 100;
+let kFeinHz = 100;          // Desktop: die Schrittwahl stellt ihn (desktop.js)
 function feinschritt(d) {
   const v = link.st.vfo[state.trx] ? link.st.vfo[state.trx][0] : null;
   if (!v) { return; }
@@ -3208,6 +3209,10 @@ zeichneBedienung();
   }
 }
 
+
+// Desktop-Layout ab ca. 900 px Breite (desktop.js); darunter bleibt es bei
+// „Ein Schirm". Dieselben Elemente, anderes Raster.
+desktopStarten({ link, $, feinSetzen: (hz) => { kFeinHz = hz; }, logHolen: logListeHolen });
 
 // ── Mac-Look: Zeigerinstrument, Rotorzeile, ON AIR ──────────────────────────
 // Die Zahlen schreibt weiter die Schleife oben nach #smeter/#sbar/#rotorGrad;

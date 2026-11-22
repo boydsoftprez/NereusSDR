@@ -641,3 +641,48 @@ footer #onAir.an{color:var(--tx-border)}
 /* Zeichenflaechen: feste Anzeigehoehe, die Pixelgroesse stellt app.js nach
    Anzeigegroesse x devicePixelRatio ein (anzeigeAnpassen). */
 #pan{height:96px}
+
+
+/* ═══ Desktop-Layout (ab ca. 900 px), 2026-11-21 ══════════════════════════
+   Martins Blatt: docs/design/handfunke-entwuerfe/2026-11-21-desktop.
+   Nur unter body.dt (desktop.js setzt die Klasse). Darunter: „Ein Schirm". */
+@media (min-width: 900px){
+  body.dt{display:block;height:100dvh;overflow:hidden}
+  body.dt .feld:not(#rotorFeld){display:none}
+  body.dt::after{display:none}
+  #dtGitter{position:absolute;inset:0 0 118px 0;display:grid;gap:10px;padding:10px 14px 0;
+    grid-template-columns:280px 1fr 340px;grid-template-rows:auto 1fr}
+  #dtBar{grid-column:1 / 4;display:flex;gap:12px;align-items:center;padding:8px 10px;
+    background:#060608;border:1px solid #1f1f23;border-radius:10px;overflow:hidden}
+  .dtGruppe{display:flex;gap:6px;align-items:center}
+  .dtGruppe + .dtGruppe{border-left:1px solid #1f1f23;padding-left:12px}
+  #dtBar .chips{display:flex;gap:6px;flex-wrap:nowrap}
+  #dtBar .chip{height:28px;padding:0 10px;font-size:12px;flex:none;min-width:0}
+  #dtLinks,#dtRechts{display:flex;flex-direction:column;gap:10px;min-height:0;grid-row:2}
+  #dtLinks{grid-column:1}
+  #dtMitte{grid-column:2;grid-row:2;min-height:0}
+  #dtRechts{grid-column:3}
+  #dtMitte .scope{height:100%;display:flex;flex-direction:column;min-height:0;margin:0}
+  #dtMitte #pan{flex:none;height:230px}
+  #dtMitte #wf{flex:1;min-height:0;height:auto}
+  body.dt .feinschritt{display:flex}
+  #dtLinks .meter,#dtRechts .sliders,#dtRechts #rotorFeld,.dtPnl{margin:0;padding:10px 12px}
+  #dtRechts header{margin:0;padding:10px 12px;height:auto;background:#060608;border:1px solid #1f1f23;border-radius:10px}
+  #dtRechts .vfo{margin:0;padding:0}
+  #dtRechts .vfo .hz{font-size:46px}
+  #dtRechts .vfo .b,#dtRechts .vfo .zoom,#dtRechts .vfo .spacer{display:none}
+  #dtRechts .sliders{flex-direction:column;gap:12px}
+  #dtRechts .sliders .sl .v{display:inline}
+  #dtRechts .mikrow{margin:0}
+  .dtMess{display:flex;align-items:center;gap:10px}
+  .dtMess svg{width:132px;height:62px;flex:none}
+  .dtWert{font:700 28px/1 var(--mono);color:#7e7e85}
+  .dtKlein{font:var(--f-small)/1.2 var(--mono);color:#6b6b71}
+  .dtZeile{display:flex;align-items:center;justify-content:space-between;margin:8px 0 0}
+  .dtW{font:600 13px/1 var(--mono);color:var(--text)}
+  .dtLogPnl{flex:1;min-height:0;overflow:hidden}
+  .dtLogKopf{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+  .dtLogZ{font:11px/1.5 var(--mono);color:#a6a6ac;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* Sendeleiste unten links, Fusszeile ueber die ganze Breite */
+  body.dt .txrow{max-width:640px;right:auto;left:14px}
+}
