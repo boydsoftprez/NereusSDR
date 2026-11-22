@@ -21,6 +21,8 @@
 // 2026-11-16: Recordings: recordingsVersion at 120, after bandStackVersion and
 //   before txSsbModMonitorVersion (now 121), which goes after every other entry;
 //   coreBuildInfo at 122. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-22: Receive leveler: the slice's RXL properties pinned at 156 to 162.
+//   J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import Foundation
 import LinkTestSupport
@@ -354,7 +356,7 @@ import Testing
         let classes = try #require(try Self.surface()["mirrorClasses"] as? [String: Any])
         let slice = try #require(classes["SliceModel"] as? [String: Any])
         let properties = try #require(slice["properties"] as? [[String: Any]])
-        #expect(properties.count == 156)
+        #expect(properties.count == 163)
         let warning = try #require(properties.first { $0["name"] as? String == "nnrLoadWarning" })
         #expect((warning["ordinal"] as? NSNumber)?.intValue == 155)
         #expect(warning["kind"] as? String == "utf8")
@@ -370,6 +372,31 @@ import Testing
         #expect((reason["ordinal"] as? NSNumber)?.intValue == 153)
         #expect(reason["kind"] as? String == "utf8")
         #expect(reason["direction"] as? String == "outbound")
+    }
+
+    /// The receive leveler's six settings and its live gain are appended
+    /// after the NNR warning, 156 to 162, so no earlier ordinal moves.
+    @Test func sliceReceiveLevelerPropertiesAreAppendedLast() throws {
+        let classes = try #require(try Self.surface()["mirrorClasses"] as? [String: Any])
+        let slice = try #require(classes["SliceModel"] as? [String: Any])
+        let properties = try #require(slice["properties"] as? [[String: Any]])
+        let expected: [(String, Int, String, String)] = [
+            ("rxLevelerMode", 156, "enum", "bidirectional"),
+            ("rxLevelerTargetDb", 157, "i64", "bidirectional"),
+            ("rxLevelerMaxBoostDb", 158, "i64", "bidirectional"),
+            ("rxLevelerAttackMs", 159, "i64", "bidirectional"),
+            ("rxLevelerReleaseMs", 160, "i64", "bidirectional"),
+            ("rxLevelerMaxCutDb", 161, "i64", "bidirectional"),
+            ("rxLevelerGainDb", 162, "f64", "outbound"),
+        ]
+        for (name, ordinal, kind, direction) in expected {
+            let entry = try #require(properties.first { $0["name"] as? String == name }, "\(name)")
+            #expect((entry["ordinal"] as? NSNumber)?.intValue == ordinal, "\(name)")
+            #expect(entry["kind"] as? String == kind, "\(name)")
+            #expect(entry["direction"] as? String == direction, "\(name)")
+        }
+        let ordinals = properties.compactMap { ($0["ordinal"] as? NSNumber)?.intValue }
+        #expect(ordinals.max() == 162)
     }
 
     /// The CFC profile the band editor reads (`cfcProfile` 1): the Core's
