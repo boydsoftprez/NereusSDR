@@ -1137,6 +1137,7 @@ DdcAssignment P1CodecStandard::applyDdcAssignment(
 
         // From Thetis console.cs:8387-8392 [v2.10.3.15]:
         //   case HPSDRModel.HERMES:
+        //   case HPSDRModel.ANAN_G2E: //N1GP G2E added
         //   case HPSDRModel.ANAN10:
         //   case HPSDRModel.ANAN100:
         //       P1_rxcount = 4;                     // RX4 used for puresignal feedback
@@ -1151,8 +1152,7 @@ DdcAssignment P1CodecStandard::applyDdcAssignment(
             }
             return ddcAssignmentHermesClass(ctx, slices);
 
-        // From Thetis console.cs:8388 [v2.10.3.15] //N1GP G2E added
-        //   case HPSDRModel.ANAN_G2E:
+        // ANAN_G2E (console.cs:8388 above) keeps the four-receiver map.
         default:
             return ddcAssignmentHermesClass(ctx, slices);
     }
