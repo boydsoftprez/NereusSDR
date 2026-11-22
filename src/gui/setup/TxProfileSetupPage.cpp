@@ -24,6 +24,17 @@
 //   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
 //               (resetItemsBeforeRowChange), so accessibility cannot read a
 //               deleted cell. AI-assisted via Anthropic Claude Code.
+//   2026-11-17 - Export... and Import... for one transmit profile
+//                 (.nereus-tx-profile). Brian Sutton (W4KZO), AI-assisted
+//                 via xAI Grok.
+//   2026-11-22 - PR 809 review fixes: Save and Import refuse a name with a
+//                 reason; the file leaves out this radio's wiring keys; the
+//                 suggested file name avoids every character Windows
+//                 forbids and the save dialog adds the extension itself;
+//                 export's own unsaved question; a remote window's import
+//                 and export wait for the Core's answer; a note when keys
+//                 from a newer build were left out. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived semantics are
@@ -98,6 +109,14 @@ TxProfileSetupPage::TxProfileSetupPage(RadioModel* model,
             m_seedingFromModel = false;
             clearDirty();
         });
+        // A remote window: the Core's answer to an import, or to the save
+        // an export waits for. Queued, so the page's message box never
+        // runs inside the link's result handling.
+        connect(m_profileMgr, &MicProfileManager::stationRequestFinished, this,
+                [this](MicProfileManager::StationRequest request, bool accepted,
+                       const QString& reason) {
+            onStationRequestFinished(static_cast<int>(request), accepted, reason);
+        }, Qt::QueuedConnection);
     }
 }
 
@@ -346,17 +365,22 @@ void TxProfileSetupPage::applyProfileByName(const QString& name)
 // J.4 — handleUnsavedPrompt: returns true if the switch should proceed.
 // Yes → save, No → discard, Cancel → revert.
 // ---------------------------------------------------------------------------
-TxProfileSetupPage::UnsavedPromptResult TxProfileSetupPage::promptUnsaved()
+TxProfileSetupPage::UnsavedPromptResult TxProfileSetupPage::promptUnsaved(bool exporting)
 {
     const QString currentName = m_profileMgr ? m_profileMgr->activeProfileName() : QString();
     if (m_unsavedPromptHook) {
         return m_unsavedPromptHook(currentName);
     }
+    const QString question = exporting
+        ? tr("The current profile (\"%1\") has been modified.\n"
+             "Save the changes and export them? No exports the profile as it "
+             "was last saved.").arg(currentName)
+        : tr("The current profile (\"%1\") has been modified.\n"
+             "Save before switching?").arg(currentName);
     const auto answer = QMessageBox::question(
         this,
         tr("Unsaved Profile Changes"),
-        tr("The current profile (\"%1\") has been modified.\n"
-           "Save before switching?").arg(currentName),
+        question,
         QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel);
     switch (answer) {
         case QMessageBox::Yes: return UnsavedPromptResult::Yes;
@@ -448,6 +472,14 @@ void TxProfileSetupPage::onSaveClicked()
     const QString trimmed = prompt.name.trimmed();
     if (trimmed.isEmpty()) {
         // Empty / whitespace-only name → no-op (validation).
+        return;
+    }
+    // No control characters and a name of 64 characters or fewer, as
+    // import takes (MicProfileManager::profileNameRefusal).
+    const QString nameRefusal = MicProfileManager::profileNameRefusal(
+        MicProfileManager::normalizedProfileName(trimmed));
+    if (!nameRefusal.isEmpty()) {
+        showSaveRefusal(nameRefusal);
         return;
     }
 
@@ -604,18 +636,54 @@ void TxProfileSetupPage::showFileResult(bool success, const QString& text)
     }
 }
 
+void TxProfileSetupPage::showSaveRefusal(const QString& text)
+{
+    if (m_rejectionMessageHook) {
+        m_rejectionMessageHook(text);
+    } else {
+        QMessageBox::warning(this, tr("Save TX Profile"), text);
+    }
+}
+
+QString TxProfileSetupPage::suggestedExportFileName(const QString& profileName)
+{
+    // Every character Windows forbids in a file name, and the control
+    // characters, become underscores.
+    QString title;
+    title.reserve(profileName.size());
+    for (const QChar c : profileName) {
+        const bool forbidden = c.unicode() < 0x20 || c.unicode() == 0x7F
+            || QStringLiteral("*?\"<>|/\\:").contains(c);
+        title += forbidden ? QLatin1Char('_') : c;
+    }
+    return title + QStringLiteral(".nereus-tx-profile");
+}
+
 QString TxProfileSetupPage::chooseExportPath(const QString& profileName)
 {
-    QString title = profileName;
-    for (const QChar mark : {QLatin1Char('/'), QLatin1Char('\\'), QLatin1Char(':')}) {
-        title.replace(mark, QLatin1Char('_'));
+    const QString suffix = QStringLiteral("nereus-tx-profile");
+    // The dialog adds the extension before it checks for a file of that
+    // name, so its own replace question appears.
+    QFileDialog dialog(this, tr("Export TX Profile"), QString(),
+                       tr("Nereus TX profile (*.nereus-tx-profile)"));
+    dialog.setAcceptMode(QFileDialog::AcceptSave);
+    dialog.setFileMode(QFileDialog::AnyFile);
+    dialog.setDefaultSuffix(suffix);
+    dialog.selectFile(suggestedExportFileName(profileName));
+    if (dialog.exec() != QDialog::Accepted || dialog.selectedFiles().isEmpty()) {
+        return {};
     }
-    QString path = QFileDialog::getSaveFileName(
-        this, tr("Export TX Profile"),
-        QStringLiteral("%1.nereus-tx-profile").arg(title),
-        tr("Nereus TX profile (*.nereus-tx-profile)"));
-    if (!path.isEmpty() && !path.endsWith(QStringLiteral(".nereus-tx-profile"))) {
-        path += QStringLiteral(".nereus-tx-profile");
+    QString path = dialog.selectedFiles().constFirst();
+    if (!path.endsWith(QLatin1Char('.') + suffix)) {
+        // A dialog that gave no extension asked about the name typed, not
+        // this one: ask before replacing a file.
+        path += QLatin1Char('.') + suffix;
+        if (QFile::exists(path)
+            && QMessageBox::question(this, tr("Export TX Profile"),
+                                     tr("%1 already exists. Replace it?").arg(path),
+                                     QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes) {
+            return {};
+        }
     }
     return path;
 }
@@ -640,6 +708,18 @@ QHash<QString, QVariant> variantKeys(const QHash<QString, QString>& keys)
 
 } // namespace
 
+QString TxProfileSetupPage::importedText(const QString& name, int unknownKeys)
+{
+    QString text = tr("Imported \"%1\" and selected it.").arg(name);
+    if (unknownKeys == 1) {
+        text += tr("\n\nOne setting this version of NereusSDR does not know was left out.");
+    } else if (unknownKeys > 1) {
+        text += tr("\n\n%1 settings this version of NereusSDR does not know were left out.")
+                    .arg(unknownKeys);
+    }
+    return text;
+}
+
 void TxProfileSetupPage::onExportClicked()
 {
     if (!m_profileMgr || !m_tx || !m_combo) { return; }
@@ -648,26 +728,46 @@ void TxProfileSetupPage::onExportClicked()
         showFileResult(false, tr("Select a transmit profile to export."));
         return;
     }
-    bool useLive = false;
+    bool savedFirst = false;
     if (m_dirty) {
-        switch (promptUnsaved()) {
+        switch (promptUnsaved(/*exporting=*/true)) {
             case UnsavedPromptResult::Cancel:
                 return;
             case UnsavedPromptResult::Yes:
                 if (!m_profileMgr->activeProfileName().isEmpty()) {
-                    m_profileMgr->saveProfile(m_profileMgr->activeProfileName(), m_tx);
+                    if (!m_profileMgr->saveProfile(m_profileMgr->activeProfileName(), m_tx)) {
+                        // A remote window's requester has said why.
+                        if (!m_profileMgr->isStationMirror()) {
+                            showFileResult(false, tr("Could not save the transmit profile."));
+                        }
+                        return;
+                    }
+                    savedFirst = true;
                 }
                 clearDirty();
-                useLive = true;
                 break;
             case UnsavedPromptResult::No:
                 break;
         }
     }
+    const QString path = m_exportPathHook ? m_exportPathHook() : chooseExportPath(name);
+    if (path.isEmpty()) { return; }
+    if (savedFirst && m_profileMgr->isStationMirror()) {
+        // The Core saves; the file is written from what it stored once it
+        // answers (onStationRequestFinished).
+        m_pendingExportName = name;
+        m_pendingExportPath = path;
+        return;
+    }
+    writeExportFile(name, path);
+}
+
+void TxProfileSetupPage::writeExportFile(const QString& name, const QString& path)
+{
     const QString mac = model() ? model()->currentRadioMac() : QString();
-    const QHash<QString, QVariant> stored = useLive
-        ? MicProfileManager::liveProfileValues(m_tx)
-        : MicProfileManager::readStoredProfile(mac, name);
+    // The stored profile, without this radio's wiring keys.
+    const QHash<QString, QVariant> stored = MicProfileManager::portableValues(
+        MicProfileManager::readStoredProfile(mac, name));
     if (stored.isEmpty()) {
         showFileResult(false, mac.isEmpty()
             ? tr("Connect a radio to export its transmit profile.")
@@ -679,8 +779,6 @@ void TxProfileSetupPage::onExportClicked()
     for (auto it = stored.constBegin(); it != stored.constEnd(); ++it) {
         document.keys.insert(it.key(), it.value().toString());
     }
-    const QString path = m_exportPathHook ? m_exportPathHook() : chooseExportPath(name);
-    if (path.isEmpty()) { return; }
     QByteArray bytes;
     QString error;
     if (!TxProfileFile::encode(document, &bytes, &error)) {
@@ -694,6 +792,37 @@ void TxProfileSetupPage::onExportClicked()
         return;
     }
     showFileResult(true, tr("The transmit profile \"%1\" was exported to:\n%2").arg(name, path));
+}
+
+void TxProfileSetupPage::onStationRequestFinished(int request, bool accepted,
+                                                  const QString& reason)
+{
+    const auto kind = static_cast<MicProfileManager::StationRequest>(request);
+    if (kind == MicProfileManager::StationRequest::Import && !m_pendingImportName.isEmpty()) {
+        const QString name = m_pendingImportName;
+        const int unknownKeys = m_pendingImportUnknownKeys;
+        m_pendingImportName.clear();
+        m_pendingImportUnknownKeys = 0;
+        if (accepted) {
+            showFileResult(true, importedText(name, unknownKeys));
+        } else {
+            showFileResult(false, reason.isEmpty()
+                ? tr("The Core did not import the transmit profile.") : reason);
+        }
+        return;
+    }
+    if (kind == MicProfileManager::StationRequest::Save && !m_pendingExportName.isEmpty()) {
+        const QString name = m_pendingExportName;
+        const QString path = m_pendingExportPath;
+        m_pendingExportName.clear();
+        m_pendingExportPath.clear();
+        if (accepted) {
+            writeExportFile(name, path);
+        } else {
+            showFileResult(false, reason.isEmpty()
+                ? tr("The Core did not save the transmit profile.") : reason);
+        }
+    }
 }
 
 void TxProfileSetupPage::onImportClicked()
@@ -719,8 +848,15 @@ void TxProfileSetupPage::onImportClicked()
         return;
     }
     const QString name = MicProfileManager::normalizedProfileName(document.name);
-    if (name.isEmpty()) {
-        showFileResult(false, tr("Give the transmit profile a name."));
+    const QHash<QString, QVariant> values = variantKeys(document.keys);
+    // Checked before any question, so a file that cannot be imported says
+    // why at once.
+    QString refusal = MicProfileManager::profileNameRefusal(name);
+    if (refusal.isEmpty()) {
+        refusal = MicProfileManager::importValuesRefusal(MicProfileManager::portableValues(values));
+    }
+    if (!refusal.isEmpty()) {
+        showFileResult(false, refusal);
         return;
     }
     if (m_dirty && !handleUnsavedPrompt(name)) {
@@ -738,16 +874,25 @@ void TxProfileSetupPage::onImportClicked()
         }
         if (!overwrite) { return; }
     }
-    if (!m_profileMgr->importProfile(name, variantKeys(document.keys), m_tx)) {
-        if (!m_profileMgr->isStationMirror()) {
-            showFileResult(false, tr("Could not import this transmit profile. "
-                                     "Connect a radio and try again."));
+    const int unknownKeys = static_cast<int>(MicProfileManager::unknownProfileKeys(values).size());
+    QString reason;
+    if (!m_profileMgr->importProfile(name, values, m_tx, &reason)) {
+        // A remote window's requester has said why a request was not sent.
+        if (!reason.isEmpty()) {
+            showFileResult(false, reason);
+        } else if (!m_profileMgr->isStationMirror()) {
+            showFileResult(false, tr("Could not import this transmit profile."));
         }
         return;
     }
-    if (!m_profileMgr->isStationMirror()) {
-        showFileResult(true, tr("Imported \"%1\" and selected it.").arg(name));
+    if (m_profileMgr->isStationMirror()) {
+        // Sent: the Core's answer says how it went (onStationRequestFinished).
+        m_pendingImportName = name;
+        m_pendingImportUnknownKeys = unknownKeys;
+        return;
     }
+    clearDirty();
+    showFileResult(true, importedText(name, unknownKeys));
 }
 
 } // namespace NereusSDR

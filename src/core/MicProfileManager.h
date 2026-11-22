@@ -72,6 +72,16 @@
 //   2026-10-09 - Fix wave: TXParaEQData and FilterLow/FilterHigh positions
 //                 recounted from liveKeyList() (39th, 88-89). J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-17 - importProfile, normalizedProfileName, readStoredProfile
+//                 and liveProfileValues for one profile's file; the station
+//                 requester carries the imported values. Brian Sutton
+//                 (W4KZO), AI-assisted via xAI Grok.
+//   2026-11-22 - Import checks the name and every value with a plain
+//                 reason, leaves out this radio's wiring keys and refuses a
+//                 file with no settings; profileNameRefusal also guards
+//                 save; a remote window hears the Core's answer
+//                 (stationRequestFinished). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived handler logic
@@ -158,13 +168,46 @@ public:
 
     /// Store `values` under `name` (commas become underscores, as save does)
     /// and select it. Missing live keys take the factory defaults. Unknown
-    /// keys are left out. On a remote window this asks the Core
-    /// (txProfile.import) and changes nothing here.
+    /// keys are left out, and so are this radio's wiring keys
+    /// (radioWiringKeys): the profile keeps this radio's current values for
+    /// them. Refused, with `reason` in plain words, for a name
+    /// profileNameRefusal refuses, for values importValuesRefusal refuses,
+    /// and for a file with no setting this build knows. On a remote window
+    /// this asks the Core (txProfile.import) and changes nothing here; the
+    /// Core's answer comes back through stationRequestFinished.
     bool importProfile(const QString& name, const QHash<QString, QVariant>& values,
-                       TransmitModel* tx);
+                       TransmitModel* tx, QString* reason = nullptr);
 
     /// The name save and import store: trimmed, with commas replaced.
     static QString normalizedProfileName(QString name);
+
+    /// The longest profile name save and import take, in characters.
+    static constexpr int kMaxProfileNameLength = 64;
+
+    /// Why `name` (as normalizedProfileName gives it) cannot name a
+    /// profile, in plain words, or empty when it can: empty, longer than
+    /// kMaxProfileNameLength, or holding a control character (a tab, a
+    /// line break) or a character that is not text.
+    static QString profileNameRefusal(const QString& name);
+
+    /// The keys that describe how this radio is wired (the mic jack, PTT,
+    /// bias, line input, digital outputs and the mic source). A profile
+    /// file leaves them out and an import ignores them.
+    static const QStringList& radioWiringKeys();
+
+    /// `values` without the radio wiring keys: what a profile file carries.
+    static QHash<QString, QVariant> portableValues(const QHash<QString, QVariant>& values);
+
+    /// The keys of `values` this build does not keep in a profile (from a
+    /// newer build, or not profile settings). Wiring keys are not counted.
+    static QStringList unknownProfileKeys(const QHash<QString, QVariant>& values);
+
+    /// Why imported `values` cannot be stored, in plain words naming the
+    /// setting, or empty when every known key holds a value its setting
+    /// takes: True or False for a switch, a number in its range (the
+    /// ranges TransmitModel::settingRangeRefusal refuses on the link), a
+    /// readable equalizer curve. Unknown and wiring keys are not checked.
+    static QString importValuesRefusal(const QHash<QString, QVariant>& values);
 
     /// The saved keys of one profile under hardware/<mac>/tx/profile/.
     /// Empty when that radio has none. A remote window reads the Core's
@@ -218,6 +261,7 @@ public:
     // combos show the Core's active profile when it arrives; a refused
     // request (reportStationRequestRefused) shows it again.
     enum class StationRequest { Select, Save, Delete, Import };
+    Q_ENUM(StationRequest)
     /// Sends one request to the Core; false when it was not sent (the
     /// requester says why to the operator). `values` is the imported
     /// profile for Import, and empty for the others.
@@ -231,6 +275,9 @@ public:
     void applyStationActiveProfile(const QString& name);
     /// The Core refused a request: the combos show its active profile again.
     void reportStationRequestRefused();
+    /// The Core answered a request (txProfile.*): stationRequestFinished.
+    void reportStationRequestFinished(StationRequest request, bool accepted,
+                                      const QString& reason);
 
 signals:
     /// Emitted when the dirty/clean state of the active profile changes.
@@ -249,6 +296,11 @@ signals:
     /// Emitted when the active profile has changed (either via
     /// setActiveProfile or via deleteProfile of the active one).
     void activeProfileChanged(const QString& name);
+
+    /// A remote window: the Core answered one request, with its reason
+    /// when it refused.
+    void stationRequestFinished(MicProfileManager::StationRequest request, bool accepted,
+                                const QString& reason);
 
 private:
     /// Read the profile-name manifest from AppSettings.  Empty list means

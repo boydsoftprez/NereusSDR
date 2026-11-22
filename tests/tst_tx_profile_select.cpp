@@ -22,11 +22,29 @@
 //                                    transmit is held (ruling 7.7); the
 //                                    Core's own key holds it here.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-11-17  Brian Sutton (W4KZO)  txProfile.import stores and selects
+//                                    a profile, with its refusals.
+//                                    AI-assisted via xAI Grok.
+//   2026-11-22  J.J. Boyd / KG4VCF  CI fix: the mirror's requester takes
+//                                    the imported values. Review fixes: the
+//                                    Core's refusals of a large, non-text,
+//                                    badly named or out-of-range import and
+//                                    of one with no settings; the wiring
+//                                    keys stay the Core's; a remote
+//                                    window's TX Profile page exports the
+//                                    Core's stored profile, waits for the
+//                                    Core's save and import, and leaves
+//                                    Import disabled on a Core at version
+//                                    16. AI tooling: Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 #include <QCoreApplication>
 #include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QPushButton>
+#include <QComboBox>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 
@@ -46,7 +64,9 @@
 #include "core/session/StationClient.h"
 #include "core/session/StationServer.h"
 #include "core/settings/SettingsProxy.h"
+#include "core/TxProfileFile.h"
 #include "fakes/LoopbackTransport.h"
+#include "gui/setup/TxProfileSetupPage.h"
 #include "fakes/UpgradedCoreToken.h"
 #include "models/RadioModel.h"
 #include "models/TransmitModel.h"
@@ -182,6 +202,14 @@ private slots:
     void deleteRefusals();
     void importStoresTheProfileAndSelectsIt();
     void importRefusals();
+    void importRefusalsTheCoreChecks();
+    void importKeepsTheCoresWiring();
+    void saveRefusesABadName();
+    void remoteExportReadsTheCoresStoredProfile();
+    void remoteExportYesWaitsForTheCoresSave();
+    void remoteImportConfirmsOnceTheCoreAnswers();
+    void remoteImportRefusalShowsOnThePage();
+    void importIsDisabledOnACoreAtVersion16();
     void wrongArgumentsAreNotUnderstood();
     void aRefusedSelectShowsTheCoresProfileAgain();
     void anUnconnectedWindowAsksNothing();
@@ -542,6 +570,278 @@ void TstTxProfileSelect::importRefusals()
     QVERIFY(storedField(QStringLiteral("On Air"), QStringLiteral("MicGain")).isEmpty());
 }
 
+// PR 809 review: what the Core checks itself, whatever the window sent.
+void TstTxProfileSelect::importRefusalsTheCoreChecks()
+{
+    Session s(m_securityDir.path(), this);
+    QVERIFY(s.connect());
+    const int count = s.coreProfiles().profileNames().size();
+    SessionMessage result;
+    const struct {
+        QString name;
+        QString keysJson;
+        QString reason;
+    } refused[] = {
+        {QStringLiteral("Huge"),
+         QStringLiteral("{\"MicGain\":\"%1\"}").arg(QString(256 * 1024, QLatin1Char('1'))),
+         QStringLiteral("The transmit profile is too large.")},
+        {QStringLiteral("Numbers"), QStringLiteral("{\"MicGain\":-9}"),
+         QStringLiteral("A setting in the transmit profile is not text.")},
+        {QStringLiteral("Tab\tName"), QStringLiteral("{\"MicGain\":\"-9\"}"),
+         QStringLiteral("Use a transmit profile name without tabs, line breaks or other "
+                        "control characters.")},
+        {QString(65, QLatin1Char('x')), QStringLiteral("{\"MicGain\":\"-9\"}"),
+         QStringLiteral("Use a transmit profile name of 64 characters or fewer.")},
+        {QStringLiteral("Loud"), QStringLiteral("{\"MicGain\":\"loud\"}"),
+         QStringLiteral("Choose a mic level from -50 to 70 dB.")},
+        {QStringLiteral("Leveler"), QStringLiteral("{\"Lev_On\":\"yes\"}"),
+         QStringLiteral("The transmit profile's leveler setting is not on or off.")},
+        {QStringLiteral("Curve"), QStringLiteral("{\"TXParaEQData\":\"zzz\"}"),
+         QStringLiteral("The Core could not read that equalizer curve. Save the curve again "
+                        "and retry.")},
+        {QStringLiteral("Empty"), QStringLiteral("{}"),
+         QStringLiteral("The transmit profile has no settings.")},
+        {QStringLiteral("Newer"), QStringLiteral("{\"FutureKnob\":\"3\"}"),
+         QStringLiteral("The transmit profile has no settings.")},
+    };
+    for (const auto& r : refused) {
+        result = s.invoke("txProfile.import", {nameArg(r.name), nameArg(r.keysJson, "keysJson")});
+        QVERIFY2(!result.accepted, qPrintable(r.reason));
+        QCOMPARE(result.reason, r.reason);
+        QVERIFY(OperatorWording::isPlain(result.reason));
+    }
+    QCOMPARE(s.coreProfiles().profileNames().size(), count);
+}
+
+void TstTxProfileSelect::importKeepsTheCoresWiring()
+{
+    Session s(m_securityDir.path(), this);
+    QVERIFY(s.connect());
+    TransmitModel& coreTx = s.core->transmitModel();
+    coreTx.setMicXlr(true);
+    coreTx.setMicPttDisabled(false);
+    const SessionMessage result = s.invoke("txProfile.import",
+        {nameArg(QStringLiteral("Wired")),
+         nameArg(QStringLiteral("{\"MicGain\":\"-8\",\"Mic_XLR\":\"False\","
+                                "\"Mic_PTT_Disabled\":\"True\"}"), "keysJson")});
+    QVERIFY2(result.accepted, qPrintable(result.reason));
+    QCOMPARE(coreTx.micGainDb(), -8);
+    QVERIFY(coreTx.micXlr());
+    QVERIFY(!coreTx.micPttDisabled());
+    QCOMPARE(storedField(QStringLiteral("Wired"), QStringLiteral("Mic_XLR")), QStringLiteral("True"));
+}
+
+void TstTxProfileSelect::saveRefusesABadName()
+{
+    Session s(m_securityDir.path(), this);
+    QVERIFY(s.connect());
+    const int count = s.coreProfiles().profileNames().size();
+    SessionMessage result = s.invoke("txProfile.save", {nameArg(QStringLiteral("Line\nBreak"))});
+    QVERIFY(!result.accepted);
+    QCOMPARE(result.reason, QStringLiteral(
+        "Use a transmit profile name without tabs, line breaks or other control characters."));
+    result = s.invoke("txProfile.save", {nameArg(QString(65, QLatin1Char('y')))});
+    QVERIFY(!result.accepted);
+    QCOMPARE(result.reason, QStringLiteral("Use a transmit profile name of 64 characters or fewer."));
+    QCOMPARE(s.coreProfiles().profileNames().size(), count);
+    // The window does not send one.
+    QVERIFY(!s.windowProfiles().saveProfile(QStringLiteral("Tab\tName"), &s.window.transmitModel()));
+}
+
+namespace {
+
+QString writeProfileFile(const QTemporaryDir& dir, const QString& name, const QJsonObject& keys)
+{
+    const QJsonObject root{{QStringLiteral("nereusTxProfileVersion"), TxProfileFile::kVersion},
+                           {QStringLiteral("name"), name},
+                           {QStringLiteral("keys"), keys}};
+    const QString path = dir.filePath(QStringLiteral("in.nereus-tx-profile"));
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        return {};
+    }
+    file.write(QJsonDocument(root).toJson());
+    return path;
+}
+
+TxProfileFile::Document readProfileFile(const QString& path)
+{
+    TxProfileFile::Document document;
+    QFile file(path);
+    if (file.open(QIODevice::ReadOnly)) {
+        TxProfileFile::decode(file.readAll(), &document, nullptr);
+    }
+    return document;
+}
+
+}  // namespace
+
+void TstTxProfileSelect::remoteExportReadsTheCoresStoredProfile()
+{
+    Session s(m_securityDir.path(), this);
+    TransmitModel& coreTx = s.core->transmitModel();
+    coreTx.setMicGainDb(-13);
+    QVERIFY(s.coreProfiles().saveProfile(QStringLiteral("Desk"), &coreTx));
+    QVERIFY(s.coreProfiles().setActiveProfile(QStringLiteral("Desk"), &coreTx));
+    QVERIFY(s.connect());
+    QTRY_COMPARE(s.windowProfiles().activeProfileName(), QStringLiteral("Desk"));
+    TxProfileSetupPage page(&s.window, &s.windowProfiles(), &s.window.transmitModel());
+    QCOMPARE(page.profileCombo()->currentText(), QStringLiteral("Desk"));
+    // The Core's live level moves on; its stored profile does not.
+    coreTx.setMicGainDb(-2);
+    QTRY_COMPARE(s.window.transmitModel().micGainDb(), -2);
+    page.setUnsavedPromptHook([](const QString&) {
+        return TxProfileSetupPage::UnsavedPromptResult::No;
+    });
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("Desk.nereus-tx-profile"));
+    page.setExportPathHook([path] { return path; });
+    bool ok = false;
+    QString shown;
+    page.setFileResultHook([&](bool success, const QString& text) {
+        ok = success;
+        shown = text;
+    });
+    page.exportButton()->click();
+    QVERIFY2(ok, qPrintable(shown));
+    const TxProfileFile::Document document = readProfileFile(path);
+    QCOMPARE(document.name, QStringLiteral("Desk"));
+    QCOMPARE(document.keys.value(QStringLiteral("MicGain")), QStringLiteral("-13"));
+    QVERIFY(!document.keys.contains(QStringLiteral("Mic_XLR")));
+}
+
+void TstTxProfileSelect::remoteExportYesWaitsForTheCoresSave()
+{
+    Session s(m_securityDir.path(), this);
+    TransmitModel& coreTx = s.core->transmitModel();
+    coreTx.setMicGainDb(-13);
+    QVERIFY(s.coreProfiles().saveProfile(QStringLiteral("Desk"), &coreTx));
+    QVERIFY(s.coreProfiles().setActiveProfile(QStringLiteral("Desk"), &coreTx));
+    QVERIFY(s.connect());
+    QTRY_COMPARE(s.windowProfiles().activeProfileName(), QStringLiteral("Desk"));
+    TxProfileSetupPage page(&s.window, &s.windowProfiles(), &s.window.transmitModel());
+    coreTx.setMicGainDb(-2);
+    QTRY_COMPARE(s.window.transmitModel().micGainDb(), -2);
+    int asked = 0;
+    page.setUnsavedPromptHook([&asked](const QString&) {
+        ++asked;
+        return TxProfileSetupPage::UnsavedPromptResult::Yes;
+    });
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("Desk.nereus-tx-profile"));
+    page.setExportPathHook([path] { return path; });
+    int results = 0;
+    bool ok = false;
+    page.setFileResultHook([&](bool success, const QString&) {
+        ++results;
+        ok = success;
+    });
+    page.exportButton()->click();
+    QCOMPARE(asked, 1);
+    // Nothing is written before the Core has saved.
+    QVERIFY(!QFile::exists(path));
+    QCOMPARE(results, 0);
+    QTRY_COMPARE(results, 1);
+    QVERIFY(ok);
+    QCOMPARE(storedField(QStringLiteral("Desk"), QStringLiteral("MicGain")), QStringLiteral("-2"));
+    QCOMPARE(readProfileFile(path).keys.value(QStringLiteral("MicGain")), QStringLiteral("-2"));
+}
+
+void TstTxProfileSelect::remoteImportConfirmsOnceTheCoreAnswers()
+{
+    Session s(m_securityDir.path(), this);
+    QVERIFY(s.connect());
+    QTRY_VERIFY(!s.windowProfiles().profileNames().isEmpty());
+    TxProfileSetupPage page(&s.window, &s.windowProfiles(), &s.window.transmitModel());
+    // As MainWindow's gate does for a Core at version 17.
+    page.setTransmitSettingsPermittedAt(kTransmitSettingsTxProfileFileVersion, true, {});
+    QVERIFY(page.importButton()->isEnabled());
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeProfileFile(dir, QStringLiteral("From File"),
+        QJsonObject{{QStringLiteral("MicGain"), QStringLiteral("-19")},
+                    {QStringLiteral("FutureKnob"), QStringLiteral("1")}});
+    page.setImportPathHook([path] { return path; });
+    int results = 0;
+    bool ok = false;
+    QString shown;
+    page.setFileResultHook([&](bool success, const QString& text) {
+        ++results;
+        ok = success;
+        shown = text;
+    });
+    page.importButton()->click();
+    QCOMPARE(results, 0);
+    QTRY_COMPARE(results, 1);
+    QVERIFY2(ok, qPrintable(shown));
+    QCOMPARE(shown, QStringLiteral("Imported \"From File\" and selected it.\n\n"
+                                   "One setting this version of NereusSDR does not know was left out."));
+    QCOMPARE(s.coreProfiles().activeProfileName(), QStringLiteral("From File"));
+    QCOMPARE(s.core->transmitModel().micGainDb(), -19);
+}
+
+void TstTxProfileSelect::remoteImportRefusalShowsOnThePage()
+{
+    Session s(m_securityDir.path(), this);
+    QVERIFY(s.connect());
+    QTRY_VERIFY(!s.windowProfiles().profileNames().isEmpty());
+    TxProfileSetupPage page(&s.window, &s.windowProfiles(), &s.window.transmitModel());
+    // As MainWindow's gate does for a Core at version 17.
+    page.setTransmitSettingsPermittedAt(kTransmitSettingsTxProfileFileVersion, true, {});
+    QVERIFY(page.importButton()->isEnabled());
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeProfileFile(dir, QStringLiteral("On Air"),
+        QJsonObject{{QStringLiteral("MicGain"), QStringLiteral("-19")}});
+    page.setImportPathHook([path] { return path; });
+    int results = 0;
+    bool ok = true;
+    QString shown;
+    page.setFileResultHook([&](bool success, const QString& text) {
+        ++results;
+        ok = success;
+        shown = text;
+    });
+    s.keyCore();
+    QTRY_VERIFY(s.core->moxController()->isMox());
+    page.importButton()->click();
+    QTRY_COMPARE(results, 1);
+    s.unkeyCore();
+    QVERIFY(!ok);
+    QCOMPARE(shown, kOnAir);
+    QVERIFY(!s.coreProfiles().profileNames().contains(QStringLiteral("On Air")));
+}
+
+void TstTxProfileSelect::importIsDisabledOnACoreAtVersion16()
+{
+    Session s(m_securityDir.path(), this);
+    QVERIFY(s.connect());
+    s.client->setTransmitSettingsVersionForTest(16);
+    QVERIFY(s.client->transmitSettingsAvailable(kTransmitSettingsCwVersion));
+    QVERIFY(!s.client->transmitSettingsAvailable(kTransmitSettingsTxProfileFileVersion));
+    // The window sends nothing to such a Core.
+    const IStationLink::CommandOutcome outcome =
+        s.client->requestTxProfileImport(QStringLiteral("Desk"), QStringLiteral("{\"MicGain\":\"-9\"}"));
+    QVERIFY(!outcome.sent);
+    QCOMPARE(outcome.reason, IStationLink::transmitSettingsUnavailableReason());
+
+    // As SetupDialog passes MainWindow's gates on to the page: each
+    // version as the link offers it.
+    TxProfileSetupPage page(&s.window, &s.windowProfiles(), &s.window.transmitModel());
+    page.setTransmitSettingsPermittedAt(kTransmitSettingsTxProfileFileVersion, true, {});
+    QVERIFY(page.importButton()->isEnabled());
+    for (const int version : {3, kTransmitSettingsTxProfileFileVersion}) {
+        page.setTransmitSettingsPermittedAt(version, s.client->transmitSettingsAvailable(version),
+                                            IStationLink::transmitSettingsUnavailableReason());
+    }
+    QVERIFY(!page.importButton()->isEnabled());
+    QCOMPARE(page.importButton()->toolTip(), IStationLink::transmitSettingsUnavailableReason());
+    QVERIFY(page.exportButton()->isEnabled());
+    QVERIFY(page.saveButton()->isEnabled());
+}
+
 void TstTxProfileSelect::wrongArgumentsAreNotUnderstood()
 {
     Session s(m_securityDir.path(), this);
@@ -613,6 +913,12 @@ void TstTxProfileSelect::refusalsArePlainWords()
           QStringLiteral("The transmit profile was not understood."),
           QStringLiteral("The transmit profile is too large."),
           QStringLiteral("The Core did not import the transmit profile."),
+          QStringLiteral("A setting in the transmit profile is not text."),
+          QStringLiteral("The transmit profile has no settings."),
+          QStringLiteral("Use a transmit profile name of 64 characters or fewer."),
+          QStringLiteral("Use a transmit profile name without tabs, line breaks or other "
+                         "control characters."),
+          QStringLiteral("The transmit profile's leveler setting is not on or off."),
           QStringLiteral("The Core has no radio to keep transmit profiles for."),
           QStringLiteral("Update this app to change transmit profiles on this Core."),
           QStringLiteral("RADE is not running on the Core's active slice."),

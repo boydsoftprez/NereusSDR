@@ -1,6 +1,8 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-11-17: transmitSettingsVersion 17 (txProfile.import). Brian
+//               Sutton (W4KZO), AI-assisted via xAI Grok.
 //   2026-11-16: Recording plan Task 22: the dsr.* verbs (rewind sound)
 //               behind the recordings gate.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.

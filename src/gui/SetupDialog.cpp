@@ -8,6 +8,9 @@
 // behaviour rules consulted while implementing visibility wiring.
 //
 // Modification history (NereusSDR):
+//   2026-11-17 - Diagnostics > Export / Import's Open TX Profile... selects
+//                the TX Profile page. Brian Sutton (W4KZO), AI-assisted via
+//                xAI Grok.
 //   2026-11-16 - Cores > Digital Spectrum Recorder (DsrSetupPage, Core
 //                scope), before Recordings, recording plan Task 26.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.

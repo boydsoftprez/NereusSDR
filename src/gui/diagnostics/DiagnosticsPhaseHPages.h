@@ -35,6 +35,9 @@
 //   2026-10-08 - Import All Settings' picker, question and result are
 //                 overridable, as Export's are, for tests. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-17 - The TX Profile section's Open TX Profile... button
+//                 (txProfilePageRequested). Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 //   2026-11-22 - ExportImportConfigPage is exported from the GUI DLL so a
 //                 test can watch its txProfilePageRequested signal.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.

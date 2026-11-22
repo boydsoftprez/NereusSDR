@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-17: The Setup dialog's gate for transmitSettingsVersion 17
+//               (TX Profile's Import...). Brian Sutton (W4KZO), AI-assisted
+//               via xAI Grok.
 //   2026-11-16: Any tune of a pan's slice reaches its DsrRewindLink
 //               (sliceTuned): in the past it plays from the top row, or
 //               says nothing was kept at that frequency then. J.J. Boyd

@@ -417,11 +417,17 @@
 //                                    AI-assisted via Anthropic Claude Code.
 //   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
 //                 AI-assisted via xAI Grok.
+//   2026-11-17 - txProfile.import (name, keysJson), read with
+//                 TxProfileFile::parseKeys. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
+//   2026-11-22 - The TxProfileFile include moved to the core includes.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include "core/roundtable/RoundtableWire.h"
 #include "core/session/SessionCommandDispatcher.h"
 
+#include "core/TxProfileFile.h"
 #include "core/TxSliceArbiter.h"
 
 #include "core/SliceOwnership.h"
@@ -458,7 +464,6 @@
 #include "core/session/StationServer.h"
 #include "core/StationRotorController.h"
 #include "models/BandGrid.h"
-#include "core/TxProfileFile.h"
 #include "models/RadioModel.h"
 #include "models/RotorModel.h"
 #include "models/StationTciModel.h"

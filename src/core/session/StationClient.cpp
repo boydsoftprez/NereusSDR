@@ -9,6 +9,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-22: The TX profile page hears the Core's answer to every
+//               txProfile.* request (reportStationRequestFinished).
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-17: requestTxProfileImport (txProfile.import, transmitSettings
+//               Version 17). Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 //   2026-11-16: Recording plan Task 22: the dsr.* verbs (rewind sound) are
 //               sent and answered with the recordings verbs.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -9132,6 +9137,20 @@ void StationClient::handleCommandResult(const SessionMessage& message)
             if (AlexAntennaFacade* alex = m_radioModel->alexAntennaFacade()) {
                 alex->reportBandEditRefused();
             }
+        }
+    }
+
+    // PR 809 review (M5, M10): the page that imported a profile, or saved
+    // one to export it, hears the Core's answer, accepted or refused.
+    if (pending.verb.startsWith("txProfile.") && !m_radioModel.isNull()) {
+        if (MicProfileManager* profiles = m_radioModel->micProfileManager()) {
+            using Request = MicProfileManager::StationRequest;
+            const Request request = pending.verb == "txProfile.import" ? Request::Import
+                : pending.verb == "txProfile.save"                     ? Request::Save
+                : pending.verb == "txProfile.delete"                   ? Request::Delete
+                                                                       : Request::Select;
+            profiles->reportStationRequestFinished(request, message.accepted,
+                                                   message.reason);
         }
     }
 

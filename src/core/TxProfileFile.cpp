@@ -1,4 +1,22 @@
+// =================================================================
+// src/core/TxProfileFile.cpp  (NereusSDR)
+// =================================================================
+//
+// no-port-check: NereusSDR-original file.
+//
+// One transmit profile's file and txProfile.import's keysJson. See
+// TxProfileFile.h.
+//
+// Modification history (NereusSDR):
+//   2026-11-17 - Created. Brian Sutton (W4KZO), AI-assisted via xAI Grok.
+//   2026-11-22 - decode refuses a name save would refuse
+//                 (MicProfileManager::profileNameRefusal) and a file with no
+//                 settings. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// =================================================================
+
 #include "core/TxProfileFile.h"
+
+#include "core/MicProfileManager.h"
 
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -104,8 +122,14 @@ bool decode(const QByteArray& input, Document* output, QString* error)
         setError(error, QStringLiteral("Give the transmit profile a name."));
         return false;
     }
+    const QString nameRefusal = MicProfileManager::profileNameRefusal(
+        MicProfileManager::normalizedProfileName(name.toString()));
+    if (!nameRefusal.isEmpty()) {
+        setError(error, nameRefusal);
+        return false;
+    }
     const QJsonValue keys = root.value(QStringLiteral("keys"));
-    if (!keys.isObject()) {
+    if (!keys.isObject() || keys.toObject().isEmpty()) {
         setError(error, QStringLiteral("The transmit profile has no settings."));
         return false;
     }

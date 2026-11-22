@@ -46,6 +46,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-17: requestTxProfileImport. Brian Sutton (W4KZO), AI-assisted
+//               via xAI Grok.
 //   2026-11-05: Band stack plan Task 6: sliceControlledHere.
 //   2026-11-05: Band stack plan Task 4: bandStackAvailable and sendBandStackCommand.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.

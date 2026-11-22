@@ -20,6 +20,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-22 - PR 809 review: txProfile.save and txProfile.import refuse a
+//                 name with a control character or over 64 characters, and
+//                 import passes on the manager's own reason for a value.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-17 - txProfile.import (importTxProfileForStation) and the
+//                 window's import request to the Core. Brian Sutton
+//                 (W4KZO), AI-assisted via xAI Grok.
 //   2026-11-16 — Roundtable pauses for a slice playing the past: presence
 //                 keeps the frequency it had live (RecordingService::
 //                 rewoundLiveFrequencyHz) and it sends no readings until it
@@ -8398,6 +8405,14 @@ bool RadioModel::saveTxProfileForStation(const QString& name, QString* reason,
         if (reason) { *reason = QStringLiteral("Give the transmit profile a name."); }
         return false;
     }
+    // The name rule save and import share (no control characters, at most
+    // MicProfileManager::kMaxProfileNameLength characters).
+    const QString refusal = MicProfileManager::profileNameRefusal(
+        MicProfileManager::normalizedProfileName(trimmed));
+    if (!refusal.isEmpty()) {
+        if (reason) { *reason = refusal; }
+        return false;
+    }
     if (m_micProfileMgr->profileNames().isEmpty()) {
         if (reason) { *reason = QStringLiteral("The Core has no radio to keep transmit profiles for."); }
         return false;
@@ -8459,8 +8474,12 @@ bool RadioModel::importTxProfileForStation(const QString& name,
         if (reason) { *reason = QStringLiteral("The Core has no radio to keep transmit profiles for."); }
         return false;
     }
-    if (!m_micProfileMgr->importProfile(trimmed, values, &m_transmitModel)) {
+    // importProfile checks the name and every value, with its own words
+    // (MicProfileManager::profileNameRefusal and importValuesRefusal).
+    QString refusal;
+    if (!m_micProfileMgr->importProfile(trimmed, values, &m_transmitModel, &refusal)) {
         if (reason) { *reason = QStringLiteral("The Core did not import the transmit profile."); }
+        if (reason && !refusal.isEmpty()) { *reason = refusal; }
         return false;
     }
     return true;

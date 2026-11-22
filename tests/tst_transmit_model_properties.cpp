@@ -55,6 +55,11 @@
 //   2026-10-26  J.J. Boyd / KG4VCF  CW transmit, transmitSettingsVersion
 //                                    16 (the CW settings on `transmit`).
 //                                    AI-assisted via Claude Code.
+//   2026-11-17  Brian Sutton (W4KZO)  transmitSettingsVersion 17
+//                                    (txProfile.import) is offered.
+//                                    AI-assisted via xAI Grok.
+//   2026-11-22  J.J. Boyd / KG4VCF  CI fix: 17 is offered and 18 is not.
+//                                    AI tooling: Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>

@@ -59,6 +59,13 @@
 //                 transmit settings version that carries it
 //                 (setTransmitSettingsPermitted / ...PermittedAt). J.J.
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-17 - Export... and Import... for one transmit profile, with
+//                 their file path and result hooks. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
+//   2026-11-22 - A remote window's import and export wait for the Core's
+//                 answer; Save and Import refuse a name with a reason; the
+//                 export's question and file name. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived semantics are
@@ -162,6 +169,11 @@ public:
     void setExportPathHook(FilePathHook hook);
     void setImportPathHook(FilePathHook hook);
 
+    // The file name Export... suggests: the profile name with every
+    // character Windows forbids (* ? " < > | / \ : and control characters)
+    // made an underscore, and the .nereus-tx-profile extension.
+    static QString suggestedExportFileName(const QString& profileName);
+
     // Replaces the export and import result message.
     using FileResultHook = std::function<void(bool success, const QString& text)>;
     void setFileResultHook(FileResultHook hook);
@@ -204,8 +216,18 @@ private:
     // Run the J.4 prompt + branch logic for a switching-to newName.
     // Returns true if the switch should proceed; false on Cancel.
     bool handleUnsavedPrompt(const QString& newName);
-    UnsavedPromptResult promptUnsaved();
+    // The unsaved-changes question; `exporting` words it for Export.
+    UnsavedPromptResult promptUnsaved(bool exporting = false);
     void showFileResult(bool success, const QString& text);
+    void showSaveRefusal(const QString& text);
+    // Writes `name`'s stored profile (without this radio's wiring keys) to
+    // `path` and says how it went.
+    void writeExportFile(const QString& name, const QString& path);
+    // A remote window: the Core answered an import or a save for export.
+    void onStationRequestFinished(int request, bool accepted, const QString& reason);
+    // The import result, with a note when keys this build does not know
+    // were left out.
+    static QString importedText(const QString& name, int unknownKeys);
     QString chooseExportPath(const QString& profileName);
     QString chooseImportPath();
 
@@ -237,6 +259,14 @@ private:
     // True only during simulateUserComboChangeForTest — emulates focused
     // user input without needing a real focus event.
     bool m_simulateUserChangeForTest{false};
+
+    // A remote window: the import sent to the Core (name, keys this build
+    // does not know), and the export waiting for the Core's save (name,
+    // path). Empty names when none is waiting.
+    QString m_pendingImportName;
+    int     m_pendingImportUnknownKeys{0};
+    QString m_pendingExportName;
+    QString m_pendingExportPath;
 
     // ── Test hooks ──────────────────────────────────────────────────────────
     SavePromptHook        m_savePromptHook;

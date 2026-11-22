@@ -53,6 +53,9 @@
 //   2026-10-09 - D25: the settings path wraps instead of widening the page
 //                past the Settings window. J.J. Boyd (KG4VCF), AI-assisted
 //                via Anthropic Claude Code.
+//   2026-11-17 - Export / Import's TX Profile section: Open TX Profile...
+//                goes to the page where one profile is imported and
+//                exported. Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 // =================================================================
 
 #include "DiagnosticsPhaseHPages.h"

@@ -208,6 +208,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-17: requestTxProfileImport. Brian Sutton (W4KZO), AI-assisted
+//               via xAI Grok.
 //   2026-11-16: Recording plan Task 11 fix round 2: m_voiceKeyerSelfWireId
 //               and followVoiceMessageSending. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
