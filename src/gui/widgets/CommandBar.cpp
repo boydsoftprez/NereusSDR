@@ -26,6 +26,7 @@
 #include "models/SliceModel.h"
 
 #include <QHBoxLayout>
+#include <QEvent>
 #include <QPainter>
 #include <QStyleOption>
 #include <QInputDialog>
@@ -322,6 +323,29 @@ void CommandBar::paintEvent(QPaintEvent* e)
         const int unten = qMax(a.bottom(), b.bottom());
         p.drawLine(x, oben, x, unten);
     }
+}
+
+// ── Keine alten Striche (2026-11-21) ─────────────────────────────────
+//
+// Betreiber: „wieder sind die trennlinien oben falsch - schaue oben bei
+// ft8 und bei 192". Auf seinem Bild standen neben den richtigen Strichen
+// lange an alten Stellen, halb hinter den Pillen. Die Striche malt die
+// Leiste selbst (paintEvent); ruecken die Gruppen aber, ohne dass die
+// Leiste ihre Groesse aendert -- andere Pillen-Texte nach dem Wechsel
+// Flex -> Anvelina, eine Pille mehr oder weniger --, zeichnet Qt nur die
+// verschobenen Pillen neu. Die alten Striche bleiben dann als Bildreste
+// stehen. tst_command_bar hat 508 solche Punkte gezaehlt.
+//
+// Darum: jede neue Anordnung (LayoutRequest, nachdem Qt sie ausgefuehrt
+// hat) zeichnet die ganze Leiste neu. Das kommt selten und kostet eine
+// Leiste aus Pillen.
+bool CommandBar::event(QEvent* e)
+{
+    const bool erledigt = QWidget::event(e);
+    if (e->type() == QEvent::LayoutRequest) {
+        update();
+    }
+    return erledigt;
 }
 
 void CommandBar::addTrailing(QWidget* w)

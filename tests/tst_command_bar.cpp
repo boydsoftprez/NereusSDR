@@ -20,6 +20,7 @@
 //     Wackelkontakt aussieht.
 
 #include <QtTest>
+#include <QScreen>
 
 #include <cmath>
 
@@ -117,6 +118,56 @@ private slots:
         }
         QVERIFY2(luecken >= 2, "weniger als zwei Luecken zwischen den Gruppen");
         QCOMPARE(striche, luecken);
+    }
+
+    /// A2 — keine alten Striche (2026-11-21). Betreiber: „wieder sind
+    /// die trennlinien oben falsch - schaue oben bei ft8 und bei 192".
+    /// Auf seinem Bild standen neben den richtigen, kurzen Strichen
+    /// lange Striche an alten Stellen, halb hinter den Pillen (links an
+    /// FT8, mitten durch 2.9k, um 192 kHz). Das sind REST-Bildpunkte:
+    /// ruecken die Gruppen (andere Pillen-Texte nach dem Wechsel Flex ->
+    /// Anvelina), zeichnet Qt nur die verschobenen Pillen neu, nicht die
+    /// Leiste -- die alten Striche bleiben stehen.
+    ///
+    /// Gemessen wird darum am WIRKLICHEN Fensterbild (grabWindow, der
+    /// Bildspeicher), nicht an grab(): grab() malt frisch und zeigt nie
+    /// einen Rest. Nach einer Verschiebung muss beides gleich sein.
+    void nachEinerVerschiebungBleibtKeinAlterStrichStehen()
+    {
+        CommandBar bar;
+        bar.resize(1400, 70);
+        bar.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&bar, kFensterFrist));
+        for (int i = 0; i < 4; ++i) { QCoreApplication::processEvents(); }
+
+        // Eine Pille weiter vorn verschwinden lassen: alles dahinter
+        // rueckt, die Leiste selbst aendert ihre Groesse nicht.
+        QPushButton* weg = nullptr;
+        for (QPushButton* b : bar.findChildren<QPushButton*>()) {
+            if (b->isVisible() && b->text() == QStringLiteral("FT4")) { weg = b; }
+        }
+        QVERIFY2(weg, "keine sichtbare FT4-Pille in der Leiste");
+        weg->hide();
+        for (int i = 0; i < 6; ++i) {
+            QCoreApplication::processEvents();
+            QTest::qWait(10);
+        }
+
+        QScreen* schirm = bar.screen();
+        QVERIFY(schirm);
+        const QImage aufDemSchirm =
+            schirm->grabWindow(bar.winId()).toImage().convertToFormat(QImage::Format_RGB32);
+        const QImage frisch = bar.grab().toImage().convertToFormat(QImage::Format_RGB32);
+        QCOMPARE(aufDemSchirm.size(), frisch.size());
+        int anders = 0;
+        for (int y = 0; y < frisch.height(); ++y) {
+            for (int x = 0; x < frisch.width(); ++x) {
+                if (aufDemSchirm.pixel(x, y) != frisch.pixel(x, y)) { ++anders; }
+            }
+        }
+        QVERIFY2(anders == 0,
+                 qPrintable(QStringLiteral("%1 Bildpunkte weichen von einer frischen "
+                                           "Zeichnung ab -- alte Striche").arg(anders)));
     }
 
     /// B — hinter jeder Gruppe steht eine Dehnung, solange noch etwas
