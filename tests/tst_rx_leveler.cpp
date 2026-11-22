@@ -38,6 +38,11 @@
 //                the word, the hold is timed from when it is armed and a
 //                pause's let-go arms none, std::numbers::pi. J.J. Boyd
 //                (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-22 - Re-review: hiss after an over is not lifted with a
+//                station still said present, a start over lets the gain go
+//                without a step (a filter drag too), a pause with the
+//                station there from the start. J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -168,7 +173,9 @@ private slots:
         RxLevelerParams on = autoParams();
         on.stationPresent = true;
         for (int i = 0; i < 200; ++i) {
-            std::vector<float> x = randomBlock(1024, 1 + static_cast<std::uint32_t>(i), 0.02f);
+            // Words with gaps between them, so the hiss is learned first.
+            const float level = i % 20 < 10 ? 0.02f : 0.001f;
+            std::vector<float> x = randomBlock(1024, 1 + static_cast<std::uint32_t>(i), level);
             lev.process(x.data(), 1024, kRate, on);
         }
         QVERIFY(lev.gainDb() > 1.0);   // it was doing something
@@ -938,15 +945,20 @@ private slots:
             }
             RxLeveler lev;
             std::vector<float> x(kBlock * 2);
-            const int blocks = static_cast<int>(4.0 * kRate) / kBlock;
+            const int blocks = static_cast<int>(5.0 * kRate) / kBlock;
             for (int b = 0; b < blocks; ++b) {
+                // A second of hiss before the station is said to be there.
+                p.stationPresent = b * kBlock >= static_cast<int>(kRate);
                 for (int k = 0; k < kBlock; ++k) {
                     const double t = (b * kBlock + k) / kRate;
-                    // A voice-band pair of tones well inside the band.
+                    // A voice-band pair of tones well inside the band, in
+                    // syllables with gaps, over a small hiss tone.
                     const double ph1 = kTwoPi * 700.0 * t;
                     const double ph2 = kTwoPi * 1300.0 * t;
-                    const double a = 0.05 * (std::sin(ph1) + 0.6 * std::sin(ph2));
-                    const double q = 0.05 * (std::cos(ph1) + 0.6 * std::cos(ph2));
+                    const double on = p.stationPresent && std::fmod(t, 0.25) < 0.17 ? 0.05 : 0.0;
+                    const double hiss = 0.002 * std::sin(kTwoPi * 731.0 * t);
+                    const double a = on * (std::sin(ph1) + 0.6 * std::sin(ph2)) + hiss;
+                    const double q = on * (std::cos(ph1) + 0.6 * std::cos(ph2)) + hiss;
                     double left = a;
                     double right = a;
                     if (pair == 1) {
@@ -1138,9 +1150,18 @@ private slots:
 
     // The let-go in a pause (the gain back toward unity with no voice) is
     // not a turn-down for a louder voice: it arms no hold, and the gain
-    // rises again as soon as the voice is back.
+    // rises again as soon as the voice is back. The same with the hiss
+    // learned before the station, and with the station there from the
+    // first block (the hiss is learned from the gaps between words).
+    void aPausesLetGoArmsNoHold_data()
+    {
+        QTest::addColumn<double>("leadIn");
+        QTest::newRow("hiss heard first") << 2.0;
+        QTest::newRow("station present from the start") << 0.0;
+    }
     void aPausesLetGoArmsNoHold()
     {
+        QFETCH(double, leadIn);
         constexpr int kBlock = 480;
         constexpr double kTwoPi = 2.0 * std::numbers::pi;
         constexpr double kDt = kBlock / kRate;
@@ -1152,14 +1173,15 @@ private slots:
         double gainAtResume = 0.0;
         double gainAfterResume = 0.0;
         double mostHold = 0.0;
-        const int blocks = static_cast<int>(14.0 * kRate) / kBlock;
+        const double pauseAt = leadIn + 6.0;
+        const double resumeAt = pauseAt + 3.0;
+        const int blocks = static_cast<int>((resumeAt + 3.0) * kRate) / kBlock;
         for (int b = 0; b < blocks; ++b) {
             const double t0 = b * kDt;
-            // 2 s of hiss with nobody there (the hiss is learned), a quiet
-            // voice 6 s, a 3 s pause (the station still there), the voice
-            // again.
-            p.stationPresent = t0 >= 2.0;
-            const bool pause = t0 < 2.0 || (t0 >= 8.0 && t0 < 11.0);
+            // The lead-in's hiss with nobody there, a quiet voice 6 s, a 3 s
+            // pause (the station still there), the voice again.
+            p.stationPresent = t0 >= leadIn;
+            const bool pause = t0 < leadIn || (t0 >= pauseAt && t0 < resumeAt);
             for (int k = 0; k < kBlock; ++k) {
                 const double t = (b * kBlock + k) / kRate;
                 const double v = !pause && std::fmod(t, 0.25) < 0.17
@@ -1167,14 +1189,14 @@ private slots:
                 x[2 * k] = x[2 * k + 1] = static_cast<float>(v + 0.002 * std::sin(kTwoPi * 731.0 * t));
             }
             lev.process(x.data(), kBlock, kRate, p);
-            if ((t0 >= 8.0 && t0 < 11.0) || (t0 >= 11.0 && t0 < 11.0 + kDt)) {
+            if (t0 >= pauseAt && t0 < resumeAt + kDt) {
                 mostHold = std::max(mostHold, lev.riseHoldLeftSec());
             }
-            if (std::abs(t0 - (8.0 - kDt)) < kDt / 2) {
+            if (std::abs(t0 - (pauseAt - kDt)) < kDt / 2) {
                 gainBeforePause = lev.gainDb();
-            } else if (std::abs(t0 - (11.0 - kDt)) < kDt / 2) {
+            } else if (std::abs(t0 - (resumeAt - kDt)) < kDt / 2) {
                 gainAtResume = lev.gainDb();
-            } else if (std::abs(t0 - 12.5) < kDt / 2) {
+            } else if (std::abs(t0 - (resumeAt + 1.5)) < kDt / 2) {
                 gainAfterResume = lev.gainDb();
             }
         }
@@ -1185,6 +1207,87 @@ private slots:
         QVERIFY2(gainAfterResume > gainAtResume + 3.0,
                  qPrintable(QStringLiteral("after resume %1, at resume %2")
                                 .arg(gainAfterResume).arg(gainAtResume)));
+    }
+
+    // A quiet voice lifted, then the slice transmits (resetForTransmit) and
+    // unkeys with the station check still saying a station is there (its
+    // hold, or the S-meter frozen at key-down): plain hiss is not lifted.
+    // The hiss learned before the over is kept, so it is not a voice.
+    void hissAfterAnOverIsNotLifted()
+    {
+        constexpr int kBlock = 480;
+        constexpr double kTwoPi = 2.0 * std::numbers::pi;
+        constexpr double kDt = kBlock / kRate;
+        RxLevelerParams p = autoParams();
+        p.stationPresent = true;
+        RxLeveler lev;
+        std::vector<float> x(kBlock * 2);
+        const auto block = [&](int b, bool voice) {
+            for (int k = 0; k < kBlock; ++k) {
+                const double t = (b * kBlock + k) / kRate;
+                const double v = voice && std::fmod(t, 0.25) < 0.17
+                    ? 0.03 * std::sin(kTwoPi * 1000.0 * t) : 0.0;
+                x[2 * k] = x[2 * k + 1] = static_cast<float>(v + 0.002 * std::sin(kTwoPi * 731.0 * t));
+            }
+            lev.process(x.data(), kBlock, kRate, p);
+        };
+        const int voiceBlocks = static_cast<int>(6.0 / kDt);
+        for (int b = 0; b < voiceBlocks; ++b) {
+            block(b, true);
+        }
+        QVERIFY2(lev.gainDb() > 6.0, qPrintable(QString::number(lev.gainDb())));
+        lev.resetForTransmit();
+        QCOMPARE(lev.gainDb(), 0.0);
+        double most = 0.0;
+        for (int b = 0; b < static_cast<int>(3.0 / kDt); ++b) {
+            block(voiceBlocks + b, false);
+            most = std::max(most, lev.gainDb());
+        }
+        QVERIFY2(most < 0.5, qPrintable(QStringLiteral("most lift on the hiss %1 dB").arg(most)));
+    }
+
+    // startOver (a retune, a filter or mode change, a new receiver) lets
+    // the gain go back to unity at the leveler's own rates, never in one
+    // block, and forgets what it learned.
+    void startOverLetsTheGainGoWithoutAStep()
+    {
+        constexpr int kBlock = 480;
+        constexpr double kTwoPi = 2.0 * std::numbers::pi;
+        constexpr double kDt = kBlock / kRate;
+        RxLevelerParams p = autoParams();
+        p.stationPresent = true;
+        RxLeveler lev;
+        std::vector<float> x(kBlock * 2);
+        const auto block = [&](int b, bool voice) {
+            for (int k = 0; k < kBlock; ++k) {
+                const double t = (b * kBlock + k) / kRate;
+                const double v = voice && std::fmod(t, 0.25) < 0.17
+                    ? 0.03 * std::sin(kTwoPi * 1000.0 * t) : 0.0;
+                x[2 * k] = x[2 * k + 1] = static_cast<float>(v + 0.002 * std::sin(kTwoPi * 731.0 * t));
+            }
+            lev.process(x.data(), kBlock, kRate, p);
+        };
+        const int voiceBlocks = static_cast<int>(6.0 / kDt);
+        for (int b = 0; b < voiceBlocks; ++b) {
+            block(b, true);
+        }
+        const double before = lev.gainDb();
+        QVERIFY(before > 6.0);
+        lev.startOver();
+        QCOMPARE(lev.loudnessDb(), RxLeveler::kSilenceDbfs);
+        QCOMPARE(lev.gainDb(), before);
+        // The most one block may move toward unity at the release rate.
+        double last = before;
+        for (int b = 0; b < static_cast<int>(3.0 / kDt); ++b) {
+            block(voiceBlocks + b, false);
+            const double releaseStep =
+                last * (1.0 - std::exp(-kDt * 1000.0 / RxLeveler::kAutoReleaseMs));
+            QVERIFY2(last - lev.gainDb() <= releaseStep + 1e-4,
+                     qPrintable(QStringLiteral("stepped %1 dB in one block").arg(last - lev.gainDb())));
+            QVERIFY(lev.gainDb() <= last + 1e-4);
+            last = lev.gainDb();
+        }
+        QVERIFY2(last < 0.5, qPrintable(QStringLiteral("still %1 dB after 3 s").arg(last)));
     }
 
     void weakStationMatrix()

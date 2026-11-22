@@ -27,6 +27,10 @@
 //               the local one and each owner mix's own, each topped up
 //               from the playback feed first.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-22 : Re-review: MOX resets the leveler keeping its hiss
+//                (resetForTransmit), and a new reset count lets the gain go
+//                at its rates (startOver), not in one block. J.J. Boyd
+//                (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-22 : The transmitting slice's leveler starts over while MOX
 //                holds its audio back, so no key-down gain lifts the hiss
 //                after the over, and a new reset count from RadioModel
@@ -4498,9 +4502,10 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
         // many frames were withheld so its positions keep real time.
         skipSliceTaps(sliceId, frames);
         // Receive leveler: the gain it had at key-down would lift the hiss
-        // for about a second after the over, so it starts over while this
-        // slice transmits (cheap: a few stores, no lock).
-        m_rxLevelers[static_cast<size_t>(sliceId)].reset();
+        // for about a second after the over, so it goes to unity while this
+        // slice transmits, keeping the hiss it learned (cheap: a few
+        // stores, no lock).
+        m_rxLevelers[static_cast<size_t>(sliceId)].resetForTransmit();
         // Remote-window parity Task 32: nothing of this slice is queued,
         // but while no other slice is a barrier member its call drains the
         // mix, so MON (the transmit monitor, an opportunistic slot that
@@ -4550,7 +4555,7 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
     // (RadioModel bumps the count): nothing learned before carries on.
     int& resetSeen = m_rxLevelerResetSeen[static_cast<size_t>(sliceId)];
     if (leveler.resetCount != resetSeen) {
-        rxLeveler.reset();
+        rxLeveler.startOver();      // the gain lets go at its rates, no step
         resetSeen = leveler.resetCount;
     }
     // The scratch is sized off this thread with the mix scratch; a larger

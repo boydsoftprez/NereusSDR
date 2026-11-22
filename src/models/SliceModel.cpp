@@ -10,9 +10,10 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-11-14 - Receive leveler settings: RX Leveler by Brian Sutton
-//                (W4KZO), AI-assisted via xAI Grok; maximum cut in place of pause hold and the live
-//                gain reading. NereusSDR-original. J.J. Boyd (KG4VCF),
-//                AI-assisted via Anthropic Claude Code.
+//                (W4KZO), AI-assisted via xAI Grok; maximum cut in place
+//                of pause hold and the live gain reading.
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 //   2026-11-05 - A newly added receiver starts with RIT and XIT off, on a
 //                letter used before too; a restored receiver keeps its own.
 //                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via

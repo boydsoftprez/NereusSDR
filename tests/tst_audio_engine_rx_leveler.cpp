@@ -23,6 +23,11 @@
 //   2026-11-22 - The RadioModel half, the MOX reset, the reset count, the
 //                large block and two receivers. J.J. Boyd (KG4VCF),
 //                AI-assisted via Claude Code.
+//   2026-11-22 - Re-review: hiss after an over stays unlifted with a
+//                station still said present; a start over (retune, mode,
+//                filter, reused id, a filter drag) lets the gain go at the
+//                release rate. J.J. Boyd (KG4VCF), AI-assisted via Claude
+//                Code.
 //   2026-11-14 — New. J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                via Anthropic Claude Code.
 // =================================================================
@@ -67,6 +72,19 @@ std::vector<float> quietVoice()
             * (std::sin(2.0 * kPi * 400.0 * t) + 0.5 * std::sin(2.0 * kPi * 1100.0 * t))
             + noise(rng);
         x[static_cast<size_t>(2 * i)] = x[static_cast<size_t>(2 * i + 1)] = static_cast<float>(v);
+    }
+    return x;
+}
+
+// The hiss of quietVoice() alone: nobody talking.
+std::vector<float> hissOnly()
+{
+    std::vector<float> x(static_cast<size_t>(kFrames) * kBlocks * 2);
+    std::mt19937 rng(11);
+    std::normal_distribution<double> noise(0.0, 0.0005);
+    for (int i = 0; i < kFrames * kBlocks; ++i) {
+        const float v = static_cast<float>(noise(rng));
+        x[static_cast<size_t>(2 * i)] = x[static_cast<size_t>(2 * i + 1)] = v;
     }
     return x;
 }
@@ -196,6 +214,28 @@ struct Rig {
         p.stationPresent = present;
         p.resetCount = engine->sliceRxLeveler(slice).resetCount;
         engine->setSliceRxLeveler(slice, p);
+    }
+
+    // After a reset count change, with a station still said present and
+    // only hiss: the gain goes back to unity at the release rate, never in
+    // one block, and gets well down within a second (the leveler, had it
+    // not started over, would hold the gain through that pause).
+    void expectLetsGo(int slice, double from)
+    {
+        const std::vector<float> hiss = hissOnly();
+        constexpr double kDt = double(kFrames) / 48000.0;
+        double last = from;
+        for (int b = 0; b < 47; ++b) {
+            feed(slice, hiss, b, 1);
+            const double g = engine->sliceRxLevelerGainDb(slice);
+            const double releaseStep =
+                std::abs(last) * (1.0 - std::exp(-kDt * 1000.0 / RxLeveler::kAutoReleaseMs));
+            QVERIFY2(std::abs(last - g) <= releaseStep + 1e-4,
+                     qPrintable(QStringLiteral("block %1 stepped from %2 to %3").arg(b).arg(last).arg(g)));
+            last = g;
+        }
+        QVERIFY2(last < 0.5 * from,
+                 qPrintable(QStringLiteral("%1 dB after a second, from %2").arg(last).arg(from)));
     }
 
     void feed(int slice, const std::vector<float>& input, int fromBlock, int blocks)
@@ -339,8 +379,8 @@ private slots:
     }
 
     // A retune starts the leveler over: the gain it had for the last
-    // frequency is gone on the first block after it. A meter tick with no
-    // retune leaves it alone.
+    // frequency lets go at the release rate. A meter tick with no retune
+    // leaves it alone.
     void aRetuneStartsTheLevelerOver()
     {
         const std::vector<float> input = quietVoice();
@@ -358,9 +398,7 @@ private slots:
         rig.radio->updateRxLevelers();
         QCOMPARE_NE(rig.engine->sliceRxLeveler(rig.id).resetCount, before);
         rig.publishStation(rig.id);         // a station there too, for this test
-        rig.feed(rig.id, input, 200, 1);
-        QVERIFY2(rig.engine->sliceRxLevelerGainDb(rig.id) < 1.0,
-                 qPrintable(QString::number(rig.engine->sliceRxLevelerGainDb(rig.id))));
+        rig.expectLetsGo(rig.id, rig.engine->sliceRxLevelerGainDb(rig.id));
     }
 
     // A mode or a filter change starts it over too.
@@ -379,8 +417,35 @@ private slots:
         slice->setDspMode(DSPMode::LSB);
         QCOMPARE_NE(rig.engine->sliceRxLeveler(rig.id).resetCount, count);
         rig.publishStation(rig.id);
-        rig.feed(rig.id, input, 200, 1);
-        QVERIFY(rig.engine->sliceRxLevelerGainDb(rig.id) < 1.0);
+        rig.expectLetsGo(rig.id, rig.engine->sliceRxLevelerGainDb(rig.id));
+    }
+
+    // A filter drag changes the filter on every step, each a start over:
+    // the gain never steps, it lets go at the release rate.
+    void aFilterDragDoesNotStepTheGain()
+    {
+        const std::vector<float> input = quietVoice();
+        Rig rig;
+        SliceModel* slice = rig.radio->sliceById(rig.id);
+        rig.publishStation(rig.id);
+        rig.feed(rig.id, input, 0, 200);
+        double last = rig.engine->sliceRxLevelerGainDb(rig.id);
+        QVERIFY(last > 3.0);
+        constexpr double kDt = double(kFrames) / 48000.0;
+        const int count = rig.engine->sliceRxLeveler(rig.id).resetCount;
+        for (int step = 0; step < 30; ++step) {
+            slice->setFilter(100, 2900 - 20 * step - 20);
+            rig.publishStation(rig.id);
+            rig.feed(rig.id, input, 200 + step, 1);
+            const double g = rig.engine->sliceRxLevelerGainDb(rig.id);
+            const double releaseStep =
+                std::abs(last) * (1.0 - std::exp(-kDt * 1000.0 / RxLeveler::kAutoReleaseMs));
+            QVERIFY2(std::abs(last - g) <= releaseStep + 1e-4,
+                     qPrintable(QStringLiteral("drag step %1: %2 to %3 dB").arg(step).arg(last).arg(g)));
+            last = g;
+        }
+        QCOMPARE_NE(rig.engine->sliceRxLeveler(rig.id).resetCount, count);
+        QVERIFY(last > 0.0);
     }
 
     // A receiver made again on a slice id starts with nothing the last one
@@ -402,9 +467,33 @@ private slots:
         QCOMPARE(again, second);
         QCOMPARE_NE(rig.engine->sliceRxLeveler(again).resetCount, before);
         rig.publishStation(again);
-        rig.feed(again, input, 200, 1);
-        QVERIFY2(rig.engine->sliceRxLevelerGainDb(again) < 1.0,
-                 qPrintable(QString::number(rig.engine->sliceRxLevelerGainDb(again))));
+        rig.expectLetsGo(again, rig.engine->sliceRxLevelerGainDb(again));
+    }
+
+    // The station check still says a station is there across the unkey
+    // (its hold, or the S-meter frozen at key-down): with only hiss after
+    // the over, the gain stays at unity. The leveler kept the hiss it
+    // learned before the over.
+    void hissAfterAnOverStaysUnliftedWithAStationStillSaid()
+    {
+        const std::vector<float> input = quietVoice();
+        const std::vector<float> hiss = hissOnly();
+        Rig rig;
+        rig.radio->requestTxHandoffToSlice(rig.id);
+        QCOMPARE(rig.radio->txBoundSlice()->sliceIndex(), rig.id);
+        rig.publishStation(rig.id);
+        rig.feed(rig.id, input, 0, 200);
+        QVERIFY(rig.engine->sliceRxLevelerGainDb(rig.id) > 3.0);
+        rig.engine->setMoxStateForTest(true);
+        rig.feed(rig.id, input, 200, 5);
+        rig.engine->setMoxStateForTest(false);
+        rig.publishStation(rig.id, /*present=*/true);
+        double most = 0.0;
+        for (int b = 0; b < 141; ++b) {     // three seconds
+            rig.feed(rig.id, hiss, b, 1);
+            most = std::max(most, rig.engine->sliceRxLevelerGainDb(rig.id));
+        }
+        QVERIFY2(most < 0.5, qPrintable(QStringLiteral("most lift on the hiss %1 dB").arg(most)));
     }
 
     // While the slice transmits its leveler starts over, so after the over

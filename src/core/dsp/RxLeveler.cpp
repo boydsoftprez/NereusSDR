@@ -229,6 +229,41 @@ void RxLeveler::reset()
     m_hissPow = -1.0;
     m_peakRefDb = -200.0;
     m_active = false;
+    m_letGo = false;
+    m_hissLearnLeft = 0.0;
+    m_publishedGain.store(0.0f, std::memory_order_relaxed);
+    m_publishedLimiter.store(0.0f, std::memory_order_relaxed);
+}
+
+void RxLeveler::startOver()
+{
+    // The gain and the limiter stay where they are: process() takes them
+    // back to unity at their own rates (m_letGo).
+    m_loudPow = -1.0;
+    m_loudSec = 0.0;
+    m_quietSec = 0.0;
+    m_needDb = 0.0;
+    m_riseHoldLeft = 0.0;
+    m_fallDb = 0.0;
+    m_hissPow = -1.0;
+    m_hissLearnLeft = 0.0;
+    m_peakRefDb = -200.0;
+    m_shortPow = 0.0;       // the old frequency's level, not this one's
+    m_letGo = true;
+}
+
+void RxLeveler::resetForTransmit()
+{
+    m_gainDb = 0.0;
+    m_limiter = 1.0;
+    m_loudPow = -1.0;
+    m_loudSec = 0.0;
+    m_quietSec = 0.0;
+    m_needDb = 0.0;
+    m_riseHoldLeft = 0.0;
+    m_fallDb = 0.0;
+    m_shortPow = 0.0;       // the over's level is not the band's
+    m_letGo = false;
     m_publishedGain.store(0.0f, std::memory_order_relaxed);
     m_publishedLimiter.store(0.0f, std::memory_order_relaxed);
 }
@@ -328,13 +363,26 @@ void RxLeveler::process(float* x, int frames, double sampleRate,
         m_peakRefDb = std::max(shortDb, m_peakRefDb - kPeakFallDbPerSec * dt);
     }
     const bool present = params.stationPresent;
-    // The hiss between overs, learned while no station is there. It
-    // follows a quieter level quickly and a louder one slowly, and skips a
-    // level far above it: the first syllables of an over arrive before
-    // the S-meter has said a station is there.
-    if (!present && shortDb > kSilenceDbfs) {
+    // The hiss. The first reading sets it, station or not, and a quieter
+    // one lowers it quickly, station or not: the hiss is no louder than the
+    // quietest moment. It rises only while no station is there, slowly, and
+    // skips a level far above it: the first syllables of an over arrive
+    // before the S-meter has said a station is there.
+    if (!present) {
+        m_hissLearnLeft = 0.0;      // heard with nobody there: learned
+    }
+    if (shortDb > kSilenceDbfs) {
         if (m_hissPow < 0.0) {
             m_hissPow = m_shortPow;
+            // First read with a station there: its quietest moments over
+            // kHissLearnSec are the hiss, before any block is speech.
+            m_hissLearnLeft = present ? kHissLearnSec : 0.0;
+        } else if (present && m_hissLearnLeft > 0.0) {
+            m_hissPow = std::min(m_hissPow, m_shortPow);
+        } else if (present) {
+            // A station: a louder block is its voice and a quieter one may
+            // be the AGC pulling the hiss down under it; neither is the
+            // band's hiss.
         } else if (m_shortPow < m_hissPow) {
             m_hissPow += step(dt, kHissFallSec) * (m_shortPow - m_hissPow);
         } else if (shortDb < toDb(m_hissPow) + kHissSkipDb) {
@@ -344,9 +392,15 @@ void RxLeveler::process(float* x, int frames, double sampleRate,
         }
     }
     const double hiss = m_hissPow > 0.0 ? m_hissPow : 0.0;
+    // Not until some hiss is known: over an unmeasured hiss, the hiss
+    // itself would pass the peaks gate alone and be lifted as a voice.
+    if (present && m_hissLearnLeft > 0.0) {
+        m_hissLearnLeft = std::max(0.0, m_hissLearnLeft - dt);
+    }
+    const bool hissKnown = hiss > 0.0 && m_hissLearnLeft <= 0.0;
     const bool speech = present && shortDb > kSilenceDbfs
         && shortDb > m_peakRefDb - kSpeechGateDb
-        && (hiss <= 0.0 || shortDb > toDb(hiss) + kOverHissDb);
+        && hissKnown && shortDb > toDb(hiss) + kOverHissDb;
 
     m_quietSec = speech ? 0.0 : m_quietSec + dt;
 
@@ -359,6 +413,7 @@ void RxLeveler::process(float* x, int frames, double sampleRate,
         if (m_loudPow < 0.0) {
             m_loudPow = voice;
             m_loudSec = dt;
+            m_letGo = false;    // a voice again: the gain follows it
         } else {
             // A plain average of what has been heard until a time constant
             // has passed, so the first syllable does not set the reading.
@@ -382,7 +437,9 @@ void RxLeveler::process(float* x, int frames, double sampleRate,
     }
     double want = 0.0;
     if (!present || m_loudPow < 0.0) {
-        want = present ? m_gainDb : 0.0;    // no station: back to unity
+        // No station: back to unity. A station not yet heard: hold, unless
+        // the leveler is starting over (a retune), when it goes to unity.
+        want = present && !m_letGo ? m_gainDb : 0.0;
     } else if (m_quietSec >= kPauseReleaseSec) {
         want = 0.0;                         // a long pause, or the over ended
     } else if (m_quietSec < kWordGapSec) {

@@ -60,6 +60,15 @@
 //                leveler over after a retune or a new receiver. J.J. Boyd
 //                (KG4VCF), AI-assisted via Claude Code. riseHoldLeftSec
 //                for the tests.
+//   2026-11-22 - Re-review fixes: no block counts as speech until some
+//                hiss is learned; with a station already there when the
+//                hiss is first read, its quietest reading over
+//                kHissLearnSec is the hiss before any block is speech, so
+//                a station present from the start (or after a reset)
+//                never has its hiss lifted. resetForTransmit keeps the
+//                hiss; startOver lets the gain back to unity at its own
+//                rates instead of in one block.
+//                J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include "core/WdspTypes.h"
@@ -166,19 +175,28 @@ public:
     static constexpr double kWordGapSec = 0.3;
     // How fast the recent-peaks reference falls (dB per second).
     static constexpr double kPeakFallDbPerSec = 4.0;
-    // The hiss level is learned while no station is present and taken
-    // out of the loudness reading, so a weak station is judged by its
-    // voice, not its voice plus hiss. It falls with the first time
-    // constant, rises with the second, and on a block more than
-    // kHissSkipDb above it rises no faster than kHissCreepDbPerSec: the
-    // first syllables of a weak station, a few dB over the hiss, arrive
-    // before the station check has said a station is there, and must not
-    // be learned as hiss. A band that really gets noisier is still
-    // followed, slowly.
+    // The hiss level is learned and taken out of the loudness reading, so a
+    // weak station is judged by its voice, not its voice plus hiss. The
+    // first reading sets it, station or not, and no block counts as speech
+    // until it is set: a block over a hiss nobody has measured would be
+    // taken for a voice. While no station is present it falls with the
+    // first time constant on any quieter reading (the hiss is no louder
+    // than the quietest moment) and rises with the second, and on a block
+    // more than kHissSkipDb above it rises no faster than
+    // kHissCreepDbPerSec: the first syllables of a weak station, a few dB
+    // over the hiss, arrive before the station check has said a station
+    // is there, and must not be learned as hiss. A band that really gets
+    // noisier is still followed, slowly. While a station is there the
+    // hiss holds: a louder block is its voice, and a quieter one may be
+    // the AGC pulling the hiss down under it.
     static constexpr double kHissFallSec = 0.2;
     static constexpr double kHissRiseSec = 3.0;
     static constexpr double kHissSkipDb = 2.0;
     static constexpr double kHissCreepDbPerSec = 0.3;
+    // With a station already there when the hiss is first read, the hiss
+    // is the quietest reading over this long before any block counts as
+    // speech (s).
+    static constexpr double kHissLearnSec = 1.0;
     // Below this a block is silence whatever the reference says (dBFS).
     static constexpr double kSilenceDbfs = -70.0;
     // The loudness reading: an average of the speech blocks' power, hiss
@@ -230,10 +248,19 @@ public:
                             int& highHz);
 
     // Back to unity, nothing learned. The audio thread calls this when the
-    // leveler is turned off, so turning it on again starts from scratch,
-    // when the reset count changes (a retune, a new receiver) and while
-    // the receiver transmits.
+    // leveler is turned off, so turning it on again starts from scratch.
     void reset();
+    // A new frequency, passband or receiver (the reset count changed):
+    // what was learned is forgotten (hiss, loudness, peaks, the hold), and
+    // the gain goes back to unity at its own rates, as when a station
+    // leaves, instead of in one block (a filter drag changes it often).
+    void startOver();
+    // The receiver transmits (its audio is held back): the gain is unity at
+    // once, the loudness and the hold forgotten. The hiss and the peak
+    // reference are kept: the band's noise on this frequency does not change
+    // because we transmitted, and they keep the hiss after the over from
+    // being taken for a voice.
+    void resetForTransmit();
 
     // In place, interleaved stereo float32, `frames` frames. With
     // params.on false the block is left untouched and the state resets.
@@ -290,8 +317,10 @@ private:
     double m_riseHoldLeft{0.0};
     double m_fallDb{0.0};
     double m_hissPow{-1.0};     // < 0: not learned yet
+    double m_hissLearnLeft{0.0};  // > 0: still learning it under a station
     double m_peakRefDb{-200.0};
     bool   m_active{false};
+    bool   m_letGo{false};      // after startOver: to unity until a voice is heard
     std::atomic<float> m_publishedGain{0.0f};
     std::atomic<float> m_publishedLimiter{0.0f};
 };
