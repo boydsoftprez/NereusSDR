@@ -1159,9 +1159,77 @@ DocumentResult ThetisContainerFile::decode(const QByteArray& bytes)
                 }
             }
 
-            // The two temperature bars share the right column in the saved
-            // layout and read as one crowded stack. Put them side by side
-            // under the Amp-Out caption instead.
+            // The WaveNode helper publishes each temperature in Celsius and
+            // Fahrenheit. Thetis's saved layout carries one bar per sensor
+            // (bound to the helper's selected unit), so add the Fahrenheit
+            // pair here and put all four in one row under the Amp-Out
+            // caption. This runs on import as well as on reset, so a fresh
+            // install and "Reset helper containers" keep both units.
+            QVector<int> celsiusBars;
+            for (int i = 0; i < container.contents.size(); ++i) {
+                ContentEntry& entry = container.contents[i];
+                if (entry.typeId != QLatin1String("meter.customBar")) { continue; }
+                const QJsonObject barSettings =
+                    entry.extensions.value(QStringLiteral("thetisSettings")).toObject();
+                const QString title = settingString(barSettings, "meter_custom_title");
+                if (title.contains(QLatin1String("Temp"), Qt::CaseInsensitive)) {
+                    celsiusBars.append(i);
+                }
+            }
+            if (celsiusBars.size() == 2) {
+                std::sort(celsiusBars.begin(), celsiusBars.end(),
+                          [&container](int left, int right) {
+                              return settingString(container.contents[left].extensions
+                                                       .value(QStringLiteral("thetisSettings"))
+                                                       .toObject(),
+                                                   "meter_custom_title")
+                                   < settingString(container.contents[right].extensions
+                                                       .value(QStringLiteral("thetisSettings"))
+                                                       .toObject(),
+                                                   "meter_custom_title");
+                          });
+                for (int sensor = 0; sensor < 2; ++sensor) {
+                    ContentEntry& celsius = container.contents[celsiusBars[sensor]];
+                    QJsonObject celsiusSettings =
+                        celsius.extensions.value(QStringLiteral("thetisSettings")).toObject();
+                    const QString celsiusTitle =
+                        QStringLiteral("Temp %1 C").arg(sensor + 1);
+                    celsiusSettings.insert(QStringLiteral("meter_custom_title"),
+                                           celsiusTitle);
+                    celsiusSettings.insert(QStringLiteral("meter_custom_units"),
+                                           QStringLiteral("C"));
+                    celsius.extensions.insert(QStringLiteral("thetisSettings"),
+                                              celsiusSettings);
+                    celsius.name = celsiusTitle;
+
+                    ContentEntry fahrenheit = celsius;
+                    fahrenheit.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+                    const QString fahrenheitTitle =
+                        QStringLiteral("Temp %1 F").arg(sensor + 1);
+                    QJsonObject fahrenheitSettings = celsiusSettings;
+                    fahrenheitSettings.insert(QStringLiteral("meter_custom_title"),
+                                              fahrenheitTitle);
+                    fahrenheitSettings.insert(QStringLiteral("meter_custom_units"),
+                                              QStringLiteral("F"));
+                    fahrenheitSettings.insert(QStringLiteral("meter_custom_min"), 0.0);
+                    // Fahrenheit reads higher than Celsius: keep a 0-200 F
+                    // scale so an amplifier near 100 C still fits.
+                    fahrenheitSettings.insert(QStringLiteral("meter_custom_max"), 200.0);
+                    fahrenheitSettings.insert(QStringLiteral("_mmio_variable_0"),
+                                              QStringLiteral("Zjjg.tempF%1").arg(sensor + 1));
+                    fahrenheit.extensions.insert(QStringLiteral("thetisSettings"),
+                                                 fahrenheitSettings);
+                    // The binary settings blob belongs to the Celsius record;
+                    // the Fahrenheit record is rebuilt from the parsed
+                    // settings above.
+                    fahrenheit.extensions.remove(QStringLiteral("thetisItemSettings"));
+                    fahrenheit.extensions.remove(QStringLiteral("thetisItemGroup"));
+                    fahrenheit.name = fahrenheitTitle;
+                    fahrenheit.config.remove(QStringLiteral("legacyRecord"));
+                    container.contents.append(fahrenheit);
+                }
+            }
+
             QVector<ContentEntry*> tempBars;
             for (auto& entry : container.contents) {
                 if (entry.typeId != QLatin1String("meter.customBar")) { continue; }
@@ -1172,7 +1240,7 @@ DocumentResult ThetisContainerFile::decode(const QByteArray& bytes)
                     tempBars.append(&entry);
                 }
             }
-            if (tempBars.size() == 2 && haveRight) {
+            if (tempBars.size() == 4 && haveRight) {
                 std::sort(tempBars.begin(), tempBars.end(),
                           [](const ContentEntry* left, const ContentEntry* right) {
                               return left->extensions
@@ -1188,13 +1256,12 @@ DocumentResult ThetisContainerFile::decode(const QByteArray& bytes)
                           });
                 const double windowW = container.geometry.width();
                 const double gapPx = 10.0;
-                // Use the empty band under the centre column and the right
-                // meter, clear of the amplifier buttons on the left. Wider
-                // cells keep the bar's title readable.
+                // Four cells share the band under the centre column and the
+                // right meter, clear of the amplifier buttons on the left.
                 const double rowLeft = 0.35;
                 const double rowRight = 1.0;
                 const double barWidthPx = qMax(40.0,
-                    ((rowRight - rowLeft) * windowW - gapPx) / 2.0);
+                    ((rowRight - rowLeft) * windowW - 3.0 * gapPx) / 4.0);
                 // Below the Amp-Out caption's whole panel: its background is
                 // opaque and paints over anything placed inside it.
                 const double barY = captionBottom + 6.0 / oldHeight;
