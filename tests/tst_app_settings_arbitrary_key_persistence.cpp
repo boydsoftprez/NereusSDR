@@ -18,8 +18,17 @@
 // If this test ever fails, the regression is almost certainly a new
 // filter inside AppSettings::save() or load() -- start the audit at
 // src/core/AppSettings.cpp.
+//
+// Modification history (NereusSDR):
+//   2026-11-22  J.J. Boyd (KG4VCF)  A key with characters an XML element
+//                                    name cannot hold (a tab, a line break,
+//                                    a leading digit, a lone surrogate)
+//                                    saves, reloads and comes back, and the
+//                                    older escapes keep their spelling.
+//                                    AI-assisted via Claude Code.
 
 #include <QtTest/QtTest>
+#include <QFile>
 #include <QTemporaryDir>
 
 #include "core/AppSettings.h"
@@ -131,6 +140,58 @@ private slots:
             QStringLiteral("radios/AA:BB:CC:DD:EE:FF/name")));
         QVERIFY(!s.contains(
             QStringLiteral("hardware/AA:BB:CC:DD:EE:FF/sampleRate")));
+    }
+
+    // A TX profile name from a file becomes part of its keys. No key may
+    // make the file unreadable on the next launch (the loader would treat
+    // the whole file as corrupt), and the older escapes keep their spelling
+    // so files written before them still load.
+    void odd_keys_round_trip_and_older_escapes_are_unchanged() {
+        QTemporaryDir tmp;
+        QVERIFY(tmp.isValid());
+        const QString path = tmp.filePath(QStringLiteral("NereusSDR.settings"));
+        const QString prefix = QStringLiteral("hardware/aa:bb:cc:11:22:33/tx/profile/");
+        const QStringList keys{
+            prefix + QStringLiteral("Tab\there/MicGain"),
+            prefix + QStringLiteral("Line\nbreak/MicGain"),
+            prefix + QStringLiteral("Bell\x07" "and\x7f" "/MicGain"),
+            prefix + QString(QChar(0x0001)) + QStringLiteral("start/MicGain"),
+            QStringLiteral("9LeadingDigit"),
+            QStringLiteral("-LeadingDash"),
+            QStringLiteral(".LeadingDot"),
+            prefix + QStringLiteral("Caf\u00e9 \u00b7 \u0301/MicGain"),
+            prefix + QString::fromUcs4(U"Emoji \U0001F4FB/MicGain"),
+            prefix + QString(QChar(0xD800)) + QStringLiteral("lone/MicGain"),
+            prefix + QString(QChar(0xFFFE)) + QStringLiteral("nonchar/MicGain"),
+            prefix + QStringLiteral("D-104+CPDR/MicGain"),
+        };
+        {
+            AppSettings s(path);
+            for (int i = 0; i < keys.size(); ++i) {
+                s.setValue(keys.at(i), QString::number(i));
+            }
+            s.save();
+        }
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QString text = QString::fromUtf8(file.readAll());
+        file.close();
+        // The older escapes, byte for byte.
+        QVERIFY(text.contains(QStringLiteral(
+            "hardware__s__aa__c__bb__c__cc__c__11__c__22__c__33__s__tx__s__profile__s__"
+            "D-104__plus__CPDR__s__MicGain")));
+        QVERIFY(text.contains(QStringLiteral("Tab__u0009__here")));
+        QVERIFY(text.contains(QStringLiteral("__u0039__LeadingDigit")));
+        QVERIFY(text.contains(QStringLiteral("Emoji__sp____u01F4FB__")));
+        {
+            AppSettings s(path);
+            s.load();
+            QVERIFY(!s.wasCorruptedOnLoad());
+            for (int i = 0; i < keys.size(); ++i) {
+                QVERIFY2(s.contains(keys.at(i)), qPrintable(QString::number(i)));
+                QCOMPARE(s.value(keys.at(i)).toString(), QString::number(i));
+            }
+        }
     }
 };
 

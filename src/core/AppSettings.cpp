@@ -66,6 +66,11 @@
 //                 ends, so a background save still writing at exit no
 //                 longer leaves the Windows process waiting forever.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-22 - encodeXmlKey() escapes every other character an XML
+//                 element name cannot hold as __uXXXX__ (a tab, a line
+//                 break, a leading digit), so no key can make the file
+//                 unreadable; the fixed tokens are unchanged. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -255,6 +260,14 @@ void AppSettings::seedDaemonProfileMarker()
 //   ':' '/' '[' ']' '+' ' ' '?' '&' '#' '(' ')' ',' '@' '!' '*' '\'' '"'
 //   '=' ';' '<' '>' '{' '}' '|' '$' '%' '^' '~' '`' '\\'
 //
+// Every other character an XML 1.0 element name cannot hold (a control
+// character, a character outside NameChar, a character past U+FFFF, which
+// QXmlStreamReader refuses in a name, or a NameChar that cannot start a
+// name, such as a leading digit) is written as __uXXXX__: its code point
+// in upper-case hex, four digits, or six past U+FFFF. A lone surrogate is
+// written as its own code unit. The fixed tokens above keep their spelling,
+// so files written before 2026-11-22 load as they did.
+//
 // Bug fix 2026-04-30: pre-fix builds wrote element names with literal '+',
 // causing QXmlStreamReader to bail mid-file, silently dropping every
 // element after the first malformed one (in particular all radios/* keys
@@ -263,11 +276,31 @@ void AppSettings::seedDaemonProfileMarker()
 // after upgrade — once the next save() runs they are well-formed.
 // ---------------------------------------------------------------------------
 
+// XML 1.0 (Fifth Edition) section 2.3, productions [4] and [4a], without
+// [#x10000-#xEFFFF]: QXmlStreamReader refuses a character past U+FFFF in a
+// name ("Invalid XML name."), so those are escaped too.
+static bool isXmlNameStartChar(char32_t c)
+{
+    return c == U':' || c == U'_' || (c >= U'A' && c <= U'Z') || (c >= U'a' && c <= U'z')
+        || (c >= 0xC0 && c <= 0xD6) || (c >= 0xD8 && c <= 0xF6) || (c >= 0xF8 && c <= 0x2FF)
+        || (c >= 0x370 && c <= 0x37D) || (c >= 0x37F && c <= 0x1FFF)
+        || (c >= 0x200C && c <= 0x200D) || (c >= 0x2070 && c <= 0x218F)
+        || (c >= 0x2C00 && c <= 0x2FEF) || (c >= 0x3001 && c <= 0xD7FF)
+        || (c >= 0xF900 && c <= 0xFDCF) || (c >= 0xFDF0 && c <= 0xFFFD);
+}
+
+static bool isXmlNameChar(char32_t c)
+{
+    return isXmlNameStartChar(c) || c == U'-' || c == U'.' || (c >= U'0' && c <= U'9')
+        || c == 0xB7 || (c >= 0x300 && c <= 0x36F) || (c >= 0x203F && c <= 0x2040);
+}
+
 static QString encodeXmlKey(const QString& key)
 {
     QString out;
     out.reserve(key.size());
-    for (QChar c : key) {
+    for (qsizetype i = 0; i < key.size(); ++i) {
+        const QChar c = key.at(i);
         switch (c.unicode()) {
             case ':':  out += QLatin1String("__c__");     break;
             case '/':  out += QLatin1String("__s__");     break;
@@ -299,7 +332,26 @@ static QString encodeXmlKey(const QString& key)
             case '~':  out += QLatin1String("__tilde__"); break;
             case '`':  out += QLatin1String("__bt__");    break;
             case '\\': out += QLatin1String("__bs__");    break;
-            default:   out += c;                          break;
+            default: {
+                char32_t point = c.unicode();
+                qsizetype units = 1;
+                if (c.isHighSurrogate() && i + 1 < key.size() && key.at(i + 1).isLowSurrogate()) {
+                    point = QChar::surrogateToUcs4(c, key.at(i + 1));
+                    units = 2;
+                }
+                const bool allowed = out.isEmpty() ? isXmlNameStartChar(point)
+                                                   : isXmlNameChar(point);
+                if (allowed) {
+                    out += key.mid(i, units);
+                } else {
+                    out += QLatin1String("__u")
+                         + QString::number(point, 16).toUpper().rightJustified(
+                               point > 0xFFFF ? 6 : 4, QLatin1Char('0'))
+                         + QLatin1String("__");
+                }
+                i += units - 1;
+                break;
+            }
         }
     }
     return out;
@@ -338,7 +390,30 @@ static QString decodeXmlKey(const QString& tag)
     out.replace(QLatin1String("__tilde__"), QLatin1String("~"));
     out.replace(QLatin1String("__bt__"),    QLatin1String("`"));
     out.replace(QLatin1String("__bs__"),    QLatin1String("\\"));
-    return out;
+    // The __uXXXX__ escapes (four hex digits, or six past U+FFFF).
+    static const QRegularExpression escaped(
+        QStringLiteral("__u([0-9A-F]{6}|[0-9A-F]{4})__"));
+    if (!out.contains(QLatin1String("__u"))) {
+        return out;
+    }
+    QString decoded;
+    decoded.reserve(out.size());
+    qsizetype from = 0;
+    QRegularExpressionMatchIterator it = escaped.globalMatch(out);
+    while (it.hasNext()) {
+        const QRegularExpressionMatch match = it.next();
+        decoded += QStringView(out).mid(from, match.capturedStart() - from);
+        const char32_t point = match.captured(1).toUInt(nullptr, 16);
+        if (point > 0xFFFF) {
+            decoded += QChar(QChar::highSurrogate(point));
+            decoded += QChar(QChar::lowSurrogate(point));
+        } else {
+            decoded += QChar(static_cast<char16_t>(point));
+        }
+        from = match.capturedEnd();
+    }
+    decoded += QStringView(out).mid(from);
+    return decoded;
 }
 
 // One-shot recovery for files written by pre-2026-04-30 builds. Scan the
