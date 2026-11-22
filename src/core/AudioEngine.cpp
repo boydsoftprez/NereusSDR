@@ -27,14 +27,20 @@
 //               the local one and each owner mix's own, each topped up
 //               from the playback feed first.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-22 : The transmitting slice's leveler starts over while MOX
+//                holds its audio back, so no key-down gain lifts the hiss
+//                after the over, and a new reset count from RadioModel
+//                starts a leveler over (a retune, a new receiver). J.J.
+//                Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-16 : The leveler gets its measuring band (the middle of the
 //                filter) from a second word per slice. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
 //   2026-11-14 : rxBlockReady runs each receiver's leveler (RxLeveler) on
 //                a copy for the speakers and remote-listening mix; VAX and
 //                the receiver taps keep the plain block. RX Leveler feature
-//                by Brian Sutton (W4KZO); engine and placement by J.J. Boyd
-//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//                by Brian Sutton (W4KZO), AI-assisted via xAI Grok; engine
+//                and placement by J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 //   2026-10-17 : openRole() gives the bus its stream event sink before
 //                 it opens, so a device lost during or right after the
 //                 open reaches the supervisor; each bus has a generation
@@ -853,6 +859,18 @@ double AudioEngine::sliceRxLevelerGainDb(int sliceId) const noexcept
         return 0.0;
     }
     return m_rxLevelers[static_cast<size_t>(sliceId)].gainDb();
+}
+
+RxLevelerParams AudioEngine::sliceRxLeveler(int sliceId) const noexcept
+{
+    if (sliceId < 0 || sliceId >= kMaxSliceAudioViews) {
+        return RxLevelerParams{};
+    }
+    RxLevelerParams p = RxLevelerParams::unpack(
+        m_sliceRxLeveler[static_cast<size_t>(sliceId)].load(std::memory_order_acquire));
+    RxLevelerParams::unpackBand(
+        m_sliceRxLevelerBand[static_cast<size_t>(sliceId)].load(std::memory_order_acquire), p);
+    return p;
 }
 
 #if defined(Q_OS_LINUX)
@@ -4479,6 +4497,10 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
         // R-R3-43: a receiver tap hears nothing either, but is told how
         // many frames were withheld so its positions keep real time.
         skipSliceTaps(sliceId, frames);
+        // Receive leveler: the gain it had at key-down would lift the hiss
+        // for about a second after the over, so it starts over while this
+        // slice transmits (cheap: a few stores, no lock).
+        m_rxLevelers[static_cast<size_t>(sliceId)].reset();
         // Remote-window parity Task 32: nothing of this slice is queued,
         // but while no other slice is a barrier member its call drains the
         // mix, so MON (the transmit monitor, an opportunistic slot that
@@ -4524,6 +4546,13 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
         m_sliceRxLevelerBand[static_cast<size_t>(sliceId)].load(std::memory_order_acquire),
         leveler);
     RxLeveler& rxLeveler = m_rxLevelers[static_cast<size_t>(sliceId)];
+    // A retune, a band, mode or filter change, or a new receiver on this id
+    // (RadioModel bumps the count): nothing learned before carries on.
+    int& resetSeen = m_rxLevelerResetSeen[static_cast<size_t>(sliceId)];
+    if (leveler.resetCount != resetSeen) {
+        rxLeveler.reset();
+        resetSeen = leveler.resetCount;
+    }
     // The scratch is sized off this thread with the mix scratch; a larger
     // block is leveled and queued a scratch at a time.
     const int chunkMax = std::min(m_mixScratchFrames.load(std::memory_order_seq_cst),

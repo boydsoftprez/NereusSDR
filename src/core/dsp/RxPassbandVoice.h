@@ -41,7 +41,12 @@
 //                neighbor overlapping one edge made RXL pump (JJ on the
 //                air). J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                via Anthropic Claude Code.
+//   2026-11-22 - outerEdges follows the mode: a USB or LSB filter crossing
+//                the carrier is trimmed on its far edge only. J.J. Boyd
+//                (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
+
+#include "core/WdspTypes.h"
 
 #include <vector>
 
@@ -76,9 +81,13 @@ public:
                   bool trimLow = false, bool trimHigh = false);
 
     // Which edges of a filter filterLowHz..filterHighHz about the carrier
-    // are away from it: the low one when it is below the carrier, the high
-    // one when it is above.
-    static void outerEdges(int filterLowHz, int filterHighHz, bool& trimLow, bool& trimHigh);
+    // are away from it, for a receiver in `mode`: the low one in LSB and the
+    // other lower modes, the high one in USB and the other upper modes, even
+    // when the filter crosses the carrier. In AM, SAM and DSB, both sides:
+    // the low one when it is below the carrier, the high one when it is
+    // above.
+    static void outerEdges(DSPMode mode, int filterLowHz, int filterHighHz, bool& trimLow,
+                           bool& trimHigh);
 
     // The share (0 to 1) of the passband's bins above the band's noise,
     // averaged over the frames since the last call, or -1 with none.

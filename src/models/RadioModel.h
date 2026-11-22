@@ -12,6 +12,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-22 - Receive leveler reset count per slice
+//                (m_rxLevelerResetCounts). NereusSDR-original. J.J. Boyd
+//                (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-15 - The receive leveler's station check also reads the
 //                panadapter bins in each receiver's passband
 //                (feedRxLevelerSpectrum). NereusSDR-original. J.J. Boyd
@@ -1093,6 +1096,9 @@ class QTimer;   // Core speaker's delay readout (native audio plan Task 21)
 #include <vector>
 
 namespace NereusSDR { class VoltsAmpsLog; }
+// Receive leveler tests, friends below (global scope, as QtTest declares them).
+class TestDsrRewind;
+class TstAudioEngineRxLeveler;
 
 namespace NereusSDR {
 
@@ -8430,8 +8436,9 @@ private:
     // (rxLevelerGainDb), which is how local and remote windows read it.
     void publishRxLevelers();
     void updateRxLevelers();
-    // A retune (more than kRxLevelerRetuneHz), a mode or a filter change:
-    // the station check starts learning the quiet level again.
+    // A retune (more than kRxLevelerRetuneHz), a mode or a filter change,
+    // or a receiver made on the id: the station check starts learning the
+    // quiet level again, and the leveler starts over (its reset count).
     void resetRxStationGate(int sliceId);
     static constexpr double kRxLevelerRetuneHz = 1000.0;
     struct RxLevelerTrack {
@@ -8440,7 +8447,14 @@ private:
         QElapsedTimer frameClock;
         double frequencyHz{0.0};
     };
+    friend class ::TstAudioEngineRxLeveler;   // the leveler's RadioModel half
+    friend class ::TestDsrRewind;             // no live bins while rewound
     QHash<int, RxLevelerTrack> m_rxLevelerTracks;
+    // Per slice id, RxLevelerParams::resetCount: bumped by resetRxStationGate
+    // (a retune, a mode or filter change, a receiver made on the id) and
+    // published, so the audio thread starts that leveler over. Kept apart
+    // from the tracks, which go with their slice: a reused id still moves on.
+    QHash<int, int> m_rxLevelerResetCounts;
     QElapsedTimer m_rxLevelerClock;
     // RADE gaps (2026-09-30): the slices in RADE mode (bit n for id n), and
     // their hand-off to the DSP worker (RxDspWorker::setRadeModeSlices).

@@ -53,6 +53,13 @@
 //                overlapping one edge made the level drift up and down
 //                (JJ on the air). J.J. Boyd (KG4VCF), with AI-assisted
 //                transformation via Anthropic Claude Code.
+//   2026-11-22 - Review fixes: the trimmed loudness reading filters each
+//                side apart (a panned or BIN receiver read 3 dB low), the
+//                measuring band follows the mode rather than the filter's
+//                sign, and a reset count in the settings word starts the
+//                leveler over after a retune or a new receiver. J.J. Boyd
+//                (KG4VCF), AI-assisted via Claude Code. riseHoldLeftSec
+//                for the tests.
 // =================================================================
 
 #include "core/WdspTypes.h"
@@ -85,6 +92,12 @@ struct RxLevelerParams {
     // receiver's filter less its outer edges. 0 and 0 read the whole block.
     int  measureLowHz{0};
     int  measureHighHz{0};
+    // Bumped by RadioModel after a retune, a band, mode or filter change and
+    // when a receiver is made on this id (0 to kResetCountMask, then round
+    // again). The audio thread starts the leveler over when it changes, so
+    // nothing learned on the old frequency or the old receiver carries on.
+    int  resetCount{0};
+    static constexpr int kResetCountMask = 0x1F;    // five bits (bits 3 to 7)
 
     bool operator==(const RxLevelerParams&) const = default;
 
@@ -204,17 +217,22 @@ public:
     // feed decoders or carry no speech level to even out.
     static bool modeAllows(DSPMode mode);
 
-    // The audio band (Hz) the loudness is read in, for a receiver filter
-    // of filterLowHz..filterHighHz about the carrier: the filter less
-    // RxPassbandVoice::kEdgeShare of its width at the edges away from the
-    // carrier, as audio frequencies (the top of the audio in USB and LSB;
-    // in AM and DSB, which fold, the top too). The edge next to the
-    // carrier is kept: it holds the voice's own strongest harmonics. 0 and
-    // 0 when nothing is left.
-    static void measureBand(int filterLowHz, int filterHighHz, int& lowHz, int& highHz);
+    // The audio band (Hz) the loudness is read in, for a receiver in `mode`
+    // with a filter of filterLowHz..filterHighHz about the carrier: the
+    // filter less RxPassbandVoice::kEdgeShare of its width at the edges away
+    // from the carrier, as audio frequencies (the top of the audio in USB
+    // and LSB; in AM, SAM and DSB, which fold, the top too). The sideband is
+    // the mode's, not the filter's sign: a USB or LSB filter that crosses the
+    // carrier is trimmed on its far edge only. The edge next to the carrier
+    // is kept: it holds the voice's own strongest harmonics. 0 and 0 when
+    // nothing is left.
+    static void measureBand(DSPMode mode, int filterLowHz, int filterHighHz, int& lowHz,
+                            int& highHz);
 
     // Back to unity, nothing learned. The audio thread calls this when the
-    // leveler is turned off, so turning it on again starts from scratch.
+    // leveler is turned off, so turning it on again starts from scratch,
+    // when the reset count changes (a retune, a new receiver) and while
+    // the receiver transmits.
     void reset();
 
     // In place, interleaved stereo float32, `frames` frames. With
@@ -230,6 +248,9 @@ public:
     // The station's speech level as the leveler reads it (dBFS), or
     // kSilenceDbfs before it has heard any. Audio thread (and tests).
     double loudnessDb() const;
+    // What is left of the hold after a turn-down (s, 0 when none). Audio
+    // thread (and tests).
+    double riseHoldLeftSec() const { return m_riseHoldLeft; }
 
 private:
     // One second-order section (transposed direct form II).
@@ -247,9 +268,12 @@ private:
     void setMeasureBand(int lowHz, int highHz, double sampleRate);
 
     // The measuring band: 8th-order Butterworth high- and low-pass, on the
-    // loudness reading only, never on the audio.
-    std::array<Section, 4> m_measureHp{};
-    std::array<Section, 4> m_measureLp{};
+    // loudness reading only, never on the audio. One set per side (left,
+    // right), so a panned or BIN receiver is read as the whole-block
+    // reading reads it: the power of each side, not of their sum.
+    using Sections = std::array<Section, 4>;
+    std::array<Sections, 2> m_measureHp{};
+    std::array<Sections, 2> m_measureLp{};
     bool   m_measureHpOn{false};
     bool   m_measureLpOn{false};
     int    m_measureLowHz{-1};

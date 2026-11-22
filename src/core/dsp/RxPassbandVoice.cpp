@@ -22,11 +22,29 @@ void RxPassbandVoice::reset()
     m_frames = 0;
 }
 
-void RxPassbandVoice::outerEdges(int filterLowHz, int filterHighHz, bool& trimLow,
-                                 bool& trimHigh)
+void RxPassbandVoice::outerEdges(DSPMode mode, int filterLowHz, int filterHighHz,
+                                 bool& trimLow, bool& trimHigh)
 {
-    trimLow = filterLowHz < 0;
-    trimHigh = filterHighHz > 0;
+    switch (mode) {
+    case DSPMode::AM:
+    case DSPMode::SAM:
+    case DSPMode::DSB:
+        trimLow = filterLowHz < 0;
+        trimHigh = filterHighHz > 0;
+        break;
+    case DSPMode::LSB:
+    case DSPMode::CWL:
+    case DSPMode::DIGL:
+    case DSPMode::RADE_L:
+    case DSPMode::RADE2_L:
+        trimLow = true;
+        trimHigh = false;
+        break;
+    default:
+        trimLow = false;
+        trimHigh = true;
+        break;
+    }
 }
 
 void RxPassbandVoice::addFrame(const float* binsDbm, int binCount, int loBin, int hiBin,

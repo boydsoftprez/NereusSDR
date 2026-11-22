@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <numbers>
 
 namespace NereusSDR {
 
@@ -59,6 +60,7 @@ std::uint64_t RxLevelerParams::pack() const noexcept
     w |= on ? 1u : 0u;
     w |= stationPresent ? 2u : 0u;
     w |= nearOverload ? 4u : 0u;
+    w |= static_cast<std::uint64_t>(resetCount & kResetCountMask) << 3;
     w |= field(targetDb, RxLeveler::kTargetDbMin, RxLeveler::kTargetDbMax) << 8;
     w |= field(maxBoostDb, RxLeveler::kMaxBoostDbMin, RxLeveler::kMaxBoostDbMax) << 16;
     w |= field(maxCutDb, RxLeveler::kMaxCutDbMin, RxLeveler::kMaxCutDbMax) << 24;
@@ -73,6 +75,7 @@ RxLevelerParams RxLevelerParams::unpack(std::uint64_t w) noexcept
     p.on = (w & 1u) != 0;
     p.stationPresent = (w & 2u) != 0;
     p.nearOverload = (w & 4u) != 0;
+    p.resetCount = static_cast<int>((w >> 3) & static_cast<std::uint64_t>(kResetCountMask));
     p.targetDb = static_cast<int>((w >> 8) & 0xFFu) + RxLeveler::kTargetDbMin;
     p.maxBoostDb = static_cast<int>((w >> 16) & 0xFFu) + RxLeveler::kMaxBoostDbMin;
     p.maxCutDb = static_cast<int>((w >> 24) & 0xFFu) + RxLeveler::kMaxCutDbMin;
@@ -93,7 +96,8 @@ void RxLevelerParams::unpackBand(std::uint64_t w, RxLevelerParams& into) noexcep
     into.measureHighHz = static_cast<int>((w >> 16) & 0xFFFFu);
 }
 
-void RxLeveler::measureBand(int filterLowHz, int filterHighHz, int& lowHz, int& highHz)
+void RxLeveler::measureBand(DSPMode mode, int filterLowHz, int filterHighHz, int& lowHz,
+                            int& highHz)
 {
     lowHz = 0;
     highHz = 0;
@@ -104,15 +108,40 @@ void RxLeveler::measureBand(int filterLowHz, int filterHighHz, int& lowHz, int& 
         * static_cast<double>(filterHighHz - filterLowHz);
     double lo = 0.0;
     double hi = 0.0;
-    if (filterLowHz >= 0) {             // above the carrier (USB)
-        lo = filterLowHz;
-        hi = filterHighHz - edge;
-    } else if (filterHighHz <= 0) {     // below it (LSB): audio is mirrored
-        lo = -filterHighHz;
+    switch (mode) {
+    case DSPMode::AM:
+    case DSPMode::SAM:
+    case DSPMode::DSB:
+        // Both sidebands. A filter about the carrier folds, the shorter
+        // side's top is the audio's top; one lying to one side is read as
+        // that sideband.
+        if (filterLowHz >= 0) {
+            lo = filterLowHz;
+            hi = filterHighHz - edge;
+        } else if (filterHighHz <= 0) {
+            lo = -filterHighHz;
+            hi = -filterLowHz - edge;
+        } else {
+            lo = 0.0;
+            hi = std::min(-filterLowHz, filterHighHz) - edge;
+        }
+        break;
+    case DSPMode::LSB:
+    case DSPMode::CWL:
+    case DSPMode::DIGL:
+    case DSPMode::RADE_L:
+    case DSPMode::RADE2_L:
+        // Below the carrier, mirrored: the outer edge is the filter's low
+        // one. A part above the carrier folds onto the bottom of the audio.
+        lo = std::max(0, -filterHighHz);
         hi = -filterLowHz - edge;
-    } else {                            // straddles it (AM, DSB): folded
-        lo = 0.0;
-        hi = std::min(-filterLowHz, filterHighHz) - edge;
+        break;
+    default:
+        // Above the carrier (USB and the other upper modes): the outer edge
+        // is the high one. A part below the carrier folds onto the bottom.
+        lo = std::max(0, filterLowHz);
+        hi = filterHighHz - edge;
+        break;
     }
     if (hi <= lo) {
         return;
@@ -140,7 +169,7 @@ void RxLeveler::setMeasureBand(int lowHz, int highHz, double sampleRate)
     // Robert Bristow-Johnson's audio EQ cookbook biquads (low- and
     // high-pass), one per Butterworth section Q.
     const auto design = [sampleRate](Section& sec, double hz, double q, bool high) {
-        const double w0 = 2.0 * 3.14159265358979323846 * hz / sampleRate;
+        const double w0 = 2.0 * std::numbers::pi * hz / sampleRate;
         const double c = std::cos(w0);
         const double alpha = std::sin(w0) / (2.0 * q);
         const double a0 = 1.0 + alpha;
@@ -157,14 +186,14 @@ void RxLeveler::setMeasureBand(int lowHz, int highHz, double sampleRate)
         sec.z1 = 0.0;
         sec.z2 = 0.0;
     };
-    for (size_t i = 0; i < m_measureHp.size(); ++i) {
-        if (m_measureHpOn) {
-            design(m_measureHp[i], lowHz, kButterworth8Q[i], true);
-        }
-    }
-    for (size_t i = 0; i < m_measureLp.size(); ++i) {
-        if (m_measureLpOn) {
-            design(m_measureLp[i], topHz, kButterworth8Q[i], false);
+    for (size_t side = 0; side < m_measureHp.size(); ++side) {
+        for (size_t i = 0; i < kButterworth8Q.size(); ++i) {
+            if (m_measureHpOn) {
+                design(m_measureHp[side][i], lowHz, kButterworth8Q[i], true);
+            }
+            if (m_measureLpOn) {
+                design(m_measureLp[side][i], topHz, kButterworth8Q[i], false);
+            }
         }
     }
 }
@@ -255,22 +284,27 @@ void RxLeveler::process(float* x, int frames, double sampleRate,
     setMeasureBand(params.measureLowHz, params.measureHighHz, sampleRate);
     double power = fullPower;
     if (m_measureHpOn || m_measureLpOn) {
+        // Each side through its own filters, and the power of both averaged
+        // as fullPower averages them: a panned or BIN receiver (left and
+        // right apart, or 90 degrees apart) reads what the whole block reads.
         double msum = 0.0;
         for (int n = 0; n < frames; ++n) {
-            double y = 0.5 * (static_cast<double>(x[2 * n]) + static_cast<double>(x[2 * n + 1]));
-            if (m_measureHpOn) {
-                for (Section& sec : m_measureHp) {
-                    y = sec.run(y);
+            for (size_t side = 0; side < 2; ++side) {
+                double y = static_cast<double>(x[2 * n + static_cast<int>(side)]);
+                if (m_measureHpOn) {
+                    for (Section& sec : m_measureHp[side]) {
+                        y = sec.run(y);
+                    }
                 }
-            }
-            if (m_measureLpOn) {
-                for (Section& sec : m_measureLp) {
-                    y = sec.run(y);
+                if (m_measureLpOn) {
+                    for (Section& sec : m_measureLp[side]) {
+                        y = sec.run(y);
+                    }
                 }
+                msum += y * y;
             }
-            msum += y * y;
         }
-        power = msum / static_cast<double>(frames) * std::pow(10.0, kMeasureOffsetDb / 10.0);
+        power = msum / static_cast<double>(samples) * std::pow(10.0, kMeasureOffsetDb / 10.0);
         if (!std::isfinite(power)) {
             power = fullPower;
             m_measureLowHz = -1;    // start the filters over next block

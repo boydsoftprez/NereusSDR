@@ -18,6 +18,11 @@
 // settings store is the test sandbox's (TestSandboxInit).
 //
 // Modification history (NereusSDR):
+//   2026-11-22 - The receive leveler's six per-slice settings come back,
+//                Custom included. J.J. Boyd (KG4VCF), AI-assisted via
+//                Claude Code.
+//   2026-11-14 - rxLevelerMaxBoostDb is saved under its own slice. Brian
+//                Sutton (W4KZO), AI-assisted via xAI Grok.
 //   2026-11-05 - A newly added receiver starts with RIT and XIT off, on a
 //                letter used before too; a restored one keeps its own.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
@@ -305,6 +310,50 @@ private slots:
     // then restores the last band. The lock from the first must not veto
     // the frequency in the second, or the slice comes back on the
     // constructor's 14.225 MHz and the next save damages the 20 m slot.
+    // The receive leveler's six settings are saved under the slice they
+    // were changed on and come back after a restart; Custom comes back
+    // with its own knobs, not the Auto preset.
+    void theReceiveLevelersSixSettingsComeBackCustomIncluded()
+    {
+        int id = -1;
+        {
+            RadioModel radio;
+            SilentRadioConnection conn;
+            radio.injectConnectionForTest(&conn);
+            DetachConnection detach{&radio};
+            radio.configureStreamPool(2, 2, kRateHz);
+            QVERIFY(radio.addSlice() >= 0);
+            id = radio.addSlice();
+            SliceModel* slice = radio.sliceById(id);
+            QVERIFY(slice);
+            slice->setRxLevelerTargetDb(-18);
+            slice->setRxLevelerMaxBoostDb(14);
+            slice->setRxLevelerAttackMs(2500);
+            slice->setRxLevelerReleaseMs(900);
+            slice->setRxLevelerMaxCutDb(9);
+            slice->setRxLevelerMode(RxLevelerMode::Custom);
+            radio.flushPendingSettingsSave();
+        }
+        auto& settings = AppSettings::instance();
+        QCOMPARE(settings.value(sliceKey(id, "RxLevelerMode")).toInt(),
+                 static_cast<int>(RxLevelerMode::Custom));
+        QCOMPARE(settings.value(sliceKey(id, "RxLevelerTargetDb")).toInt(), -18);
+        QCOMPARE(settings.value(sliceKey(id, "RxLevelerMaxBoostDb")).toInt(), 14);
+        QCOMPARE(settings.value(sliceKey(id, "RxLevelerAttackMs")).toInt(), 2500);
+        QCOMPARE(settings.value(sliceKey(id, "RxLevelerReleaseMs")).toInt(), 900);
+        QCOMPARE(settings.value(sliceKey(id, "RxLevelerMaxCutDb")).toInt(), 9);
+
+        SliceModel restored;
+        restored.setSliceIndex(id);
+        restored.restoreFromSettings(Band::Band20m, false);
+        QCOMPARE(restored.rxLevelerMode(), RxLevelerMode::Custom);
+        QCOMPARE(restored.rxLevelerTargetDb(), -18);
+        QCOMPARE(restored.rxLevelerMaxBoostDb(), 14);
+        QCOMPARE(restored.rxLevelerAttackMs(), 2500);
+        QCOMPARE(restored.rxLevelerReleaseMs(), 900);
+        QCOMPARE(restored.rxLevelerMaxCutDb(), 9);
+    }
+
     void aLockedSliceComesBackOnItsSavedFrequency()
     {
         auto& s = AppSettings::instance();

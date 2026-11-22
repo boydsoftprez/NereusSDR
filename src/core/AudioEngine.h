@@ -31,15 +31,21 @@
 //               setOwnerMixPlayback, the owner mix's route to its own;
 //               setPlaybackFeed, which each drain tops the slots up from.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-22: Receive leveler review fixes: the transmitting slice's
+//               leveler starts over each block it is held back, and a new
+//               reset count in its settings word starts it over after a
+//               retune or a new receiver (m_rxLevelerResetSeen);
+//               sliceRxLeveler reads the word back. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 //   2026-11-16: The receive leveler's measuring band rides in a second
 //               word per slice (m_sliceRxLevelerBand). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 //   2026-11-14: Receive leveler per receiver (setSliceRxLeveler,
 //               sliceRxLevelerGainDb): the speakers and remote-listening
 //               mix get the leveled block, VAX and the receiver taps the
-//               plain one. RX Leveler feature by Brian Sutton (W4KZO);
-//               engine and placement by J.J. Boyd (KG4VCF), AI-assisted
-//               via Anthropic Claude Code.
+//               plain one. RX Leveler feature by Brian Sutton (W4KZO),
+//               AI-assisted via xAI Grok; engine and placement by J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-27: Add approved remote CW hold/activity integration for
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-17 : makeBus() sets a stream event sink before the open;
@@ -589,6 +595,8 @@ public:
     void setSliceRxLeveler(int sliceId, const RxLevelerParams& params) noexcept;
     // Any thread: the gain the slice's leveler applies now, dB (0 when off).
     double sliceRxLevelerGainDb(int sliceId) const noexcept;
+    // Any thread: what was last published for the slice (both words).
+    RxLevelerParams sliceRxLeveler(int sliceId) const noexcept;
 
     // Legacy start/stop retained for the single-entry-point symmetry the
     // rest of the codebase expects. Speakers bus is opened lazily the
@@ -1915,6 +1923,9 @@ private:
     // a second word per slice id, written before the first.
     std::array<std::atomic<std::uint64_t>, kMaxSliceAudioViews> m_sliceRxLevelerBand{};
     std::array<RxLeveler, kMaxSliceAudioViews> m_rxLevelers;
+    // The reset count each leveler last ran with (RxLevelerParams::
+    // resetCount), audio thread only: a new count starts that leveler over.
+    std::array<int, kMaxSliceAudioViews> m_rxLevelerResetSeen{};
 
     // Sub-Phase 12 Task 12.2 — live-reconfig safety mutex for the speakers
     // bus. setSpeakersConfig() acquires this during tear-down + rebuild.

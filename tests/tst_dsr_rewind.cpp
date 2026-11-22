@@ -33,6 +33,10 @@
 //                 Code. Roundtable's live frequency for a slice playing the
 //                 past holds through the rewind's retune and any tune in
 //                 the past, and lets go on LIVE and on PTT.
+//   2026-11-22 - The receive leveler takes no live panadapter bins for a
+//                 slice playing the past, and takes them again on LIVE
+//                 (this class is RadioModel's friend for its tracks). J.J.
+//                 Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -55,7 +59,9 @@
 #include "core/recordings/dsr/DsrRecorder.h"
 #include "core/recordings/dsr/DsrReplay.h"
 #include "core/session/RecordingsFacade.h"
+#include "models/RadioModel.h"
 #include "models/RxDspWorker.h"
+#include "models/SliceModel.h"
 
 #include <algorithm>
 #include <functional>
@@ -787,6 +793,56 @@ private slots:
         QVERIFY2(std::abs(toneHz - 1000.0) < 10.0, qPrintable(QStringLiteral("tone %1 Hz").arg(toneHz)));
         rx->setActive(false);
 #endif
+    }
+
+    // The receive leveler: while a slice plays the past, the live
+    // panadapter bins are not its station check's (its S-meter follows the
+    // replay and decides, and the leveler reads the whole block); back to
+    // live, the bins count again.
+    void aRewoundSliceTakesNoLiveBinsForTheLeveler()
+    {
+        RxDspWorker worker;     // outlives the model and its recordings
+        prepareWorker(worker);
+        RadioModel model;
+        model.configureStreamPool(/*userDdcCount=*/5, /*maxSlices=*/5, kRate);
+        const int id = model.addSlice();
+        QCOMPARE(id, 0);
+        SliceModel* slice = model.sliceById(id);
+        QVERIFY(slice);
+        slice->setDspMode(DSPMode::USB);
+        slice->setFilter(100, 2900);
+        slice->setRxLevelerMode(RxLevelerMode::Auto);
+        const int stream = slice->streamIndex();
+        QVERIFY(stream >= 0);
+        QVERIFY(model.streamSampleRateHz(stream) > 0);
+        // The slice in the middle of its stream's bins.
+        slice->setFrequency(model.streamCentreHz(stream));
+        model.updateRxLevelers();       // makes the slice's station check
+        QVERIFY(model.m_rxLevelerTracks.contains(id));
+        const QVector<float> bins(1024, -130.0f);
+        const auto binsTaken = [&model, id] {
+            return model.m_rxLevelerTracks[id].voice.take() >= 0.0;
+        };
+        model.feedRxLevelerSpectrum(stream, bins);
+        QVERIFY(binsTaken());
+
+        RecordingService* svc = model.recordingService();
+        QVERIFY(svc);
+        FakeRadio* radio = prepare(*svc);
+        radio->worker = &worker;
+        keepCarrier(*svc, 3);
+        const DsrRingFile& ring = svc->dsrRecorder()->ring();
+        QString why;
+        QVERIFY2(svc->rewind(id, ring.oldestUtcNs(0) + kNs, kPlayHz, &why), qPrintable(why));
+        QVERIFY(svc->rewoundLiveFrequencyHz(id).has_value());
+        model.feedRxLevelerSpectrum(stream, bins);
+        QVERIFY(!binsTaken());
+
+        QVERIFY2(svc->goLive(id, &why), qPrintable(why));
+        QVERIFY(!svc->rewoundLiveFrequencyHz(id).has_value());
+        model.feedRxLevelerSpectrum(stream, bins);
+        QVERIFY(binsTaken());
+        radio->worker = nullptr;
     }
 };
 

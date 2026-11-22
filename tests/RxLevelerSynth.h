@@ -13,6 +13,10 @@
 // averaged over 100 ms like WDSP's (rxa.c create_meter, 0.100).
 //
 // Everything is deterministic from the seed.
+//
+// Modification history (NereusSDR):
+//   2026-11-22 - std::numbers::pi, and measureBand takes the mode. J.J.
+//                Boyd (KG4VCF), AI-assisted via Claude Code.
 
 #include "core/dsp/RxLeveler.h"
 #include "core/dsp/RxStationGate.h"
@@ -20,13 +24,14 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <numbers>
 #include <random>
 #include <vector>
 
 namespace RxlSynth {
 
 constexpr double kRate = 48000.0;
-constexpr double kPi = 3.14159265358979323846;
+constexpr double kPi = std::numbers::pi;
 
 struct Biquad {
     double b0{1}, b1{0}, b2{0}, a1{0}, a2{0};
@@ -370,7 +375,7 @@ inline NereusSDR::RxLevelerParams autoParams()
     p.releaseMs = RxLeveler::kAutoReleaseMs;
     // The loudness is read without the synthetic passband's outer edge,
     // as RadioModel sets it from the slice's filter.
-    RxLeveler::measureBand(300, 2700, p.measureLowHz, p.measureHighHz);
+    RxLeveler::measureBand(NereusSDR::DSPMode::USB, 300, 2700, p.measureLowHz, p.measureHighHz);
     return p;
 }
 

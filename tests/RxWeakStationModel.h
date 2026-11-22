@@ -36,6 +36,8 @@
 //   2026-11-16 — Band: static crashes, fading noise, a carrier, a swell of
 //                the noise floor, and a run with no station. J.J. Boyd (KG4VCF), with AI-assisted
 //                transformation via Anthropic Claude Code.
+//   2026-11-22 - std::numbers::pi. J.J. Boyd (KG4VCF), AI-assisted via
+//                Claude Code.
 // =================================================================
 
 #include "core/dsp/RxLeveler.h"
@@ -45,6 +47,7 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <numbers>
 #include <random>
 #include <vector>
 
@@ -75,7 +78,7 @@ struct Result {
 
 namespace detail {
 
-constexpr double kPi = 3.14159265358979323846;
+constexpr double kPi = std::numbers::pi;
 constexpr int kFftSize = 1024;
 constexpr double kFrameSec = 0.033;
 constexpr double kOverStart = 12.0;

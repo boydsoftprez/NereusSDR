@@ -13,7 +13,16 @@
 // TCI reads the receive channel (TciServer's audio taps on RxChannel),
 // ahead of AudioEngine, so it is plain by construction.
 //
+// And RadioModel's half (this class is its friend): what publishRxLevelers
+// sends for Auto, Custom, a mode RXL leaves alone and a remote window; the
+// reset count after a retune and on a reused slice id; the transmitting
+// slice's leveler starting over; a block larger than the scratch; two
+// receivers kept apart.
+//
 // Modification history (NereusSDR):
+//   2026-11-22 - The RadioModel half, the MOX reset, the reset count, the
+//                large block and two receivers. J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code.
 //   2026-11-14 — New. J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                via Anthropic Claude Code.
 // =================================================================
@@ -31,6 +40,7 @@
 #include <cmath>
 #include <cstring>
 #include <memory>
+#include <numbers>
 #include <random>
 #include <vector>
 
@@ -41,7 +51,7 @@ namespace {
 constexpr int kFrames = 1024;
 constexpr int kBlocks = 240;      // about five seconds
 constexpr int kVaxChannel = 1;
-constexpr double kPi = 3.14159265358979323846;
+constexpr double kPi = std::numbers::pi;
 
 // A quiet, speech-like signal: bursts of a few tones, on and off, well
 // under the listening target, so the leveler lifts it.
@@ -146,6 +156,57 @@ Result run(const std::vector<float>& input, int afGain, RxLevelerMode mode,
     return r;
 }
 
+// One receiver on a RadioModel with its speakers, as run() makes it, kept
+// for a test to drive block by block.
+struct Rig {
+    std::unique_ptr<RadioModel> radio;
+    AudioEngine* engine{nullptr};
+    FakeAudioBus* speakers{nullptr};
+    int id{-1};
+
+    Rig()
+    {
+        radio = std::make_unique<RadioModel>();
+        engine = radio->audioEngine();
+        auto bus = openBus(QStringLiteral("FakeSpeakers"));
+        speakers = bus.get();
+        engine->setSpeakersBusForTest(std::move(bus));
+        radio->configureStreamPool(/*userDdcCount=*/5, /*maxSlices=*/5,
+                                   /*defaultRateHz=*/192000);
+        engine->masterMixForTest().setRampFrames(1);
+        engine->masterMixForTest().setSlewUpFrames(0);
+        id = addReceiver();
+    }
+
+    int addReceiver()
+    {
+        const int added = radio->addSlice();
+        SliceModel* slice = radio->sliceById(added);
+        slice->setDspMode(DSPMode::USB);
+        slice->setRxLevelerMode(RxLevelerMode::Auto);
+        engine->setSliceStreaming(added, true);
+        return added;
+    }
+
+    // What RadioModel published for the slice, with a station present: the
+    // reset count stays RadioModel's.
+    void publishStation(int slice, bool present = true)
+    {
+        RxLevelerParams p = levelerOn();
+        p.stationPresent = present;
+        p.resetCount = engine->sliceRxLeveler(slice).resetCount;
+        engine->setSliceRxLeveler(slice, p);
+    }
+
+    void feed(int slice, const std::vector<float>& input, int fromBlock, int blocks)
+    {
+        for (int b = fromBlock; b < fromBlock + blocks; ++b) {
+            engine->rxBlockReady(slice, input.data() + static_cast<size_t>(b % kBlocks) * kFrames * 2,
+                                 kFrames);
+        }
+    }
+};
+
 }  // namespace
 
 class TstAudioEngineRxLeveler : public QObject {
@@ -218,6 +279,223 @@ private slots:
                      qPrintable(QStringLiteral("sample %1: %2 vs %3").arg(i).arg(q[i]).arg(f[i])));
         }
         QVERIFY(loudest > 0.01);
+    }
+
+    // ── RadioModel's half ─────────────────────────────────────────────────
+
+    // Auto is published as its preset whatever the knobs say; Custom
+    // passes the knobs; a mode RXL leaves alone turns it off.
+    void publishResolvesAutoAndPassesCustom()
+    {
+        Rig rig;
+        SliceModel* slice = rig.radio->sliceById(rig.id);
+        slice->setRxLevelerTargetDb(-18);
+        slice->setRxLevelerMaxBoostDb(14);
+        slice->setRxLevelerAttackMs(2500);
+        slice->setRxLevelerReleaseMs(900);
+        slice->setRxLevelerMaxCutDb(9);
+        rig.radio->publishRxLevelers();
+        RxLevelerParams p = rig.engine->sliceRxLeveler(rig.id);
+        QVERIFY(p.on);
+        QCOMPARE(p.targetDb, RxLeveler::kAutoTargetDb);
+        QCOMPARE(p.maxBoostDb, RxLeveler::kAutoMaxBoostDb);
+        QCOMPARE(p.attackMs, RxLeveler::kAutoAttackMs);
+        QCOMPARE(p.releaseMs, RxLeveler::kAutoReleaseMs);
+        QCOMPARE(p.maxCutDb, RxLeveler::kAutoMaxCutDb);
+
+        slice->setRxLevelerMode(RxLevelerMode::Custom);
+        rig.radio->publishRxLevelers();
+        p = rig.engine->sliceRxLeveler(rig.id);
+        QVERIFY(p.on);
+        QCOMPARE(p.targetDb, -18);
+        QCOMPARE(p.maxBoostDb, 14);
+        QCOMPARE(p.attackMs, 2500);
+        QCOMPARE(p.releaseMs, 900);
+        QCOMPARE(p.maxCutDb, 9);
+
+        for (DSPMode mode : {DSPMode::CWU, DSPMode::FM, DSPMode::DIGU}) {
+            slice->setDspMode(mode);
+            rig.radio->publishRxLevelers();
+            QVERIFY2(!rig.engine->sliceRxLeveler(rig.id).on, qPrintable(QString::number(int(mode))));
+        }
+        slice->setDspMode(DSPMode::LSB);
+        rig.radio->publishRxLevelers();
+        QVERIFY(rig.engine->sliceRxLeveler(rig.id).on);
+        slice->setRxLevelerMode(RxLevelerMode::Off);
+        rig.radio->publishRxLevelers();
+        QVERIFY(!rig.engine->sliceRxLeveler(rig.id).on);
+    }
+
+    // A remote window's audio arrives leveled by the Core: it publishes off.
+    void aRemoteWindowPublishesOff()
+    {
+        RadioModel remote{RadioModel::Role::Remote};
+        SliceModel* slice = remote.sliceById(remote.addSliceWithStationId(0));
+        QVERIFY(slice);
+        slice->setDspMode(DSPMode::USB);
+        slice->setRxLevelerMode(RxLevelerMode::Auto);
+        remote.publishRxLevelers();
+        QVERIFY(!remote.audioEngine()->sliceRxLeveler(0).on);
+    }
+
+    // A retune starts the leveler over: the gain it had for the last
+    // frequency is gone on the first block after it. A meter tick with no
+    // retune leaves it alone.
+    void aRetuneStartsTheLevelerOver()
+    {
+        const std::vector<float> input = quietVoice();
+        Rig rig;
+        SliceModel* slice = rig.radio->sliceById(rig.id);
+        rig.radio->updateRxLevelers();      // the station check knows the frequency
+        const int before = rig.engine->sliceRxLeveler(rig.id).resetCount;
+        rig.radio->updateRxLevelers();
+        QCOMPARE(rig.engine->sliceRxLeveler(rig.id).resetCount, before);
+        rig.publishStation(rig.id);
+        rig.feed(rig.id, input, 0, 200);
+        QVERIFY(rig.engine->sliceRxLevelerGainDb(rig.id) > 3.0);
+
+        slice->setFrequency(slice->frequency() + 5000.0);
+        rig.radio->updateRxLevelers();
+        QCOMPARE_NE(rig.engine->sliceRxLeveler(rig.id).resetCount, before);
+        rig.publishStation(rig.id);         // a station there too, for this test
+        rig.feed(rig.id, input, 200, 1);
+        QVERIFY2(rig.engine->sliceRxLevelerGainDb(rig.id) < 1.0,
+                 qPrintable(QString::number(rig.engine->sliceRxLevelerGainDb(rig.id))));
+    }
+
+    // A mode or a filter change starts it over too.
+    void aModeOrFilterChangeStartsTheLevelerOver()
+    {
+        const std::vector<float> input = quietVoice();
+        Rig rig;
+        SliceModel* slice = rig.radio->sliceById(rig.id);
+        int count = rig.engine->sliceRxLeveler(rig.id).resetCount;
+        slice->setFilter(200, 2600);
+        QCOMPARE_NE(rig.engine->sliceRxLeveler(rig.id).resetCount, count);
+        count = rig.engine->sliceRxLeveler(rig.id).resetCount;
+        rig.publishStation(rig.id);
+        rig.feed(rig.id, input, 0, 200);
+        QVERIFY(rig.engine->sliceRxLevelerGainDb(rig.id) > 3.0);
+        slice->setDspMode(DSPMode::LSB);
+        QCOMPARE_NE(rig.engine->sliceRxLeveler(rig.id).resetCount, count);
+        rig.publishStation(rig.id);
+        rig.feed(rig.id, input, 200, 1);
+        QVERIFY(rig.engine->sliceRxLevelerGainDb(rig.id) < 1.0);
+    }
+
+    // A receiver made again on a slice id starts with nothing the last one
+    // there learned.
+    void aReusedSliceIdStartsTheLevelerOver()
+    {
+        const std::vector<float> input = quietVoice();
+        Rig rig;
+        const int second = rig.addReceiver();
+        rig.publishStation(second);
+        rig.feed(second, input, 0, 200);
+        QVERIFY(rig.engine->sliceRxLevelerGainDb(second) > 3.0);
+        const int before = rig.engine->sliceRxLeveler(second).resetCount;
+
+        rig.radio->removeSlice(second);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QVERIFY(rig.radio->sliceById(second) == nullptr);
+        const int again = rig.addReceiver();
+        QCOMPARE(again, second);
+        QCOMPARE_NE(rig.engine->sliceRxLeveler(again).resetCount, before);
+        rig.publishStation(again);
+        rig.feed(again, input, 200, 1);
+        QVERIFY2(rig.engine->sliceRxLevelerGainDb(again) < 1.0,
+                 qPrintable(QString::number(rig.engine->sliceRxLevelerGainDb(again))));
+    }
+
+    // While the slice transmits its leveler starts over, so after the over
+    // the hiss is not lifted by the gain it had at key-down.
+    void transmittingStartsTheLevelerOver()
+    {
+        const std::vector<float> input = quietVoice();
+        Rig rig;
+        rig.radio->requestTxHandoffToSlice(rig.id);
+        QVERIFY(rig.radio->txBoundSlice() != nullptr);
+        QCOMPARE(rig.radio->txBoundSlice()->sliceIndex(), rig.id);
+        rig.publishStation(rig.id);
+        rig.feed(rig.id, input, 0, 200);
+        QVERIFY(rig.engine->sliceRxLevelerGainDb(rig.id) > 3.0);
+
+        rig.engine->setMoxStateForTest(true);
+        rig.feed(rig.id, input, 200, 5);
+        QCOMPARE(rig.engine->sliceRxLevelerGainDb(rig.id), 0.0);
+        rig.engine->setMoxStateForTest(false);
+        // Unkeyed, nobody on the frequency.
+        rig.publishStation(rig.id, /*present=*/false);
+        rig.feed(rig.id, input, 205, 1);
+        QCOMPARE(rig.engine->sliceRxLevelerGainDb(rig.id), 0.0);
+    }
+
+    // A block larger than the leveler's scratch is leveled and queued a
+    // scratch at a time: every frame goes through the leveler, which ends
+    // where one leveler running the same chunks ends, and the speakers
+    // hear it.
+    void aBlockLargerThanTheScratchIsLeveledWhole()
+    {
+        constexpr int kChunk = AudioEngine::kMixScratchMinFrames;
+        constexpr int kBig = 2 * kChunk + 500;
+        constexpr int kBigBlocks = 12;
+        const std::vector<float> voice = quietVoice();
+        std::vector<float> input(static_cast<size_t>(kBig) * kBigBlocks * 2);
+        for (size_t i = 0; i < input.size(); ++i) {
+            input[i] = voice[i % voice.size()];
+        }
+        Rig rig;
+        rig.publishStation(rig.id);
+        const RxLevelerParams published = rig.engine->sliceRxLeveler(rig.id);
+        for (int b = 0; b < kBigBlocks; ++b) {
+            rig.engine->rxBlockReady(rig.id, input.data() + static_cast<size_t>(b) * kBig * 2, kBig);
+        }
+        QVERIFY(rig.engine->sliceRxLevelerGainDb(rig.id) > 3.0);
+
+        // The same chunks through a leveler of our own.
+        RxLeveler reference;
+        std::vector<float> expected = input;
+        for (int b = 0; b < kBigBlocks; ++b) {
+            for (int done = 0; done < kBig;) {
+                const int n = std::min(kChunk, kBig - done);
+                reference.process(expected.data() + (static_cast<size_t>(b) * kBig + done) * 2, n,
+                                  48000.0, published);
+                done += n;
+            }
+        }
+        QCOMPARE(rig.engine->sliceRxLevelerGainDb(rig.id), reference.gainDb());
+        const QByteArray speakers = rig.speakers->buffer();
+        QVERIFY(speakers.size() >= qsizetype(kBig * 2 * sizeof(float)));
+        QVERIFY(speakers.size() <= qsizetype(expected.size() * sizeof(float)));
+    }
+
+    // Two receivers keep their levelers apart: a station on one lifts that
+    // one only, and turning one off or starting it over leaves the other.
+    void twoReceiversAreKeptApart()
+    {
+        const std::vector<float> input = quietVoice();
+        Rig rig;
+        const int other = rig.addReceiver();
+        rig.publishStation(rig.id, /*present=*/true);
+        rig.publishStation(other, /*present=*/false);
+        for (int b = 0; b < 200; ++b) {
+            rig.feed(rig.id, input, b, 1);
+            rig.feed(other, input, b, 1);
+        }
+        const double lifted = rig.engine->sliceRxLevelerGainDb(rig.id);
+        QVERIFY(lifted > 3.0);
+        QCOMPARE(rig.engine->sliceRxLevelerGainDb(other), 0.0);
+
+        // The other turned off, then started over: the first keeps its gain.
+        rig.radio->sliceById(other)->setRxLevelerMode(RxLevelerMode::Off);
+        rig.radio->sliceById(other)->setFilter(300, 2500);
+        rig.radio->publishRxLevelers();
+        rig.publishStation(rig.id, /*present=*/true);
+        rig.feed(other, input, 200, 2);
+        rig.feed(rig.id, input, 200, 1);
+        QVERIFY2(rig.engine->sliceRxLevelerGainDb(rig.id) > lifted - 0.5,
+                 qPrintable(QStringLiteral("%1, was %2")
+                                .arg(rig.engine->sliceRxLevelerGainDb(rig.id)).arg(lifted)));
     }
 };
 
