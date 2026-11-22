@@ -6,6 +6,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-22: Receive leveler: rxLevelerMaxCutDb in place of the pause
+//               hold, and rxLevelerGainDb Outbound (the live gain). J.J.
+//               Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-14: Receive leveler: SliceModel's RXL settings Bidirectional.
+//               Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 //   2026-11-15: Recording plan Task 5: the read-only recordings object (RecordingsFacade).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05: Band stack plan Task 4: the read-only bandStack object (BandStackFacade).

@@ -14,7 +14,7 @@
 // =================================================================
 // Modification history (NereusSDR):
 // 2026-11-14 - Receive leveler: RX Leveler settings per receiver (Brian
-//              Sutton, W4KZO); pause hold replaced by maximum cut, Auto
+//              Sutton, W4KZO, AI-assisted via xAI Grok); pause hold replaced by maximum cut, Auto
 //              preset defaults, and the live rxLevelerGainDb reading. The
 //              settings' properties moved to the end of the list so every
 //              earlier property keeps its wire ordinal.

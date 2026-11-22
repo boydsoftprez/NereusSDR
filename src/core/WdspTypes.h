@@ -21,6 +21,9 @@
 //                 MOX reading step that floors and signs it (console.cs)
 //                 (D14, R-R3-49), by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-11-14 - RxLevelerMode (Off, Auto, Custom), the receive leveler's
+//                 setting per receiver. NereusSDR-original. Brian Sutton
+//                 (W4KZO), AI-assisted via xAI Grok.
 // =================================================================
 
 /*  wdsp.cs

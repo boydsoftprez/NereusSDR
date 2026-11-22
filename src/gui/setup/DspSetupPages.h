@@ -9,6 +9,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-22 - The RX Leveler section's maximum cut in place of the pause
+//                 hold, and no timer: the live gain comes from the slice.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-14 - AgcAlcSetupPage's RX Leveler section (updateRxLevelerGating,
+//                 refreshRxLevelerBoost and its controls). Brian Sutton
+//                 (W4KZO), AI-assisted via xAI Grok.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
