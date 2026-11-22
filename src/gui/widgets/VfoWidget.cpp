@@ -24,9 +24,11 @@
 //                from SliceModel::rxLevelerGainDb, while RXL is on in a
 //                voice mode. The access words and the tag share one line.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
-//   2026-11-14 - RXL flag and popup (Brian Sutton, W4KZO): reset values
-//                follow the new Auto preset. J.J. Boyd (KG4VCF),
-//                AI-assisted via Anthropic Claude Code.
+//   2026-11-22 - The RXL popup's Maximum boost help says "leveler". J.J.
+//                Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-14 - RXL flag and popup (Brian Sutton, W4KZO, AI-assisted via
+//                xAI Grok): reset values follow the new Auto preset. J.J.
+//                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-04 - The flag's ⋯ button opens the right-click list; the S-meter
 //                 item and the bar's source tag (overlay design D39 to D41);
 //                 the Roundtable line's open state. J.J. Boyd (KG4VCF),
@@ -5816,7 +5818,7 @@ void VfoWidget::showRxlPopup(const QPoint& globalPos)
         slice->rxLevelerTargetDb());
     const Knob boost = addKnob(
         QStringLiteral("Maximum boost"),
-        QStringLiteral("Most gain the rider may add. Used when Mode is Custom."),
+        QStringLiteral("Most gain the leveler may add. Used when Mode is Custom."),
         static_cast<int>(RxLeveler::kMaxBoostDbMin),
         static_cast<int>(RxLeveler::kMaxBoostDbMax),
         slice->rxLevelerMaxBoostDb());

@@ -16,12 +16,16 @@
 //      flag nobody else shares the line shows with the tag alone.
 //   6. Folding the flag hides it; unfolding brings it back, and changes
 //      while folded show on unfold.
+//   8. The RXL button turns RXL off, and back on in the last mode that
+//      was on (Auto until it has been Custom).
 //   7. With NEREUS_FLAG_CAPTURE_DIR set, captures of the flag in the
 //      workspace look with the tag at +12, -5 and 0.
 //
 // Modification history (NereusSDR):
 //   2026-11-15 - New. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-11-22 - The RXL button comes back on in the last mode. J.J. Boyd
+//                (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -30,6 +34,7 @@
 #include <QDir>
 #include <QLabel>
 #include <QPixmap>
+#include <QPushButton>
 
 #include <algorithm>
 #include <cmath>
@@ -137,6 +142,42 @@ private slots:
         slice.setRxLevelerMode(RxLevelerMode::Off);
         QVERIFY(!flag.rxlTagForTest()->isVisibleTo(&flag));
         QVERIFY(!flag.topLineForTest()->isVisibleTo(&flag));
+    }
+
+    void the_rxl_button_comes_back_on_in_the_last_mode()
+    {
+        VfoWidget flag;
+        flag.setSliceIndex(0);
+        SliceModel slice(0);
+        flag.setSlice(&slice);
+        flag.setMode(DSPMode::USB);
+        QPushButton* rxl = nullptr;
+        for (QPushButton* b : flag.findChildren<QPushButton*>()) {
+            if (b->text() == QStringLiteral("RXL")) {
+                rxl = b;
+            }
+        }
+        QVERIFY(rxl != nullptr);
+        QCOMPARE(slice.rxLevelerMode(), RxLevelerMode::Off);
+        QVERIFY(!rxl->isChecked());
+
+        rxl->click();                                   // never on before: Auto
+        QCOMPARE(slice.rxLevelerMode(), RxLevelerMode::Auto);
+        QVERIFY(rxl->isChecked());
+
+        slice.setRxLevelerMode(RxLevelerMode::Custom);  // the setup page
+        QVERIFY(rxl->isChecked());
+        rxl->click();
+        QCOMPARE(slice.rxLevelerMode(), RxLevelerMode::Off);
+        QVERIFY(!rxl->isChecked());
+        rxl->click();                                   // back on in Custom
+        QCOMPARE(slice.rxLevelerMode(), RxLevelerMode::Custom);
+
+        slice.setRxLevelerMode(RxLevelerMode::Auto);
+        rxl->click();
+        QCOMPARE(slice.rxLevelerMode(), RxLevelerMode::Off);
+        rxl->click();                                   // and in Auto again
+        QCOMPARE(slice.rxLevelerMode(), RxLevelerMode::Auto);
     }
 
     void follows_the_slices_reading_and_colours()

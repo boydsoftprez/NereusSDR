@@ -8,13 +8,18 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-11-14: RX Leveler section (Brian Sutton, W4KZO): maximum cut in
+//   2026-11-14: RX Leveler section (Brian Sutton, W4KZO, AI-assisted via
+//               xAI Grok): maximum cut in
 //               place of pause hold, new ranges, and the live gain read
 //               from the slice instead of the receive channel.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-15: RX Leveler wording the user-text checks accept: "voice" or
 //               "signal" where it said "station" (that word is kept for one
 //               meaning), "Gain now: off" for the dash. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-22: RX Leveler "Gain now" shows off after RXL Off and the
+//               voice-modes note in CW, FM and digital (as the phone does),
+//               and its help says the panadapter decides while it runs.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-09-27: Match NR2/NR4 controls and defaults to Thetis v2.10.3.15.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //               (R-IOS-06, R-IOS-27).
@@ -579,7 +584,8 @@ void AgcAlcSetupPage::rebuildForActiveSlice()
     m_rxLevelerMaxBoost->setSuffix(" dB");
     m_rxLevelerMaxBoost->setValue(slice->rxLevelerMaxBoostDb());
     m_rxLevelerMaxBoost->setToolTip(QStringLiteral(
-        "Most the leveler may lift a quiet voice. It never lifts the noise between overs."));
+        "Most the leveler may lift a quiet voice. It lifts only while a signal shows "
+        "above the noise, and starts letting go about a second after the voice stops."));
     addLabeledSpinner(rxLevLay, "Maximum boost", m_rxLevelerMaxBoost);
 
     m_rxLevelerAttack = new QSpinBox;
@@ -614,10 +620,11 @@ void AgcAlcSetupPage::rebuildForActiveSlice()
 
     m_rxLevelerBoostLbl = new QLabel(QStringLiteral("Gain now: off"));
     m_rxLevelerBoostLbl->setProperty("nereusSetupId", "dsp.agcAlc.rxLevelerBoost");
+    m_rxLevelerBoostLbl->setWordWrap(true);     // the voice-modes note is long
     m_rxLevelerBoostLbl->setToolTip(QStringLiteral(
         "What the leveler is doing to this receiver right now: lifting (+) or "
-        "turning down (-). It lifts only while the S-meter shows a signal "
-        "above the noise."));
+        "turning down (-). It lifts only while a signal shows above the noise: "
+        "on the panadapter while it runs, otherwise on the S-meter."));
     rxLevLay->addWidget(m_rxLevelerBoostLbl);
 
     connect(m_rxLevelerMode, QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -632,6 +639,7 @@ void AgcAlcSetupPage::rebuildForActiveSlice()
         QSignalBlocker b(m_rxLevelerMode);
         m_rxLevelerMode->setCurrentIndex(static_cast<int>(mode));
         updateRxLevelerGating(mode);
+        refreshRxLevelerBoost();
     });
     connect(m_rxLevelerTarget, QOverload<int>::of(&QSpinBox::valueChanged),
             slice, &SliceModel::setRxLevelerTargetDb);
@@ -672,6 +680,9 @@ void AgcAlcSetupPage::rebuildForActiveSlice()
     // Core's figure the same way.
     connect(slice, &SliceModel::rxLevelerGainDbChanged, m_rxLevelerBoostLbl,
             [this](double) { refreshRxLevelerBoost(); });
+    // CW, FM and the digital modes are left alone: the line says so.
+    connect(slice, &SliceModel::dspModeChanged, m_rxLevelerBoostLbl,
+            [this](DSPMode) { refreshRxLevelerBoost(); });
     updateRxLevelerGating(slice->rxLevelerMode());
     refreshRxLevelerBoost();
 
@@ -844,6 +855,13 @@ void AgcAlcSetupPage::refreshRxLevelerBoost()
     SliceModel* slice = selectedSlice();
     if (slice == nullptr || slice->rxLevelerMode() == RxLevelerMode::Off) {
         m_rxLevelerBoostLbl->setText(QStringLiteral("Gain now: off"));
+        return;
+    }
+    if (!RxLeveler::modeAllows(slice->dspMode())) {
+        // The phone's words for the same state (ModesTabModel.rxlVoiceOnlyText).
+        m_rxLevelerBoostLbl->setText(QStringLiteral(
+            "RXL levels voice modes (LSB, USB, DSB, AM, SAM). In this mode the audio "
+            "is left as it is."));
         return;
     }
     const double dB = slice->rxLevelerGainDb();
