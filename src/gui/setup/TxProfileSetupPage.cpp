@@ -33,8 +33,12 @@
 //                 forbids and the save dialog adds the extension itself;
 //                 export's own unsaved question; a remote window's import
 //                 and export wait for the Core's answer; a note when keys
-//                 from a newer build were left out. J.J. Boyd (KG4VCF),
-//                 AI-assisted via Claude Code.
+//                 from a newer build were left out. An export saves only
+//                 after its file is chosen, keeps the edits marked unsaved
+//                 until the save is done, says why a name cannot be saved,
+//                 and forgets a waiting export when the link drops; the
+//                 suggested file name avoids Windows' reserved names.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived semantics are
@@ -118,6 +122,24 @@ TxProfileSetupPage::TxProfileSetupPage(RadioModel* model,
             onStationRequestFinished(static_cast<int>(request), accepted, reason);
         }, Qt::QueuedConnection);
     }
+    if (model) {
+        // With the link down no answer will come: a later save must never
+        // write the file this export chose.
+        connect(model, &RadioModel::stationLinkStateChanged, this, [this] {
+            const IStationLink* link = this->model() ? this->model()->stationLink() : nullptr;
+            if (!link || !link->stationLinkReady()) {
+                clearPendingStationRequests();
+            }
+        });
+    }
+}
+
+void TxProfileSetupPage::clearPendingStationRequests()
+{
+    m_pendingImportName.clear();
+    m_pendingImportUnknownKeys = 0;
+    m_pendingExportName.clear();
+    m_pendingExportPath.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -396,6 +418,14 @@ bool TxProfileSetupPage::handleUnsavedPrompt(const QString& /*newName*/)
     switch (promptUnsaved()) {
         case UnsavedPromptResult::Yes:
             if (m_profileMgr && m_tx && !m_profileMgr->activeProfileName().isEmpty()) {
+                // A name saved before a name rule cannot be saved again:
+                // say why and keep the edits.
+                const QString refusal = MicProfileManager::profileNameRefusal(
+                    MicProfileManager::normalizedProfileName(m_profileMgr->activeProfileName()));
+                if (!refusal.isEmpty()) {
+                    showSaveRefusal(refusal);
+                    return false;
+                }
                 m_profileMgr->saveProfile(m_profileMgr->activeProfileName(), m_tx);
             }
             return true;
@@ -656,6 +686,29 @@ QString TxProfileSetupPage::suggestedExportFileName(const QString& profileName)
             || QStringLiteral("*?\"<>|/\\:").contains(c);
         title += forbidden ? QLatin1Char('_') : c;
     }
+    // Windows drops a trailing dot or space from a name.
+    while (!title.isEmpty()
+           && (title.endsWith(QLatin1Char('.')) || title.endsWith(QLatin1Char(' ')))) {
+        title.chop(1);
+    }
+    if (title.isEmpty()) {
+        title = QStringLiteral("_");
+    }
+    // Windows keeps CON, PRN, AUX, NUL, COM1 to COM9 and LPT1 to LPT9 for
+    // its devices, in any case and with any extension.
+    QString stem = title.section(QLatin1Char('.'), 0, 0);
+    while (stem.endsWith(QLatin1Char(' '))) {
+        stem.chop(1);
+    }
+    stem = stem.toUpper();
+    const bool reserved = stem == QLatin1String("CON") || stem == QLatin1String("PRN")
+        || stem == QLatin1String("AUX") || stem == QLatin1String("NUL")
+        || ((stem.startsWith(QLatin1String("COM")) || stem.startsWith(QLatin1String("LPT")))
+            && stem.size() == 4 && stem.at(3) >= QLatin1Char('1')
+            && stem.at(3) <= QLatin1Char('9'));
+    if (reserved) {
+        title.prepend(QLatin1Char('_'));
+    }
     return title + QStringLiteral(".nereus-tx-profile");
 }
 
@@ -728,36 +781,59 @@ void TxProfileSetupPage::onExportClicked()
         showFileResult(false, tr("Select a transmit profile to export."));
         return;
     }
-    bool savedFirst = false;
+    bool saveFirst = false;
     if (m_dirty) {
         switch (promptUnsaved(/*exporting=*/true)) {
             case UnsavedPromptResult::Cancel:
                 return;
             case UnsavedPromptResult::Yes:
-                if (!m_profileMgr->activeProfileName().isEmpty()) {
-                    if (!m_profileMgr->saveProfile(m_profileMgr->activeProfileName(), m_tx)) {
-                        // A remote window's requester has said why.
-                        if (!m_profileMgr->isStationMirror()) {
-                            showFileResult(false, tr("Could not save the transmit profile."));
-                        }
+                if (m_profileMgr->activeProfileName().isEmpty()) {
+                    clearDirty();
+                    break;
+                }
+                {
+                    // A name saved before a name rule cannot be saved
+                    // again: say why and keep the edits.
+                    const QString refusal = MicProfileManager::profileNameRefusal(
+                        MicProfileManager::normalizedProfileName(
+                            m_profileMgr->activeProfileName()));
+                    if (!refusal.isEmpty()) {
+                        showFileResult(false, refusal);
                         return;
                     }
-                    savedFirst = true;
                 }
-                clearDirty();
+                saveFirst = true;
                 break;
             case UnsavedPromptResult::No:
                 break;
         }
     }
+    // The file is chosen before anything is saved: Cancel keeps the edits
+    // unsaved, and a Core's answer always finds the export waiting.
     const QString path = m_exportPathHook ? m_exportPathHook() : chooseExportPath(name);
     if (path.isEmpty()) { return; }
-    if (savedFirst && m_profileMgr->isStationMirror()) {
-        // The Core saves; the file is written from what it stored once it
-        // answers (onStationRequestFinished).
-        m_pendingExportName = name;
-        m_pendingExportPath = path;
-        return;
+    if (saveFirst) {
+        const QString active = m_profileMgr->activeProfileName();
+        if (m_profileMgr->isStationMirror()) {
+            // The Core saves; the file is written from what it stored, and
+            // the edits are marked saved, once it answers
+            // (onStationRequestFinished). The page shows a refusal itself.
+            m_pendingExportName = name;
+            m_pendingExportPath = path;
+            m_profileMgr->setStationExportSaveWaiting(true);
+            if (!m_profileMgr->saveProfile(active, m_tx)) {
+                // Not sent; the requester has said why.
+                m_profileMgr->setStationExportSaveWaiting(false);
+                m_pendingExportName.clear();
+                m_pendingExportPath.clear();
+            }
+            return;
+        }
+        if (!m_profileMgr->saveProfile(active, m_tx)) {
+            showFileResult(false, tr("Could not save the transmit profile."));
+            return;
+        }
+        clearDirty();
     }
     writeExportFile(name, path);
 }
@@ -817,6 +893,7 @@ void TxProfileSetupPage::onStationRequestFinished(int request, bool accepted,
         m_pendingExportName.clear();
         m_pendingExportPath.clear();
         if (accepted) {
+            clearDirty();
             writeExportFile(name, path);
         } else {
             showFileResult(false, reason.isEmpty()

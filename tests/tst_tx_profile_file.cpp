@@ -14,13 +14,16 @@
 //   2026-11-22 - Every field round trips (both curves, every switch); the
 //                 wiring keys stay this radio's; names, values and a file
 //                 with no settings are refused in plain words; every
-//                 factory profile imports. J.J. Boyd (KG4VCF), AI-assisted
-//                 via Claude Code.
+//                 factory profile imports; a name with two underscores in
+//                 a row is refused and one with a single underscore saves
+//                 and reloads. J.J. Boyd (KG4VCF), AI-assisted via Claude
+//                 Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QTemporaryDir>
 
 #include "core/AppSettings.h"
 #include "core/CfcProfile.h"
@@ -321,6 +324,12 @@ private slots:
             << QStringLiteral("Use a transmit profile name of 64 characters or fewer.");
         QTest::newRow("blank") << QStringLiteral("   ")
             << QStringLiteral("Give the transmit profile a name.");
+        // The settings file reads either back as another name ("B", and
+        // "D-104+CPDR").
+        const QString underscores =
+            QStringLiteral("Use a transmit profile name without two underscores in a row.");
+        QTest::newRow("escaped letter") << QStringLiteral("__u0042__") << underscores;
+        QTest::newRow("escaped word") << QStringLiteral("D-104__plus__CPDR") << underscores;
     }
 
     // Save and import share the name rule, and so does a file's name.
@@ -356,6 +365,56 @@ private slots:
             QVERIFY(!TxProfileFile::decode(QJsonDocument(root).toJson(), &out, &error));
             QCOMPARE(error, reason);
         }
+    }
+
+    // A name with one underscore survives the settings file: saved, written
+    // to disk, read back, and the same profile again.
+    void aNameWithOneUnderscoreSavesAndReloads()
+    {
+        const QString name = QStringLiteral("Desk_Night");
+        QVERIFY(MicProfileManager::profileNameRefusal(name).isEmpty());
+        {
+            MicProfileManager mgr;
+            mgr.setMacAddress(kMac);
+            mgr.load();
+            TransmitModel tx;
+            tx.setMicGainDb(-21);
+            QVERIFY(mgr.saveProfile(name, &tx));
+        }
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("NereusSDR.settings"));
+        const QStringList keys = AppSettings::instance().allKeys();
+        {
+            AppSettings disk(path);
+            for (const QString& key : keys) {
+                disk.setValue(key, AppSettings::instance().value(key));
+            }
+            QString error;
+            QVERIFY2(disk.save(&error), qPrintable(error));
+        }
+        AppSettings back(path);
+        back.load();
+        QStringList reloaded = back.allKeys();
+        QStringList expected = keys;
+        reloaded.sort();
+        expected.sort();
+        QCOMPARE(reloaded, expected);
+        QCOMPARE(back.value(field(name, QStringLiteral("MicGain"))).toString(),
+                 QStringLiteral("-21"));
+
+        // The reloaded file, as this computer's settings again.
+        AppSettings::instance().clear();
+        for (const QString& key : reloaded) {
+            AppSettings::instance().setValue(key, back.value(key));
+        }
+        MicProfileManager mgr;
+        mgr.setMacAddress(kMac);
+        mgr.load();
+        QVERIFY(mgr.profileNames().contains(name));
+        TransmitModel tx;
+        QVERIFY(mgr.setActiveProfile(name, &tx));
+        QCOMPARE(tx.micGainDb(), -21);
     }
 
     void badValuesAreRefusedNamingTheSetting_data()

@@ -80,8 +80,9 @@
 //                 reason, leaves out this radio's wiring keys and refuses a
 //                 file with no settings; profileNameRefusal also guards
 //                 save; a remote window hears the Core's answer
-//                 (stationRequestFinished). J.J. Boyd (KG4VCF), AI-assisted
-//                 via Claude Code.
+//                 (stationRequestFinished). A name with two underscores in
+//                 a row is refused; setStationExportSaveWaiting. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived handler logic
@@ -187,7 +188,10 @@ public:
     /// Why `name` (as normalizedProfileName gives it) cannot name a
     /// profile, in plain words, or empty when it can: empty, longer than
     /// kMaxProfileNameLength, or holding a control character (a tab, a
-    /// line break) or a character that is not text.
+    /// line break) or a character that is not text, or holding two
+    /// underscores in a row (the settings file reads __plus__ or __u0042__
+    /// in a key back as one character, so such a name would load as
+    /// another one).
     static QString profileNameRefusal(const QString& name);
 
     /// The keys that describe how this radio is wired (the mic jack, PTT,
@@ -278,6 +282,13 @@ public:
     /// The Core answered a request (txProfile.*): stationRequestFinished.
     void reportStationRequestFinished(StationRequest request, bool accepted,
                                       const QString& reason);
+    /// A remote window: the TX Profile page waits for the Core's answer to
+    /// the save an export needs, and shows its refusal itself. While set,
+    /// StationClient keeps a refused txProfile.save out of its general
+    /// refusal notices. The Core's answer to a save
+    /// (reportStationRequestFinished) clears it.
+    void setStationExportSaveWaiting(bool waiting);
+    bool stationExportSaveWaiting() const { return m_stationExportSaveWaiting; }
 
 signals:
     /// Emitted when the dirty/clean state of the active profile changes.
@@ -345,6 +356,7 @@ private:
     StationRequester m_stationRequester;
     QStringList m_stationNames;
     QString m_stationActive;
+    bool m_stationExportSaveWaiting{false};
 };
 
 } // namespace NereusSDR

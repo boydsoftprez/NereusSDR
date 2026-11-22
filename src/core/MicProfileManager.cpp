@@ -54,7 +54,10 @@
 //                 also uses) and every value (importValuesRefusal), with a
 //                 plain reason; this radio's wiring keys stay as they are
 //                 (radioWiringKeys); a file with no settings is refused; a
-//                 remote window hears the Core's answer. J.J. Boyd
+//                 remote window hears the Core's answer. A name with two
+//                 underscores in a row is refused (the settings file's
+//                 escapes); the page can take the refusal of the save an
+//                 export waits on (setStationExportSaveWaiting). J.J. Boyd
 //                 (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
@@ -1025,6 +1028,13 @@ QString MicProfileManager::profileNameRefusal(const QString& name)
                                   "or other control characters.");
         }
     }
+    // The settings file spells characters a key cannot hold as words
+    // between two underscores (__plus__, __u0042__; AppSettings
+    // encodeXmlKey), and reads any such word back as its character. A name
+    // that already holds one would load as another profile's name.
+    if (name.contains(QLatin1String("__"))) {
+        return QStringLiteral("Use a transmit profile name without two underscores in a row.");
+    }
     return {};
 }
 
@@ -1541,9 +1551,19 @@ void MicProfileManager::reportStationRequestRefused()
     }
 }
 
+void MicProfileManager::setStationExportSaveWaiting(bool waiting)
+{
+    m_stationExportSaveWaiting = waiting;
+}
+
 void MicProfileManager::reportStationRequestFinished(StationRequest request, bool accepted,
                                                      const QString& reason)
 {
+    if (request == StationRequest::Save) {
+        // StationClient has read it for this answer; the next save is the
+        // page's again only if it says so.
+        m_stationExportSaveWaiting = false;
+    }
     if (isStationMirror()) {
         emit stationRequestFinished(request, accepted, reason);
     }

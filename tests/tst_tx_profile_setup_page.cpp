@@ -38,8 +38,10 @@
 //                 the active profile, refused names and values, the wiring
 //                 keys left out, the newer-build note, the suggested file
 //                 name, and the Diagnostics button really opening the TX
-//                 Profile page. J.J. Boyd (KG4VCF), AI-assisted via Claude
-//                 Code.
+//                 Profile page; export says why an old name cannot be
+//                 saved and keeps the edits, a cancelled file keeps them
+//                 too, and the file name avoids Windows' reserved names.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 #include <QtTest/QtTest>
 #include <QApplication>
@@ -703,6 +705,95 @@ private slots:
         QCOMPARE(readProfileFile(path).keys.value(QStringLiteral("MicGain")), QStringLiteral("-4"));
     }
 
+    // A profile named before the name rules cannot be saved again under
+    // that name: export's Yes says why, writes nothing and keeps the edits.
+    void exportYesOnAnOldNameSaysWhyAndKeepsTheEdits()
+    {
+        const QString oldName(65, QLatin1Char('x'));
+        auto& settings = AppSettings::instance();
+        const QString manifest = QStringLiteral("hardware/%1/tx/profile/_names").arg(kMacA);
+        {
+            MicProfileManager seed;
+            seed.setMacAddress(kMacA);
+            seed.load();
+        }
+        settings.setValue(manifest, settings.value(manifest).toString()
+                                        + QLatin1Char(',') + oldName);
+        settings.setValue(QStringLiteral("hardware/%1/tx/profile/%2/MicGain").arg(kMacA, oldName),
+                          QStringLiteral("-6"));
+        TransmitModel tx;
+        MicProfileManager mgr;
+        mgr.setMacAddress(kMacA);
+        mgr.load();
+        QVERIFY(mgr.profileNames().contains(oldName));
+        QVERIFY(mgr.setActiveProfile(oldName, &tx));
+        RadioModel rm;
+        connectRadio(rm);
+        TxProfileSetupPage page(&rm, &mgr, &tx);
+        int asked = 0;
+        page.setUnsavedPromptHook([&asked](const QString&) {
+            ++asked;
+            return TxProfileSetupPage::UnsavedPromptResult::Yes;
+        });
+        tx.setMicGainDb(-4);
+        QApplication::processEvents();
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("Old.nereus-tx-profile"));
+        int pathAsked = 0;
+        page.setExportPathHook([&pathAsked, path] {
+            ++pathAsked;
+            return path;
+        });
+        bool ok = true;
+        QString shown;
+        page.setFileResultHook([&](bool success, const QString& text) {
+            ok = success;
+            shown = text;
+        });
+        page.exportButton()->click();
+        QCOMPARE(asked, 1);
+        QVERIFY(!ok);
+        QCOMPARE(shown, QStringLiteral("Use a transmit profile name of 64 characters or fewer."));
+        QCOMPARE(pathAsked, 0);
+        QVERIFY(!QFile::exists(path));
+        QCOMPARE(storedValue(oldName, QStringLiteral("MicGain")), QStringLiteral("-6"));
+        // Still unsaved: the next export asks again.
+        page.exportButton()->click();
+        QCOMPARE(asked, 2);
+    }
+
+    // Export's Yes saves only once the file is chosen: a cancelled file
+    // saves nothing and keeps the edits unsaved.
+    void exportCancelOnTheFileKeepsTheEditsUnsaved()
+    {
+        TransmitModel tx;
+        MicProfileManager mgr;
+        mgr.setMacAddress(kMacA);
+        mgr.load();
+        QVERIFY(mgr.setActiveProfile(QStringLiteral("Default"), &tx));
+        const QString before = storedValue(QStringLiteral("Default"), QStringLiteral("MicGain"));
+        RadioModel rm;
+        connectRadio(rm);
+        TxProfileSetupPage page(&rm, &mgr, &tx);
+        int asked = 0;
+        page.setUnsavedPromptHook([&asked](const QString&) {
+            ++asked;
+            return TxProfileSetupPage::UnsavedPromptResult::Yes;
+        });
+        tx.setMicGainDb(-4);
+        QApplication::processEvents();
+        page.setExportPathHook([] { return QString(); });
+        int results = 0;
+        page.setFileResultHook([&results](bool, const QString&) { ++results; });
+        page.exportButton()->click();
+        QCOMPARE(asked, 1);
+        QCOMPARE(results, 0);
+        QCOMPARE(storedValue(QStringLiteral("Default"), QStringLiteral("MicGain")), before);
+        page.exportButton()->click();
+        QCOMPARE(asked, 2);
+    }
+
     // The file carries no wiring key.
     void exportLeavesOutTheRadiosWiring()
     {
@@ -884,6 +975,35 @@ private slots:
                  QStringLiteral("a_b_c_d_e_f_g_h_i_j_k.nereus-tx-profile"));
         QCOMPARE(TxProfileSetupPage::suggestedExportFileName(QStringLiteral("D-104+CPDR")),
                  QStringLiteral("D-104+CPDR.nereus-tx-profile"));
+        // A trailing dot or space is dropped.
+        QCOMPARE(TxProfileSetupPage::suggestedExportFileName(QStringLiteral("Desk. .")),
+                 QStringLiteral("Desk.nereus-tx-profile"));
+        QCOMPARE(TxProfileSetupPage::suggestedExportFileName(QStringLiteral("...")),
+                 QStringLiteral("_.nereus-tx-profile"));
+        // A device name, in any case, with or without an extension.
+        const struct {
+            const char* name;
+            const char* file;
+        } reserved[] = {
+            {"CON", "_CON.nereus-tx-profile"},
+            {"prn", "_prn.nereus-tx-profile"},
+            {"Aux.old", "_Aux.old.nereus-tx-profile"},
+            {"nul ", "_nul.nereus-tx-profile"},
+            {"NUL .txt", "_NUL .txt.nereus-tx-profile"},
+            {"com1", "_com1.nereus-tx-profile"},
+            {"COM9", "_COM9.nereus-tx-profile"},
+            {"lpt1.x", "_lpt1.x.nereus-tx-profile"},
+            {"LPT9", "_LPT9.nereus-tx-profile"},
+        };
+        for (const auto& r : reserved) {
+            QCOMPARE(TxProfileSetupPage::suggestedExportFileName(QString::fromLatin1(r.name)),
+                     QString::fromLatin1(r.file));
+        }
+        // Near misses stay as they are.
+        for (const char* name : {"COM0", "COM10", "LPT", "CONSOLE", "Nul2", "CON-1"}) {
+            QCOMPARE(TxProfileSetupPage::suggestedExportFileName(QString::fromLatin1(name)),
+                     QString::fromLatin1(name) + QStringLiteral(".nereus-tx-profile"));
+        }
     }
 
     // The Diagnostics page's button switches Setup to the TX Profile page.

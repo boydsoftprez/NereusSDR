@@ -64,8 +64,10 @@
 //                 AI-assisted via xAI Grok.
 //   2026-11-22 - A remote window's import and export wait for the Core's
 //                 answer; Save and Import refuse a name with a reason; the
-//                 export's question and file name. J.J. Boyd (KG4VCF),
-//                 AI-assisted via Claude Code.
+//                 export's question and file name; an export keeps the
+//                 edits marked unsaved until its save is done and forgets
+//                 a waiting answer when the link drops. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived semantics are
@@ -171,7 +173,10 @@ public:
 
     // The file name Export... suggests: the profile name with every
     // character Windows forbids (* ? " < > | / \ : and control characters)
-    // made an underscore, and the .nereus-tx-profile extension.
+    // made an underscore, a trailing dot or space dropped, an underscore
+    // in front of a name Windows keeps for a device (CON, PRN, AUX, NUL,
+    // COM1 to COM9, LPT1 to LPT9, in any case, with or without an
+    // extension), and the .nereus-tx-profile extension.
     static QString suggestedExportFileName(const QString& profileName);
 
     // Replaces the export and import result message.
@@ -225,6 +230,8 @@ private:
     void writeExportFile(const QString& name, const QString& path);
     // A remote window: the Core answered an import or a save for export.
     void onStationRequestFinished(int request, bool accepted, const QString& reason);
+    // A remote window whose link dropped: no answer will come.
+    void clearPendingStationRequests();
     // The import result, with a note when keys this build does not know
     // were left out.
     static QString importedText(const QString& name, int unknownKeys);

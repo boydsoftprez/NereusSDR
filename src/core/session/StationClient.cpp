@@ -10,8 +10,10 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-11-22: The TX profile page hears the Core's answer to every
-//               txProfile.* request (reportStationRequestFinished).
-//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//               txProfile.* request (reportStationRequestFinished); an
+//               import's refusal, and that of the save an export waits on,
+//               are shown by the page alone. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 //   2026-11-17: requestTxProfileImport (txProfile.import, transmitSettings
 //               Version 17). Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 //   2026-11-16: Recording plan Task 22: the dsr.* verbs (rewind sound) are
@@ -2636,6 +2638,10 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
     if (!m_radioModel.isNull()) {
         // Fix wave GUI-I6: nothing of the retired session is on its way.
         m_radioModel->transmitModel().setTunePowerForTxBandWriteInFlight(false);
+        // Nor the save an export waited on.
+        if (MicProfileManager* profiles = m_radioModel->micProfileManager()) {
+            profiles->setStationExportSaveWaiting(false);
+        }
     }
     m_controlTakeBacks.clear();
     m_pendingPs3Display.reset();
@@ -9077,9 +9083,21 @@ void StationClient::handleCommandResult(const SessionMessage& message)
                     : message.reason);
         }
     }
+    // The TX Profile page shows the refusal of an import, and of the save
+    // an export waits on, itself (onStationRequestFinished, below): no
+    // toast, and no word to the receive chooser.
+    MicProfileManager* const pageProfiles =
+        m_radioModel.isNull() ? nullptr : m_radioModel->micProfileManager();
+    const bool txProfilePageRequest = pending.verb == "txProfile.import"
+        || (pending.verb == "txProfile.save" && pageProfiles
+            && pageProfiles->stationExportSaveWaiting());
+    if (!message.accepted && pageProfiles && pending.verb == "txProfile.import") {
+        // As below: the combos show the Core's active profile again.
+        pageProfiles->reportStationRequestRefused();
+    }
     if (!message.accepted && !m_radioModel.isNull() && !ioBoardRequest
         && !filterResponseRequest && !spotRequest && !recordRequest && !radioRequest
-        && !supportRequest
+        && !supportRequest && !txProfilePageRequest
         && !message.commandVerb.startsWith("ps3.") && !message.commandVerb.startsWith("dspAssets.")
         && !message.commandVerb.startsWith("notch.")) {
         // The station's OWN reason, relayed verbatim. Wording a refusal
