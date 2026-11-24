@@ -92,7 +92,10 @@ void writeSliceProperty(SliceModel& slice, const ControlRanges::NrControl& contr
 void applyCustomNr(SliceModel& slice, int nrSlot)
 {
     const ControlRanges::NrSlotControls* controls = NewSliceDefaults::nrControlsForChoice(nrSlot);
-    if (controls == nullptr || !NewSliceDefaults::nrSettingsCustomized(controls->key)) {
+    // The Settings box only shows or hides these controls. A value the
+    // operator has set is kept, and a new slice uses it, whether or not
+    // the subsection is open.
+    if (controls == nullptr) {
         return;
     }
     for (std::size_t i = 0; i < controls->count; ++i) {

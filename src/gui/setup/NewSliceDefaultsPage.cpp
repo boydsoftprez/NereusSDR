@@ -147,8 +147,7 @@ NewSliceDefaultsPage::NewSliceDefaultsPage(RadioModel* model, QWidget* parent)
     for (const auto& reducer : reducers) {
         addItem(m_nr, QString::fromLatin1(reducer.name), static_cast<int>(reducer.slot));
     }
-    m_nr->setToolTip(tr("Check Settings to set this reducer's own knobs. "
-                        "Otherwise they come from the slice you are on."));
+    m_nr->setToolTip(tr("Settings shows this reducer's controls. A value you set is kept."));
     installNrDetails();
 
     m_anf = addChoice(tr("ANF"), QStringLiteral("newSliceAnf"));
@@ -210,14 +209,14 @@ NewSliceDefaultsPage::NewSliceDefaultsPage(RadioModel* model, QWidget* parent)
         if (m_reloading) {
             return;
         }
-        syncNrDetails();
+        // The checkmark stays as the operator left it. Only the open
+        // subsection follows the reducer they picked, and save keeps that
+        // choice without touching the knobs they already set.
+        showNrDetails();
         save();
     });
     connect(m_nrCustomize, &QCheckBox::toggled, this, [this](bool) {
         showNrDetails();
-        if (!m_reloading) {
-            save();
-        }
     });
     connect(m_agcOffset, qOverload<int>(&QSpinBox::valueChanged), this, onChoice);
     connect(m_agcT, qOverload<int>(&QSpinBox::valueChanged), this, onChoice);
@@ -332,33 +331,6 @@ void NewSliceDefaultsPage::save()
         NewSliceDefaults::setAgcTChoice(NewSliceDefaults::kAgcTFollow);
     }
     NewSliceDefaults::setNrChoice(chosen(m_nr));
-    if (const ControlRanges::NrSlotControls* controls =
-            NewSliceDefaults::nrControlsForChoice(chosen(m_nr))) {
-        const bool custom = m_nrCustomize->isChecked();
-        NewSliceDefaults::setNrSettingsCustomized(controls->key, custom);
-        if (custom) {
-            for (std::size_t i = 0; i < controls->count; ++i) {
-                const ControlRanges::NrControl& control = controls->controls[i];
-                const QString name = QStringLiteral("newSliceNr_%1_%2")
-                    .arg(QLatin1String(controls->key), QLatin1String(control.property));
-                if (auto* box = m_nrDetails->findChild<QCheckBox*>(name)) {
-                    NewSliceDefaults::setNrSetting(controls->key, control.property,
-                                                   box->isChecked() ? 1.0 : 0.0);
-                } else if (auto* combo = m_nrDetails->findChild<QComboBox*>(name)) {
-                    NewSliceDefaults::setNrSetting(controls->key, control.property,
-                                                   combo->currentData().toDouble());
-                } else if (auto* spin = m_nrDetails->findChild<QDoubleSpinBox*>(name)) {
-                    NewSliceDefaults::setNrSetting(
-                        controls->key, control.property,
-                        spin->value() * spin->property("nrToProperty").toDouble());
-                } else if (auto* spin = m_nrDetails->findChild<QSpinBox*>(name)) {
-                    NewSliceDefaults::setNrSetting(
-                        controls->key, control.property,
-                        spin->value() * spin->property("nrToProperty").toDouble());
-                }
-            }
-        }
-    }
     NewSliceDefaults::setAnfChoice(
         static_cast<NewSliceDefaults::SwitchPolicy>(chosen(m_anf)));
     NewSliceDefaults::setNbChoice(chosen(m_nb));
@@ -406,11 +378,25 @@ void NewSliceDefaultsPage::installNrDetails()
     detailsLayout->setContentsMargins(0, 0, 0, 0);
     detailsLayout->setSpacing(4);
 
-    const auto remember = [this](QWidget* editor) {
-        const auto saveEdit = [this] {
-            if (!m_reloading) {
-                save();
+    const auto remember = [this](QWidget* editor, const QString& slotKey, const QString& property) {
+        const auto saveEdit = [this, editor, slotKey, property] {
+            if (m_reloading || editor == nullptr) {
+                return;
             }
+            double value = 0.0;
+            if (auto* spin = qobject_cast<QDoubleSpinBox*>(editor)) {
+                value = spin->value() * spin->property("nrToProperty").toDouble();
+            } else if (auto* spin = qobject_cast<QSpinBox*>(editor)) {
+                value = spin->value() * spin->property("nrToProperty").toDouble();
+            } else if (auto* combo = qobject_cast<QComboBox*>(editor)) {
+                value = combo->currentData().toDouble();
+            } else if (auto* box = qobject_cast<QCheckBox*>(editor)) {
+                value = box->isChecked() ? 1.0 : 0.0;
+            } else {
+                return;
+            }
+            NewSliceDefaults::setNrSetting(slotKey.toUtf8().constData(),
+                                           property.toUtf8().constData(), value);
         };
         if (auto* spin = qobject_cast<QDoubleSpinBox*>(editor)) {
             connect(spin, qOverload<double>(&QDoubleSpinBox::valueChanged), this, saveEdit);
@@ -498,7 +484,7 @@ void NewSliceDefaultsPage::installNrDetails()
                 panelLayout->addLayout(row);
                 editor = spin;
             }
-            remember(editor);
+            remember(editor, QString::fromLatin1(slot.key), QString::fromLatin1(control.property));
         }
         panel->setVisible(false);
         detailsLayout->addWidget(panel);
@@ -563,13 +549,8 @@ void NewSliceDefaultsPage::syncNrDetails()
             }
         }
     }
-    const ControlRanges::NrSlotControls* controls =
-        NewSliceDefaults::nrControlsForChoice(m_nr->currentData().toInt());
-    {
-        const QSignalBlocker blocker(m_nrCustomize);
-        m_nrCustomize->setChecked(controls != nullptr
-                                  && NewSliceDefaults::nrSettingsCustomized(controls->key));
-    }
+    // The checkmark is only show and hide. A reload must not clear it,
+    // and must not put back a value the operator has already set.
     showNrDetails();
 }
 

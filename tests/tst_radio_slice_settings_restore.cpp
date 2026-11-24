@@ -988,7 +988,8 @@ private slots:
         seed->setNr1Taps(80);
         auto& settings = AppSettings::instance();
         settings.setValue(QStringLiteral("NewSlice/Nr"), static_cast<int>(NrSlot::NR1));
-        settings.setValue(QStringLiteral("NewSlice/Nr/nr1/Custom"), 1);
+        // The Settings box is closed. The tap the operator set is still used.
+        settings.setValue(QStringLiteral("NewSlice/Nr/nr1/Custom"), 0);
         settings.setValue(QStringLiteral("NewSlice/Nr/nr1/nr1Taps"), 200);
         SliceModel* slice = radio.sliceById(radio.addSlice(QString(), false, /*newReceiver=*/true));
         QVERIFY(slice);
