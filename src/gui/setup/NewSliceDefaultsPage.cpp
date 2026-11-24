@@ -19,10 +19,16 @@
 
 #include "core/ControlRanges.h"
 #include "core/WdspTypes.h"
+#include "models/BandGrid.h"
 #include "models/NewSliceDefaults.h"
 #include "models/SliceModel.h"
 
+#include <algorithm>
+#include <cmath>
+
+#include <QCheckBox>
 #include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QLabel>
 #include <QPushButton>
 #include <QShowEvent>
@@ -48,11 +54,12 @@ NewSliceDefaultsPage::NewSliceDefaultsPage(RadioModel* model, QWidget* parent)
 {
     auto* intro = new QLabel(
         tr("A new slice opens with these settings. Each new slice stays on the "
-           "frequency you are tuned to and it keeps the sample rate of the "
-           "receiver it joins. A setting left on its default choice follows "
-           "the slice you are on. Lock, mute, RIT and XIT still start off "
-           "until you change them. These settings belong to the Core, so "
-           "every window on this station opens a new slice the same way."),
+           "frequency you are tuned to, unless a band is chosen below, and it "
+           "keeps the sample rate of the receiver it joins. A setting left on "
+           "its default choice follows the slice you are on. Lock, mute, RIT "
+           "and XIT still start off until you change them. These settings "
+           "belong to the Core, so every window on this station opens a new "
+           "slice the same way."),
         this);
     intro->setWordWrap(true);
     intro->setObjectName(QStringLiteral("newSliceIntro"));
@@ -60,6 +67,14 @@ NewSliceDefaultsPage::NewSliceDefaultsPage(RadioModel* model, QWidget* parent)
 
     addSection(tr("Receiver"));
     const QString follow = tr("Same as the slice I am on");
+    m_band = addChoice(tr("Band"), QStringLiteral("newSliceBand"));
+    addItem(m_band, follow, NewSliceDefaults::kFollowSlice);
+    for (const BandGridEntry& entry : kBandGrid) {
+        addItem(m_band, QString::fromLatin1(entry.name), static_cast<int>(entry.band));
+    }
+    m_band->setToolTip(tr("Choosing a band opens the new slice on that band's usual "
+                          "frequency. Its usual mode is used unless Mode is set below."));
+
     m_mode = addChoice(tr("Mode"), QStringLiteral("newSliceMode"));
     addItem(m_mode, follow, NewSliceDefaults::kFollowSlice);
     for (int mode = static_cast<int>(DSPMode::LSB);
@@ -132,7 +147,9 @@ NewSliceDefaultsPage::NewSliceDefaultsPage(RadioModel* model, QWidget* parent)
     for (const auto& reducer : reducers) {
         addItem(m_nr, QString::fromLatin1(reducer.name), static_cast<int>(reducer.slot));
     }
-    m_nr->setToolTip(tr("The reducer's knobs still come from the slice you are on."));
+    m_nr->setToolTip(tr("Check Settings to set this reducer's own knobs. "
+                        "Otherwise they come from the slice you are on."));
+    installNrDetails();
 
     m_anf = addChoice(tr("ANF"), QStringLiteral("newSliceAnf"));
     addItem(m_anf, follow, NewSliceDefaults::kFollowSlice);
@@ -184,11 +201,24 @@ NewSliceDefaultsPage::NewSliceDefaultsPage(RadioModel* model, QWidget* parent)
             save();
         }
     };
-    for (QComboBox* box : {m_mode, m_filter, m_agcMode, m_autoAgc, m_agcOffsetChoice,
-                           m_agcTChoice, m_step, m_volumeChoice, m_nr, m_anf, m_nb,
+    for (QComboBox* box : {m_band, m_mode, m_filter, m_agcMode, m_autoAgc, m_agcOffsetChoice,
+                           m_agcTChoice, m_step, m_volumeChoice, m_anf, m_nb,
                            m_snb, m_squelch, m_lock, m_mute, m_rit, m_xit}) {
         connect(box, qOverload<int>(&QComboBox::currentIndexChanged), this, onChoice);
     }
+    connect(m_nr, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) {
+        if (m_reloading) {
+            return;
+        }
+        syncNrDetails();
+        save();
+    });
+    connect(m_nrCustomize, &QCheckBox::toggled, this, [this](bool) {
+        showNrDetails();
+        if (!m_reloading) {
+            save();
+        }
+    });
     connect(m_agcOffset, qOverload<int>(&QSpinBox::valueChanged), this, onChoice);
     connect(m_agcT, qOverload<int>(&QSpinBox::valueChanged), this, onChoice);
     connect(m_volume, qOverload<int>(&QSpinBox::valueChanged), this, onChoice);
@@ -234,6 +264,7 @@ void NewSliceDefaultsPage::reload()
     }
     const bool was = m_reloading;
     m_reloading = true;
+    select(m_band, NewSliceDefaults::bandChoice());
     select(m_mode, NewSliceDefaults::modeChoice());
     select(m_filter, static_cast<int>(NewSliceDefaults::filterPolicy()));
     select(m_agcMode, NewSliceDefaults::agcModeChoice());
@@ -264,6 +295,7 @@ void NewSliceDefaultsPage::reload()
     }
     m_volume->setEnabled(af != NewSliceDefaults::kFollowSlice);
     select(m_nr, NewSliceDefaults::nrChoice());
+    syncNrDetails();
     select(m_anf, static_cast<int>(NewSliceDefaults::anfChoice()));
     select(m_nb, NewSliceDefaults::nbChoice());
     select(m_snb, static_cast<int>(NewSliceDefaults::snbChoice()));
@@ -278,6 +310,7 @@ void NewSliceDefaultsPage::reload()
 void NewSliceDefaultsPage::save()
 {
     const auto chosen = [](const QComboBox* box) { return box->currentData().toInt(); };
+    NewSliceDefaults::setBandChoice(chosen(m_band));
     NewSliceDefaults::setModeChoice(chosen(m_mode));
     NewSliceDefaults::setFilterPolicy(
         static_cast<NewSliceDefaults::FilterPolicy>(chosen(m_filter)));
@@ -299,6 +332,33 @@ void NewSliceDefaultsPage::save()
         NewSliceDefaults::setAgcTChoice(NewSliceDefaults::kAgcTFollow);
     }
     NewSliceDefaults::setNrChoice(chosen(m_nr));
+    if (const ControlRanges::NrSlotControls* controls =
+            NewSliceDefaults::nrControlsForChoice(chosen(m_nr))) {
+        const bool custom = m_nrCustomize->isChecked();
+        NewSliceDefaults::setNrSettingsCustomized(controls->key, custom);
+        if (custom) {
+            for (std::size_t i = 0; i < controls->count; ++i) {
+                const ControlRanges::NrControl& control = controls->controls[i];
+                const QString name = QStringLiteral("newSliceNr_%1_%2")
+                    .arg(QLatin1String(controls->key), QLatin1String(control.property));
+                if (auto* box = m_nrDetails->findChild<QCheckBox*>(name)) {
+                    NewSliceDefaults::setNrSetting(controls->key, control.property,
+                                                   box->isChecked() ? 1.0 : 0.0);
+                } else if (auto* combo = m_nrDetails->findChild<QComboBox*>(name)) {
+                    NewSliceDefaults::setNrSetting(controls->key, control.property,
+                                                   combo->currentData().toDouble());
+                } else if (auto* spin = m_nrDetails->findChild<QDoubleSpinBox*>(name)) {
+                    NewSliceDefaults::setNrSetting(
+                        controls->key, control.property,
+                        spin->value() * spin->property("nrToProperty").toDouble());
+                } else if (auto* spin = m_nrDetails->findChild<QSpinBox*>(name)) {
+                    NewSliceDefaults::setNrSetting(
+                        controls->key, control.property,
+                        spin->value() * spin->property("nrToProperty").toDouble());
+                }
+            }
+        }
+    }
     NewSliceDefaults::setAnfChoice(
         static_cast<NewSliceDefaults::SwitchPolicy>(chosen(m_anf)));
     NewSliceDefaults::setNbChoice(chosen(m_nb));
@@ -322,6 +382,195 @@ void NewSliceDefaultsPage::save()
         static_cast<NewSliceDefaults::SwitchPolicy>(chosen(m_rit)));
     NewSliceDefaults::setXitChoice(
         static_cast<NewSliceDefaults::SwitchPolicy>(chosen(m_xit)));
+}
+
+void NewSliceDefaultsPage::installNrDetails()
+{
+    // The Noise reduction label is 150 wide, then 8 of row spacing. A
+    // further 12 puts Settings just inside the combo, with room above
+    // and below so it does not sit against the rows around it.
+    auto* block = new QWidget(this);
+    block->setObjectName(QStringLiteral("newSliceNrSettings"));
+    auto* blockLayout = new QVBoxLayout(block);
+    blockLayout->setContentsMargins(170, 8, 0, 8);
+    blockLayout->setSpacing(8);
+
+    m_nrCustomize = new QCheckBox(tr("Settings"), block);
+    m_nrCustomize->setObjectName(QStringLiteral("newSliceNrCustomize"));
+    m_nrCustomize->setVisible(false);
+    blockLayout->addWidget(m_nrCustomize);
+
+    m_nrDetails = new QWidget(block);
+    m_nrDetails->setObjectName(QStringLiteral("newSliceNrDetails"));
+    auto* detailsLayout = new QVBoxLayout(m_nrDetails);
+    detailsLayout->setContentsMargins(0, 0, 0, 0);
+    detailsLayout->setSpacing(4);
+
+    const auto remember = [this](QWidget* editor) {
+        const auto saveEdit = [this] {
+            if (!m_reloading) {
+                save();
+            }
+        };
+        if (auto* spin = qobject_cast<QDoubleSpinBox*>(editor)) {
+            connect(spin, qOverload<double>(&QDoubleSpinBox::valueChanged), this, saveEdit);
+        } else if (auto* spin = qobject_cast<QSpinBox*>(editor)) {
+            connect(spin, qOverload<int>(&QSpinBox::valueChanged), this, saveEdit);
+        } else if (auto* combo = qobject_cast<QComboBox*>(editor)) {
+            connect(combo, qOverload<int>(&QComboBox::currentIndexChanged), this, saveEdit);
+        } else if (auto* box = qobject_cast<QCheckBox*>(editor)) {
+            connect(box, &QCheckBox::toggled, this, saveEdit);
+        }
+    };
+
+    for (const ControlRanges::NrSlotControls& slot : ControlRanges::kNoiseReductionSlots) {
+        auto* panel = new QWidget(m_nrDetails);
+        panel->setObjectName(QStringLiteral("newSliceNrPanel_%1").arg(QLatin1String(slot.key)));
+        auto* panelLayout = new QVBoxLayout(panel);
+        panelLayout->setContentsMargins(0, 0, 0, 0);
+        panelLayout->setSpacing(4);
+        for (std::size_t i = 0; i < slot.count; ++i) {
+            const ControlRanges::NrControl& control = slot.controls[i];
+            const QString name = QStringLiteral("newSliceNr_%1_%2")
+                .arg(QLatin1String(slot.key), QLatin1String(control.property));
+            const bool fractional = control.decimals > 0 || control.step < 1.0 || control.divide != 1;
+            const double toProperty = fractional
+                ? static_cast<double>(control.divide) * control.scale
+                : control.scale;
+            QWidget* editor = nullptr;
+            if (control.kind == ControlRanges::NrControlKind::Switch) {
+                auto* box = new QCheckBox(QString::fromLatin1(control.label), panel);
+                box->setObjectName(name);
+                box->setChecked(control.defaultValue != 0.0);
+                panelLayout->addWidget(box);
+                editor = box;
+            } else if (control.kind == ControlRanges::NrControlKind::Choice) {
+                auto* row = new QHBoxLayout;
+                auto* label = new QLabel(QString::fromLatin1(control.label), panel);
+                label->setStyleSheet(QStringLiteral("QLabel { color: #c8d8e8; font-size: 12px; }"));
+                label->setFixedWidth(160);
+                label->setWordWrap(true);
+                auto* combo = new QComboBox(panel);
+                combo->setObjectName(name);
+                keepComboNarrow(combo);
+                for (std::size_t n = 0; n < control.optionCount; ++n) {
+                    combo->addItem(QString::fromLatin1(control.options[n].label), control.options[n].id);
+                }
+                const int index = combo->findData(static_cast<int>(control.defaultValue));
+                combo->setCurrentIndex(index >= 0 ? index : 0);
+                row->addWidget(label);
+                row->addWidget(combo, 1);
+                panelLayout->addLayout(row);
+                editor = combo;
+            } else if (fractional) {
+                auto* row = new QHBoxLayout;
+                auto* label = new QLabel(QString::fromLatin1(control.label), panel);
+                label->setStyleSheet(QStringLiteral("QLabel { color: #c8d8e8; font-size: 12px; }"));
+                label->setFixedWidth(160);
+                label->setWordWrap(true);
+                auto* spin = new QDoubleSpinBox(panel);
+                spin->setObjectName(name);
+                spin->setRange(control.min / control.divide, control.max / control.divide);
+                spin->setSingleStep(control.step / control.divide);
+                spin->setDecimals(std::max(control.decimals, 0));
+                spin->setSuffix(QString::fromLatin1(control.suffix));
+                spin->setProperty("nrToProperty", toProperty);
+                spin->setValue(control.defaultValue / toProperty);
+                row->addWidget(label);
+                row->addWidget(spin, 1);
+                panelLayout->addLayout(row);
+                editor = spin;
+            } else {
+                auto* row = new QHBoxLayout;
+                auto* label = new QLabel(QString::fromLatin1(control.label), panel);
+                label->setStyleSheet(QStringLiteral("QLabel { color: #c8d8e8; font-size: 12px; }"));
+                label->setFixedWidth(160);
+                label->setWordWrap(true);
+                auto* spin = new QSpinBox(panel);
+                spin->setObjectName(name);
+                spin->setRange(static_cast<int>(control.min), static_cast<int>(control.max));
+                spin->setSingleStep(std::max(1, static_cast<int>(control.step)));
+                spin->setSuffix(QString::fromLatin1(control.suffix));
+                spin->setProperty("nrToProperty", toProperty);
+                spin->setValue(static_cast<int>(std::lround(control.defaultValue / toProperty)));
+                row->addWidget(label);
+                row->addWidget(spin, 1);
+                panelLayout->addLayout(row);
+                editor = spin;
+            }
+            remember(editor);
+        }
+        panel->setVisible(false);
+        detailsLayout->addWidget(panel);
+    }
+    m_nrDetails->setVisible(false);
+    blockLayout->addWidget(m_nrDetails);
+    addToSection(block);
+}
+
+void NewSliceDefaultsPage::showNrDetails()
+{
+    if (!m_nr || !m_nrCustomize || !m_nrDetails) {
+        return;
+    }
+    const ControlRanges::NrSlotControls* controls =
+        NewSliceDefaults::nrControlsForChoice(m_nr->currentData().toInt());
+    const bool offer = controls != nullptr;
+    if (QWidget* block = m_nrCustomize->parentWidget()) {
+        block->setVisible(offer);
+    }
+    m_nrCustomize->setVisible(offer);
+    m_nrDetails->setVisible(offer && m_nrCustomize->isChecked());
+    const auto panels = m_nrDetails->findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly);
+    for (QWidget* panel : panels) {
+        const bool selected = controls != nullptr
+            && panel->objectName() == QStringLiteral("newSliceNrPanel_%1").arg(QLatin1String(controls->key));
+        panel->setVisible(selected);
+    }
+}
+
+void NewSliceDefaultsPage::syncNrDetails()
+{
+    if (!m_nr || !m_nrCustomize || !m_nrDetails) {
+        return;
+    }
+    for (const ControlRanges::NrSlotControls& slot : ControlRanges::kNoiseReductionSlots) {
+        for (std::size_t i = 0; i < slot.count; ++i) {
+            const ControlRanges::NrControl& control = slot.controls[i];
+            double value = control.defaultValue;
+            NewSliceDefaults::nrSetting(slot.key, control.property, &value);
+            const QString name = QStringLiteral("newSliceNr_%1_%2")
+                .arg(QLatin1String(slot.key), QLatin1String(control.property));
+            if (auto* box = m_nrDetails->findChild<QCheckBox*>(name)) {
+                const QSignalBlocker blocker(box);
+                box->setChecked(value != 0.0);
+            } else if (auto* combo = m_nrDetails->findChild<QComboBox*>(name)) {
+                const QSignalBlocker blocker(combo);
+                const int index = combo->findData(static_cast<int>(std::lround(value)));
+                combo->setCurrentIndex(index >= 0 ? index : 0);
+            } else if (auto* spin = m_nrDetails->findChild<QDoubleSpinBox*>(name)) {
+                const QSignalBlocker blocker(spin);
+                const double toProperty = spin->property("nrToProperty").toDouble();
+                if (toProperty != 0.0) {
+                    spin->setValue(value / toProperty);
+                }
+            } else if (auto* spin = m_nrDetails->findChild<QSpinBox*>(name)) {
+                const QSignalBlocker blocker(spin);
+                const double toProperty = spin->property("nrToProperty").toDouble();
+                if (toProperty != 0.0) {
+                    spin->setValue(static_cast<int>(std::lround(value / toProperty)));
+                }
+            }
+        }
+    }
+    const ControlRanges::NrSlotControls* controls =
+        NewSliceDefaults::nrControlsForChoice(m_nr->currentData().toInt());
+    {
+        const QSignalBlocker blocker(m_nrCustomize);
+        m_nrCustomize->setChecked(controls != nullptr
+                                  && NewSliceDefaults::nrSettingsCustomized(controls->key));
+    }
+    showNrDetails();
 }
 
 } // namespace NereusSDR

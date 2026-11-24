@@ -5,7 +5,7 @@
 ### Receive
 
 - **Choose how a new slice opens.** Setup > General > New Slice sets the
-  mode, filter, AGC, AGC offset, noise reduction, noise blanker, squelch, step, volume,
+  band, mode, filter, AGC, AGC offset, noise reduction, noise blanker, squelch, step, volume,
   lock, mute, RIT and XIT a new slice starts with. +RX, Ctrl+R and Add slice
   on the pan use those choices. A row left on its usual choice still copies
   the slice you are on, and lock, mute, RIT and XIT still start off. The new

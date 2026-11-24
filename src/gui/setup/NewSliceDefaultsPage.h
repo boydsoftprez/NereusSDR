@@ -19,9 +19,11 @@
 #include "gui/SetupPage.h"
 #include "gui/NereusGuiExport.h"
 
+class QCheckBox;
 class QComboBox;
 class QShowEvent;
 class QSpinBox;
+class QWidget;
 
 namespace NereusSDR {
 
@@ -41,7 +43,11 @@ private:
     void select(QComboBox* box, int value);
     void reload();
     void save();
+    void installNrDetails();
+    void syncNrDetails();
+    void showNrDetails();
 
+    QComboBox* m_band{nullptr};
     QComboBox* m_mode{nullptr};
     QComboBox* m_filter{nullptr};
     QComboBox* m_agcMode{nullptr};
@@ -54,6 +60,8 @@ private:
     QComboBox* m_volumeChoice{nullptr};
     QSpinBox*  m_volume{nullptr};
     QComboBox* m_nr{nullptr};
+    QCheckBox* m_nrCustomize{nullptr};
+    QWidget*   m_nrDetails{nullptr};
     QComboBox* m_anf{nullptr};
     QComboBox* m_nb{nullptr};
     QComboBox* m_snb{nullptr};

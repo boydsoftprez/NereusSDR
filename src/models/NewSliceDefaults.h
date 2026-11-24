@@ -19,6 +19,7 @@
 //                xAI Grok.
 // =================================================================
 
+#include "core/ControlRanges.h"
 #include "core/WdspTypes.h"
 
 namespace NereusSDR {
@@ -57,6 +58,26 @@ public:
 
     static int modeChoice();
     static void setModeChoice(int mode);
+
+    // kFollowSlice stays on the tuned frequency. Any other value is a
+    // band-grid band, and the new slice opens on that band's usual
+    // frequency. Its usual mode is used only when Mode is still
+    // "same as the slice I am on".
+    static int bandChoice();
+    static void setBandChoice(int band);
+
+    // The quick controls for a noise-reduction choice, or nullptr for Off,
+    // "same as the slice", and a reducer with no quick controls (BNR).
+    static const ControlRanges::NrSlotControls* nrControlsForChoice(int nrSlot);
+
+    // True when the operator asked to set that reducer's own knobs.
+    static bool nrSettingsCustomized(const char* slotKey);
+    static void setNrSettingsCustomized(const char* slotKey, bool on);
+
+    // One knob, in the SliceModel property's own units. Absent means the
+    // copied slice's value stays.
+    static bool nrSetting(const char* slotKey, const char* property, double* value);
+    static void setNrSetting(const char* slotKey, const char* property, double value);
 
     static FilterPolicy filterPolicy();
     static void setFilterPolicy(FilterPolicy policy);

@@ -316,6 +316,9 @@ protected:
     QHBoxLayout* addLabeledEdit(QLayout* parent, const QString& label, QLineEdit* edit);
     QHBoxLayout* addLabeledLabel(QLayout* parent, const QString& label, QLabel* value);
 
+    // A widget in the section most recently opened with addSection().
+    void addToSection(QWidget* widget);
+
 private:
     void init(const QString& title);
     QHBoxLayout* makeLabeledRow(QLayout* parent, const QString& labelText, QWidget* control);

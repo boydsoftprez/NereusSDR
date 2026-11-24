@@ -19,9 +19,15 @@
 
 #include "core/AppSettings.h"
 #include "core/ControlRanges.h"
+#include "models/BandDefaults.h"
+#include "models/BandGrid.h"
 #include "models/SliceModel.h"
 
+#include <cmath>
+#include <cstring>
 #include <functional>
+
+#include <QMetaProperty>
 
 namespace NereusSDR {
 namespace {
@@ -33,6 +39,70 @@ bool validMode(int mode)
 {
     return mode >= static_cast<int>(DSPMode::LSB)
         && mode <= static_cast<int>(DSPMode::RADE2_L);
+}
+
+bool validBand(int band)
+{
+    return band == NewSliceDefaults::kFollowSlice
+        || bandGridEntry(static_cast<Band>(band)) != nullptr;
+}
+
+const char* nrSlotKey(int nrSlot)
+{
+    switch (static_cast<NrSlot>(nrSlot)) {
+    case NrSlot::NR1:  return "nr1";
+    case NrSlot::NR2:  return "nr2";
+    case NrSlot::NR3:  return "nr3";
+    case NrSlot::NR4:  return "nr4";
+    case NrSlot::DFNR: return "dfnr";
+    case NrSlot::MNR:  return "mnr";
+    case NrSlot::NNR:  return "nnr";
+    default:           return nullptr;
+    }
+}
+
+QString nrFieldKey(const char* slotKey, const char* field)
+{
+    return QStringLiteral("NewSlice/Nr/") + QLatin1String(slotKey)
+        + QLatin1Char('/') + QLatin1String(field);
+}
+
+void writeSliceProperty(SliceModel& slice, const ControlRanges::NrControl& control, double value)
+{
+    const QMetaObject* meta = slice.metaObject();
+    const int index = meta->indexOfProperty(control.property);
+    if (index < 0) {
+        return;
+    }
+    const QMetaProperty property = meta->property(index);
+    QVariant outgoing;
+    if (control.kind == ControlRanges::NrControlKind::Switch
+        || property.userType() == QMetaType::Bool) {
+        outgoing = value != 0.0;
+    } else if (property.userType() == QMetaType::Double) {
+        outgoing = value;
+    } else {
+        outgoing = static_cast<int>(std::lround(value));
+    }
+    if (!property.write(&slice, outgoing)) {
+        property.write(&slice, static_cast<int>(std::lround(value)));
+    }
+}
+
+void applyCustomNr(SliceModel& slice, int nrSlot)
+{
+    const ControlRanges::NrSlotControls* controls = NewSliceDefaults::nrControlsForChoice(nrSlot);
+    if (controls == nullptr || !NewSliceDefaults::nrSettingsCustomized(controls->key)) {
+        return;
+    }
+    for (std::size_t i = 0; i < controls->count; ++i) {
+        const ControlRanges::NrControl& control = controls->controls[i];
+        double value = 0.0;
+        if (!NewSliceDefaults::nrSetting(controls->key, control.property, &value)) {
+            continue;
+        }
+        writeSliceProperty(slice, control, value);
+    }
 }
 
 bool validAgcMode(int mode)
@@ -145,6 +215,72 @@ void NewSliceDefaults::setModeChoice(int mode)
         return;
     }
     writeInt(QStringLiteral("NewSlice/Mode"), mode);
+}
+
+int NewSliceDefaults::bandChoice()
+{
+    const int stored = AppSettings::instance().value(
+        QStringLiteral("NewSlice/Band"), kFollowSlice).toInt();
+    return validBand(stored) ? stored : kFollowSlice;
+}
+
+void NewSliceDefaults::setBandChoice(int band)
+{
+    if (!validBand(band)) {
+        return;
+    }
+    writeInt(QStringLiteral("NewSlice/Band"), band);
+}
+
+const ControlRanges::NrSlotControls* NewSliceDefaults::nrControlsForChoice(int nrSlot)
+{
+    const char* key = nrSlotKey(nrSlot);
+    if (key == nullptr) {
+        return nullptr;
+    }
+    for (const ControlRanges::NrSlotControls& slot : ControlRanges::kNoiseReductionSlots) {
+        if (std::strcmp(slot.key, key) == 0) {
+            return &slot;
+        }
+    }
+    return nullptr;
+}
+
+bool NewSliceDefaults::nrSettingsCustomized(const char* slotKey)
+{
+    if (slotKey == nullptr) {
+        return false;
+    }
+    return AppSettings::instance().value(nrFieldKey(slotKey, "Custom"), 0).toInt() == 1;
+}
+
+void NewSliceDefaults::setNrSettingsCustomized(const char* slotKey, bool on)
+{
+    if (slotKey == nullptr) {
+        return;
+    }
+    writeInt(nrFieldKey(slotKey, "Custom"), on ? 1 : 0);
+}
+
+bool NewSliceDefaults::nrSetting(const char* slotKey, const char* property, double* value)
+{
+    if (slotKey == nullptr || property == nullptr || value == nullptr) {
+        return false;
+    }
+    const QString key = nrFieldKey(slotKey, property);
+    if (!AppSettings::instance().contains(key)) {
+        return false;
+    }
+    *value = AppSettings::instance().value(key).toDouble();
+    return true;
+}
+
+void NewSliceDefaults::setNrSetting(const char* slotKey, const char* property, double value)
+{
+    if (slotKey == nullptr || property == nullptr) {
+        return;
+    }
+    AppSettings::instance().setValue(nrFieldKey(slotKey, property), value);
 }
 
 NewSliceDefaults::FilterPolicy NewSliceDefaults::filterPolicy()
@@ -364,6 +500,13 @@ void NewSliceDefaults::reset()
 {
     auto& settings = AppSettings::instance();
     settings.remove(QStringLiteral("NewSlice/Mode"));
+    settings.remove(QStringLiteral("NewSlice/Band"));
+    const QStringList keys = settings.allKeys();
+    for (const QString& key : keys) {
+        if (key.startsWith(QLatin1String("NewSlice/Nr/"))) {
+            settings.remove(key);
+        }
+    }
     settings.remove(QStringLiteral("NewSlice/Filter"));
     settings.remove(QStringLiteral("NewSlice/AgcMode"));
     settings.remove(QStringLiteral("NewSlice/AutoAgc"));
@@ -386,6 +529,17 @@ void NewSliceDefaults::apply(SliceModel& slice, const SliceModel* seed)
 {
     if (seed == &slice) {
         seed = nullptr;
+    }
+    const int band = bandChoice();
+    if (band != kFollowSlice) {
+        const BandSeed opening = BandDefaults::seedFor(static_cast<Band>(band));
+        if (opening.valid) {
+            slice.setFrequency(opening.frequencyHz);
+            // The band's usual mode, unless Mode names one of its own.
+            if (modeChoice() == kFollowSlice) {
+                slice.setDspModeForNewReceiver(opening.mode);
+            }
+        }
     }
     const DSPMode modeBefore = slice.dspMode();
     const int mode = modeChoice();
@@ -424,6 +578,7 @@ void NewSliceDefaults::apply(SliceModel& slice, const SliceModel* seed)
     const int nr = nrChoice();
     if (nr != kFollowSlice) {
         slice.setActiveNr(static_cast<NrSlot>(nr));
+        applyCustomNr(slice, nr);
     }
     const bool seedAnf = seed && seed->anfEnabled();
     if (anfChoice() != SwitchPolicy::FollowSlice) {

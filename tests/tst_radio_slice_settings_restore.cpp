@@ -42,6 +42,7 @@
 #include "core/WdspEngine.h"
 #include "core/WdspTypes.h"
 #include "models/Band.h"
+#include "models/BandDefaults.h"
 #include "models/NewSliceDefaults.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -958,6 +959,43 @@ private slots:
         QCOMPARE(slice->afGain(), kLetterAfGain);
         QVERIFY(slice->locked());
         QVERIFY(slice->ritEnabled());
+    }
+
+    void aChosenBandOpensOnThatBandsUsualFrequencyAndMode()
+    {
+        RadioModel radio;
+        SliceModel* seed = radio.sliceById(radio.addSlice());
+        QVERIFY(seed);
+        setSeedValues(*seed);
+        AppSettings::instance().setValue(QStringLiteral("NewSlice/Band"),
+                                         static_cast<int>(Band::Band20m));
+        SliceModel* slice = radio.sliceById(radio.addSlice(QString(), false, /*newReceiver=*/true));
+        QVERIFY(slice);
+        const BandSeed opening = BandDefaults::seedFor(Band::Band20m);
+        QCOMPARE(slice->frequency(), opening.frequencyHz);
+        QCOMPARE(slice->dspMode(), opening.mode);
+        QCOMPARE(slice->filterLow(), 100);
+        QCOMPARE(slice->filterHigh(), 3000);
+        QCOMPARE(seed->frequency(), kSeedFrequencyHz);
+    }
+
+    void aChosenNoiseReducerCanKeepItsOwnKnobs()
+    {
+        RadioModel radio;
+        SliceModel* seed = radio.sliceById(radio.addSlice());
+        QVERIFY(seed);
+        setSeedValues(*seed);
+        seed->setNr1Taps(80);
+        auto& settings = AppSettings::instance();
+        settings.setValue(QStringLiteral("NewSlice/Nr"), static_cast<int>(NrSlot::NR1));
+        settings.setValue(QStringLiteral("NewSlice/Nr/nr1/Custom"), 1);
+        settings.setValue(QStringLiteral("NewSlice/Nr/nr1/nr1Taps"), 200);
+        SliceModel* slice = radio.sliceById(radio.addSlice(QString(), false, /*newReceiver=*/true));
+        QVERIFY(slice);
+        QCOMPARE(slice->activeNr(), NrSlot::NR1);
+        QCOMPARE(slice->nr1Taps(), 200);
+        QCOMPARE(slice->nr1Delay(), seed->nr1Delay());
+        QCOMPARE(seed->nr1Taps(), 80);
     }
 
     void aNewReceiverDoesNotCopyLockMuteRitOrXit()
