@@ -204,6 +204,8 @@
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-24 - LimitFiltersToSidebands is Station scope. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-24 - NewSlice/ is the Core's defaults for a slice an operator
+//                opens. J.J. Boyd (KG4VCF), AI-assisted via xAI Grok.
 //   2026-10-31 - Roundtable/SignalFormat is a local reporter-display
 //                preference. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
@@ -519,6 +521,11 @@ const Rule kPrefixes[] = {
     // Core's catalogue sends them to an app. A window running its radio
     // locally has no remote backend, so nothing changes for it.
     { "filters/", SettingsScope::Station },
+
+    // Setup > General > New Slice. The Core reads these when it mints a
+    // slice someone asked for, so a remote window edits the same choices
+    // the radio opens on.
+    { "NewSlice/", SettingsScope::Station },
 
     // Parity ruling C12 (remote-window parity plan, 2026-09-24): Setup >
     // Display > Grid & Scales' per-band dB max and min

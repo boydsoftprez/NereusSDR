@@ -20,6 +20,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-24 - A new receiver applies Setup > General > New Slice after
+//                the copy. Absent choices keep the copy, and lock, mute,
+//                RIT and XIT off. NereusSDR-original. J.J. Boyd (KG4VCF),
+//                AI-assisted via xAI Grok.
 //   2026-11-16 — Roundtable pauses for a slice playing the past: presence
 //                 keeps the frequency it had live (RecordingService::
 //                 rewoundLiveFrequencyHz) and it sends no readings until it
@@ -1988,6 +1992,7 @@ mw0lge@grange-lane.co.uk
 #include "core/cat/CatService.h"
 #include "core/cat/CatSettings.h"
 #include "RadioModel.h"
+#include "NewSliceDefaults.h"
 #include "core/ClarityController.h"
 #include "core/session/RemoteDevicesState.h"
 #include "core/AmModulationAnalyzer.h"
@@ -17614,6 +17619,13 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
                 slice->copyNoiseReductionFrom(*seedFrom);
                 if (!currentAdded()) { return -1; }
             }
+        }
+        if (newReceiver) {
+            // Setup > General > New Slice. A row left on its usual choice
+            // keeps the copy above. Lock, mute, RIT and XIT stay off
+            // unless the operator said otherwise.
+            NewSliceDefaults::apply(*slice, hasSeed ? seedFrom : nullptr);
+            if (!currentAdded()) { return -1; }
         }
     }
 

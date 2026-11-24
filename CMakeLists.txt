@@ -1860,6 +1860,7 @@ set(MODEL_SOURCES
     src/models/PureSignalSettings.cpp
     src/models/PureSignalSettings.h
     src/models/SliceModel.cpp
+    src/models/NewSliceDefaults.cpp
     src/models/PanadapterModel.cpp
     src/models/MeterModel.cpp
     src/models/TransmitModel.cpp
@@ -2334,6 +2335,7 @@ set(GUI_SOURCES
     src/gui/setup/GeneralSetupPages.cpp
     src/gui/setup/GeneralOptionsPage.cpp
     src/gui/setup/GeneralFiltersPage.cpp
+    src/gui/setup/NewSliceDefaultsPage.cpp
     src/gui/setup/HardwarePage.cpp
     src/gui/setup/HardwareDdcRoutingPage.cpp
     src/gui/setup/PaSetupPages.cpp

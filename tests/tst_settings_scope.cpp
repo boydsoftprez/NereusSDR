@@ -845,6 +845,8 @@ private slots:
             << int(SettingsScope::OperatorLocal);
         QTest::newRow("FreeDvReporter/FrequencyAsKhz is OperatorLocal (a display unit)")
             << QStringLiteral("FreeDvReporter/FrequencyAsKhz") << int(SettingsScope::OperatorLocal);
+        QTest::newRow("NewSlice/Mode is Station (the Core's new-slice choices)")
+            << QStringLiteral("NewSlice/Mode") << int(SettingsScope::Station);
     }
 
     void knownExamples()

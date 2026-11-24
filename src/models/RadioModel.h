@@ -12,6 +12,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-24 - A new receiver applies the Core's New Slice choices
+//                after the copy. NereusSDR-original. J.J. Boyd (KG4VCF),
+//                AI-assisted via xAI Grok.
 //   2026-11-05 - A newly added receiver starts with RIT and XIT off, on a
 //                letter used before too; a restored receiver keeps its own.
 //                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
@@ -3422,7 +3425,10 @@ public:
     // `newReceiver` is for a slice someone asked for (+RX, a device's
     // request). It is a copy of the slice the operator is on, with lock,
     // mute, RIT and XIT off, and reads nothing the letter saved; with no
-    // slice to copy it opens on defaults. The letter's saved RIT and XIT are
+    // slice to copy it opens on defaults. Setup > General > New Slice
+    // (the Core's NewSlice/ settings) replaces any of those choices the
+    // operator has set. Frequency and sample rate stay with the slice
+    // they were on and the receiver they join. The letter's saved RIT and XIT are
     // removed, unless a saved layout is held. Without it a letter's
     // preferences, RIT and XIT come back. The remote client only sends the verb; the Core mints
     // the slice and mirrors it back.

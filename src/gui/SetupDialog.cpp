@@ -8,6 +8,9 @@
 // behaviour rules consulted while implementing visibility wiring.
 //
 // Modification history (NereusSDR):
+//   2026-11-24 - General > New Slice (NewSliceDefaultsPage, Core scope):
+//                the operator's defaults for a slice they open.
+//                J.J. Boyd (KG4VCF), AI-assisted via xAI Grok.
 //   2026-11-16 - Cores > Digital Spectrum Recorder (DsrSetupPage, Core
 //                scope), before Recordings, recording plan Task 26.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -244,6 +247,7 @@
 #include "setup/GeneralSetupPages.h"
 #include "setup/GeneralOptionsPage.h"
 #include "setup/GeneralFiltersPage.h"
+#include "setup/NewSliceDefaultsPage.h"
 // Hardware
 #include "setup/HardwarePage.h"
 #include "setup/ThisCorePage.h"
@@ -1848,6 +1852,10 @@ void SetupDialog::buildTree()
     // the slice lives.
     registerPage(general, "Filters", SetupScope::Core,
                  [this] { return new GeneralFiltersPage(m_model); });
+    // The Core mints a slice someone asked for, so the choices live there
+    // and every window on the station opens a new slice the same way.
+    registerPage(general, "New Slice", SetupScope::Core,
+                 [this] { return new NewSliceDefaultsPage(m_model); });
 
     // Parity Task 21 (R-IOS-18; the operator's "Option A"): a remote
     // window's Core, its radio first (Change radio). A window running its

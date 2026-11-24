@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Receive
+
+- **Choose how a new slice opens.** Setup > General > New Slice sets the
+  mode, filter, AGC, AGC offset, noise reduction, noise blanker, squelch, step, volume,
+  lock, mute, RIT and XIT a new slice starts with. +RX, Ctrl+R and Add slice
+  on the pan use those choices. A row left on its usual choice still copies
+  the slice you are on, and lock, mute, RIT and XIT still start off. The new
+  slice stays on your frequency and keeps the sample rate of the receiver it
+  joins. The choices belong to the Core, so every window on the station
+  shares them.
+
 ### Roundtable
 
 - **Roundtable moves off the spectrum on the desktop.** While Roundtable is on,
