@@ -102,6 +102,9 @@ public:
     QVector<KiwiSdrAntennaProfile> profiles() const { return m_profiles; }
     KiwiSdrAntennaProfile profile(const QString& id) const;
     bool hasProfile(const QString& id) const;
+    // Longpath (2026-11-24): das Profil mit diesem Endpunkt, leer wenn keins.
+    // Schreibweise wie bei addProfile normalisiert.
+    QString profileIdForEndpoint(const QString& endpoint) const;
 
     // CSV import/export of the saved receiver list (#4586), scoped to the
     // profile fields only — passwords stay in IKiwiSdrCredentialStore and

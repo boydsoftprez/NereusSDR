@@ -49,6 +49,13 @@ public:
     // Gueltig, nachdem der Dialog angenommen wurde.
     QString selectedEndpoint() const { return m_selectedEndpoint; }  // host[:port]
     QString selectedName() const { return m_selectedName; }          // Namensvorschlag
+    // Entfernung der Auswahl in km; < 0, wenn nicht bekannt.
+    double selectedKm() const { return m_selectedKm; }
+
+    // Vorauswahl nach Entfernung zum eigenen Locator und nach Band
+    // (kiwiPreselect). Haengt nichts an der Netzabfrage: wer sie ruft,
+    // sortiert und filtert nur, was ohnehin geladen wird.
+    void setPreselection(const QString& ownGrid, double frequencyHz);
 
 private:
     void startFetch();
@@ -70,6 +77,10 @@ private:
 
     QString m_selectedEndpoint;
     QString m_selectedName;
+    double m_selectedKm{-1.0};
+    bool m_preselect{false};
+    QString m_ownGrid;
+    double m_frequencyHz{0.0};
 };
 
 } // namespace Longpath

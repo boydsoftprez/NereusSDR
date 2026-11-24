@@ -49,6 +49,7 @@
 #include "core/AppSettings.h"
 #include "core/AudioEngine.h"
 #include "core/LogCategories.h"
+#include "core/KiwiOwnSignal.h"
 #include "core/KiwiSdrManager.h"
 #include "gui/KiwiWaterfallPanel.h"
 #include "gui/applets/AppletPanelWidget.h"
@@ -336,11 +337,13 @@ void MainWindow::refreshKiwiSdrAppletReceivers()
 void MainWindow::syncKiwiSdrTransmitMute()
 {
     if (!m_kiwiSdrManager || !m_radioModel) { return; }
-    AudioEngine* audio = m_radioModel->audioEngine();
-    if (!audio) { return; }
-
+    // Die Messung "hoert er mich" braucht die Kante auch ohne Tonweg.
     const TransmitModel& tx = m_radioModel->transmitModel();
     const bool sending = tx.isMox() || tx.isTune();
+    kiwiOwnSignalTxEdge(sending);
+
+    AudioEngine* audio = m_radioModel->audioEngine();
+    if (!audio) { return; }
 
     for (const KiwiSdrAntennaProfile& profile : m_kiwiSdrManager->profiles()) {
         const int sliceId =
@@ -353,7 +356,16 @@ void MainWindow::syncKiwiSdrTransmitMute()
         if (!kiwiControllableSlice(sliceId)) { continue; }
 
         if (sending) {
-            if (profile.keepAudioDuringTx) { continue; }
+            // "Mein Signal" haelt den Ton des Modus-Kiwi beim Senden an
+            // (2026-11-24); ausdruecklich aufheben statt "nichts tun", denn
+            // wer den Modus MITTEN in der Sendung einschaltet, trifft eine
+            // schon stumm geschaltete Quelle an.
+            if (kiwiKeepsAudioDuringTx(
+                    profile, m_kiwiOwnSignalOn
+                                 && profile.id == m_kiwiOwnProfileId)) {
+                audio->setKiwiSdrAudioSourceEnabled(sliceId, true);
+                continue;
+            }
             audio->setKiwiSdrAudioSourceEnabled(sliceId, false);
             continue;
         }
@@ -399,24 +411,14 @@ void MainWindow::setAppletVisibleForTest(const QString& id, bool visible)
     if (m_appletVis) { m_appletVis->setVisible(id, visible); }
 }
 
-void MainWindow::addKiwiSdrReceiver(const QString& name,
-                                    const QString& endpoint)
+// ── Welche Scheibe? ──────────────────────────────────────────────────
+//
+// Herausgeloest aus addKiwiSdrReceiver (2026-11-24), damit "Mein Signal"
+// einen schon vorhandenen Empfaenger auf dieselbe Weise und mit
+// derselben Sicherheitsschranke einer Scheibe zuordnet. Der Koerper ist
+// zeichengleich geblieben.
+SliceModel* MainWindow::assignKiwiProfileToSlice(const QString& id)
 {
-    if (!m_kiwiSdrManager || endpoint.trimmed().isEmpty()) {
-        return;
-    }
-
-    const QString label = name.trimmed().isEmpty()
-                              ? endpoint.trimmed()
-                              : name.trimmed();
-    const QString id = m_kiwiSdrManager->addProfile(label, endpoint.trimmed());
-    if (id.isEmpty()) {
-        qCWarning(lcKiwiSdr) << "KiwiSDR konnte nicht angelegt werden:"
-                             << endpoint;
-        return;
-    }
-
-    // ── Welche Scheibe? ─────────────────────────────────────────────
     //
     // Die aktive, wenn es eine gibt. Gibt es keine — und das ist der
     // Normalfall OHNE verbundenes Funkgeraet —, dann die erste.
@@ -509,6 +511,27 @@ void MainWindow::addKiwiSdrReceiver(const QString& name,
             // jedes CW-Durchlasses (2026-09-21).
             SliceModel::cwPitchHz());
     }
+    return slice;
+}
+
+void MainWindow::addKiwiSdrReceiver(const QString& name,
+                                    const QString& endpoint)
+{
+    if (!m_kiwiSdrManager || endpoint.trimmed().isEmpty()) {
+        return;
+    }
+
+    const QString label = name.trimmed().isEmpty()
+                              ? endpoint.trimmed()
+                              : name.trimmed();
+    const QString id = m_kiwiSdrManager->addProfile(label, endpoint.trimmed());
+    if (id.isEmpty()) {
+        qCWarning(lcKiwiSdr) << "KiwiSDR konnte nicht angelegt werden:"
+                             << endpoint;
+        return;
+    }
+
+    SliceModel* slice = assignKiwiProfileToSlice(id);
 
     m_kiwiSdrManager->connectProfile(id);
     refreshKiwiSdrAppletReceivers();
@@ -596,6 +619,14 @@ void MainWindow::updateKiwiSdrTrackingForSlice(SliceModel* slice)
     // die inzwischen ein echtes Funkgeraet uebernommen hat, steuert
     // keinen Kiwi mehr (die Zuordnung faellt gleich ohnehin).
     if (!kiwiControllableSlice(sliceId)) { return; }
+    // Im Modus "Mein Signal" folgt der Kiwi der SENDEfrequenz, nicht der
+    // Empfangsfrequenz seiner Scheibe (2026-11-24).
+    if (m_kiwiOwnSignalOn
+        && m_kiwiSdrManager->assignedProfileForSlice(sliceId)
+               == m_kiwiOwnProfileId
+        && sendKiwiOwnSignalTracking()) {
+        return;
+    }
     m_kiwiSdrManager->updateSliceTracking(
         sliceId,
         slice->frequency() / 1.0e6,
@@ -744,8 +775,10 @@ void MainWindow::wireKiwiSdr()
         if (enabled) {
             const TransmitModel& tx = m_radioModel->transmitModel();
             const bool sending = tx.isMox() || tx.isTune();
-            if (sending &&
-                !m_kiwiSdrManager->profile(profileId).keepAudioDuringTx) {
+            if (sending
+                && !kiwiKeepsAudioDuringTx(
+                       m_kiwiSdrManager->profile(profileId),
+                       m_kiwiOwnSignalOn && profileId == m_kiwiOwnProfileId)) {
                 return;
             }
         }
@@ -877,6 +910,9 @@ void MainWindow::wireKiwiSdr()
     });
 
     refreshKiwiSdrAppletReceivers();
+
+    // Mein Signal am Kiwi (Entwurf C) -- haengt sich an das Obige.
+    wireKiwiOwnSignal();
 }
 
 } // namespace Longpath

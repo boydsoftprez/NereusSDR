@@ -260,6 +260,16 @@ public:
     { addKiwiSdrReceiver(name, endpoint); }
     class KiwiSdrManager* kiwiSdrManagerForTest() const
     { return m_kiwiSdrManager; }
+    // Mein Signal am Kiwi: ohne Dialog, mit einem schon bekannten Profil.
+    void setKiwiOwnSignalProfileForTest(const QString& profileId, double km = -1.0)
+    { setKiwiOwnSignalProfile(profileId, km); }
+    void setKiwiOwnSignalForTest(bool on) { setKiwiOwnSignal(on); }
+    bool kiwiOwnSignalOnForTest() const { return m_kiwiOwnSignalOn; }
+    class KiwiOwnSignalStrip* kiwiOwnStripForTest() const { return m_kiwiStrip; }
+    class KiwiSdrApplet* kiwiSdrAppletForTest() const { return m_kiwiSdrApplet; }
+    void startKiwiRecordingForTest() { startKiwiRecording(); }
+    void stopKiwiRecordingForTest() { stopKiwiRecording(); }
+    class KiwiRecording* kiwiRecordingForTest() const { return m_kiwiRecording; }
     RadioModel* radioModelForTest() const { return m_radioModel; }
     class InstrumentApplet* signalInstrumentForTest() const;
     class ContestFenster* contestFensterForTest() const { return m_contestFenster; }
@@ -1652,7 +1662,20 @@ private:
     void wireKiwiSdr();
     void refreshKiwiSdrAppletReceivers();
     void addKiwiSdrReceiver(const QString& name, const QString& endpoint);
+    class SliceModel* assignKiwiProfileToSlice(const QString& id);
     void syncKiwiSdrTransmitMute();
+    // Mein Signal am Kiwi (Entwurf C) -- MainWindow_KiwiOwnSignal.cpp.
+    void wireKiwiOwnSignal();
+    void setKiwiOwnSignal(bool on);
+    void setKiwiOwnSignalProfile(const QString& profileId, double km);
+    void chooseOtherKiwi();
+    void syncKiwiOwnSignal();
+    bool sendKiwiOwnSignalTracking();
+    void kiwiOwnSignalTxEdge(bool sending);
+    void startKiwiRecording();
+    void stopKiwiRecording();
+    class SliceModel* kiwiOwnTxSlice() const;
+    qint64 kiwiOwnNowMs() const;
     // Stufe 3b (2026-09-21): der Kiwi folgt der zugeordneten Scheibe --
     // Frequenz, Betriebsart, Filter, Panadapter. Verdrahtet je Zuordnung
     // (nicht je Scheibe wie bei Aether, wo jede Scheibe einen Kiwi haben
@@ -2251,6 +2274,18 @@ private:
     class KiwiSdrManager* m_kiwiSdrManager{nullptr};
     // Je zugeordneter Scheibe die vier Nachfuehr-Verbindungen (Stufe 3b).
     QHash<int, QVector<QMetaObject::Connection>> m_kiwiSdrTrackingConnections;
+
+    // ── Mein Signal am Kiwi (2026-11-24, Entwurf C) ──────────────────
+    // Siehe MainWindow_KiwiOwnSignal.cpp.
+    class KiwiOwnSignalStrip* m_kiwiStrip{nullptr};
+    class KiwiRecording* m_kiwiRecording{nullptr};
+    std::shared_ptr<class KiwiHearMeMeter> m_kiwiHearMe;
+    bool m_kiwiOwnSignalOn{false};
+    QString m_kiwiOwnProfileId;
+    double m_kiwiOwnKm{-1.0};
+    QVector<QMetaObject::Connection> m_kiwiOwnConnections;
+    QPointer<class SpectrumWidget> m_kiwiOwnPan;
+    QTimer* m_kiwiRecordTimer{nullptr};
     QPointer<class UpdateDialog> m_updateDialog;
 
     // ── SunSDR (TCI-Client, 2026-08-24) ──────────────────────────────

@@ -9,6 +9,7 @@
 //                steht in der Kopfdatei.
 
 #include "gui/KiwiPublicReceiverPicker.h"
+#include "core/KiwiOwnSignal.h"
 #include "gui/StyleConstants.h"
 
 #include <QAccessible>
@@ -40,6 +41,7 @@ bool g_haveSessionCache = false;
 enum Column {
     ReceiverColumn,
     LocationColumn,
+    DistanceColumn,
     UsersColumn,
     ApiColumn,
     LimitsColumn,
@@ -79,7 +81,8 @@ KiwiPublicReceiverPicker::KiwiPublicReceiverPicker(QWidget* parent)
 
     m_table = new QTableWidget(0, ColumnCount, this);
     m_table->setHorizontalHeaderLabels(
-        {tr("Receiver"), tr("Location"), tr("Users"), tr("API"), tr("Limits")});
+        {tr("Receiver"), tr("Location"), tr("Entfernung"), tr("Users"),
+         tr("API"), tr("Limits")});
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -87,6 +90,7 @@ KiwiPublicReceiverPicker::KiwiPublicReceiverPicker(QWidget* parent)
     m_table->horizontalHeader()->setStretchLastSection(false);
     m_table->horizontalHeader()->setSectionResizeMode(ReceiverColumn, QHeaderView::Stretch);
     m_table->horizontalHeader()->setSectionResizeMode(LocationColumn, QHeaderView::Stretch);
+    m_table->horizontalHeader()->setSectionResizeMode(DistanceColumn, QHeaderView::ResizeToContents);
     m_table->horizontalHeader()->setSectionResizeMode(UsersColumn, QHeaderView::ResizeToContents);
     m_table->horizontalHeader()->setSectionResizeMode(ApiColumn, QHeaderView::ResizeToContents);
     m_table->horizontalHeader()->setSectionResizeMode(LimitsColumn, QHeaderView::ResizeToContents);
@@ -126,6 +130,15 @@ KiwiPublicReceiverPicker::KiwiPublicReceiverPicker(QWidget* parent)
     } else {
         startFetch();
     }
+}
+
+void KiwiPublicReceiverPicker::setPreselection(const QString& ownGrid,
+                                               double frequencyHz)
+{
+    m_preselect = true;
+    m_ownGrid = ownGrid.trimmed();
+    m_frequencyHz = frequencyHz;
+    applyFilter();
 }
 
 void KiwiPublicReceiverPicker::startFetch()
@@ -169,16 +182,30 @@ void KiwiPublicReceiverPicker::applyFilter()
 {
     const QString needle = m_search->text().trimmed();
 
-    QVector<const KiwiPublicReceiver*> matches;
-    matches.reserve(m_apiReceivers.size());
-    for (const auto& r : m_apiReceivers) {
+    // Vorauswahl (2026-11-24, "Mein Signal am Kiwi"): nach Entfernung zum
+    // eigenen Locator geordnet, nur was die Frequenz abdeckt und nicht voll
+    // ist. Ohne Vorauswahl bleibt es bei der Reihenfolge des Verzeichnisses.
+    QVector<KiwiCandidate> ordered;
+    if (m_preselect) {
+        ordered = kiwiPreselect(m_apiReceivers, m_ownGrid, m_frequencyHz);
+    } else {
+        for (const auto& r : m_apiReceivers) {
+            KiwiCandidate c;
+            c.receiver = r;
+            ordered.append(c);
+        }
+    }
+    QVector<const KiwiCandidate*> matches;
+    matches.reserve(ordered.size());
+    for (const KiwiCandidate& c : ordered) {
+        const KiwiPublicReceiver& r = c.receiver;
         if (!needle.isEmpty()
             && !r.name.contains(needle, Qt::CaseInsensitive)
             && !r.location.contains(needle, Qt::CaseInsensitive)
             && !r.url.contains(needle, Qt::CaseInsensitive)) {
             continue;
         }
-        matches.append(&r);
+        matches.append(&c);
     }
 
     // Bug fix 2026-09-07: this used to insertRow()+setItem() one row at a
@@ -199,7 +226,8 @@ void KiwiPublicReceiverPicker::applyFilter()
     {
         const QSignalBlocker modelBlocker(m_table->model());
         for (int row = 0; row < matches.size(); ++row) {
-            const KiwiPublicReceiver& r = *matches.at(row);
+            const KiwiPublicReceiver& r = matches.at(row)->receiver;
+            const double km = matches.at(row)->km;
 
             auto* nameItem = new QTableWidgetItem(r.name.isEmpty() ? r.url : r.name);
             nameItem->setToolTip(r.url);
@@ -208,7 +236,11 @@ void KiwiPublicReceiverPicker::applyFilter()
             nameItem->setData(Qt::UserRole + 1,
                               QUrl(r.url).host().left(16));  // short default name
             m_table->setItem(row, ReceiverColumn, nameItem);
+            nameItem->setData(Qt::UserRole + 2, km);
             m_table->setItem(row, LocationColumn, new QTableWidgetItem(r.location));
+            m_table->setItem(row, DistanceColumn, new QTableWidgetItem(
+                km >= 0.0 ? QStringLiteral("%1 km").arg(qRound(km))
+                          : QString()));
             m_table->setItem(row, UsersColumn, new QTableWidgetItem(
                 QStringLiteral("%1/%2").arg(r.users).arg(r.usersMax)));
             m_table->setItem(row, ApiColumn, new QTableWidgetItem(r.apiBadge()));
@@ -245,6 +277,11 @@ void KiwiPublicReceiverPicker::applyFilter()
         hiddenParts << tr("%1 policy-unknown").arg(m_hiddenUnknown);
     if (!hiddenParts.isEmpty())
         status += tr(" (%1 hidden)").arg(hiddenParts.join(QStringLiteral(", ")));
+    if (m_preselect) {
+        status += tr("  ·  nach Entfernung zu %1 geordnet, passend zu %2 MHz")
+                      .arg(m_ownGrid.isEmpty() ? tr("(Locator fehlt)") : m_ownGrid)
+                      .arg(m_frequencyHz / 1.0e6, 0, 'f', 3);
+    }
     if (m_fromCache)
         status += tr("  ·  cached — use “Refresh list” to update");
     m_status->setText(status);
@@ -259,6 +296,7 @@ void KiwiPublicReceiverPicker::acceptCurrentRow()
     if (!item) return;
     m_selectedEndpoint = item->data(Qt::UserRole).toString();
     m_selectedName = item->data(Qt::UserRole + 1).toString();
+    m_selectedKm = item->data(Qt::UserRole + 2).toDouble();
     accept();
 }
 

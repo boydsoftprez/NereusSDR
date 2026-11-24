@@ -228,3 +228,42 @@ genauerem Lesen als bereits geschlossen bzw. nicht anwendbar:
   Fensterebene während der Zerstörung ist dadurch unterbunden. Nicht
   live gegen einen Absturz getestet (dazu bräuchte es einen echten
   Lauf, siehe `CLAUDE.local.md`), aber am Code nicht reproduzierbar.
+
+## „Mein Signal am Kiwi“ (2026-11-24, Entwurf C)
+
+Betreiber: einen KiwiSDR leicht hören, das eigene ausgesendete Signal
+dort hören, aufnehmen und schön im Display sehen. Entwurf:
+`~/Longpath/entwuerfe-kiwi-2026-11-24/C-streifen-hauptfenster.png`
+(Hausstil). Die Prüfung von Zeus und AetherSDR hatte ergeben: virtuelle
+Antennen, Diversity und Bandrückruf (Aether) sowie TDoA (Zeus) werden
+nicht gebraucht; die Lücke war nur der Eigensignal-Modus.
+
+**Was dazukommt**
+
+| Stück | Wo | Was |
+| --- | --- | --- |
+| Sendefrequenz | `MainWindow_KiwiOwnSignal.cpp`, `RadioModel::transmitFrequencyHz` | Im Modus folgt der Kiwi der *Sende*frequenz der Sendescheibe (Split = eigener Sende-Slice, XIT, FM-Ablage — dieselbe Ableitung wie beim Senden), samt deren Betriebsart und Filter. Die Sendescheibe wird nur gelesen. |
+| Ton beim Senden | `kiwiKeepsAudioDuringTx` (`core/KiwiOwnSignal.h`), `syncKiwiSdrTransmitMute` | Profil mit `keepAudioDuringTx` **oder** Profil des Modus. Wer den Modus mitten in der Sendung einschaltet, bekommt den Ton ausdrücklich wieder (vorher: „nichts tun“, eine schon stumme Quelle blieb stumm). |
+| Vorauswahl | `kiwiPreselect`, `KiwiPublicReceiverPicker::setPreselection` | Nach Entfernung zum Locator (`User/GridSquare`, ersatzweise `gps` des Verzeichnisses) und Band, nur `ext_api > 0`, nicht offline, nicht voll. Der Abruf bleibt ein Klick (Dialog öffnen), kein Hintergrundpolling. |
+| Streifen | `gui/KiwiOwnSignalStrip` | Direkt unter dem Panadapter in dessen Spalte; Achse = Mitte/Breite des Panadapters der Sendescheibe, jede Kiwi-Zeile wird mit ihrem *eigenen* Bereich darauf abgebildet (der Kiwi trifft die Breite nur in Zoomstufen); Ränder fluchten mit `SpectrumWidget::spectrumRect()`. Marke `#a86b6d`, Kopfzeile „KIWI Name · km · Verzug“, Status rechts, Fußzeile Aufnahme. |
+| Hört er mich? | `KiwiHearMeMeter` | Pro Zeile: Spitze auf der Marke (±1,5 kHz) gegen den Zeilenmedian; „hört mich“, wenn ≥ 6 dB in mindestens zwei Zeilen und einem Viertel des Fensters (Sprachpausen). Fenster = [Tasten + Verzug, Loslassen + Verzug]. Verzug wird am ersten Anstieg gemessen — nur, wenn die Marke vorher frei war — sonst 1,2 s angenommen („ca.“). **„hört nichts“ nur mit Beweislast:** ≥ 3 Zeilen im Fenster, Marke im Bild, 3 s nach dem Verzug. Alles andere (kein Bild, Marke außerhalb des Kiwi-Bereichs, zu wenig Zeilen) ist **„unbekannt“**. Pegel = Kiwi-Wasserfall-dBm als S-Wert (S9 = −73 dBm), nur so genau wie dessen Eichung. |
+| Aufnahme | `core/KiwiRecording` | WAV (24 kHz, Float, stereo — wie geliefert) nach `<Datenordner>/recordings/Mein-Signal_<Kiwi>_<Zeit>.wav`, daneben der Streifen als PNG. Obergrenze 2 h, Schreibfehler beenden mit Hinweis. |
+| Bedienung | `KiwiSdrApplet` | „Mein Signal“, „Aufnehmen“, „Anderen Kiwi …“ (öffnet den vorsortierten Dialog). Der Modus startet nie von allein. |
+
+**`QsoRecorder` nimmt den Kiwi-Ton nicht von selbst auf** (geprüft): sein
+Abgriff in `AudioEngine::rxBlockReady` gilt genau einer Scheibe — der, die
+aufgenommen wird, normalerweise die des Funkgeräts —, und Kiwi-Ton läuft
+unter der Scheibe des Kiwi und wird beim Senden gesperrt. Deshalb ein
+eigener Schreiber am `decodedAudioReady` des Profils, unabhängig von der
+Stummschaltung.
+
+**Sicherheitsschranke unverändert:** der Kiwi hängt nur an einer Scheibe,
+die `kiwiControllableSlice` freigibt (`streamIndex() < 0`). Übernimmt ein
+echtes Funkgerät die Scheibe, ist der Modus aus
+(`sliceAssignmentChanged`), und es wird nichts mehr nachgeführt.
+
+**Nicht gebaut / offen:** Zielfrequenz-Folgen des *Wasserfallausschnitts*
+beruht auf `setWaterfallView` und den Zoomstufen des Kiwi — am echten
+Gerät ungeprüft. Der Kiwi-Wasserfall-Pegel ist nicht gegen ein
+Referenzsignal geeicht. Die Rundlaufzeit (Verzug) ist nur eine
+Messung am Anstieg, kein Zeitstempel des Kiwi.

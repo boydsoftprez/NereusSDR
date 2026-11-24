@@ -38,6 +38,7 @@
 
 class QLabel;
 class QListWidget;
+class QPushButton;
 
 namespace Longpath {
 
@@ -69,6 +70,21 @@ public:
     void setReceivers(const QVector<KiwiSdrReceiverStatus>& receivers);
     void setKiwiSdrManager(KiwiSdrManager* manager);
 
+    // ── Mein Signal am Kiwi (2026-11-24, Entwurf C) ──────────────────
+    //
+    // Drei Knoepfe ueber der Empfaengerliste. Das Applet schaltet nichts
+    // selbst, es meldet nur den Wunsch; der Zustand kommt vom MainWindow
+    // zurueck (die Setter blockieren ihr eigenes Signal).
+    void setOwnSignalActive(bool active);
+    void setRecordingActive(bool active);
+    // Name des Kiwi, an dem "Mein Signal" haengt; leer = noch keiner.
+    void setOwnSignalReceiverName(const QString& name);
+
+signals:
+    void ownSignalToggled(bool on);
+    void recordToggled(bool on);
+    void otherReceiverRequested();
+
 private:
     void rebuildReceiverList();
     QWidget* buildReceiverRow(const KiwiSdrReceiverStatus& receiver);
@@ -76,6 +92,10 @@ private:
     QString sliceText(SliceModel* slice) const;
 
     QLabel* m_emptyLabel{nullptr};
+    QPushButton* m_ownSignalButton{nullptr};
+    QPushButton* m_recordButton{nullptr};
+    QPushButton* m_otherButton{nullptr};
+    QLabel* m_ownSignalLabel{nullptr};
     QListWidget* m_receiverList{nullptr};
     QVector<KiwiSdrReceiverStatus> m_receivers;
     QList<QMetaObject::Connection> m_sliceConnections;

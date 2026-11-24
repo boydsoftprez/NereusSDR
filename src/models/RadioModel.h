@@ -608,6 +608,13 @@ public:
 
     SliceModel* activeSlice() const { return m_activeSlice; }
 
+    /// Sendefrequenz der Scheibe in Hz (XIT, FM-Ablage -- dieselbe Ableitung
+    /// wie beim Senden selbst). Fuer Anzeigen, die der Sendefrequenz statt
+    /// der Empfangsfrequenz folgen ("Mein Signal am Kiwi", 2026-11-24).
+    quint64 transmitFrequencyHz(const SliceModel* s) const {
+        return txFrequencyForSlice(s);
+    }
+
     /// Hand the transmitter to the slice with this ID, RF-safely.
     ///
     /// Takes a slice ID (see sliceById), not a list position, and converts.

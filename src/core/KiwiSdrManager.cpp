@@ -556,6 +556,16 @@ QString KiwiSdrManager::profilePasswordPersistenceDetail(
     return m_profilePasswordPersistenceDetails.value(id);
 }
 
+QString KiwiSdrManager::profileIdForEndpoint(const QString& endpoint) const
+{
+    const QString normalized = normalizedProfileEndpoint(endpoint);
+    if (normalized.isEmpty()) { return QString(); }
+    for (const KiwiSdrAntennaProfile& p : m_profiles) {
+        if (p.endpoint == normalized) { return p.id; }
+    }
+    return QString();
+}
+
 QString KiwiSdrManager::addProfile(const QString& name, const QString& endpoint)
 {
     const QString normalizedEndpoint = normalizedProfileEndpoint(endpoint);

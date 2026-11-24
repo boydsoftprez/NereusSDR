@@ -21,6 +21,7 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QStringList>
 #include <QVBoxLayout>
 
@@ -189,6 +190,47 @@ KiwiSdrApplet::KiwiSdrApplet(RadioModel* model, QWidget* parent)
     root->setContentsMargins(4, 2, 4, 4);
     root->setSpacing(4);
 
+    // ── Mein Signal am Kiwi ──────────────────────────────────────────
+    auto* ownRow = new QHBoxLayout;
+    ownRow->setContentsMargins(0, 0, 0, 0);
+    ownRow->setSpacing(4);
+    m_ownSignalButton = blueToggle(tr("Mein Signal"), -1, 22);
+    m_ownSignalButton->setCheckable(true);
+    m_ownSignalButton->setObjectName(QStringLiteral("kiwiOwnSignalButton"));
+    m_ownSignalButton->setAccessibleName(
+        tr("Mein Signal am Kiwi hören"));
+    m_ownSignalButton->setToolTip(
+        tr("Ein Kiwi hört mit: Wasserfall unter dem Panadapter, "
+           "Marke auf der Sendefrequenz, Ton bleibt beim Senden."));
+    m_recordButton = blueToggle(tr("Aufnehmen"), -1, 22);
+    m_recordButton->setCheckable(true);
+    m_recordButton->setObjectName(QStringLiteral("kiwiRecordButton"));
+    m_recordButton->setAccessibleName(tr("Ton des Kiwi aufnehmen"));
+    m_otherButton = blueToggle(tr("Anderen Kiwi …"), 112, 22);
+    m_otherButton->setObjectName(QStringLiteral("kiwiOtherButton"));
+    m_otherButton->setAccessibleName(tr("Anderen Kiwi auswählen"));
+    ownRow->addWidget(m_ownSignalButton, 1);
+    ownRow->addWidget(m_recordButton, 1);
+    root->addLayout(ownRow);
+    // Zweite Zeile: "Anderen Kiwi ..." mit dem gewaehlten Namen daneben --
+    // in einer Zeile mit den zwei Schaltern wurde der Text abgeschnitten.
+    auto* otherRow = new QHBoxLayout;
+    otherRow->setContentsMargins(0, 0, 0, 0);
+    otherRow->setSpacing(6);
+    otherRow->addWidget(m_otherButton, 0);
+    m_ownSignalLabel = new QLabel(this);
+    m_ownSignalLabel->setTextFormat(Qt::PlainText);
+    m_ownSignalLabel->setStyleSheet(detailStyle());
+    m_ownSignalLabel->setVisible(false);
+    otherRow->addWidget(m_ownSignalLabel, 1);
+    root->addLayout(otherRow);
+    connect(m_ownSignalButton, &QPushButton::toggled, this,
+            &KiwiSdrApplet::ownSignalToggled);
+    connect(m_recordButton, &QPushButton::toggled, this,
+            &KiwiSdrApplet::recordToggled);
+    connect(m_otherButton, &QPushButton::clicked, this,
+            &KiwiSdrApplet::otherReceiverRequested);
+
     m_emptyLabel = new QLabel(tr("No KiwiSDR receive antenna configured"), this);
     m_emptyLabel->setAccessibleName(tr("KiwiSDR receiver status"));
     m_emptyLabel->setStyleSheet(emptyStyle());
@@ -244,6 +286,24 @@ void KiwiSdrApplet::setReceivers(const QVector<KiwiSdrReceiverStatus>& receivers
 void KiwiSdrApplet::setKiwiSdrManager(KiwiSdrManager* manager)
 {
     m_kiwiSdrManager = manager;
+}
+
+void KiwiSdrApplet::setOwnSignalActive(bool active)
+{
+    const QSignalBlocker blocker(m_ownSignalButton);
+    m_ownSignalButton->setChecked(active);
+}
+
+void KiwiSdrApplet::setRecordingActive(bool active)
+{
+    const QSignalBlocker blocker(m_recordButton);
+    m_recordButton->setChecked(active);
+}
+
+void KiwiSdrApplet::setOwnSignalReceiverName(const QString& name)
+{
+    m_ownSignalLabel->setText(tr("Mein Signal: %1").arg(name));
+    m_ownSignalLabel->setVisible(!name.isEmpty());
 }
 
 void KiwiSdrApplet::rebuildReceiverList()
