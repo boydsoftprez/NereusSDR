@@ -400,7 +400,11 @@ void RxLeveler::process(float* x, int frames, double sampleRate,
     const bool hissKnown = hiss > 0.0 && m_hissLearnLeft <= 0.0;
     const bool speech = present && shortDb > kSilenceDbfs
         && shortDb > m_peakRefDb - kSpeechGateDb
-        && hissKnown && shortDb > toDb(hiss) + kOverHissDb;
+        && hissKnown && shortDb > toDb(hiss) + kOverHissDb
+        // A voice's first reading is its own: the 50 ms level is still up
+        // in the tail of a word the station check came too late for, and
+        // the bare hiss of that block is no voice.
+        && (m_loudPow >= 0.0 || toDb(power) > toDb(hiss) + kOverHissDb);
 
     m_quietSec = speech ? 0.0 : m_quietSec + dt;
 
@@ -408,6 +412,7 @@ void RxLeveler::process(float* x, int frames, double sampleRate,
     // when the station goes, so the next one is judged on its own.
     if (!present) {
         m_loudPow = -1.0;
+        m_loudSec = 0.0;
     } else if (speech) {
         const double voice = std::max(power - hiss, power * 0.1);
         if (m_loudPow < 0.0) {
@@ -455,6 +460,11 @@ void RxLeveler::process(float* x, int frames, double sampleRate,
     } else if (m_riseHoldLeft > 0.0) {
         m_riseHoldLeft = std::max(0.0, m_riseHoldLeft - dt);
         want = std::min(want, m_gainDb);
+    }
+    // A first soft syllable is not the station: no rise until enough of
+    // its voice is heard. Down, and back up to unity, go as ever.
+    if (present && m_loudSec < kRiseSpeechSec) {
+        want = std::min(want, std::max(m_gainDb, 0.0));
     }
     want = std::clamp(want, -maxCut, maxBoost);
 

@@ -43,6 +43,10 @@
 //                without a step (a filter drag too), a pause with the
 //                station there from the start. J.J. Boyd (KG4VCF),
 //                AI-assisted via Claude Code.
+//   2026-11-25 - The nets run on both sets of voices, a weak station's
+//                settled gain is checked against what it needs, and a word
+//                tail when the station check comes late lifts nothing.
+//                J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -50,6 +54,7 @@
 #include "RxLevelerSynth.h"
 #include "RxWeakStationModel.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <numbers>
@@ -59,6 +64,12 @@ using namespace NereusSDR;
 using namespace RxlSynth;
 
 namespace {
+
+// Sets the synthetic voices (RxlSynth::voices) and puts them back.
+struct UseVoices {
+    explicit UseVoices(Voices v) { voices = v; }
+    ~UseVoices() { voices = Voices::A; }
+};
 
 // A net: overs of different stations with gaps of hiss between them, some
 // long, some back to back.
@@ -162,6 +173,14 @@ std::vector<float> randomBlock(int frames, std::uint32_t seed, float amp)
 
 class TestRxLeveler : public QObject {
     Q_OBJECT
+
+private:
+    static void voiceSets()
+    {
+        QTest::addColumn<int>("set");
+        QTest::newRow("voices A") << static_cast<int>(Voices::A);
+        QTest::newRow("voices B") << static_cast<int>(Voices::B);
+    }
 
 private slots:
     // ── The engine ────────────────────────────────────────────────────────
@@ -292,8 +311,11 @@ private slots:
     // the hiss is back to plain. (Two seconds with the old +10 dB Auto
     // boost: a weak station lifted +20 dB takes about half a second longer
     // to let go.)
+    void gapsAreNotLifted_data() { voiceSets(); }
     void gapsAreNotLifted()
     {
+        QFETCH(int, set);
+        const UseVoices use(static_cast<Voices>(set));
         for (double hiss : {-30.0, -40.0}) {
             for (int block : {256, 1024}) {
                 const Net n = buildNet(standardNet(), hiss, 77);
@@ -322,8 +344,11 @@ private slots:
     // A loud station after a gap, or straight after a weak one the gain was
     // up for, starts no louder than it would without the leveler; a weak
     // one may come up, but its start stays under the boost headroom.
+    void noBlastWhenALoudStationFollows_data() { voiceSets(); }
     void noBlastWhenALoudStationFollows()
     {
+        QFETCH(int, set);
+        const UseVoices use(static_cast<Voices>(set));
         const std::vector<Segment> segs = standardNet();
         for (double hiss : {-30.0, -40.0}) {
             for (int block : {256, 1024}) {
@@ -351,11 +376,43 @@ private slots:
         }
     }
 
+    // The station check can come after a first word has ended. The 50 ms
+    // level is still up from it while the block is bare hiss; that is no
+    // voice, and nothing is lifted until one is heard.
+    void aWordTailIsNotTheStation()
+    {
+        for (int block : {256, 1024}) {
+            std::vector<double> x = bandNoise(static_cast<int>(6 * kRate), 5);
+            for (double& v : x) {
+                v *= 0.01;                          // hiss at -40 dBFS
+            }
+            for (int i = static_cast<int>(3.0 * kRate); i < static_cast<int>(3.2 * kRate); ++i) {
+                x[static_cast<size_t>(i)] *= 20.0;  // a word at -14
+            }
+            RxLeveler lev;
+            RxLevelerParams p = autoParams();
+            std::vector<float> buf(static_cast<size_t>(block) * 2);
+            for (int pos = 0; pos + block <= static_cast<int>(x.size()); pos += block) {
+                for (int i = 0; i < block; ++i) {
+                    buf[static_cast<size_t>(2 * i)] = static_cast<float>(x[static_cast<size_t>(pos + i)]);
+                    buf[static_cast<size_t>(2 * i + 1)] = buf[static_cast<size_t>(2 * i)];
+                }
+                p.stationPresent = pos >= static_cast<int>(3.23 * kRate);
+                lev.process(buf.data(), block, kRate, p);
+                QVERIFY2(lev.gainDb() <= 0.1,
+                         qPrintable(QStringLiteral("%1 s: %2 dB").arg(pos / kRate).arg(lev.gainDb())));
+            }
+        }
+    }
+
     // What it is for: weak stations come up, heavily processed ones come
     // down, a natural strong voice is left about where it was, and the
     // spread of levels across the net shrinks.
+    void levelsTheNet_data() { voiceSets(); }
     void levelsTheNet()
     {
+        QFETCH(int, set);
+        const UseVoices use(static_cast<Voices>(set));
         const Net n = buildNet(standardNet(), -30.0, 77);
         const Run r = runLeveler(n, autoParams());
         const std::vector<Segment> segs = standardNet();
@@ -377,6 +434,15 @@ private slots:
                 QVERIFY2(change < -1.0, qPrintable(QStringLiteral("processed: %1 dB").arg(change)));
                 QVERIFY(change >= -RxLeveler::kAutoMaxCutDb - 0.5);
             } else if (s.snrDb < 40.0) {
+                // The settled gain is what the station needs to reach the
+                // target.
+                std::vector<double> gains(r.gainDb.begin() + blockOf(r, a + (b - a) / 2),
+                                          r.gainDb.begin() + blockOf(r, b));
+                std::nth_element(gains.begin(), gains.begin() + gains.size() / 2, gains.end());
+                const double gain = gains[gains.size() / 2];
+                const double need = RxLeveler::kAutoTargetDb - before;
+                QVERIFY2(std::abs(gain - need) < 1.5,
+                         qPrintable(QStringLiteral("weak: needs %1 dB, gets %2 dB").arg(need).arg(gain)));
                 QVERIFY2(change > 2.5, qPrintable(QStringLiteral("weak: %1 dB").arg(change)));
                 QVERIFY(change <= RxLeveler::kAutoMaxBoostDb + 0.5);
             } else {

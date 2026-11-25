@@ -17,6 +17,8 @@
 // Modification history (NereusSDR):
 //   2026-11-22 - std::numbers::pi, and measureBand takes the mode. J.J.
 //                Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-25 - The same voices on every platform, in two sets. J.J. Boyd
+//                (KG4VCF), AI-assisted via Claude Code.
 
 #include "core/dsp/RxLeveler.h"
 #include "core/dsp/RxStationGate.h"
@@ -32,6 +34,50 @@ namespace RxlSynth {
 
 constexpr double kRate = 48000.0;
 constexpr double kPi = std::numbers::pi;
+
+// The standard library's distributions differ by platform, so the same
+// seed made a different voice on each. These are the same everywhere.
+// Both of the orders the libraries hand out a pair of normals in are
+// kept (Apple's and GCC's), as two sets of voices.
+enum class Voices { A, B };
+inline Voices voices = Voices::A;
+
+struct Uniform {
+    double operator()(std::mt19937& rng) const
+    {
+        const double low = static_cast<double>(rng());
+        const double high = static_cast<double>(rng());
+        return (low + high * 4294967296.0) / 18446744073709551616.0;
+    }
+};
+
+struct Normal {
+    double mean;
+    double sigma;
+    double saved{0.0};
+    bool   hasSaved{false};
+    Normal(double m, double s) : mean(m), sigma(s) {}
+    double operator()(std::mt19937& rng)
+    {
+        if (hasSaved) {
+            hasSaved = false;
+            return saved * sigma + mean;
+        }
+        const Uniform u;
+        double x = 0.0;
+        double y = 0.0;
+        double r2 = 0.0;
+        do {
+            x = 2.0 * u(rng) - 1.0;
+            y = 2.0 * u(rng) - 1.0;
+            r2 = x * x + y * y;
+        } while (r2 > 1.0 || r2 == 0.0);
+        const double k = std::sqrt(-2.0 * std::log(r2) / r2);
+        hasSaved = true;
+        saved = (voices == Voices::A ? y : x) * k;
+        return (voices == Voices::A ? x : y) * k * sigma + mean;
+    }
+};
 
 struct Biquad {
     double b0{1}, b1{0}, b2{0}, a1{0}, a2{0};
@@ -83,7 +129,7 @@ struct Passband {
 inline std::vector<double> bandNoise(int n, std::uint32_t seed)
 {
     std::mt19937 rng(seed);
-    std::normal_distribution<double> g(0.0, 1.0);
+    Normal g(0.0, 1.0);
     Passband pb;
     std::vector<double> out(static_cast<std::size_t>(n));
     double acc = 0.0;
@@ -104,8 +150,8 @@ inline std::vector<double> speech(double seconds, std::uint32_t seed, bool proce
     const int n = static_cast<int>(seconds * kRate);
     std::vector<double> out(static_cast<std::size_t>(n), 0.0);
     std::mt19937 rng(seed);
-    std::uniform_real_distribution<double> u(0.0, 1.0);
-    std::normal_distribution<double> g(0.0, 1.0);
+    Uniform u;
+    Normal g(0.0, 1.0);
     const double vowels[][2] = {{730, 1090}, {270, 2290}, {530, 1840}, {660, 1720},
                                 {300, 870},  {640, 1190}, {490, 1350}};
     int pos = 0;
@@ -285,7 +331,7 @@ inline Net buildNet(const std::vector<Segment>& segs, double noiseOutDb,
     double m = noisePow;
     const int tick = static_cast<int>(0.1 * kRate);
     std::mt19937 rng(noiseSeed + 7);
-    std::normal_distribution<double> wob(0.0, 0.3);
+    Normal wob(0.0, 0.3);
     for (int i = 0; i < total; ++i) {
         m += avg * (rf[static_cast<std::size_t>(i)] * rf[static_cast<std::size_t>(i)] - m);
         if ((i + 1) % tick == 0) {

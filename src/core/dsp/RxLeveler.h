@@ -69,6 +69,10 @@
 //                hiss; startOver lets the gain back to unity at its own
 //                rates instead of in one block.
 //                J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-25 - The start of an over: the bare hiss in the tail of a word
+//                no longer seeds the loudness, and the gain does not rise
+//                until kRiseSpeechSec of speech is heard. J.J. Boyd
+//                (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include "core/WdspTypes.h"
@@ -202,6 +206,10 @@ public:
     // The loudness reading: an average of the speech blocks' power, hiss
     // taken out, over about this long.
     static constexpr double kLoudnessSec = 1.0;
+    // No rise above unity (or above where the gain is) until this much of
+    // a station's speech has been heard (s): its first soft syllable is
+    // not its level.
+    static constexpr double kRiseSpeechSec = 0.3;
     // A speech block may not be lifted past target + this. A loud station
     // that starts while the gain is still up for a quiet one loses that
     // boost at once instead of at the fall rate.
