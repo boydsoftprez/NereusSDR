@@ -6697,6 +6697,10 @@ nereus_add_test(tst_display_fft_replan)
 # wire rate.
 nereus_add_test(tst_pan_rate_follows_stream)
 
+# Issue 700: the Linux platform theme choice before QApplication: Cinnamon goes
+# through the desktop portal unless the user picked a theme.
+nereus_add_test(tst_portal_theme_choice)
+
 # Display pill plan Task 9: PanModels, a per-band PanadapterModel for every
 # window pan. The pan's band follows its centre, the band's stored dB Max
 # and Min set its range, the store is shared, the per-band 3D Floor is
