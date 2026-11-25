@@ -10,6 +10,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-14 - RxLevelerMode (Off, Auto, Custom) declared for the mirror.
+//                 Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 //   2026-08-09  J.J. Boyd / KG4VCF  Whole-branch review, Important 3:
 //                                    declared enum domains. AI-assisted
 //                                    transformation via Anthropic Claude
@@ -110,6 +112,9 @@ const DomainTable& table()
 
         declare<AGCMode>(&t, { AGCMode::Off, AGCMode::Long, AGCMode::Slow, AGCMode::Med,
                                AGCMode::Fast, AGCMode::Custom });
+
+        declare<RxLevelerMode>(&t, { RxLevelerMode::Off, RxLevelerMode::Auto,
+                                     RxLevelerMode::Custom });
 
         declare<NbMode>(&t, { NbMode::Off, NbMode::NB, NbMode::NB2 });
 

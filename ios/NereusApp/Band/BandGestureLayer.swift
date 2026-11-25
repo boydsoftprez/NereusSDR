@@ -24,6 +24,9 @@
 // 2026-11-16: A drag in from the right edge over the recorder's time strip
 // is the edge's swipe again (or moves the band with the edge Off).
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-15: a tap on a flag's letter folds it to its tag, and a tap on
+// that tag opens it again, kept per receiver on this phone. J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import Combine
 import NereusBand
@@ -241,6 +244,8 @@ struct BandGestureLayer: View {
         let measured = flagHeights
         let column = FlagLayout.sideColumnSize(button: FlagSideButtons.diameter(large: large))
         let olderRade = Set(entries.filter { $0.rade?.wraps == true }.map(\.id))
+        // The flags folded by their letter, read once for this layout.
+        let foldedFlags = settings.foldedFlags
         func place(top: CGFloat) -> [FlagPlacement] {
             FlagLayout.layout(slices: entries.map(\.slice), activeSliceId: slices.activeSliceId,
                               geometry: geometry,
@@ -258,7 +263,8 @@ struct BandGestureLayer: View {
                                   }
                                   return measured[slice.id] ?? fixed
                               },
-                              sideColumn: column, top: top)
+                              sideColumn: column, top: top,
+                              folded: { foldedFlags.contains($0.letter) })
         }
         // While another slice's band shows, the flags start under Back to
         // your band; sideways, where the band is short, they stay at the top
@@ -584,7 +590,12 @@ struct BandGestureLayer: View {
                         openRoundtable: toggleRoundtableLine.map { toggle in {
                             controls?.close()
                             toggle(id)
-                        } })
+                        } },
+                        rxlReadings: slices.rxlLifts,
+                        fold: {
+                            controls?.close()
+                            settings.setFlagFolded(true, letter: entry.slice.letter)
+                        })
                 .onTapGesture(coordinateSpace: .local) { point in
                     // Even if an ancestor recognises the tap, the DIV target never selects its band slice.
                     guard !entry.diversityOn || !FlagMetrics(large: large).diversity.contains(point) else { return }
@@ -626,10 +637,15 @@ struct BandGestureLayer: View {
                     .offset(x: column.minX, y: column.minY)
             }
         case .folded:
+            let letterFolded = settings.flagFolded(entry.slice.letter)
             FoldedTagView(entry: entry, activate: {
                 controls?.close()
+                // A flag folded by its letter opens again; either way the slice becomes active.
+                if letterFolded {
+                    settings.setFlagFolded(false, letter: entry.slice.letter)
+                }
                 slices.activate(id)
-            }, openDiversity: { controls?.openDiversity(entry) })
+            }, openDiversity: { controls?.openDiversity(entry) }, opensFlag: letterFolded)
                 .offset(x: rect.minX, y: rect.minY)
         }
     }

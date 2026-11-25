@@ -24,6 +24,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-14: the receive leveler's ranges in `agc`. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-09-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
@@ -85,6 +87,7 @@
 #include "core/HpsdrModel.h"
 #include "core/SampleRateCatalog.h"
 #include "core/SkuUiProfile.h"
+#include "core/dsp/RxLeveler.h"
 #include "core/session/SessionMessages.h"
 #include "core/session/StationCapabilities.h"
 #include "core/session/StationCatalog.h"
@@ -334,6 +337,17 @@ void checkDesktopValues(const QJsonObject& catalog, HPSDRModel model, ProtocolVe
     }
     QCOMPARE(agc.value(QStringLiteral("thresholdDb")).toObject(),
              range(kAgcThresholdMinDb, kAgcThresholdMaxDb, kAgcThresholdStepDb));
+    // The receive leveler's Custom settings, as the setup page holds them.
+    QCOMPARE(agc.value(QStringLiteral("rxLevelerTargetDb")).toObject(),
+             range(RxLeveler::kTargetDbMin, RxLeveler::kTargetDbMax, 1));
+    QCOMPARE(agc.value(QStringLiteral("rxLevelerMaxBoostDb")).toObject(),
+             range(RxLeveler::kMaxBoostDbMin, RxLeveler::kMaxBoostDbMax, 1));
+    QCOMPARE(agc.value(QStringLiteral("rxLevelerMaxCutDb")).toObject(),
+             range(RxLeveler::kMaxCutDbMin, RxLeveler::kMaxCutDbMax, 1));
+    QCOMPARE(agc.value(QStringLiteral("rxLevelerAttackMs")).toObject(),
+             range(RxLeveler::kAttackMsMin, RxLeveler::kAttackMsMax, 1));
+    QCOMPARE(agc.value(QStringLiteral("rxLevelerReleaseMs")).toObject(),
+             range(RxLeveler::kReleaseMsMin, RxLeveler::kReleaseMsMax, 1));
     // Thetis's clamp in setAGCThresholdPoint, console.cs:46048-46049 [v2.10.3.15].
     QCOMPARE(kAgcThresholdMinDb, -160);
     QCOMPARE(kAgcThresholdMaxDb, 2);

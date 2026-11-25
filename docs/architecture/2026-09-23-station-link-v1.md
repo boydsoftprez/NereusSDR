@@ -3272,7 +3272,7 @@ resume below 250 ms remains independent of warning presentation.
 | 12 | `streamIndex` | `i64` | outbound |  |
 | 13 | `psPaused` | `bool` | outbound |  |
 
-**SliceModel** (156 properties)
+**SliceModel** (163 properties)
 
 | Ordinal | Property | Wire kind | Direction | Enum values |
 | --- | --- | --- | --- | --- |
@@ -3432,6 +3432,13 @@ resume below 250 ms remains independent of warning presentation.
 | 153 | `radeReason` | `utf8` | outbound |  |
 | 154 | `meterReadingNs` | `i64` | outbound |  |
 | 155 | `nnrLoadWarning` | `utf8` | outbound |  |
+| 156 | `rxLevelerMode` | `enum` | bidirectional | 0, 1, 2 |
+| 157 | `rxLevelerTargetDb` | `i64` | bidirectional |  |
+| 158 | `rxLevelerMaxBoostDb` | `i64` | bidirectional |  |
+| 159 | `rxLevelerAttackMs` | `i64` | bidirectional |  |
+| 160 | `rxLevelerReleaseMs` | `i64` | bidirectional |  |
+| 161 | `rxLevelerMaxCutDb` | `i64` | bidirectional |  |
+| 162 | `rxLevelerGainDb` | `f64` | outbound |  |
 
 **SpotSourceHost** (13 properties)
 

@@ -6,6 +6,12 @@
 // 2026-10-25: Roundtable plan Task 19, on an iPad with the applet column
 // showing, the line scrolls the column to the Roundtable applet. J.J. Boyd
 // (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-15: a tap on the slice's letter folds the flag to its one-line
+// tag, as the desktop's letter does, with a VoiceOver action to match.
+// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-15: the RXL line under the header, the desktop flag's RXL tag
+// on a line of its own while RXL is on. J.J. Boyd (KG4VCF), AI-assisted
+// via Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -16,7 +22,8 @@ import SwiftUI
 /// (the board's redrawn flag, `#flagbtn-review`, approved 2026-09-30):
 /// the desktop flag's rows at one geometry for every text size. Top to
 /// bottom: the 44-point header (antennas, the passband's width, TX and the
-/// slice's letter), the 44-point owner row on a slice this phone only
+/// slice's letter), the 18-point RXL line while RXL is on in a mode it
+/// levels, the 44-point owner row on a slice this phone only
 /// listens to, the 40-point frequency across the flag, a 4-point gap, the
 /// 24-point level row, the RADE row in RADE (16 points and a 2-point gap)
 /// and the four 44-point tabs across the flag's whole width. Only the
@@ -33,6 +40,8 @@ struct FlagMetrics: Equatable {
     static let gap: CGFloat = 2
     static let header: CGFloat = 44
     static let ownerRow: CGFloat = FlagLayout.ownerRowHeight
+    /// The RXL line under the header, as tall as its tag (JJ, 2026-11-15).
+    static let rxlLine: CGFloat = 18
     static let frequencyHeight: CGFloat = 40
     static let levelTop: CGFloat = 4
     static let levelHeight: CGFloat = 24
@@ -65,19 +74,21 @@ struct FlagMetrics: Equatable {
     /// The plain flag: 158 points at every text size.
     var plainHeight: CGFloat { height(rade: false, listening: false) }
 
-    /// The flag's height: 158, 176 with the RADE row, and 44 more with the owner row.
-    func height(rade: Bool, listening: Bool) -> CGFloat {
-        Self.top + Self.header + (listening ? Self.ownerRow : 0) + Self.frequencyHeight + Self.levelTop
-            + Self.levelHeight + (rade ? Self.radeTop + Self.radeHeight : 0) + Self.tabHeight + Self.bottom
+    /// The flag's height: 158, 176 with the RADE row, 44 more with the
+    /// owner row and 18 more with the RXL line.
+    func height(rade: Bool, listening: Bool, rxl: Bool = false) -> CGFloat {
+        Self.top + Self.header + (rxl ? Self.rxlLine : 0) + (listening ? Self.ownerRow : 0) + Self.frequencyHeight
+            + Self.levelTop + Self.levelHeight + (rade ? Self.radeTop + Self.radeHeight : 0) + Self.tabHeight
+            + Self.bottom
     }
 
     var headerY: CGFloat { Self.top }
-    func ownerY() -> CGFloat { Self.top + Self.header }
-    func frequencyY(listening: Bool = false) -> CGFloat {
-        Self.top + Self.header + (listening ? Self.ownerRow : 0)
+    func ownerY(rxl: Bool = false) -> CGFloat { Self.top + Self.header + (rxl ? Self.rxlLine : 0) }
+    func frequencyY(listening: Bool = false, rxl: Bool = false) -> CGFloat {
+        ownerY(rxl: rxl) + (listening ? Self.ownerRow : 0)
     }
-    func tabsY(rade: Bool = false, listening: Bool = false) -> CGFloat {
-        height(rade: rade, listening: listening) - Self.bottom - Self.tabHeight
+    func tabsY(rade: Bool = false, listening: Bool = false, rxl: Bool = false) -> CGFloat {
+        height(rade: rade, listening: listening, rxl: rxl) - Self.bottom - Self.tabHeight
     }
 
     var antenna: CGRect { CGRect(x: Self.inset, y: headerY, width: Self.antennaWidth, height: Self.header) }
@@ -86,18 +97,18 @@ struct FlagMetrics: Equatable {
         CGRect(x: width - Self.inset - Self.letterSize - Self.gap - Self.txWidth, y: headerY, width: Self.txWidth,
                height: Self.header)
     }
-    func frequency(listening: Bool = false) -> CGRect {
-        CGRect(x: Self.inset, y: frequencyY(listening: listening), width: width - 2 * Self.inset,
+    func frequency(listening: Bool = false, rxl: Bool = false) -> CGRect {
+        CGRect(x: Self.inset, y: frequencyY(listening: listening, rxl: rxl), width: width - 2 * Self.inset,
                height: Self.frequencyHeight)
     }
     /// The owner row's Take control, at the row's right.
-    var take: CGRect {
-        CGRect(x: width - Self.inset - takeWidth, y: ownerY(), width: takeWidth, height: Self.ownerRow)
+    func take(rxl: Bool = false) -> CGRect {
+        CGRect(x: width - Self.inset - takeWidth, y: ownerY(rxl: rxl), width: takeWidth, height: Self.ownerRow)
     }
 
     /// The four tabs, left to right, across the flag's whole width.
-    func tabs(rade: Bool = false, listening: Bool = false) -> [CGRect] {
-        let y = tabsY(rade: rade, listening: listening)
+    func tabs(rade: Bool = false, listening: Bool = false, rxl: Bool = false) -> [CGRect] {
+        let y = tabsY(rade: rade, listening: listening, rxl: rxl)
         var x: CGFloat = 0
         return Self.tabWidths.map { tabWidth in
             defer { x += tabWidth }
@@ -106,10 +117,10 @@ struct FlagMetrics: Equatable {
     }
 
     /// Every button on the flag, named, in the flag's points.
-    func targets(rade: Bool = false, listening: Bool = false) -> [(name: String, rect: CGRect)] {
-        [("Antennas", antenna), ("TX", transmit), ("Frequency", frequency(listening: listening))]
-            + (listening ? [("Take control", take)] : [])
-            + zip(FlagTab.allCases, tabs(rade: rade, listening: listening)).map { ("Tab \($0.0.title)", $0.1) }
+    func targets(rade: Bool = false, listening: Bool = false, rxl: Bool = false) -> [(name: String, rect: CGRect)] {
+        [("Antennas", antenna), ("TX", transmit), ("Frequency", frequency(listening: listening, rxl: rxl))]
+            + (listening ? [("Take control", take(rxl: rxl))] : [])
+            + zip(FlagTab.allCases, tabs(rade: rade, listening: listening, rxl: rxl)).map { ("Tab \($0.0.title)", $0.1) }
     }
 }
 
@@ -195,6 +206,12 @@ struct VfoFlagView: View {
     /// iPad with the applet column showing, scrolls the column to the
     /// Roundtable applet (spec 11.4).
     var openRoundtable: (() -> Void)?
+    /// The live RXL readings the RXL line's tag watches; nil shows 0 (the flag pictures).
+    var rxlReadings: RxlLiftReadings?
+    /// A tap on the slice's letter folds the flag to its one-line tag (as
+    /// the desktop's letter folds its flag); nil leaves the letter without
+    /// a tap (the flag pictures).
+    var fold: (() -> Void)?
 
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.roundtableInColumn) private var roundtableInColumn
@@ -232,12 +249,14 @@ struct VfoFlagView: View {
         return ("Make slice \(entry.slice.letter) the transmit slice", selectForTransmit)
     }
 
-    /// A flag's height: the plain flag, with the RADE row in RADE and the
-    /// owner row on a slice this phone only listens to. One geometry at
+    /// A flag's height: the plain flag, with the RADE row in RADE, the
+    /// RXL line while RXL is on and the owner row on a slice this phone
+    /// only listens to. One geometry at
     /// every text size, so large type does not change it.
     static func expectedHeight(for entry: BandSlicesModel.Entry, large: Bool = false,
                                roundtable: Bool = false) -> CGFloat {
-        let height = FlagMetrics(large: large).height(rade: entry.rade != nil, listening: entry.listening)
+        let height = FlagMetrics(large: large).height(rade: entry.rade != nil, listening: entry.listening,
+                                                      rxl: entry.rxlOn)
             + (roundtable ? RoundtableFlagLine.height : 0)
         // An older Core's RADE reason, or the Core's reason for no RADE
         // decoder, takes a second line, measured once drawn.
@@ -258,6 +277,20 @@ struct VfoFlagView: View {
         let height = Self.expectedHeight(for: entry, large: metrics.large, roundtable: roundtable != nil)
         VStack(alignment: .leading, spacing: 0) {
             header(metrics)
+            if entry.rxlOn {
+                // The RXL line (JJ, 2026-11-15): the desktop's tag at the
+                // end of its "You control" line, on a line of its own. Only
+                // the tag watches the live reading.
+                HStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    if let rxlReadings {
+                        RxlLiftLine(sliceId: entry.id, readings: rxlReadings, points: 10 * metrics.scale)
+                    } else {
+                        RxlLiftTag(liftDb: 0, points: 10 * metrics.scale)
+                    }
+                }
+                .frame(height: FlagMetrics.rxlLine)
+            }
             if entry.listening {
                 ownerRow(metrics)
             }
@@ -310,6 +343,11 @@ struct VfoFlagView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Slice \(letter), \(entry.slice.frequencyText), \(entry.modeLabel)")
         .accessibilityIdentifier("flag\(letter)")
+        .accessibilityActions {
+            if let fold {
+                Button("Fold slice \(letter)'s flag", action: fold)
+            }
+        }
     }
 
     /// A control's press: on a listened slice the Core's line for who
@@ -347,10 +385,32 @@ struct VfoFlagView: View {
             }
             transmitButton(metrics)
             Spacer().frame(width: FlagMetrics.gap)
-            SliceLetterBadge(letter: letter, colour: colour, size: FlagMetrics.letterSize, points: 11 * metrics.scale)
-                .accessibilityHidden(true)
+            letterButton(metrics)
         }
         .frame(height: FlagMetrics.header)
+    }
+
+    /// The slice's letter: a tap folds the flag. Its target is the header's
+    /// height and reaches the flag's edge; VoiceOver has the flag's own
+    /// Fold action instead.
+    @ViewBuilder
+    private func letterButton(_ metrics: FlagMetrics) -> some View {
+        let badge = SliceLetterBadge(letter: letter, colour: colour, size: FlagMetrics.letterSize,
+                                     points: 11 * metrics.scale)
+        if let fold {
+            Button(action: fold) {
+                badge
+                    .frame(width: FlagMetrics.letterSize, height: FlagMetrics.header)
+                    .padding(.trailing, FlagMetrics.inset)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.trailing, -FlagMetrics.inset)
+            .accessibilityHidden(true)
+            .accessibilityIdentifier("flagLetter\(letter)")
+        } else {
+            badge.accessibilityHidden(true)
+        }
     }
 
     private func filterWidth(_ metrics: FlagMetrics) -> some View {

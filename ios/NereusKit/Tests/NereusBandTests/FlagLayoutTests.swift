@@ -25,6 +25,44 @@ import Testing
                   colour: "#102030", lowerSideband: lower, txSlice: tx)
     }
 
+    // MARK: Folded by a tap on the letter (JJ, 2026-11-15)
+
+    @Test func aFlagFoldedByItsLetterStaysFoldedEvenActiveAndAlone() {
+        let slices = [Self.slice(0, 7_236_000)]
+        let placements = FlagLayout.layout(slices: slices, activeSliceId: 0,
+                                           geometry: Self.geometry(width: Self.phoneWidth, centerHz: 7_237_000,
+                                                                   spanHz: 10_000),
+                                           folded: { $0.id == 0 })
+        #expect(placements.count == 1)
+        #expect(placements[0].isFolded)
+        #expect(placements[0].rect.height == FlagLayout.foldedHeight)
+        #expect(placements[0].rect.minY == 0)
+    }
+
+    @Test func foldingTheActiveFlagLetsTheOtherOneOpen() {
+        // Two kilohertz apart on a phone: today the inactive one folds.
+        let slices = [Self.slice(0, 7_236_000), Self.slice(1, 7_238_000)]
+        let geometry = Self.geometry(width: Self.phoneWidth, centerHz: 7_237_000, spanHz: 10_000)
+        let open = FlagLayout.layout(slices: slices, activeSliceId: 0, geometry: geometry)
+        #expect(!open[0].isFolded && open[1].isFolded)
+        // A's flag folded by its letter: B's flag opens; A's tag stacks below B's flag where they meet.
+        let placements = FlagLayout.layout(slices: slices, activeSliceId: 0, geometry: geometry,
+                                           folded: { $0.id == 0 })
+        #expect(placements[0].isFolded)
+        #expect(!placements[1].isFolded)
+        #expect(!FlagLayout.overlaps(placements[0].rect, placements[1].rect))
+    }
+
+    @Test func overlapStillFoldsAFlagNobodyFolded() {
+        let slices = [Self.slice(0, 7_236_000), Self.slice(1, 7_238_000), Self.slice(2, 7_237_000)]
+        let geometry = Self.geometry(width: Self.phoneWidth, centerHz: 7_237_000, spanHz: 10_000)
+        let placements = FlagLayout.layout(slices: slices, activeSliceId: 0, geometry: geometry,
+                                           folded: { $0.id == 1 })
+        #expect(!placements[0].isFolded)
+        #expect(placements[1].isFolded)
+        #expect(placements[2].isFolded)
+    }
+
     // MARK: The brief's case: two slices two kilohertz apart
 
     @Test func twoSlicesTwoKilohertzApartFoldTheInactiveOneOnAPhone() {

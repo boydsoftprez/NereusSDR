@@ -40,6 +40,32 @@
 //   2026-11-15 — Recording plan Task 5: the `recordings` facade and the
 //                 recordings access by role. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-11-22 - Receive leveler review fixes: no panadapter bins for a
+//                 slice playing the past (its S-meter follows the replay
+//                 and decides); a reset count per slice, bumped with the
+//                 station check's reset and when a receiver is made, starts
+//                 the leveler over; the measuring band and the bins' outer
+//                 edges follow the mode. NereusSDR-original. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-16 — Receive leveler: the slice's filter sets the band its
+//                 loudness is read in (RxLeveler::measureBand), worked out
+//                 again on each publish while the panadapter decides (the
+//                 publish on a filter change carries the station check's
+//                 reset, so it reads the whole block until the bins come
+//                 back). NereusSDR-original. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-11-15 — Receive leveler: the station check also reads the
+//                 panadapter bins in each receiver's passband
+//                 (feedRxLevelerSpectrum). NereusSDR-original. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-14 — Receive leveler: a station check per receiver on each
+//                 meter tick (RxStationGate), the settings published to
+//                 AudioEngine, and the live gain written back to the
+//                 slice. NereusSDR-original. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-11-14 - RX Leveler feature: each slice's RXL settings pushed to the
+//                 leveler and saved on change (pushRxLeveler in the slice
+//                 wiring). Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 //   2026-11-06 — currentCodecContext hands the codec the radio's DDC limit
 //                 (BoardCapsTable::ddcIndexLimit). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -2691,6 +2717,10 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
     if (m_role == Role::Local) {
         m_sliceMeterPump = new SliceMeterPump(this, this);
         m_sliceMeterPump->start();
+        // Receive leveler: each slice's station check runs at the S-meter's
+        // rate, on the readings the pump wrote on its previous tick.
+        connect(m_sliceMeterPump, &SliceMeterPump::polled,
+                this, &RadioModel::updateRxLevelers);
 
         // R-R3-40: one periodic sampler owns each receiver's load interval;
         // readers get its cached snapshot. Same pre-connect tolerance as the
@@ -16587,6 +16617,187 @@ void RadioModel::publishSliceAudioView()
     for (int id = 0; id < AudioEngine::kMaxSliceAudioViews; ++id) {
         m_audioEngine->setSliceAudioView(id, views[static_cast<size_t>(id)]);
     }
+    publishRxLevelers();
+}
+
+// Receive leveler, NereusSDR-original. See the declarations in RadioModel.h.
+void RadioModel::publishRxLevelers()
+{
+    if (m_audioEngine == nullptr) {
+        return;
+    }
+    std::array<RxLevelerParams, AudioEngine::kMaxSliceAudioViews> params{};
+    // Only the station that runs the DSP levels: a remote window's audio
+    // arrives already leveled by the Core.
+    if (m_role == Role::Local) {
+        for (const SliceModel* s : m_slices) {
+            const int id = s != nullptr ? s->sliceIndex() : -1;
+            if (id < 0 || id >= AudioEngine::kMaxSliceAudioViews) {
+                continue;
+            }
+            RxLevelerParams& p = params[static_cast<size_t>(id)];
+            const RxLevelerMode mode = s->rxLevelerMode();
+            p.on = mode != RxLevelerMode::Off && RxLeveler::modeAllows(s->dspMode());
+            if (mode == RxLevelerMode::Custom) {
+                p.targetDb = s->rxLevelerTargetDb();
+                p.maxBoostDb = s->rxLevelerMaxBoostDb();
+                p.maxCutDb = s->rxLevelerMaxCutDb();
+                p.attackMs = s->rxLevelerAttackMs();
+                p.releaseMs = s->rxLevelerReleaseMs();
+            } else {
+                p.targetDb = RxLeveler::kAutoTargetDb;
+                p.maxBoostDb = RxLeveler::kAutoMaxBoostDb;
+                p.maxCutDb = RxLeveler::kAutoMaxCutDb;
+                p.attackMs = RxLeveler::kAutoAttackMs;
+                p.releaseMs = RxLeveler::kAutoReleaseMs;
+            }
+            p.resetCount = m_rxLevelerResetCounts.value(id, 0);
+            const auto track = m_rxLevelerTracks.constFind(id);
+            if (track != m_rxLevelerTracks.constEnd()) {
+                p.stationPresent = track->gate.stationPresent();
+                p.nearOverload = track->gate.nearOverload();
+                // With the panadapter deciding, the loudness is read
+                // without the filter's outer edge, so a neighbor
+                // overlapping it does not move the level. Without it the
+                // S-meter (the whole passband) decides, and the leveler
+                // reads the whole block too (RxStationGate::panadapterRunning).
+                if (track->gate.panadapterRunning()) {
+                    RxLeveler::measureBand(s->dspMode(), s->filterLow(), s->filterHigh(),
+                                           p.measureLowHz, p.measureHighHz);
+                }
+            }
+        }
+    }
+    for (int id = 0; id < AudioEngine::kMaxSliceAudioViews; ++id) {
+        m_audioEngine->setSliceRxLeveler(id, params[static_cast<size_t>(id)]);
+    }
+}
+
+void RadioModel::resetRxStationGate(int sliceId)
+{
+    const auto track = m_rxLevelerTracks.find(sliceId);
+    if (track != m_rxLevelerTracks.end()) {
+        track->gate.reset();
+        track->voice.reset();
+    }
+    // And the leveler itself, on the audio thread, from the next publish:
+    // the noise it learned and the gain it had belong to the old frequency,
+    // passband or receiver.
+    int& count = m_rxLevelerResetCounts[sliceId];
+    count = (count + 1) & RxLevelerParams::kResetCountMask;
+}
+
+void RadioModel::feedRxLevelerSpectrum(int streamIndex, const QVector<float>& binsDbm)
+{
+    if (m_role != Role::Local || binsDbm.isEmpty() || streamIndex < 0) {
+        return;
+    }
+    const double rateHz = static_cast<double>(streamSampleRateHz(streamIndex));
+    if (rateHz <= 0.0) {
+        return;
+    }
+    const int bins = static_cast<int>(binsDbm.size());
+    const double binHz = rateHz / static_cast<double>(bins);
+    const double centreHz = streamCentreHz(streamIndex);
+    const RecordingService* recordings = m_recordingService.get();
+    for (const SliceModel* s : std::as_const(m_slices)) {
+        if (s == nullptr || s->streamIndex() != streamIndex
+            || s->rxLevelerMode() == RxLevelerMode::Off
+            || !RxLeveler::modeAllows(s->dspMode())) {
+            continue;
+        }
+        // A slice playing the past hears the recording, while these bins are
+        // the live band: its S-meter, which follows the replay, decides, and
+        // the leveler reads the whole block. Back to live, the bins decide
+        // again.
+        if (recordings != nullptr
+            && recordings->rewoundLiveFrequencyHz(s->sliceIndex()).has_value()) {
+            continue;
+        }
+        const auto track = m_rxLevelerTracks.find(s->sliceIndex());
+        if (track == m_rxLevelerTracks.end()) {
+            continue;   // updateRxLevelers makes it on its next tick
+        }
+        // The receiver's passband: the filter's edges about where it
+        // listens (the dial plus RIT), as bins of this frame.
+        const double rxHz = s->frequency() + (s->ritEnabled() ? s->ritHz() : 0);
+        const double lowHz = rxHz + s->filterLow() - centreHz;
+        const double highHz = rxHz + s->filterHigh() - centreHz;
+        const int loBin = bins / 2 + static_cast<int>(std::ceil(lowHz / binHz));
+        const int hiBin = bins / 2 + static_cast<int>(std::floor(highHz / binHz)) + 1;
+        double dtSec = 0.033;
+        if (track->frameClock.isValid()) {
+            dtSec = std::min(static_cast<double>(track->frameClock.restart()) / 1000.0, 0.2);
+        } else {
+            track->frameClock.start();
+        }
+        bool trimLow = false;
+        bool trimHigh = false;
+        RxPassbandVoice::outerEdges(s->dspMode(), s->filterLow(), s->filterHigh(), trimLow,
+                                    trimHigh);
+        track->voice.addFrame(binsDbm.constData(), bins, loBin, hiBin, dtSec, trimLow, trimHigh);
+    }
+}
+
+void RadioModel::updateRxLevelers()
+{
+    if (m_role != Role::Local || m_audioEngine == nullptr) {
+        return;
+    }
+    // The meter pump's interval is the operator's (MultimeterDelayMs), so
+    // the station check is told the real time between readings.
+    double dtSec = 0.1;
+    if (m_rxLevelerClock.isValid()) {
+        dtSec = std::clamp(static_cast<double>(m_rxLevelerClock.restart()) / 1000.0,
+                           0.0, 1.0);
+    } else {
+        m_rxLevelerClock.start();
+    }
+    QSet<int> live;
+    for (SliceModel* s : m_slices) {
+        if (s == nullptr) {
+            continue;
+        }
+        const int id = s->sliceIndex();
+        live.insert(id);
+        RxLevelerTrack& track = m_rxLevelerTracks[id];
+        if (std::abs(s->frequency() - track.frequencyHz) > kRxLevelerRetuneHz) {
+            resetRxStationGate(id);     // a retune or a band change
+        }
+        track.frequencyHz = s->frequency();
+        if (s->rxLevelerMode() == RxLevelerMode::Off) {
+            // Not learning while off: turned on later, it starts afresh.
+            track.gate.reset();
+            track.voice.reset();
+            s->setRxLevelerGainDb(0.0);
+            continue;
+        }
+        RxStationReading reading;
+        // What SliceMeterPump wrote on its last tick (-400, no reading,
+        // while the radio is down or the channel is not running).
+        reading.signalDbm = s->signalAverageDbm();
+        reading.panFloorDbm = s->stationAutoAgcNoiseFloorDbm();
+        reading.panFloorValid = s->stationAutoAgcNoiseFloorValid();
+        reading.adcPeakDbfs = s->adcPeakDbfs();
+        // The panadapter bins in the passband since the last tick (-1, no
+        // reading, without frames: no FFT on this stream, or transmitting).
+        reading.passbandVoice = track.voice.take();
+        if (m_stepAttController != nullptr) {
+            const int adc = sliceAdcIndex(id);
+            reading.adcOverload = adc >= 0
+                && m_stepAttController->overloadLevel(adc) != OverloadLevel::None;
+        }
+        track.gate.update(reading, dtSec);
+        s->setRxLevelerGainDb(m_audioEngine->sliceRxLevelerGainDb(id));
+    }
+    for (auto it = m_rxLevelerTracks.begin(); it != m_rxLevelerTracks.end();) {
+        if (live.contains(it.key())) {
+            ++it;
+        } else {
+            it = m_rxLevelerTracks.erase(it);
+        }
+    }
+    publishRxLevelers();
 }
 
 // RADE gaps (2026-09-30), NereusSDR-original. The slices in RADE mode, one
@@ -17504,6 +17715,9 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     }
     m_slices.append(slice);
     m_slicePublications[slice].constructing = false;
+    // Receive leveler: a receiver made on this id, new or reused, starts
+    // with nothing the last one on it learned.
+    resetRxStationGate(index);
     const auto currentAdded = [&] {
         return self && added && self->sliceById(index) == added.data();
     };
@@ -17522,6 +17736,19 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     // play its sideband.
     connect(slice, &SliceModel::dspModeChanged, this,
             [this](DSPMode) { publishRadeModeSlices(); });
+    // Receive leveler: a new mode or filter is a new passband, so the
+    // station check learns its quiet level again; the mode also decides
+    // whether the leveler runs at all.
+    connect(slice, &SliceModel::dspModeChanged, this, [this, slice](DSPMode) {
+        resetRxStationGate(slice->sliceIndex());
+        publishRxLevelers();
+    });
+    connect(slice, &SliceModel::filterChanged, this, [this, slice](int, int) {
+        resetRxStationGate(slice->sliceIndex());
+        // The station check starts over, so the leveler reads the whole
+        // block until the bins come back with the new filter's edges.
+        publishRxLevelers();
+    });
     publishSliceAudioView();
     if (!currentAdded()) { return -1; }
 
@@ -27222,6 +27449,26 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
         }
         scheduleSettingsSave(slice);
     });
+
+    // Receive leveler. It runs in AudioEngine, not in the receive channel;
+    // any setting change republishes the whole set as one word, so the
+    // audio thread never sees a torn combination.
+    const auto pushRxLeveler = [this, slice] {
+        publishRxLevelers();
+        scheduleSettingsSave(slice);
+    };
+    connect(slice, &SliceModel::rxLevelerModeChanged, this,
+            [pushRxLeveler](RxLevelerMode) { pushRxLeveler(); });
+    connect(slice, &SliceModel::rxLevelerTargetDbChanged, this,
+            [pushRxLeveler](int) { pushRxLeveler(); });
+    connect(slice, &SliceModel::rxLevelerMaxBoostDbChanged, this,
+            [pushRxLeveler](int) { pushRxLeveler(); });
+    connect(slice, &SliceModel::rxLevelerAttackMsChanged, this,
+            [pushRxLeveler](int) { pushRxLeveler(); });
+    connect(slice, &SliceModel::rxLevelerReleaseMsChanged, this,
+            [pushRxLeveler](int) { pushRxLeveler(); });
+    connect(slice, &SliceModel::rxLevelerMaxCutDbChanged, this,
+            [pushRxLeveler](int) { pushRxLeveler(); });
 
     // SNB → WDSP
     // From Thetis Project Files/Source/Console/console.cs:36347

@@ -31,6 +31,21 @@
 //               setOwnerMixPlayback, the owner mix's route to its own;
 //               setPlaybackFeed, which each drain tops the slots up from.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-22: Receive leveler review fixes: the transmitting slice's
+//               leveler starts over each block it is held back, and a new
+//               reset count in its settings word starts it over after a
+//               retune or a new receiver (m_rxLevelerResetSeen);
+//               sliceRxLeveler reads the word back. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
+//   2026-11-16: The receive leveler's measuring band rides in a second
+//               word per slice (m_sliceRxLevelerBand). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-11-14: Receive leveler per receiver (setSliceRxLeveler,
+//               sliceRxLevelerGainDb): the speakers and remote-listening
+//               mix get the leveled block, VAX and the receiver taps the
+//               plain one. RX Leveler feature by Brian Sutton (W4KZO),
+//               AI-assisted via xAI Grok; engine and placement by J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-27: Add approved remote CW hold/activity integration for
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-17 : makeBus() sets a stream event sink before the open;
@@ -361,6 +376,7 @@
 
 #include "core/NereusCoreExport.h"
 #include "core/CwSidetone.h"
+#include "core/dsp/RxLeveler.h"
 #include "AudioDeviceConfig.h"
 #include "IAudioBus.h"
 #include "audio/AsioSession.h"
@@ -567,6 +583,20 @@ public:
     void setSliceAudioView(int sliceId, const SliceAudioView& view) noexcept;
     // Any thread: one acquire load.
     SliceAudioView sliceAudioView(int sliceId) const noexcept;
+
+    // Receive leveler, per slice id (RxLeveler.h). RadioModel publishes the
+    // whole set, the station check's verdict included, on each meter tick
+    // and on every RXL change; rxBlockReady reads it in one load. With
+    // params.on false the block reaches the mix untouched. The leveler runs
+    // after VAX and the receiver taps have their copy, which is always the
+    // plain block, and before the speakers and remote-listening mix, which
+    // apply the AF level after it.
+    // Main thread only. Ids outside the range are ignored.
+    void setSliceRxLeveler(int sliceId, const RxLevelerParams& params) noexcept;
+    // Any thread: the gain the slice's leveler applies now, dB (0 when off).
+    double sliceRxLevelerGainDb(int sliceId) const noexcept;
+    // Any thread: what was last published for the slice (both words).
+    RxLevelerParams sliceRxLeveler(int sliceId) const noexcept;
 
     // Legacy start/stop retained for the single-entry-point symmetry the
     // rest of the codebase expects. Speakers bus is opened lazily the
@@ -1885,6 +1915,17 @@ private:
     // Slice control plan Task 6: 64 bits, the AF level's float in the high
     // half.
     std::array<std::atomic<quint64>, kMaxSliceAudioViews> m_sliceAudioViews{};
+    // Receive leveler: the packed RxLevelerParams per slice id (main thread
+    // writes, audio thread reads) and the leveler itself, audio thread only
+    // (its gain reading is atomic).
+    std::array<std::atomic<std::uint64_t>, kMaxSliceAudioViews> m_sliceRxLeveler{};
+    // The band the leveler reads loudness in (RxLevelerParams::packBand),
+    // a second word per slice id, written before the first.
+    std::array<std::atomic<std::uint64_t>, kMaxSliceAudioViews> m_sliceRxLevelerBand{};
+    std::array<RxLeveler, kMaxSliceAudioViews> m_rxLevelers;
+    // The reset count each leveler last ran with (RxLevelerParams::
+    // resetCount), audio thread only: a new count starts that leveler over.
+    std::array<int, kMaxSliceAudioViews> m_rxLevelerResetSeen{};
 
     // Sub-Phase 12 Task 12.2 — live-reconfig safety mutex for the speakers
     // bus. setSpeakersConfig() acquires this during tear-down + rebuild.
@@ -2130,6 +2171,7 @@ private:
     std::vector<float> m_everySliceScratch; // a headless Core's speaker (2026-10-10)
     std::vector<float> m_avMixScratch;   // anti-VOX reference
     std::vector<float> m_vaxScratch;     // one VAX channel's mix
+    std::vector<float> m_rxLevelerScratch; // the leveled copy of one block
     std::atomic<int> m_mixScratchFrames{0};
 
     // One receive-only remote-media observer.  Its lifetime is owned by the

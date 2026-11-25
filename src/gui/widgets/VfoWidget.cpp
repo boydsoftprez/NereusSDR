@@ -14,6 +14,21 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-15 - RXL's words say "voice" or "signal" where they said
+//                "station", which user text keeps for one meaning.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-15 - The RXL tag redraws only when its whole-dB value changes.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-15 - The RXL tag at the right end of the "You control" line:
+//                how far RXL turns the station up (green) or down (amber),
+//                from SliceModel::rxLevelerGainDb, while RXL is on in a
+//                voice mode. The access words and the tag share one line.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-22 - The RXL popup's Maximum boost help says "leveler". J.J.
+//                Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-14 - RXL flag and popup (Brian Sutton, W4KZO, AI-assisted via
+//                xAI Grok): reset values follow the new Auto preset. J.J.
+//                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-04 - The flag's ⋯ button opens the right-click list; the S-meter
 //                 item and the bar's source tag (overlay design D39 to D41);
 //                 the Roundtable line's open state. J.J. Boyd (KG4VCF),
@@ -485,6 +500,7 @@ warren@wpratt.com
 #include "gui/widgets/AppIcon.h"
 #include "gui/TuneStepLabel.h"
 #include "DspParamPopup.h"
+#include "GuardedSlider.h"
 #include "NnrControls.h"
 #include "VaxChannelSelector.h"
 #include "gui/AntennaPopupBuilder.h"
@@ -492,6 +508,7 @@ warren@wpratt.com
 #include "gui/QtCocoaAccessibleTableCache.h"
 #include "core/BoardCapabilities.h"
 #include "core/ControlRanges.h"
+#include "core/dsp/RxLeveler.h"
 #include "core/SkuUiProfile.h"
 #include "core/HpsdrModel.h"
 #include "core/accessories/AlexController.h"
@@ -522,6 +539,8 @@ warren@wpratt.com
 #include <QWheelEvent>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QButtonGroup>
+#include <QRadioButton>
 #include <QGridLayout>
 #include <QMenu>
 #include <QVariant>
@@ -1246,13 +1265,28 @@ void VfoWidget::buildHeaderRow()
     static_cast<QVBoxLayout*>(layout())->addLayout(hdr);
 
     // Task 14a: who controls this slice. Hidden while nobody else shares it.
-    m_accessLine = new QLabel(this);
+    // It shares its line with the RXL tag at the right end; the line shows
+    // while either has something to say.
+    m_topLine = new QWidget(this);
+    m_topLine->setObjectName(QStringLiteral("VfoTopLine"));
+    auto* topRow = new QHBoxLayout(m_topLine);
+    topRow->setContentsMargins(0, 0, 0, 0);
+    topRow->setSpacing(4);
+    m_accessLine = new QLabel(m_topLine);
     m_accessLine->setObjectName(QStringLiteral("VfoAccessLine"));
     m_accessLine->setWordWrap(true);
     m_accessLine->setStyleSheet(
         QStringLiteral("color: #c8d8e8; font-size: 10px;"));
     m_accessLine->setVisible(false);
-    static_cast<QVBoxLayout*>(layout())->addWidget(m_accessLine);
+    topRow->addWidget(m_accessLine, 1);
+    m_rxlTag = new QLabel(m_topLine);
+    m_rxlTag->setObjectName(QStringLiteral("VfoRxlTag"));
+    m_rxlTag->setAlignment(Qt::AlignCenter);
+    m_rxlTag->setVisible(false);
+    topRow->addStretch(0);
+    topRow->addWidget(m_rxlTag, 0, Qt::AlignRight | Qt::AlignTop);
+    m_topLine->setVisible(false);
+    static_cast<QVBoxLayout*>(layout())->addWidget(m_topLine);
 }
 
 void VfoWidget::buildFrequencyRow()
@@ -2290,6 +2324,18 @@ void VfoWidget::buildDspTab()
     dspGrid->addWidget(m_anfToggle, 2, 0);
     dspGrid->addWidget(m_snbToggle, 2, 1);
 
+    m_rxlToggle = makeToggle(QStringLiteral("RXL"));
+    m_rxlToggle->setToolTip(QStringLiteral(
+        "RX Leveler: evens out how loud each voice is on a net. Left-click turns it on or off. "
+        "Right-click opens mode, listening target and maximum boost. "
+        "Separate from the TX Leveler."));
+    m_rxlToggle->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_rxlToggle, &QWidget::customContextMenuRequested,
+            this, [this](const QPoint& pos) {
+                showRxlPopup(m_rxlToggle->mapToGlobal(pos));
+            });
+    dspGrid->addWidget(m_rxlToggle, 2, 2);
+
     // Uniform size for all 9 grid buttons: 64×26 px.
     // User directive: natural button size (not cramped), zero gaps between
     // buttons so their 1px borders abut forming a continuous "board" around
@@ -2298,7 +2344,7 @@ void VfoWidget::buildDspTab()
     // flag width.
     for (auto* btn : {m_nbButton, m_nr1Btn, m_nr2Btn, m_nr3Btn,
                       m_nr4Btn, m_dfnrBtn, m_mnrBtn, m_nnrBtn,
-                      m_anfToggle, m_snbToggle}) {
+                      m_anfToggle, m_snbToggle, m_rxlToggle}) {
         if (btn) {
             btn->setFixedHeight(26);
             btn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -2416,6 +2462,16 @@ void VfoWidget::buildDspTab()
     connect(m_snbToggle, &QPushButton::toggled, this, [this](bool on) {
         if (!m_updatingFromModel) { emit snbChanged(on); }
     });
+    connect(m_rxlToggle, &QPushButton::toggled, this, [this](bool on) {
+        if (m_updatingFromModel || !m_slice) {
+            return;
+        }
+        // Left-click is off, or the last mode that was on. That is Auto
+        // until the setup page has been set to Custom.
+        const RxLevelerMode restored = m_rxlLatched == RxLevelerMode::Off
+            ? RxLevelerMode::Auto : m_rxlLatched;
+        m_slice->setRxLevelerMode(on ? restored : RxLevelerMode::Off);
+    });
     connect(m_apfToggle, &QPushButton::toggled, this, [this](bool on) {
         if (!m_updatingFromModel) { emit apfChanged(on); }
         // Re-evaluate APF slider visibility regardless of source (S1.9)
@@ -2488,6 +2544,7 @@ void VfoWidget::buildModeTab()
                 m_currentMode = mode;
                 applyModeVisibility(mode);    // S1.9 — user-driven mode change
                 rebuildFilterButtons(mode);
+                updateTopLine();
                 // Update mode tab label
                 if (m_tabButtons.size() > 2) {
                     m_tabButtons[2]->setText(text);
@@ -3013,6 +3070,8 @@ void VfoWidget::setMode(DSPMode mode)
     }
     rebuildFilterButtons(mode);
     applyModeVisibility(mode);    // S1.9 — model-driven mode change
+    updateRxlToolTip();
+    updateTopLine();
     updateSnrVisibility();        // Phase 3R L1 — show SNR row only in RADE
     updateModeTabAccent();        // Phase 3R L3 — purple accent in RADE
     m_updatingFromModel = false;
@@ -3353,6 +3412,118 @@ void VfoWidget::onNrSelectionRefused(const QString& reason)
     }
 }
 
+void VfoWidget::setRxLevelerMode(RxLevelerMode mode)
+{
+    m_rxlMode = mode;
+    if (mode != RxLevelerMode::Off) {
+        m_rxlLatched = mode;
+    }
+    if (m_rxlToggle && m_rxlToggle->isChecked() != (mode != RxLevelerMode::Off)) {
+        m_updatingFromModel = true;
+        m_rxlToggle->setChecked(mode != RxLevelerMode::Off);
+        m_updatingFromModel = false;
+    }
+    updateRxlToolTip();
+    updateTopLine();
+}
+
+void VfoWidget::setRxLevelerGainDb(double dB)
+{
+    // The tag shows whole dB: a tenth-of-a-dB step that leaves the whole
+    // number where it was changes nothing on screen, so it costs nothing.
+    const double next = std::isfinite(dB) ? dB : 0.0;
+    const bool sameWhole = std::lround(next) == std::lround(m_rxlGainDb);
+    m_rxlGainDb = next;
+    if (sameWhole) {
+        return;
+    }
+    updateTopLine();
+}
+
+QString VfoWidget::rxlTagText(double dB)
+{
+    const long whole = std::isfinite(dB) ? std::lround(dB) : 0;
+    QString number = QString::number(std::labs(whole));
+    if (whole > 0) {
+        number.prepend(QLatin1Char('+'));
+    } else if (whole < 0) {
+        number.prepend(QChar(0x2212));  // a real minus sign
+    }
+    return QStringLiteral("RXL %1 dB").arg(number);
+}
+
+void VfoWidget::updateTopLine()
+{
+    if (!m_topLine || !m_accessLine || !m_rxlTag) {
+        return;
+    }
+    const QString access = accessLineText();
+    m_accessLine->setText(access);
+    m_accessLine->setVisible(!access.isEmpty());
+
+    // The tag: while RXL is on in a mode it levels. Folding the flag hides
+    // the whole line with the flag's other rows.
+    const bool tagShown = m_slice && m_rxlMode != RxLevelerMode::Off
+        && RxLeveler::modeAllows(m_currentMode);
+    if (tagShown) {
+        const long whole = std::lround(m_rxlGainDb);
+        // Green turning the station up, amber turning it down, dim at 0;
+        // the border is the text's colour, fainter.
+        QColor ink = whole > 0
+            ? WorkspacePreview::statusColour(QColor(NereusSDR::Style::kGreenText), "ok")
+            : whole < 0
+                ? WorkspacePreview::statusColour(QColor(NereusSDR::Style::kAmberText), "warn")
+                : QColor(NereusSDR::Style::kTextSecondary);
+        QColor edge = ink;
+        edge.setAlpha(whole == 0 ? 90 : 140);
+        const QString sheet = QStringLiteral(
+            "QLabel { color: %1; border: 1px solid %2; border-radius: 3px;"
+            " font-size: 10px; font-weight: bold; padding: 0px 4px; }")
+            .arg(ink.name(QColor::HexRgb), edge.name(QColor::HexArgb));
+        if (m_rxlTag->styleSheet() != sheet) {
+            m_rxlTag->setStyleSheet(sheet);
+        }
+        m_rxlTag->setText(rxlTagText(m_rxlGainDb));
+        m_rxlTag->setToolTip(whole > 0
+            ? tr("RXL is turning this signal up %1 dB.").arg(whole)
+            : whole < 0 ? tr("RXL is turning this signal down %1 dB.").arg(-whole)
+                        : tr("RXL is leaving this signal's level as it is."));
+        m_rxlTag->setAccessibleName(m_rxlTag->toolTip());
+    }
+    m_rxlTag->setVisible(tagShown);
+
+    const bool shown = !access.isEmpty() || tagShown;
+    if (m_collapsed) {
+        // Folded: the line stays hidden; unfolding shows it as recorded here.
+        if (shown) {
+            m_hiddenBeforeCollapse.remove(m_topLine);
+        } else {
+            m_hiddenBeforeCollapse.insert(m_topLine);
+        }
+        return;
+    }
+    if (m_topLine->isVisibleTo(this) != shown) {
+        m_topLine->setVisible(shown);
+        adjustSize();
+    }
+}
+
+void VfoWidget::updateRxlToolTip()
+{
+    if (!m_rxlToggle) {
+        return;
+    }
+    QString tip = QStringLiteral(
+        "RX Leveler: evens out how loud each voice is on a net. Left-click turns it on or off. "
+        "Right-click opens mode, listening target and maximum boost. "
+        "Separate from the TX Leveler.");
+    if (!RxLeveler::modeAllows(m_currentMode)) {
+        tip += QStringLiteral(
+            " Bypassed in this mode, so CW, FM, and digital audio stay unaltered.");
+    }
+    m_rxlToggle->setToolTip(tip);
+}
+
 void VfoWidget::setSnbEnabled(bool v)
 {
     if (m_snbToggle && m_snbToggle->isChecked() != v) {
@@ -3625,6 +3796,10 @@ void VfoWidget::setSlice(SliceModel* slice)
         disconnect(m_slice, &SliceModel::nrSelectionRefused, this, nullptr);
         disconnect(m_slice, &SliceModel::radeReasonChanged,
                    this, &VfoWidget::setRadeReason);
+        disconnect(m_slice, &SliceModel::rxLevelerModeChanged,
+                   this, &VfoWidget::setRxLevelerMode);
+        disconnect(m_slice, &SliceModel::rxLevelerGainDbChanged,
+                   this, &VfoWidget::setRxLevelerGainDb);
     }
     m_slice = QPointer<SliceModel>(slice);
     if (m_fmContainer) {
@@ -3678,6 +3853,15 @@ void VfoWidget::setSlice(SliceModel* slice)
                 this, &VfoWidget::setRadeReason, Qt::UniqueConnection);
     }
     setRadeReason(slice ? slice->radeReason() : QString());
+
+    if (slice) {
+        connect(slice, &SliceModel::rxLevelerModeChanged,
+                this, &VfoWidget::setRxLevelerMode);
+        connect(slice, &SliceModel::rxLevelerGainDbChanged,
+                this, &VfoWidget::setRxLevelerGainDb);
+    }
+    m_rxlGainDb = slice ? slice->rxLevelerGainDb() : 0.0;
+    setRxLevelerMode(slice ? slice->rxLevelerMode() : RxLevelerMode::Off);
 
     // VAX selector — bidirectional wiring (Phase 3O Sub-Phase 8 Task 8.2)
     if (m_vaxSelector && slice) {
@@ -5240,15 +5424,7 @@ void VfoWidget::applySliceAccess()
     updateTransmitControlAvailability();
     applyAudioBinding();
 
-    if (m_accessLine) {
-        const QString text = accessLineText();
-        m_accessLine->setText(text);
-        const bool shown = !text.isEmpty();
-        if (m_accessLine->isVisibleTo(this) != shown) {
-            m_accessLine->setVisible(shown);
-            adjustSize();
-        }
-    }
+    updateTopLine();
 
     if (m_closeBtn) {
         m_closeBtn->setToolTip(listening ? tr("Stop listening")
@@ -5557,6 +5733,151 @@ void VfoWidget::showNnrPopup(const QPoint& globalPos)
                 emit openNnrModelsRequested(sliceId);
                 popup->close();
             });
+    popup->showAt(globalPos);
+}
+
+void VfoWidget::showRxlPopup(const QPoint& globalPos)
+{
+    if (!m_slice) {
+        return;
+    }
+    auto* popup = new DspParamPopup(this);
+    const QPointer<SliceModel> slice = m_slice;
+
+    auto* modeLabel = new QLabel(QStringLiteral("Mode"), popup);
+    modeLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: #8090a0; font-size: 10px; font-weight: bold; }"));
+    popup->addWidget(modeLabel);
+
+    auto* modeRow = new QWidget(popup);
+    auto* modeLay = new QHBoxLayout(modeRow);
+    modeLay->setContentsMargins(0, 0, 0, 0);
+    auto* modes = new QButtonGroup(popup);
+    const QStringList names{QStringLiteral("Off"), QStringLiteral("Auto"),
+                            QStringLiteral("Custom")};
+    for (int i = 0; i < names.size(); ++i) {
+        auto* button = new QRadioButton(names.at(i), modeRow);
+        modes->addButton(button, i);
+        modeLay->addWidget(button);
+    }
+    if (QAbstractButton* current = modes->button(static_cast<int>(slice->rxLevelerMode()))) {
+        current->setChecked(true);
+    }
+    popup->addWidget(modeRow);
+    connect(modes, &QButtonGroup::idClicked, popup, [slice](int id) {
+        if (!slice) {
+            return;
+        }
+        if (id >= static_cast<int>(RxLevelerMode::Off)
+            && id <= static_cast<int>(RxLevelerMode::Custom)) {
+            slice->setRxLevelerMode(static_cast<RxLevelerMode>(id));
+        }
+    });
+
+    const QString sliderStyle = QStringLiteral(
+        "QSlider::groove:horizontal { height: 4px; background: #304050; border-radius: 2px; }"
+        "QSlider::handle:horizontal { width: 10px; height: 10px; margin: -3px 0;"
+        "  background: #c8d8e8; border-radius: 5px; }"
+        "QSlider::handle:horizontal:hover { background: #00b4d8; }");
+
+    struct Knob {
+        QLabel* label{nullptr};
+        QSlider* slider{nullptr};
+        QLabel* value{nullptr};
+    };
+    const auto addKnob = [&](const QString& name, const QString& tip,
+                             int min, int max, int now) {
+        Knob knob;
+        auto* row = new QWidget(popup);
+        auto* lay = new QHBoxLayout(row);
+        lay->setContentsMargins(0, 0, 0, 0);
+        knob.label = new QLabel(name, row);
+        knob.label->setMinimumWidth(112);
+        knob.label->setToolTip(tip);
+        knob.slider = new GuardedSlider(Qt::Horizontal, row);
+        knob.slider->setRange(min, max);
+        knob.slider->setValue(now);
+        knob.slider->setStyleSheet(sliderStyle);
+        knob.slider->setToolTip(tip);
+        knob.value = new QLabel(QString::number(now) + QStringLiteral(" dB"), row);
+        knob.value->setMinimumWidth(42);
+        knob.value->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        knob.value->setToolTip(tip);
+        lay->addWidget(knob.label);
+        lay->addWidget(knob.slider, 1);
+        lay->addWidget(knob.value);
+        popup->addWidget(row);
+        return knob;
+    };
+
+    const Knob target = addKnob(
+        QStringLiteral("Listening target"),
+        QStringLiteral("Speech level every voice is moved toward, in dBFS before the AF slider. Used when Mode is Custom."),
+        static_cast<int>(RxLeveler::kTargetDbMin),
+        static_cast<int>(RxLeveler::kTargetDbMax),
+        slice->rxLevelerTargetDb());
+    const Knob boost = addKnob(
+        QStringLiteral("Maximum boost"),
+        QStringLiteral("Most gain the leveler may add. Used when Mode is Custom."),
+        static_cast<int>(RxLeveler::kMaxBoostDbMin),
+        static_cast<int>(RxLeveler::kMaxBoostDbMax),
+        slice->rxLevelerMaxBoostDb());
+
+    const auto showDb = [](QLabel* label, int dB) {
+        label->setText(QString::number(dB) + QStringLiteral(" dB"));
+    };
+    connect(target.slider, &QSlider::valueChanged, popup, [slice, target, showDb](int dB) {
+        showDb(target.value, dB);
+        if (slice) {
+            slice->setRxLevelerTargetDb(dB);
+        }
+    });
+    connect(boost.slider, &QSlider::valueChanged, popup, [slice, boost, showDb](int dB) {
+        showDb(boost.value, dB);
+        if (slice) {
+            slice->setRxLevelerMaxBoostDb(dB);
+        }
+    });
+
+    const auto gate = [slice, target, boost]() {
+        const bool custom = slice && slice->rxLevelerMode() == RxLevelerMode::Custom;
+        target.slider->setEnabled(custom);
+        boost.slider->setEnabled(custom);
+    };
+    gate();
+
+    connect(slice.data(), &SliceModel::rxLevelerModeChanged, popup,
+            [modes, gate](RxLevelerMode mode) {
+        QSignalBlocker block(modes);
+        if (QAbstractButton* button = modes->button(static_cast<int>(mode))) {
+            button->setChecked(true);
+        }
+        gate();
+    });
+    connect(slice.data(), &SliceModel::rxLevelerTargetDbChanged, popup,
+            [target, showDb](int dB) {
+        QSignalBlocker block(target.slider);
+        target.slider->setValue(dB);
+        showDb(target.value, dB);
+    });
+    connect(slice.data(), &SliceModel::rxLevelerMaxBoostDbChanged, popup,
+            [boost, showDb](int dB) {
+        QSignalBlocker block(boost.slider);
+        boost.slider->setValue(dB);
+        showDb(boost.value, dB);
+    });
+
+    popup->finalize([this]() { emit openSetupRequested(); }, [slice]() {
+        if (!slice) {
+            return;
+        }
+        slice->setRxLevelerTargetDb(static_cast<int>(RxLeveler::kAutoTargetDb));
+        slice->setRxLevelerMaxBoostDb(static_cast<int>(RxLeveler::kAutoMaxBoostDb));
+        slice->setRxLevelerMaxCutDb(static_cast<int>(RxLeveler::kAutoMaxCutDb));
+        slice->setRxLevelerAttackMs(static_cast<int>(RxLeveler::kAutoAttackMs));
+        slice->setRxLevelerReleaseMs(static_cast<int>(RxLeveler::kAutoReleaseMs));
+        slice->setRxLevelerMode(RxLevelerMode::Off);
+    });
     popup->showAt(globalPos);
 }
 

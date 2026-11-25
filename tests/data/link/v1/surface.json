@@ -8853,6 +8853,53 @@
                     "kind": "utf8",
                     "name": "nnrLoadWarning",
                     "ordinal": 155
+                },
+                {
+                    "direction": "bidirectional",
+                    "enumValues": [
+                        0,
+                        1,
+                        2
+                    ],
+                    "kind": "enum",
+                    "name": "rxLevelerMode",
+                    "ordinal": 156
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "i64",
+                    "name": "rxLevelerTargetDb",
+                    "ordinal": 157
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "i64",
+                    "name": "rxLevelerMaxBoostDb",
+                    "ordinal": 158
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "i64",
+                    "name": "rxLevelerAttackMs",
+                    "ordinal": 159
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "i64",
+                    "name": "rxLevelerReleaseMs",
+                    "ordinal": 160
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "i64",
+                    "name": "rxLevelerMaxCutDb",
+                    "ordinal": 161
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "f64",
+                    "name": "rxLevelerGainDb",
+                    "ordinal": 162
                 }
             ]
         },

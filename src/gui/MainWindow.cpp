@@ -27,6 +27,9 @@
 //   2026-11-16: Every pan shows the Roundtable strip while Roundtable is on
 //               (refreshRoundtableTags, roundtableStripShownFor). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-15: Each stream's Auto AGC-T frame also goes to the receive
+//               leveler's station check (feedRxLevelerSpectrum).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-06: A pan raises the wideband flag only for a slice this window
 //               controls, not one it only listens to, JJ's decision.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
@@ -7675,9 +7678,14 @@ FFTEngine* MainWindow::ensureStreamWired(int streamIndex)
     m_streamNoiseFloors.insert(streamIndex, nf);
     if (m_radioModel) { m_radioModel->setStreamNoiseFloorTracker(streamIndex, nf); }
     connect(engine, &FFTEngine::autoAgcFrameReady, this,
-            [nf](int, const QVector<float>& binsDbm, quint64 epoch) {
+            [this, nf, streamIndex](int, const QVector<float>& binsDbm, quint64 epoch) {
         static constexpr float kFrameIntervalMs = 33.0f;
         nf->feedForEpoch(binsDbm, kFrameIntervalMs, epoch);
+        // The same frame for the receive leveler's station check
+        // (RadioModel::feedRxLevelerSpectrum, NereusSDR-original).
+        if (m_radioModel) {
+            m_radioModel->feedRxLevelerSpectrum(streamIndex, binsDbm);
+        }
     });
     // Rulings wave R2: every FFT size change, wherever it came from (a
     // pan's Display pill, Setup, a station setting change), restarts this

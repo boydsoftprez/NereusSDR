@@ -1,6 +1,7 @@
 // NereusSDR for iOS: the Modes tab's noise buttons: NB, the noise reductions, ANF, SNB and APF, NNR's step-back and settings
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // 2026-10-31: Prioritize selected NNR warning choices; J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-11-14: The RXL switch beside APF and the RXL settings below APF tune; J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import SwiftUI
 
@@ -8,7 +9,8 @@ import SwiftUI
 /// one the Core cannot run greyed with the Core's reason, and NNR marked in
 /// the warning colour with the Core's reason and Try again while the Core
 /// holds it back; then APF, in every mode as on the desktop flag, with its
-/// tune for CW; then the reducers' settings (``NnrSettingsSection``).
+/// tune for CW; then the receive leveler, RXL (``RxLevelerSection``); then
+/// the reducers' settings (``NnrSettingsSection``).
 struct NoiseSection: View {
     @ObservedObject var model: ModesTabModel
     @ObservedObject var rx: RxPanelModel
@@ -28,6 +30,12 @@ struct NoiseSection: View {
                 }
                 .accessibilityHint(model.apfReason ?? "")
                 .accessibilityIdentifier("modesApf")
+                PanelButton(label: "RXL", lit: (model.rxlMode ?? .off) != .off, style: .dsp,
+                            disabled: model.rxlReason != nil) {
+                    model.toggleRxl()
+                }
+                .accessibilityHint(model.rxlReason ?? "")
+                .accessibilityIdentifier("modesRxl")
             }
             NnrStepBack(rx: rx, identifier: "modesNnr")
             ForEach(rx.noise.filter { $0.reason != nil && !($0.id == "NNR" && rx.nnrPriorityReason != nil) }) { button in
@@ -46,6 +54,7 @@ struct NoiseSection: View {
             if let reason = model.apfTuneReason {
                 ModesChrome.note("APF tune: \(reason)")
             }
+            RxLevelerSection(model: model)
             NnrSettingsSection(model: model, rx: rx)
         }
     }

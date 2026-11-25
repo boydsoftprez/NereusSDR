@@ -8,6 +8,18 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-14: RX Leveler section (Brian Sutton, W4KZO, AI-assisted via
+//               xAI Grok): maximum cut in
+//               place of pause hold, new ranges, and the live gain read
+//               from the slice instead of the receive channel.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-15: RX Leveler wording the user-text checks accept: "voice" or
+//               "signal" where it said "station" (that word is kept for one
+//               meaning), "Gain now: off" for the dash. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-22: RX Leveler "Gain now" shows off after RXL Off and the
+//               voice-modes note in CW, FM and digital (as the phone does),
+//               and its help says the panadapter decides while it runs.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-09-27: Match NR2/NR4 controls and defaults to Thetis v2.10.3.15.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //               (R-IOS-06, R-IOS-27).
@@ -367,6 +379,13 @@ void AgcAlcSetupPage::rebuildForActiveSlice()
     }
     m_txLevelerGrp = nullptr;
     m_txAlcGrp = nullptr;
+    m_rxLevelerMode = nullptr;
+    m_rxLevelerTarget = nullptr;
+    m_rxLevelerMaxBoost = nullptr;
+    m_rxLevelerAttack = nullptr;
+    m_rxLevelerRelease = nullptr;
+    m_rxLevelerMaxCut = nullptr;
+    m_rxLevelerBoostLbl = nullptr;
     RadioModel* model = this->model();
     SliceModel* slice = selectedSlice();
     if (!slice) {
@@ -530,6 +549,143 @@ void AgcAlcSetupPage::rebuildForActiveSlice()
     // From Thetis v2.10.3.13 setup.cs:5046-5076 — CustomRXAGCEnabled
     updateCustomGating(slice->agcMode());
 
+    // ── RX Leveler ───────────────────────────────────────────────────────────
+    // A receive loudness rider. It is not the TX Leveler below. Off adds
+    // no gain. Auto is the speech preset. Custom opens the knobs.
+    QGroupBox* rxLevGrp = addSection("RX Leveler");
+    QVBoxLayout* rxLevLay = qobject_cast<QVBoxLayout*>(rxLevGrp->layout());
+
+    m_rxLevelerMode = new QComboBox;
+    m_rxLevelerMode->setProperty("nereusSetupId", "dsp.agcAlc.rxLevelerMode");
+    m_rxLevelerMode->addItems({"Off", "Auto", "Custom"});
+    m_rxLevelerMode->setCurrentIndex(static_cast<int>(slice->rxLevelerMode()));
+    m_rxLevelerMode->setToolTip(QStringLiteral(
+        "Evens out how loud each voice is on a net. Off leaves the audio as it is. "
+        "Auto uses the speech preset. Custom sets the target, the most it "
+        "may lift or cut, and how fast it moves. VAX and TCI always get the "
+        "plain audio. Bypassed in CW, FM, and digital modes."));
+    addLabeledCombo(rxLevLay, "Mode", m_rxLevelerMode);
+
+    m_rxLevelerTarget = new QSpinBox;
+    m_rxLevelerTarget->setProperty("nereusSetupId", "dsp.agcAlc.rxLevelerTargetDb");
+    m_rxLevelerTarget->setRange(static_cast<int>(RxLeveler::kTargetDbMin),
+                                static_cast<int>(RxLeveler::kTargetDbMax));
+    m_rxLevelerTarget->setSuffix(" dB");
+    m_rxLevelerTarget->setValue(slice->rxLevelerTargetDb());
+    m_rxLevelerTarget->setToolTip(QStringLiteral(
+        "Listening target: the speech level every voice is moved toward, in dBFS "
+        "before the AF slider. The AF slider stays your volume."));
+    addLabeledSpinner(rxLevLay, "Listening target", m_rxLevelerTarget);
+
+    m_rxLevelerMaxBoost = new QSpinBox;
+    m_rxLevelerMaxBoost->setProperty("nereusSetupId", "dsp.agcAlc.rxLevelerMaxBoostDb");
+    m_rxLevelerMaxBoost->setRange(static_cast<int>(RxLeveler::kMaxBoostDbMin),
+                                  static_cast<int>(RxLeveler::kMaxBoostDbMax));
+    m_rxLevelerMaxBoost->setSuffix(" dB");
+    m_rxLevelerMaxBoost->setValue(slice->rxLevelerMaxBoostDb());
+    m_rxLevelerMaxBoost->setToolTip(QStringLiteral(
+        "Most the leveler may lift a quiet voice. It lifts only while a signal shows "
+        "above the noise, and starts letting go about a second after the voice stops."));
+    addLabeledSpinner(rxLevLay, "Maximum boost", m_rxLevelerMaxBoost);
+
+    m_rxLevelerAttack = new QSpinBox;
+    m_rxLevelerAttack->setProperty("nereusSetupId", "dsp.agcAlc.rxLevelerAttackMs");
+    m_rxLevelerAttack->setRange(static_cast<int>(RxLeveler::kAttackMsMin),
+                                static_cast<int>(RxLeveler::kAttackMsMax));
+    m_rxLevelerAttack->setSuffix(" ms");
+    m_rxLevelerAttack->setValue(slice->rxLevelerAttackMs());
+    m_rxLevelerAttack->setToolTip(QStringLiteral(
+        "How quickly the gain rises when a voice is quiet."));
+    addLabeledSpinner(rxLevLay, "Attack", m_rxLevelerAttack);
+
+    m_rxLevelerRelease = new QSpinBox;
+    m_rxLevelerRelease->setProperty("nereusSetupId", "dsp.agcAlc.rxLevelerReleaseMs");
+    m_rxLevelerRelease->setRange(static_cast<int>(RxLeveler::kReleaseMsMin),
+                                 static_cast<int>(RxLeveler::kReleaseMsMax));
+    m_rxLevelerRelease->setSuffix(" ms");
+    m_rxLevelerRelease->setValue(slice->rxLevelerReleaseMs());
+    m_rxLevelerRelease->setToolTip(QStringLiteral(
+        "How quickly the gain lets go when a voice is louder, or after a pause."));
+    addLabeledSpinner(rxLevLay, "Release", m_rxLevelerRelease);
+
+    m_rxLevelerMaxCut = new QSpinBox;
+    m_rxLevelerMaxCut->setProperty("nereusSetupId", "dsp.agcAlc.rxLevelerMaxCutDb");
+    m_rxLevelerMaxCut->setRange(static_cast<int>(RxLeveler::kMaxCutDbMin),
+                              static_cast<int>(RxLeveler::kMaxCutDbMax));
+    m_rxLevelerMaxCut->setSuffix(" dB");
+    m_rxLevelerMaxCut->setValue(slice->rxLevelerMaxCutDb());
+    m_rxLevelerMaxCut->setToolTip(QStringLiteral(
+        "Most the leveler may turn a loud voice down. 0 never turns a voice down."));
+    addLabeledSpinner(rxLevLay, "Maximum cut", m_rxLevelerMaxCut);
+
+    m_rxLevelerBoostLbl = new QLabel(QStringLiteral("Gain now: off"));
+    m_rxLevelerBoostLbl->setProperty("nereusSetupId", "dsp.agcAlc.rxLevelerBoost");
+    m_rxLevelerBoostLbl->setWordWrap(true);     // the voice-modes note is long
+    m_rxLevelerBoostLbl->setToolTip(QStringLiteral(
+        "What the leveler is doing to this receiver right now: lifting (+) or "
+        "turning down (-). It lifts only while a signal shows above the noise: "
+        "on the panadapter while it runs, otherwise on the S-meter."));
+    rxLevLay->addWidget(m_rxLevelerBoostLbl);
+
+    connect(m_rxLevelerMode, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [slice](int idx) {
+        if (idx >= static_cast<int>(RxLevelerMode::Off)
+            && idx <= static_cast<int>(RxLevelerMode::Custom)) {
+            slice->setRxLevelerMode(static_cast<RxLevelerMode>(idx));
+        }
+    });
+    connect(slice, &SliceModel::rxLevelerModeChanged, m_rxLevelerMode,
+            [this](RxLevelerMode mode) {
+        QSignalBlocker b(m_rxLevelerMode);
+        m_rxLevelerMode->setCurrentIndex(static_cast<int>(mode));
+        updateRxLevelerGating(mode);
+        refreshRxLevelerBoost();
+    });
+    connect(m_rxLevelerTarget, QOverload<int>::of(&QSpinBox::valueChanged),
+            slice, &SliceModel::setRxLevelerTargetDb);
+    connect(slice, &SliceModel::rxLevelerTargetDbChanged, m_rxLevelerTarget,
+            [this](int dB) {
+        QSignalBlocker b(m_rxLevelerTarget);
+        m_rxLevelerTarget->setValue(dB);
+    });
+    connect(m_rxLevelerMaxBoost, QOverload<int>::of(&QSpinBox::valueChanged),
+            slice, &SliceModel::setRxLevelerMaxBoostDb);
+    connect(slice, &SliceModel::rxLevelerMaxBoostDbChanged, m_rxLevelerMaxBoost,
+            [this](int dB) {
+        QSignalBlocker b(m_rxLevelerMaxBoost);
+        m_rxLevelerMaxBoost->setValue(dB);
+    });
+    connect(m_rxLevelerAttack, QOverload<int>::of(&QSpinBox::valueChanged),
+            slice, &SliceModel::setRxLevelerAttackMs);
+    connect(slice, &SliceModel::rxLevelerAttackMsChanged, m_rxLevelerAttack,
+            [this](int ms) {
+        QSignalBlocker b(m_rxLevelerAttack);
+        m_rxLevelerAttack->setValue(ms);
+    });
+    connect(m_rxLevelerRelease, QOverload<int>::of(&QSpinBox::valueChanged),
+            slice, &SliceModel::setRxLevelerReleaseMs);
+    connect(slice, &SliceModel::rxLevelerReleaseMsChanged, m_rxLevelerRelease,
+            [this](int ms) {
+        QSignalBlocker b(m_rxLevelerRelease);
+        m_rxLevelerRelease->setValue(ms);
+    });
+    connect(m_rxLevelerMaxCut, QOverload<int>::of(&QSpinBox::valueChanged),
+            slice, &SliceModel::setRxLevelerMaxCutDb);
+    connect(slice, &SliceModel::rxLevelerMaxCutDbChanged, m_rxLevelerMaxCut,
+            [this](int dB) {
+        QSignalBlocker b(m_rxLevelerMaxCut);
+        m_rxLevelerMaxCut->setValue(dB);
+    });
+    // The live gain comes through the slice, so a remote window shows the
+    // Core's figure the same way.
+    connect(slice, &SliceModel::rxLevelerGainDbChanged, m_rxLevelerBoostLbl,
+            [this](double) { refreshRxLevelerBoost(); });
+    // CW, FM and the digital modes are left alone: the line says so.
+    connect(slice, &SliceModel::dspModeChanged, m_rxLevelerBoostLbl,
+            [this](DSPMode) { refreshRxLevelerBoost(); });
+    updateRxLevelerGating(slice->rxLevelerMode());
+    refreshRxLevelerBoost();
+
     // ══════════════════════════════════════════════════════════════════════════
     // ── TX Leveler ────────────────────────────────────────────────────────────
     // ══════════════════════════════════════════════════════════════════════════
@@ -679,6 +835,40 @@ void AgcAlcSetupPage::setTransmitSettingsPermittedAt(int version, bool permitted
     m_txSettingsReason = reason;
     gateTransmitControls({m_txLevelerGrp, m_txAlcGrp}, permitted,
         reason.isEmpty() ? IStationLink::transmitSettingsUnavailableReason() : reason);
+}
+
+void AgcAlcSetupPage::updateRxLevelerGating(RxLevelerMode mode)
+{
+    const bool custom = mode == RxLevelerMode::Custom;
+    if (m_rxLevelerTarget) { m_rxLevelerTarget->setEnabled(custom); }
+    if (m_rxLevelerMaxBoost) { m_rxLevelerMaxBoost->setEnabled(custom); }
+    if (m_rxLevelerAttack) { m_rxLevelerAttack->setEnabled(custom); }
+    if (m_rxLevelerRelease) { m_rxLevelerRelease->setEnabled(custom); }
+    if (m_rxLevelerMaxCut) { m_rxLevelerMaxCut->setEnabled(custom); }
+}
+
+void AgcAlcSetupPage::refreshRxLevelerBoost()
+{
+    if (m_rxLevelerBoostLbl == nullptr) {
+        return;
+    }
+    SliceModel* slice = selectedSlice();
+    if (slice == nullptr || slice->rxLevelerMode() == RxLevelerMode::Off) {
+        m_rxLevelerBoostLbl->setText(QStringLiteral("Gain now: off"));
+        return;
+    }
+    if (!RxLeveler::modeAllows(slice->dspMode())) {
+        // The phone's words for the same state (ModesTabModel.rxlVoiceOnlyText).
+        m_rxLevelerBoostLbl->setText(QStringLiteral(
+            "RXL levels voice modes (LSB, USB, DSB, AM, SAM). In this mode the audio "
+            "is left as it is."));
+        return;
+    }
+    const double dB = slice->rxLevelerGainDb();
+    m_rxLevelerBoostLbl->setText(
+        QStringLiteral("Gain now: %1%2 dB")
+            .arg(dB > 0.05 ? QStringLiteral("+") : QString())
+            .arg(dB, 0, 'f', 1));
 }
 
 // From Thetis v2.10.3.13 setup.cs:5046-5076 — CustomRXAGCEnabled

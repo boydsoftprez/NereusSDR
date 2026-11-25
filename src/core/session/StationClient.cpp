@@ -28,6 +28,9 @@
 //               RemoteRecordingsAccess; coreIsOnThisComputer split out of
 //               coreServesTciOnThisComputer.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-14: Receive leveler: the Core's live gain (rxLevelerGainDb) is a
+//               state apply on the client. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-11-05: Band stack plan Task 6: sliceControlledHere; a bandStack.* refusal goes
 //               to BandStackAccess::refused.
 //   2026-11-05: Band stack plan Task 4: bandStack declared, the `bandStack` mirror and
@@ -5470,6 +5473,8 @@ bool StationClient::applyOne(QObject* target, const MirrorProperty& prop,
         QByteArrayLiteral("SliceModel.agcGainDb"),
         QByteArrayLiteral("SliceModel.agcPeakDb"),
         QByteArrayLiteral("SliceModel.agcAverageDb"),
+        // Receive leveler: likewise the Core's live gain.
+        QByteArrayLiteral("SliceModel.rxLevelerGainDb"),
         QByteArrayLiteral("SliceModel.stationAutoAgcNoiseFloorDbm"),
         QByteArrayLiteral("SliceModel.stationAutoAgcNoiseFloorValid"),
         QByteArrayLiteral("SliceModel.stationAutoAgcNoiseFloorGeneration"),

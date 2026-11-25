@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-14 — J.J. Boyd (KG4VCF), the receive leveler's Custom ranges in
+//                `agc`; AI-assisted via Anthropic Claude Code.
 //   2026-10-12 — J.J. Boyd (KG4VCF), gate experimental RADE V2 opt-in;
 //                AI-assisted implementation via OpenAI Codex.
 //   2026-09-24: original implementation for NereusSDR by J.J. Boyd
@@ -85,6 +87,7 @@
 #include "core/SampleRateCatalog.h"
 #include "core/SkuUiProfile.h"
 #include "core/UnbuiltFeatureList.h"
+#include "core/dsp/RxLeveler.h"
 #include "core/spectrum/WaterfallPalettes.h"
 #include "models/BandGrid.h"
 #include "models/BandPlanManager.h"
@@ -221,11 +224,24 @@ QJsonObject agcObject()
     }
     // The Modes tab's AGC section shows the five modes, AGC-T and AUTO (an
     // on/off switch), so AGC-T is the one range it needs.
+    // Receive leveler: its Custom settings' ranges, each named after the
+    // slice setting it bounds, as the desktop's setup page holds them
+    // (core/dsp/RxLeveler.h), in whole dB and ms.
     return QJsonObject{
         {QStringLiteral("modes"), modes},
         {QStringLiteral("thresholdDb"),
          rangeObject(ControlRanges::kAgcThresholdMinDb, ControlRanges::kAgcThresholdMaxDb,
                      ControlRanges::kAgcThresholdStepDb)},
+        {QStringLiteral("rxLevelerTargetDb"),
+         rangeObject(RxLeveler::kTargetDbMin, RxLeveler::kTargetDbMax, 1)},
+        {QStringLiteral("rxLevelerMaxBoostDb"),
+         rangeObject(RxLeveler::kMaxBoostDbMin, RxLeveler::kMaxBoostDbMax, 1)},
+        {QStringLiteral("rxLevelerMaxCutDb"),
+         rangeObject(RxLeveler::kMaxCutDbMin, RxLeveler::kMaxCutDbMax, 1)},
+        {QStringLiteral("rxLevelerAttackMs"),
+         rangeObject(RxLeveler::kAttackMsMin, RxLeveler::kAttackMsMax, 1)},
+        {QStringLiteral("rxLevelerReleaseMs"),
+         rangeObject(RxLeveler::kReleaseMsMin, RxLeveler::kReleaseMsMax, 1)},
     };
 }
 

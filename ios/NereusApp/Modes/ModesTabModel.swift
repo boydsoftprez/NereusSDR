@@ -1,6 +1,10 @@
 // NereusSDR for iOS: the Modes tab's controls for the active slice: the Core's values in, each write to its owner
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // 2026-10-12: J.J. Boyd (KG4VCF), V2 opt-in/authority gate; AI-assisted via OpenAI Codex.
+// 2026-11-14: The receive leveler (RXL): its switch, mode, settings and live gain; J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-15: RXL's live gain kept apart from the tab (rxlGain), so a new
+//   gain redraws only its line, not the whole Modes tab (JJ: mind the
+//   phone's CPU). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-15: J.J. Boyd (KG4VCF), AI-assisted via Claude Code (Opus 5.5):
 //   set the preamp reason once per rebuild so an unchanged tab publishes nothing.
 
@@ -88,7 +92,46 @@ final class ModesTabModel: ObservableObject {
         static let autoAgcOffset = "autoAgcOffset"
         static let noiseFloorDbm = "stationAutoAgcNoiseFloorDbm"
         static let noiseFloorValid = "stationAutoAgcNoiseFloorValid"
+        static let rxLevelerMode = "rxLevelerMode"
+        static let rxLevelerGainDb = "rxLevelerGainDb"
     }
+
+    /// The receive leveler (RXL): Off, Auto or Custom, as the desktop flag's
+    /// popup offers them (the slice's `rxLevelerMode`).
+    enum RxlMode: Int64, CaseIterable, Identifiable {
+        case off = 0
+        case auto = 1
+        case custom = 2
+
+        var id: Int64 { rawValue }
+        var label: String {
+            switch self {
+            case .off: return "Off"
+            case .auto: return "Auto"
+            case .custom: return "Custom"
+            }
+        }
+    }
+
+    /// One RXL setting the Custom mode uses: the slice property it writes,
+    /// the catalogue range that bounds it (`agc.rxLeveler...`), its name and unit.
+    struct RxlSetting: Identifiable, Equatable {
+        let property: String
+        let rangeName: String
+        let label: String
+        let unit: String
+
+        var id: String { property }
+    }
+
+    /// The five settings, in the desktop Setup page's order.
+    static let rxlSettings: [RxlSetting] = [
+        RxlSetting(property: "rxLevelerTargetDb", rangeName: "rxLevelerTargetDb", label: "Listening target", unit: "dB"),
+        RxlSetting(property: "rxLevelerMaxBoostDb", rangeName: "rxLevelerMaxBoostDb", label: "Maximum boost", unit: "dB"),
+        RxlSetting(property: "rxLevelerMaxCutDb", rangeName: "rxLevelerMaxCutDb", label: "Maximum cut", unit: "dB"),
+        RxlSetting(property: "rxLevelerAttackMs", rangeName: "rxLevelerAttackMs", label: "Attack", unit: "ms"),
+        RxlSetting(property: "rxLevelerReleaseMs", rangeName: "rxLevelerReleaseMs", label: "Release", unit: "ms"),
+    ]
 
     /// The `stepAtt` object's properties (link document section 7.1).
     enum FrontEnd {
@@ -201,6 +244,11 @@ final class ModesTabModel: ObservableObject {
     static let frontEndNotReadyText = "The Core has no attenuator settings ready."
     static let noAntennaListText = "The Core does not list this radio's antennas."
     static let apfTuneText = "APF tune works in CW with APF on."
+    /// RXL levels voice: the Core passes CW, FM and digital audio as it is.
+    static let rxlVoiceOnlyText = "RXL levels voice modes (LSB, USB, DSB, AM, SAM). In this mode the audio is left as it is."
+    static let rxlCustomText = "These settings apply when the mode is Custom."
+    /// The catalogue mode labels RXL works in (the Core's RxLeveler::modeAllows).
+    static let rxlVoiceLabels: Set<String> = ["LSB", "USB", "DSB", "AM", "SAM"]
     /// The CFC compression bars: no Core sends them to a remote device, so
     /// no update is suggested (M10).
     static let cfcBarsNotOnLinkText = "This Core does not send the CFC bars."
@@ -283,6 +331,26 @@ final class ModesTabModel: ObservableObject {
     @Published private(set) var apfTuneHz: Double?
     /// Why APF tune cannot move: it works in CW with APF on.
     @Published private(set) var apfTuneReason: String?
+    /// RXL: the slice's mode, why it cannot change, a note when the slice's
+    /// mode is one RXL leaves alone, the Core's live gain while on
+    /// (``rxlGain``), and the five Custom settings with their catalogue ranges.
+    @Published private(set) var rxlMode: RxlMode?
+    @Published private(set) var rxlReason: String?
+    @Published private(set) var rxlModeNote: String?
+    /// The Core's live RXL gain as the tab shows it, "Gain now: +3.2 dB",
+    /// while RXL is on in a voice mode, else nil. It moves several times a
+    /// second, so it lives apart from this model: a new gain redraws only
+    /// the line that watches it (``RxlGainLine``), never the tab.
+    final class RxlGain: ObservableObject {
+        @Published fileprivate(set) var text: String?
+    }
+    let rxlGain = RxlGain()
+    var rxlGainText: String? { rxlGain.text }
+    @Published private(set) var rxlValues: [String: Double] = [:]
+    @Published private(set) var rxlRanges: [String: StationCatalog.Range] = [:]
+    @Published private(set) var rxlSettingsReason: String?
+    /// The last mode RXL was on in, which the switch turns back on (Auto at first), as the desktop flag does.
+    private var rxlLatched: RxlMode = .auto
     /// The DIG offset for the slice's DIGL or DIGU, and why it cannot change.
     @Published private(set) var digOffsetHz: Int64?
     @Published private(set) var digOffsetReason: String?
@@ -707,6 +775,31 @@ final class ModesTabModel: ObservableObject {
             return
         }
         writeSlice(Property.apfEnabled, .bool(!(apf ?? false)))
+    }
+
+    /// The RXL switch: off, or back on in the last mode it was on in (Auto
+    /// at first), as the desktop flag's RXL button does.
+    func toggleRxl() {
+        guard rxlReason == nil, let mode = rxlMode else {
+            return
+        }
+        writeSlice(Property.rxLevelerMode, .enumeration(mode == .off ? rxlLatched.rawValue : RxlMode.off.rawValue))
+    }
+
+    /// RXL's Off, Auto and Custom buttons.
+    func selectRxlMode(_ mode: RxlMode) {
+        guard rxlReason == nil else {
+            return
+        }
+        writeSlice(Property.rxLevelerMode, .enumeration(mode.rawValue))
+    }
+
+    /// One of the Custom settings' sliders, snapped to the Core's range.
+    func setRxlSetting(_ setting: RxlSetting, _ value: Double) {
+        guard rxlSettingsReason == nil, let range = rxlRanges[setting.rangeName] else {
+            return
+        }
+        writeSlice(setting.property, .int(Int64(RxPanelModel.snapped(value, to: range).rounded())))
     }
 
     /// The APF tune slider, -500 to 500 Hz.
@@ -1163,6 +1256,36 @@ final class ModesTabModel: ObservableObject {
             set(\.apfTuneReason, CatalogFeed.needsNewerCoreText)
         } else {
             set(\.apfTuneReason, cw && apf == true ? nil : Self.apfTuneText)
+        }
+
+        // RXL: the switch and mode, the live gain while on, and the Custom
+        // settings, greyed unless the mode is Custom.
+        let rxl = Self.whole(sliceValue(Property.rxLevelerMode)).flatMap(RxlMode.init(rawValue:))
+        set(\.rxlMode, rxl)
+        if let rxl, rxl != .off {
+            rxlLatched = rxl
+        }
+        set(\.rxlReason, object != nil && rxl == nil ? CatalogFeed.needsNewerCoreText : nil)
+        let voice = label.map { Self.rxlVoiceLabels.contains($0) } ?? true
+        set(\.rxlModeNote, rxl != nil && rxl != .off && !voice ? Self.rxlVoiceOnlyText : nil)
+        let gain = rxl != nil && rxl != .off && voice ? RxPanelModel.number(sliceValue(Property.rxLevelerGainDb)) : nil
+        let gainText = gain.map { String(format: "Gain now: %+.1f dB", $0) }
+        if rxlGain.text != gainText {
+            rxlGain.text = gainText
+        }
+        var rxlValues: [String: Double] = [:]
+        var rxlRanges: [String: StationCatalog.Range] = [:]
+        for setting in Self.rxlSettings {
+            rxlValues[setting.property] = RxPanelModel.number(sliceValue(setting.property))
+            rxlRanges[setting.rangeName] = catalog?.agc.ranges[setting.rangeName]
+        }
+        set(\.rxlValues, rxlValues)
+        set(\.rxlRanges, rxlRanges)
+        if object != nil, rxl == nil || rxlValues.count < Self.rxlSettings.count
+            || (catalog != nil && rxlRanges.count < Self.rxlSettings.count) {
+            set(\.rxlSettingsReason, CatalogFeed.needsNewerCoreText)
+        } else {
+            set(\.rxlSettingsReason, rxl == .custom ? nil : Self.rxlCustomText)
         }
 
         // The DIG offset (DIGL and DIGU) and RTTY mark and shift (DIGL), as the flag shows them.

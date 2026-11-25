@@ -1,12 +1,18 @@
 // NereusSDR for iOS: the fold rule: where each slice's flag sits, and which flags fold to a one-line tag
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-11-15: `folded`, the flags folded by a tap on their letter, which
+// stay folded wherever they land, the active slice's too. J.J. Boyd
+// (KG4VCF), AI-assisted via Claude Code.
 
 import CoreGraphics
 
 /// The one flag rule for the phone and the iPad (D9, R-IOS-11): every slice
 /// keeps its full flag unless it would land on another flag, and then it
 /// folds to a one-line tag (letter, frequency, TX badge). The active slice
-/// is always full and is placed first, at the top edge.
+/// is always full and is placed first, at the top edge, unless its flag
+/// was folded by a tap on its letter: a flag folded that way stays folded
+/// wherever it lands, until a tap on its tag opens it again.
 ///
 /// Each flag hangs on the side of its line away from the passband, as the
 /// desktop's flag does: to the right for a lower-sideband mode, to the left
@@ -102,16 +108,25 @@ public enum FlagLayout {
     /// keeps `flagSize`'s width. `sideColumn` is the round buttons' column
     /// beside each full flag, part of the flag's footprint. `top` is where
     /// the flags start: below the Back to your band bar while the band
-    /// shows another slice's display.
+    /// shows another slice's display. `folded` names the slices whose flag
+    /// was folded by a tap on its letter: always a tag.
     public static func layout(slices: [BandSlice], activeSliceId: Int?, geometry: BandGeometry,
                               flagSize: CGSize = FlagLayout.flagSize,
                               foldedSize: (BandSlice) -> CGSize = { FlagLayout.foldedSize(frequencyText: $0.frequencyText) },
                               flagHeight: (BandSlice) -> CGFloat = { _ in FlagLayout.flagSize.height },
-                              sideColumn: CGSize = FlagLayout.sideColumnSize(), top: CGFloat = 0)
+                              sideColumn: CGSize = FlagLayout.sideColumnSize(), top: CGFloat = 0,
+                              folded: (BandSlice) -> Bool = { _ in false })
         -> [FlagPlacement] {
         let width = Double(geometry.size.width)
-        // The active slice first, then the others in slice order.
+        // The active slice first, then the others in slice order; the flags
+        // folded by their letter last, so their tags stack below the open
+        // flags rather than fold them.
         let order = slices.indices.sorted { a, b in
+            let aFolded = folded(slices[a])
+            let bFolded = folded(slices[b])
+            if aFolded != bFolded {
+                return bFolded
+            }
             let aActive = slices[a].id == activeSliceId
             let bActive = slices[b].id == activeSliceId
             if aActive != bActive {
@@ -129,7 +144,7 @@ public enum FlagLayout {
                                        lowerSideband: slice.lowerSideband),
                               y: top, width: flagSize.width, height: flagHeight(slice))
             let footprint = full.union(sideColumnRect(flag: full, lineX: lineX, bandWidth: width, column: sideColumn))
-            if isActive || !placed.contains(where: { overlaps($0, footprint) }) {
+            if !folded(slice), isActive || !placed.contains(where: { overlaps($0, footprint) }) {
                 // A full flag always sits at the top; one that would land on another folds instead.
                 placed.append(footprint)
                 result[index] = .full(full)

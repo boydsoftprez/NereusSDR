@@ -9,6 +9,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-22 - The RX Leveler section's maximum cut in place of the pause
+//                 hold, and no timer: the live gain comes from the slice.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-14 - AgcAlcSetupPage's RX Leveler section (updateRxLevelerGating,
+//                 refreshRxLevelerBoost and its controls). Brian Sutton
+//                 (W4KZO), AI-assisted via xAI Grok.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -164,6 +170,8 @@ public:
 
 private:
     void updateCustomGating(AGCMode mode);
+    void updateRxLevelerGating(RxLevelerMode mode);
+    void refreshRxLevelerBoost();
     void rebuildForActiveSlice();
 
     QGroupBox*  m_txLevelerGrp{nullptr};
@@ -182,6 +190,14 @@ private:
     QSlider*    m_agcHangThresh{nullptr};
     QCheckBox*  m_autoAgcChk{nullptr};
     QSpinBox*   m_autoAgcOffset{nullptr};
+
+    QComboBox*  m_rxLevelerMode{nullptr};
+    QSpinBox*   m_rxLevelerTarget{nullptr};
+    QSpinBox*   m_rxLevelerMaxBoost{nullptr};
+    QSpinBox*   m_rxLevelerAttack{nullptr};
+    QSpinBox*   m_rxLevelerRelease{nullptr};
+    QSpinBox*   m_rxLevelerMaxCut{nullptr};
+    QLabel*     m_rxLevelerBoostLbl{nullptr};
 
     // ── Phase 3M-3a-i Batch 2 Task 2 (D): TX Leveler + TX ALC controls ──
     // Wired bidirectionally to RadioModel::transmitModel() — see

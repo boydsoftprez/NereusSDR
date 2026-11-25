@@ -9,6 +9,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-14 - Receive leveler settings: RX Leveler by Brian Sutton
+//                (W4KZO), AI-assisted via xAI Grok; maximum cut in place
+//                of pause hold and the live gain reading.
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 //   2026-11-05 - A newly added receiver starts with RIT and XIT off, on a
 //                letter used before too; a restored receiver keeps its own.
 //                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
@@ -393,6 +398,7 @@
 #include "core/RadeChannel.h"
 #include "core/RadeV2Feature.h"
 #include "core/WdspEngine.h"
+#include "core/dsp/RxLeveler.h"
 #include "core/accessories/AlexController.h"
 #include "core/session/MirrorEnumDomain.h"
 #include "core/SkuUiProfile.h"  // issue #257 — rxOnlyLabels lookup in refreshAntennasFromAlex
@@ -1124,6 +1130,93 @@ void SliceModel::setAgcMode(AGCMode mode)
     }
 }
 
+namespace {
+
+int clampLevelerInt(int value, double lo, double hi)
+{
+    if (value < static_cast<int>(lo)) { return static_cast<int>(lo); }
+    if (value > static_cast<int>(hi)) { return static_cast<int>(hi); }
+    return value;
+}
+
+}  // namespace
+
+void SliceModel::setRxLevelerMode(RxLevelerMode mode)
+{
+    const int raw = static_cast<int>(mode);
+    if (raw < static_cast<int>(RxLevelerMode::Off)
+        || raw > static_cast<int>(RxLevelerMode::Custom)) {
+        return;
+    }
+    if (holdsListenerWrite(rxLevelerMode(), mode)) { return; }
+    if (m_rxLevelerMode != mode) {
+        m_rxLevelerMode = mode;
+        emit rxLevelerModeChanged(mode);
+    }
+}
+
+void SliceModel::setRxLevelerTargetDb(int dB)
+{
+    dB = clampLevelerInt(dB, RxLeveler::kTargetDbMin, RxLeveler::kTargetDbMax);
+    if (holdsListenerWrite(rxLevelerTargetDb(), dB)) { return; }
+    if (m_rxLevelerTargetDb != dB) {
+        m_rxLevelerTargetDb = dB;
+        emit rxLevelerTargetDbChanged(dB);
+    }
+}
+
+void SliceModel::setRxLevelerMaxBoostDb(int dB)
+{
+    dB = clampLevelerInt(dB, RxLeveler::kMaxBoostDbMin, RxLeveler::kMaxBoostDbMax);
+    if (holdsListenerWrite(rxLevelerMaxBoostDb(), dB)) { return; }
+    if (m_rxLevelerMaxBoostDb != dB) {
+        m_rxLevelerMaxBoostDb = dB;
+        emit rxLevelerMaxBoostDbChanged(dB);
+    }
+}
+
+void SliceModel::setRxLevelerAttackMs(int ms)
+{
+    ms = clampLevelerInt(ms, RxLeveler::kAttackMsMin, RxLeveler::kAttackMsMax);
+    if (holdsListenerWrite(rxLevelerAttackMs(), ms)) { return; }
+    if (m_rxLevelerAttackMs != ms) {
+        m_rxLevelerAttackMs = ms;
+        emit rxLevelerAttackMsChanged(ms);
+    }
+}
+
+void SliceModel::setRxLevelerReleaseMs(int ms)
+{
+    ms = clampLevelerInt(ms, RxLeveler::kReleaseMsMin, RxLeveler::kReleaseMsMax);
+    if (holdsListenerWrite(rxLevelerReleaseMs(), ms)) { return; }
+    if (m_rxLevelerReleaseMs != ms) {
+        m_rxLevelerReleaseMs = ms;
+        emit rxLevelerReleaseMsChanged(ms);
+    }
+}
+
+void SliceModel::setRxLevelerMaxCutDb(int dB)
+{
+    dB = clampLevelerInt(dB, RxLeveler::kMaxCutDbMin, RxLeveler::kMaxCutDbMax);
+    if (holdsListenerWrite(rxLevelerMaxCutDb(), dB)) { return; }
+    if (m_rxLevelerMaxCutDb != dB) {
+        m_rxLevelerMaxCutDb = dB;
+        emit rxLevelerMaxCutDbChanged(dB);
+    }
+}
+
+void SliceModel::setRxLevelerGainDb(double dB)
+{
+    // A tenth of a dB is as fine as the readout shows; finer changes would
+    // only cost signals and remote traffic.
+    const double rounded = std::isfinite(dB) ? std::round(dB * 10.0) / 10.0 : 0.0;
+    if (qFuzzyCompare(1.0 + m_rxLevelerGainDb, 1.0 + rounded)) {
+        return;
+    }
+    m_rxLevelerGainDb = rounded;
+    emit rxLevelerGainDbChanged(rounded);
+}
+
 // ---------------------------------------------------------------------------
 // Tuning step
 // ---------------------------------------------------------------------------
@@ -1493,6 +1586,16 @@ QString SliceModel::applyMirroredValue(const QByteArray& propertyName, const QVa
     }
     if (propertyName == "agcPeakDb") {
         setAgcPeakDb(value.toDouble());
+        return QString();
+    }
+    // Receive leveler: the Core's live gain, applied as its readings are
+    // (policy keeps it Outbound, so a Core never takes it inbound).
+    if (propertyName == "rxLevelerGainDb") {
+        const double dB = value.toDouble();
+        if (!std::isfinite(dB)) {
+            return QStringLiteral("The leveler gain must be a number of decibels.");
+        }
+        setRxLevelerGainDb(dB);
         return QString();
     }
     // Parity Task 16: the Core's channel's minimum notch width.
@@ -2430,6 +2533,12 @@ void SliceModel::copyReceiverSettingsFrom(const SliceModel& source)
     setAgcHangThreshold(source.agcHangThreshold());
     setAgcMaxGain(source.agcMaxGain());
     setAgcMode(source.agcMode());
+    setRxLevelerTargetDb(source.rxLevelerTargetDb());
+    setRxLevelerMaxBoostDb(source.rxLevelerMaxBoostDb());
+    setRxLevelerAttackMs(source.rxLevelerAttackMs());
+    setRxLevelerReleaseMs(source.rxLevelerReleaseMs());
+    setRxLevelerMaxCutDb(source.rxLevelerMaxCutDb());
+    setRxLevelerMode(source.rxLevelerMode());
     // rfGain is the AGC-T, the WDSP AGC top (setRfGain).
     setRfGain(source.rfGain());
     setStepHz(source.stepHz());
@@ -3789,6 +3898,13 @@ void SliceModel::saveToSettings(Band band)
 
     s.setValue(sp + QStringLiteral("SnbEnabled"), boolStr(m_snbEnabled));
     s.setValue(sp + QStringLiteral("AnfEnabled"), boolStr(m_anfEnabled));
+    // Receive leveler, per receiver. Absent keys keep the off default.
+    s.setValue(sp + QStringLiteral("RxLevelerMode"), static_cast<int>(m_rxLevelerMode));
+    s.setValue(sp + QStringLiteral("RxLevelerTargetDb"), m_rxLevelerTargetDb);
+    s.setValue(sp + QStringLiteral("RxLevelerMaxBoostDb"), m_rxLevelerMaxBoostDb);
+    s.setValue(sp + QStringLiteral("RxLevelerAttackMs"), m_rxLevelerAttackMs);
+    s.setValue(sp + QStringLiteral("RxLevelerReleaseMs"), m_rxLevelerReleaseMs);
+    s.setValue(sp + QStringLiteral("RxLevelerMaxCutDb"), m_rxLevelerMaxCutDb);
     // Squelch, saved per receiver as Thetis does.
     // From Thetis console.cs:2830-2852 [v2.10.3.15]:
     //   a.Add("chkSquelch_checkstate/" + chkSquelch.CheckState.ToString());
@@ -4205,6 +4321,30 @@ void SliceModel::restoreFromSettings(Band band, bool restoreTuning)
     }
     if (s.contains(sp + QStringLiteral("AnfEnabled"))) {
         setAnfEnabled(s.value(sp + QStringLiteral("AnfEnabled")).toString() == QLatin1String("True"));
+    }
+    // Receive leveler. The knobs are restored before the mode so a saved
+    // Custom mode rides with the saved knobs, not the preset.
+    if (s.contains(sp + QStringLiteral("RxLevelerTargetDb"))) {
+        setRxLevelerTargetDb(s.value(sp + QStringLiteral("RxLevelerTargetDb")).toInt());
+    }
+    if (s.contains(sp + QStringLiteral("RxLevelerMaxBoostDb"))) {
+        setRxLevelerMaxBoostDb(s.value(sp + QStringLiteral("RxLevelerMaxBoostDb")).toInt());
+    }
+    if (s.contains(sp + QStringLiteral("RxLevelerAttackMs"))) {
+        setRxLevelerAttackMs(s.value(sp + QStringLiteral("RxLevelerAttackMs")).toInt());
+    }
+    if (s.contains(sp + QStringLiteral("RxLevelerReleaseMs"))) {
+        setRxLevelerReleaseMs(s.value(sp + QStringLiteral("RxLevelerReleaseMs")).toInt());
+    }
+    if (s.contains(sp + QStringLiteral("RxLevelerMaxCutDb"))) {
+        setRxLevelerMaxCutDb(s.value(sp + QStringLiteral("RxLevelerMaxCutDb")).toInt());
+    }
+    if (s.contains(sp + QStringLiteral("RxLevelerMode"))) {
+        const int raw = s.value(sp + QStringLiteral("RxLevelerMode")).toInt();
+        if (raw >= static_cast<int>(RxLevelerMode::Off)
+            && raw <= static_cast<int>(RxLevelerMode::Custom)) {
+            setRxLevelerMode(static_cast<RxLevelerMode>(raw));
+        }
     }
 
     // Squelch, per receiver. From Thetis console.cs:4164-4193 [v2.10.3.15]

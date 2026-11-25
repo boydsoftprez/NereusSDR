@@ -21,6 +21,9 @@
 //                 MOX reading step that floors and signs it (console.cs)
 //                 (D14, R-R3-49), by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-11-14 - RxLevelerMode (Off, Auto, Custom), the receive leveler's
+//                 setting per receiver. NereusSDR-original. Brian Sutton
+//                 (W4KZO), AI-assisted via xAI Grok.
 // =================================================================
 
 /*  wdsp.cs
@@ -227,6 +230,14 @@ enum class AGCMode : int {
     Med    = 3,
     Fast   = 4,
     Custom = 5
+};
+
+// Receive loudness rider. Defined with the other DSP enums so SliceModel
+// can publish it. The processor lives in dsp/RxLeveler.h.
+enum class RxLevelerMode : int {
+    Off    = 0,
+    Auto   = 1,
+    Custom = 2
 };
 
 // RX meter types. Values match WDSP GetRXAMeter 'mt' argument.
@@ -546,3 +557,4 @@ Q_DECLARE_METATYPE(NereusSDR::NrPosition)
 Q_DECLARE_METATYPE(NereusSDR::EmnrGainMethod)
 Q_DECLARE_METATYPE(NereusSDR::EmnrNpeMethod)
 Q_DECLARE_METATYPE(NereusSDR::SbnrAlgo)
+Q_DECLARE_METATYPE(NereusSDR::RxLevelerMode)

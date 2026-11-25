@@ -13,6 +13,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-11-14 - Receive leveler: RX Leveler settings per receiver (Brian
+//              Sutton, W4KZO, AI-assisted via xAI Grok); pause hold
+//              replaced by maximum cut, Auto preset defaults, and the live
+//              rxLevelerGainDb reading. The
+//              settings' properties moved to the end of the list so every
+//              earlier property keeps its wire ordinal.
+//              NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//              Anthropic Claude Code.
 // 2026-11-06 - copyReceiverSettingsFrom, copyFilterMemoryFrom,
 //              setDspModeForNewReceiver and loadAudioRoutingFromSettings: a
 //              new receiver is a copy of the slice the operator is on, not of
@@ -344,6 +352,7 @@
 #include "core/SampleRateCatalog.h"
 #include "core/WdspTypes.h"
 #include "core/dsp/NnrSettings.h"
+#include "core/dsp/RxLeveler.h"
 
 #include <QByteArray>
 #include <QList>
@@ -824,6 +833,28 @@ private:
     // Append-only wire field: measured receive input pressure, never an
     // applied NNR limit and never persisted. Empty means no current warning.
     Q_PROPERTY(QString nnrLoadWarning READ nnrLoadWarning NOTIFY nnrLoadWarningChanged)
+    // Receive loudness rider. Per receiver, off until the operator turns
+    // it on. Separate from the transmit leveler.
+    // Appended after every earlier property so each keeps its wire ordinal
+    // (they first sat after agcMode, which moved every later ordinal).
+    Q_PROPERTY(NereusSDR::RxLevelerMode rxLevelerMode READ rxLevelerMode
+               WRITE setRxLevelerMode NOTIFY rxLevelerModeChanged)
+    Q_PROPERTY(int rxLevelerTargetDb READ rxLevelerTargetDb
+               WRITE setRxLevelerTargetDb NOTIFY rxLevelerTargetDbChanged)
+    Q_PROPERTY(int rxLevelerMaxBoostDb READ rxLevelerMaxBoostDb
+               WRITE setRxLevelerMaxBoostDb NOTIFY rxLevelerMaxBoostDbChanged)
+    Q_PROPERTY(int rxLevelerAttackMs READ rxLevelerAttackMs
+               WRITE setRxLevelerAttackMs NOTIFY rxLevelerAttackMsChanged)
+    Q_PROPERTY(int rxLevelerReleaseMs READ rxLevelerReleaseMs
+               WRITE setRxLevelerReleaseMs NOTIFY rxLevelerReleaseMsChanged)
+    Q_PROPERTY(int rxLevelerMaxCutDb READ rxLevelerMaxCutDb
+               WRITE setRxLevelerMaxCutDb NOTIFY rxLevelerMaxCutDbChanged)
+    // Receive leveler: the gain it applies now (dB, + lift, - cut; 0 when
+    // off). The Core's RadioModel writes it from AudioEngine on each meter
+    // tick; the setup page's live reading, here and in a remote window,
+    // reads it. Outbound, no WRITE. Declared last so every earlier
+    // property keeps its wire ordinal.
+    Q_PROPERTY(double rxLevelerGainDb READ rxLevelerGainDb NOTIFY rxLevelerGainDbChanged)
 
 public:
     // Receive-layout admission bounds: general receive defaults, not a
@@ -948,6 +979,24 @@ public:
 
     AGCMode agcMode() const { return m_agcMode; }
     void setAgcMode(AGCMode mode);
+
+    RxLevelerMode rxLevelerMode() const { return m_rxLevelerMode; }
+    void setRxLevelerMode(RxLevelerMode mode);
+    int rxLevelerTargetDb() const { return m_rxLevelerTargetDb; }
+    void setRxLevelerTargetDb(int dB);
+    int rxLevelerMaxBoostDb() const { return m_rxLevelerMaxBoostDb; }
+    void setRxLevelerMaxBoostDb(int dB);
+    int rxLevelerAttackMs() const { return m_rxLevelerAttackMs; }
+    void setRxLevelerAttackMs(int ms);
+    int rxLevelerReleaseMs() const { return m_rxLevelerReleaseMs; }
+    void setRxLevelerReleaseMs(int ms);
+    int rxLevelerMaxCutDb() const { return m_rxLevelerMaxCutDb; }
+    void setRxLevelerMaxCutDb(int dB);
+    /// The gain the receive leveler applies now (dB, + lift, - cut; 0 when
+    /// off). Station side only: RadioModel writes it from AudioEngine on
+    /// each meter tick; a remote window reads the mirrored value.
+    double rxLevelerGainDb() const { return m_rxLevelerGainDb; }
+    void setRxLevelerGainDb(double dB);
 
     // ---- Tuning step ----
 
@@ -1830,6 +1879,13 @@ signals:
     void dspModeChanged(NereusSDR::DSPMode mode);
     void filterChanged(int low, int high);
     void agcModeChanged(NereusSDR::AGCMode mode);
+    void rxLevelerModeChanged(NereusSDR::RxLevelerMode mode);
+    void rxLevelerTargetDbChanged(int dB);
+    void rxLevelerMaxBoostDbChanged(int dB);
+    void rxLevelerAttackMsChanged(int ms);
+    void rxLevelerReleaseMsChanged(int ms);
+    void rxLevelerMaxCutDbChanged(int dB);
+    void rxLevelerGainDbChanged(double dB);
     void stepHzChanged(int hz);
     void afGainChanged(int gain);
     void rfGainChanged(int gain);
@@ -2036,6 +2092,15 @@ private:
     int     m_filterLow{100};            // USB default from Thetis F5
     int     m_filterHigh{3000};
     AGCMode m_agcMode{AGCMode::Med};
+    // Receive leveler. Off, so an existing receiver sounds as it did.
+    // The custom numbers start at the Auto preset (RxLeveler.h).
+    RxLevelerMode m_rxLevelerMode{RxLevelerMode::Off};
+    int m_rxLevelerTargetDb{RxLeveler::kAutoTargetDb};
+    int m_rxLevelerMaxBoostDb{RxLeveler::kAutoMaxBoostDb};
+    int m_rxLevelerAttackMs{RxLeveler::kAutoAttackMs};
+    int m_rxLevelerReleaseMs{RxLeveler::kAutoReleaseMs};
+    int m_rxLevelerMaxCutDb{RxLeveler::kAutoMaxCutDb};
+    double m_rxLevelerGainDb{0.0};
     // From Thetis console.cs:1984 [v2.10.3.15]: Thetis starts at tune_step_index = 2 (10 Hz).
     int     m_stepHz{100};               // kTuneStepList[5]; NereusSDR default kept pending maintainer review
     int     m_afGain{50};                // 0-100, maps to 0.0-1.0 volume

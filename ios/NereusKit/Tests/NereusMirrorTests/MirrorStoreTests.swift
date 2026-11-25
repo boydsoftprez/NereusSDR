@@ -101,7 +101,8 @@ import Testing
         }
         #expect(store.objects(ofClass: "SliceModel").map(\.key) == ["slice:0"])
         #expect(store.objects(ofClass: "RadioModel").map(\.key) == ["radio"])
-        #expect(store.propertyNames(ofClass: "SliceModel")?.count == 150)
+        // 157 with the receive leveler's six settings and live gain.
+        #expect(store.propertyNames(ofClass: "SliceModel")?.count == 157)
 
         // Enum values are numbers, as the Core sent them.
         let slice = try #require(store.object("slice:0"))

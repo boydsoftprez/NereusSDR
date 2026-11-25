@@ -16,9 +16,14 @@
 //   2026-10-15 - Max Gain spinner sync and the rebind case. J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-11-22 - The RX Leveler's "Gain now" line: off after RXL Off, the
+//                 voice-modes note in a mode RXL leaves alone, the gain in a
+//                 voice mode. J.J. Boyd (KG4VCF), AI-assisted via Claude
+//                 Code.
 // =================================================================
 
 #include <QtTest/QtTest>
+#include <QLabel>
 #include <QSpinBox>
 
 #include "gui/setup/DspSetupPages.h"
@@ -45,6 +50,44 @@ class TestAgcAlcFixedGainSync : public QObject {
     Q_OBJECT
 
 private slots:
+    // "Gain now" follows the slice's RXL mode and receive mode, not only its
+    // gain: off after RXL Off and in a voice mode RXL leaves alone the
+    // phone's words, even when the gain reading does not move.
+    void rxLevelerGainNowShowsOffAndTheModeNote()
+    {
+        RadioModel model;
+        model.addSlice();
+        SliceModel* slice = model.activeSlice();
+        QVERIFY(slice != nullptr);
+        slice->setDspMode(DSPMode::USB);
+        slice->setRxLevelerMode(RxLevelerMode::Auto);
+        AgcAlcSetupPage page(&model);
+        QLabel* line = nullptr;
+        for (QLabel* label : page.findChildren<QLabel*>()) {
+            if (label->property("nereusSetupId").toString()
+                == QLatin1String("dsp.agcAlc.rxLevelerBoost")) {
+                line = label;
+            }
+        }
+        QVERIFY(line != nullptr);
+        QCOMPARE(line->text(), QStringLiteral("Gain now: 0.0 dB"));
+        slice->setRxLevelerGainDb(3.24);
+        QCOMPARE(line->text(), QStringLiteral("Gain now: +3.2 dB"));
+        slice->setRxLevelerGainDb(0.0);
+
+        slice->setRxLevelerMode(RxLevelerMode::Off);
+        QCOMPARE(line->text(), QStringLiteral("Gain now: off"));
+        slice->setRxLevelerMode(RxLevelerMode::Auto);
+        QCOMPARE(line->text(), QStringLiteral("Gain now: 0.0 dB"));
+
+        slice->setDspMode(DSPMode::CWU);
+        QCOMPARE(line->text(), QStringLiteral(
+            "RXL levels voice modes (LSB, USB, DSB, AM, SAM). In this mode the audio "
+            "is left as it is."));
+        slice->setDspMode(DSPMode::LSB);
+        QCOMPARE(line->text(), QStringLiteral("Gain now: 0.0 dB"));
+    }
+
     void modelChangeUpdatesSpinnerWithoutEcho()
     {
         RadioModel model;
