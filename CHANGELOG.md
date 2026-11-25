@@ -11,6 +11,9 @@
   keeps its full height; the waterfall gives up the room. Click the line or a
   tag and the details open over the waterfall, or upward over the spectrum when
   the waterfall is too short.
+- **The Roundtable strip holds still.** Your line keeps one place for each
+  station on the frequency, so it no longer jumps sideways, and drags its
+  details with it, every time a report comes or goes.
 
 ## [2026.11.1] - 2026-11-08
 

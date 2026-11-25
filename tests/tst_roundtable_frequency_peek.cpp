@@ -13,6 +13,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-18: The details hold still while reports come and go: one Heard by
+//               row per station, Your pan always there off your own frequency.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: The details hang under the strip over the waterfall, lined up
 //               with the line, and open upward over a short waterfall. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -148,6 +151,29 @@ QImage render(const RoundtableFrequencyPeek& peek)
 }
 
 // A card too long for most pans: three on frequency and 14 readings.
+// JJ's frequency: W4ECN and you on it. `reports` says which place has a
+// reading: bit 0 W4ECN, bit 1 you.
+RoundtableCardModel placesCard(Kind kind, int reports, quint64 hz = kViewedHz)
+{
+    RoundtableCardModel card;
+    card.kind = kind;
+    card.hz = hz;
+    card.clockMs = kind == Kind::LastTalker ? 0 : 3000;
+    card.endedAgoMs = kind == Kind::LastTalker ? 16000 : 0;
+    if (kind == Kind::Talking || kind == Kind::LastTalker) { card.keyed = {QStringLiteral("W4ECN")}; }
+    card.onFrequency = {RoundtableCardPerson{QStringLiteral("W4ECN"), kind == Kind::Talking, false, 0, QStringLiteral("r/a")},
+                        RoundtableCardPerson{QStringLiteral("KG4VCF"), false, true, 0, QStringLiteral("r/me")}};
+    for (int i = 0; i < 2; ++i) {
+        RoundtableCardRow row = rowOf(card.onFrequency.at(i).name, -62.0 - 4.0 * i, 3000);
+        row.you = card.onFrequency.at(i).you;
+        row.id = card.onFrequency.at(i).id;
+        row.reported = ((reports >> i) & 1) != 0;
+        row.hasPeak = row.reported;
+        card.rows.append(row);
+    }
+    return card;
+}
+
 RoundtableCardModel longTalker()
 {
     RoundtableCardModel card = talker();
@@ -420,15 +446,22 @@ private slots:
         view.card = doubled();
         QCOMPARE(roundtableViewRows(view).first().label, QStringLiteral("Your pan"));
 
-        // Blank off the pan, and with nobody talking, and on a frozen card.
+        // A dash off the pan and with nobody talking, so the view keeps its
+        // height; none on a frozen card.
         view.panDbm.reset();
-        QCOMPARE(roundtableViewRows(view).size(), 2);
+        rows = roundtableViewRows(view);
+        QCOMPARE(rows.size(), 3);
+        QVERIFY(!rows.first().reported);
         view.panDbm = -74.0;
         view.card = RoundtableCardModel{};
-        QVERIFY(roundtableViewRows(view).isEmpty());
+        rows = roundtableViewRows(view);
+        QCOMPARE(rows.size(), 1);
+        QVERIFY(!rows.first().reported);
         view.card = talker();
         view.card.kind = Kind::LastTalker;
-        QCOMPARE(roundtableViewRows(view).size(), 2);
+        rows = roundtableViewRows(view);
+        QCOMPARE(rows.size(), 3);
+        QVERIFY(!rows.first().reported);
         view.card = talker();
         view.card.frozen = true;
         QCOMPARE(roundtableViewRows(view).size(), 2);
@@ -483,6 +516,48 @@ private slots:
         more.onFrequency.append(RoundtableCardPerson{QStringLiteral("K4ABC"), false, false, 0});
         pan.peek->refresh(more, -71.0, false);
         QVERIFY(pan.peek->height() > geometry.height());
+    }
+
+    // JJ's capture: the details grew and shrank by a row as reports came and went,
+    // and moved with the line. Now one row per station: nothing moves until a
+    // station joins or leaves.
+    void theDetailsHoldStillAsReportsComeAndGo()
+    {
+        for (const bool own : {true, false}) {
+            Pan pan;
+            pan.peek->setInspectorSpot(QRect(0, 330, 1100, 400), QRect(0, 0, 1200, 300), 608);
+            const quint64 hz = own ? kSliceHz : kViewedHz;
+            if (own) {
+                pan.peek->showOwn(hz, QStringLiteral("lsb"));
+            } else {
+                pan.peek->showFor(hz, QStringLiteral("lsb"));
+            }
+            pan.peek->refresh(placesCard(Kind::Unknown, 0, hz), std::nullopt, false);
+            const QRect geometry = pan.peek->geometry();
+            const QList<QRect> buttons{pan.tune()->geometry(), pan.messages()->geometry(), pan.more()->geometry(),
+                                       pan.close()->geometry()};
+            for (const Kind kind : {Kind::Unknown, Kind::Talking, Kind::LastTalker, Kind::Unknown}) {
+                for (const int reports : {1, 3, 2, 0}) {
+                    RoundtableCardModel card = placesCard(kind, reports, hz);
+                    card.clockMs += reports * 1000;
+                    pan.peek->refresh(card, reports % 2 == 0 ? std::optional<double>() : std::optional<double>(-70.0), false);
+                    const QString what = QStringLiteral("own %1 kind %2 reports %3").arg(own).arg(static_cast<int>(kind)).arg(reports);
+                    QVERIFY2(pan.peek->geometry() == geometry, qPrintable(what));
+                    const QList<QRect> now{pan.tune()->geometry(), pan.messages()->geometry(), pan.more()->geometry(),
+                                           pan.close()->geometry()};
+                    QVERIFY2(now == buttons, qPrintable(what));
+                }
+            }
+            // A station joining is a real change: a row more.
+            RoundtableCardModel joined = placesCard(Kind::Unknown, 0, hz);
+            joined.onFrequency.append(RoundtableCardPerson{QStringLiteral("AA4QQ"), false, false, 0, QStringLiteral("r/b")});
+            RoundtableCardRow row = rowOf(QStringLiteral("AA4QQ"), -80.0);
+            row.reported = false;
+            joined.rows.append(row);
+            pan.peek->refresh(joined, std::nullopt, false);
+            QCOMPARE(pan.peek->geometry().topLeft(), geometry.topLeft());
+            QVERIFY(pan.peek->height() > geometry.height());
+        }
     }
 
     // D22: your own frequency drops the Viewing line and Your pan; Tune stays, greyed, with why.

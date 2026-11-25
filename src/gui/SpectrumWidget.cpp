@@ -8,6 +8,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-18 J.J. Boyd / KG4VCF : Roundtable holds still (JJ: "roundtable
+//                 jumps around the screen"): your line is placed outside
+//                 paint (roundtableStripLineNow) and keeps its side while
+//                 only data changes; a new line re-places the open details
+//                 at once, not after the paint; a tag is as wide as the
+//                 widest callsign of its stations, not its current talker's.
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-11-16 J.J. Boyd / KG4VCF : rewind plays on release (JJ's design
 //                 change): letting go of the picture in the past plays the
 //                 pan's slice from the top row at its own frequency; a
@@ -14005,7 +14012,7 @@ bool roundtableCardRowsEqual(const QVector<RoundtableCardRow>& a, const QVector<
         const RoundtableCardRow& x = a.at(i);
         const RoundtableCardRow& y = b.at(i);
         if (x.call != y.call || x.dbm != y.dbm || x.ageMs != y.ageMs || x.you != y.you || x.old != y.old
-            || x.peakDbm != y.peakDbm || x.hasPeak != y.hasPeak) {
+            || x.peakDbm != y.peakDbm || x.hasPeak != y.hasPeak || x.reported != y.reported || x.id != y.id) {
             return false;
         }
     }
@@ -14053,6 +14060,24 @@ QFont roundtableTagFont(const QPaintDevice* device, int pixels, int weight)
     return font;
 }
 
+// The words a tag may name while its stations stay: its own label and each of
+// its stations' callsigns. A tag is as wide as the widest of them, so a key or
+// an unkey there renames it in place and moves no neighbor.
+QStringList roundtableTagLabelChoices(const RoundtableTag& tag)
+{
+    QStringList choices{tag.label};
+    for (const QJsonValue& value : tag.stations) {
+        const QJsonObject station = value.toObject();
+        const QString call = station.value(QStringLiteral("callsign")).toString();
+        const int nth = station.value(QStringLiteral("nth")).toInt(1);
+        const QString label = nth > 1 ? QStringLiteral("%1 (%2)").arg(call).arg(nth) : call;
+        if (!label.isEmpty() && !choices.contains(label)) {
+            choices.append(label);
+        }
+    }
+    return choices;
+}
+
 QString roundtableFoldWho(const RoundtableTag& tag)
 {
     if (static_cast<RoundtableGlyph>(tag.state) == RoundtableGlyph::Unknown) {
@@ -14074,9 +14099,11 @@ void SpectrumWidget::setRoundtableTags(const QList<RoundtableTag>& tags, Roundta
     m_roundtableTagDisplay = display;
     // The child repaints the tags. The spectrum frame is left alone.
     refreshRoundtableTagLayer();
+    announceRoundtableStripLine();
 }
 
-// Each tag is as wide as its own text (D20), within the bound. A paint with
+// Each tag is as wide as its own text (D20) at its widest station's callsign,
+// within the bound. A paint with
 // nothing new measures nothing; new tags measure only text not yet seen.
 void SpectrumWidget::measureRoundtableTags(const QFont& labelFont, const QFont& countFont, const QPaintDevice* device)
 {
@@ -14095,14 +14122,20 @@ void SpectrumWidget::measureRoundtableTags(const QFont& labelFont, const QFont& 
     for (RoundtableTag& tag : m_roundtablePanTags) {
         const QString count = roundtableTagCountText(tag);
         const int names = roundtableTagNames(tag);
-        QString key = tag.label + QChar(0x1f) + count;
+        // A double names who is on it; any other tag takes room for any of its stations.
+        const QStringList choices = names > 0 ? QStringList{tag.label} : roundtableTagLabelChoices(tag);
+        QString key = choices.join(QChar(0x1e)) + QChar(0x1f) + count;
         for (int k = 0; k < names; ++k) {
             key += QChar(0x1f) + tag.keyed.at(k);
         }
         auto found = m_roundtableTagWidths.constFind(key);
         if (found == m_roundtableTagWidths.constEnd()) {
+            int labelWidth = 0;
+            for (const QString& choice : choices) {
+                labelWidth = std::max(labelWidth, labelMetrics.horizontalAdvance(choice));
+            }
             // 2 px over: advances round, and a name must not elide at its own width.
-            int width = fixed + labelMetrics.horizontalAdvance(tag.label) + 2;
+            int width = fixed + labelWidth + 2;
             if (names == 0 && !count.isEmpty()) {
                 width += labelMetrics.horizontalAdvance(QLatin1Char(' ')) + countMetrics.horizontalAdvance(count);
             }
@@ -14152,6 +14185,96 @@ void SpectrumWidget::setRoundtableCard(const RoundtableCardModel& card, const QS
         return;
     }
     refreshRoundtableTagLayer();
+    announceRoundtableStripLine();
+}
+
+void SpectrumWidget::announceRoundtableStripLine()
+{
+    // The line placed now, before the paint: open details move with it in the
+    // same pass, not a frame after it (strip design 5).
+    const QRect line = roundtableStripLineNow().line;
+    if (line != m_roundtableStripLineAnnounced) {
+        m_roundtableStripLineAnnounced = line;
+        emit roundtableInspectorSpotChanged();
+    }
+}
+
+RoundtableStripLinePlacement SpectrumWidget::roundtableStripLineNow() const
+{
+    const QRect strip = spectrumLayout().roundtableStrip;
+    const QRect specRect = spectrumLayout().spectrum;
+    const bool wantsLine = m_roundtableCard.kind != RoundtableCardModel::Kind::Quiet || !m_roundtableCard.note.isEmpty();
+    if (!wantsLine || m_roundtableTagDisplay == RoundtableTagDisplay::Hidden || strip.isEmpty() || m_bandwidthHz <= 0.0
+        || specRect.width() <= 0) {
+        return {};
+    }
+    const int dialX = hzToX(static_cast<double>(m_roundtableCard.hz), specRect);
+    if (dialX < specRect.left() || dialX > specRect.right()) {
+        return {};
+    }
+    // The flag whose dial this is says which side it hangs on.
+    bool flipped = false;
+    double nearest = -1.0;
+    for (const VfoWidget* vfo : std::as_const(m_vfoWidgets)) {
+        const double off = std::abs(vfo->frequency() - static_cast<double>(m_roundtableCard.hz));
+        if (nearest < 0.0 || off < nearest) {
+            nearest = off;
+            flipped = vfo->geometry().center().x() < dialX;
+        }
+    }
+    // The flag hanging into the strip nearest the dial sends the line to
+    // the dial's other side, when at least its head fits there.
+    RoundtableStripLineSide side = RoundtableStripLineSide::Either;
+    int nearestFlag = -1;
+    for (const QRect& rect : m_receiverFlagRegion) {
+        if (rect.top() > strip.bottom() || rect.bottom() < strip.top()) {
+            continue;
+        }
+        const int off = std::min(std::abs(rect.left() - dialX), std::abs(rect.right() - dialX));
+        if (nearestFlag < 0 || off < nearestFlag) {
+            nearestFlag = off;
+            side = rect.center().x() < dialX ? RoundtableStripLineSide::Right : RoundtableStripLineSide::Left;
+        }
+    }
+    // The line's text size, which a workspace text size changes.
+    const QFont lineFont = roundtableTagFont(this, 12, QFont::Bold);
+    const qsizetype places = m_roundtableCard.rows.size();
+    const bool reasons = strip != m_roundtableStripLinePlacedStrip || dialX != m_roundtableStripLinePlacedDialX
+        || flipped != m_roundtableStripLinePlacedFlipped || side != m_roundtableStripLinePlacedSide
+        || lineFont != m_roundtableStripLinePlacedFont || places != m_roundtableStripLinePlacedPlaces;
+    if (m_roundtableStripLinePlacedValid && !reasons) {
+        return m_roundtableStripLinePlaced;
+    }
+    const RoundtableStripLineSide held = m_roundtableStripLineHeldSide;
+    RoundtableStripLinePlacement placed;
+    if (side == RoundtableStripLineSide::Either && held != RoundtableStripLineSide::Either && !reasons) {
+        // Only the data changed: the line keeps its side, whatever its width.
+        placed = placeRoundtableStripLine(m_roundtableCard, strip, dialX, flipped, m_roundtableCardFormat, this, held);
+    }
+    if (placed.line.isNull()) {
+        // A tune, zoom, resize, flag or station change: the side it sits on
+        // stays when the whole line still fits there.
+        placed = placeRoundtableStripLine(m_roundtableCard, strip, dialX, flipped, m_roundtableCardFormat, this, side,
+                                          held);
+    }
+    if (placed.line.isNull() && side != RoundtableStripLineSide::Either) {
+        // Not even the head fits there: the rule as without the flag.
+        placed = placeRoundtableStripLine(m_roundtableCard, strip, dialX, flipped, m_roundtableCardFormat, this,
+                                          RoundtableStripLineSide::Either, held);
+    }
+    if (!placed.line.isNull()) {
+        m_roundtableStripLineHeldSide = roundtableStripLineSideOf(placed, dialX);
+    }
+    m_roundtableStripLinePlaced = placed;
+    m_roundtableStripLinePlacedStrip = strip;
+    m_roundtableStripLinePlacedDialX = dialX;
+    m_roundtableStripLinePlacedFlipped = flipped;
+    m_roundtableStripLinePlacedSide = side;
+    m_roundtableStripLinePlacedFont = lineFont;
+    m_roundtableStripLinePlacedPlaces = places;
+    m_roundtableStripLinePlacedValid = true;
+    ++m_roundtableCardPlacements;
+    return placed;
 }
 
 void SpectrumWidget::refreshRoundtableTagLayer()
@@ -14177,18 +14300,19 @@ QRect SpectrumWidget::roundtableTagSpectrumRectForTest() const
 
 void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
 {
-    // Open details line up with your line: when it moves, appears or goes, they
-    // re-place, after this paint (strip design 5).
+    // Open details line up with your line. Its moves are announced before the
+    // paint (announceRoundtableStripLine); one no setter announced is caught
+    // here and re-places them after this paint.
     struct LineWatch {
         SpectrumWidget* widget;
-        QRect before;
         ~LineWatch()
         {
-            if (widget->m_roundtableStripLineDrawn.line != before) {
+            if (widget->m_roundtableStripLineDrawn.line != widget->m_roundtableStripLineAnnounced) {
+                widget->m_roundtableStripLineAnnounced = widget->m_roundtableStripLineDrawn.line;
                 QMetaObject::invokeMethod(widget, &SpectrumWidget::roundtableInspectorSpotChanged, Qt::QueuedConnection);
             }
         }
-    } lineWatch{this, m_roundtableStripLineDrawn.line};
+    } lineWatch{this};
     m_roundtableTagHits.clear();
     m_roundtableStripLineDrawn = RoundtableStripLinePlacement{};
     // Everything Roundtable sits in the strip under the frequency scale (strip
@@ -14215,55 +14339,9 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
         }
     }
 
-    // Your frequency's line, beside its dial (strip design 3), when the dial is here.
-    RoundtableStripLinePlacement placed;
-    if (wantsLine) {
-        const int dialX = hzToX(static_cast<double>(m_roundtableCard.hz), specRect);
-        if (dialX >= specRect.left() && dialX <= specRect.right()) {
-            // The flag whose dial this is says which side it hangs on.
-            bool flipped = false;
-            double nearest = -1.0;
-            for (const VfoWidget* vfo : std::as_const(m_vfoWidgets)) {
-                const double off = std::abs(vfo->frequency() - static_cast<double>(m_roundtableCard.hz));
-                if (nearest < 0.0 || off < nearest) {
-                    nearest = off;
-                    flipped = vfo->geometry().center().x() < dialX;
-                }
-            }
-            // The flag hanging into the strip nearest the dial sends the line to
-            // the dial's other side, when at least its head fits there.
-            RoundtableStripLineSide side = RoundtableStripLineSide::Either;
-            int nearestFlag = -1;
-            for (const QRect& rect : std::as_const(flagsInStrip)) {
-                const int off = std::min(std::abs(rect.left() - dialX), std::abs(rect.right() - dialX));
-                if (nearestFlag < 0 || off < nearestFlag) {
-                    nearestFlag = off;
-                    side = rect.center().x() < dialX ? RoundtableStripLineSide::Right : RoundtableStripLineSide::Left;
-                }
-            }
-            // The line's text size, which a workspace text size changes.
-            const QFont lineFont = roundtableTagFont(p.device(), 12, QFont::Bold);
-            if (!m_roundtableStripLinePlacedValid || strip != m_roundtableStripLinePlacedStrip
-                || dialX != m_roundtableStripLinePlacedDialX || flipped != m_roundtableStripLinePlacedFlipped
-                || side != m_roundtableStripLinePlacedSide || lineFont != m_roundtableStripLinePlacedFont) {
-                m_roundtableStripLinePlaced = placeRoundtableStripLine(m_roundtableCard, strip, dialX, flipped,
-                                                                       m_roundtableCardFormat, p.device(), side);
-                if (m_roundtableStripLinePlaced.line.isNull() && side != RoundtableStripLineSide::Either) {
-                    // Not even the head fits there: the rule as without the flag.
-                    m_roundtableStripLinePlaced = placeRoundtableStripLine(m_roundtableCard, strip, dialX, flipped,
-                                                                           m_roundtableCardFormat, p.device());
-                }
-                m_roundtableStripLinePlacedStrip = strip;
-                m_roundtableStripLinePlacedDialX = dialX;
-                m_roundtableStripLinePlacedFlipped = flipped;
-                m_roundtableStripLinePlacedSide = side;
-                m_roundtableStripLinePlacedFont = lineFont;
-                m_roundtableStripLinePlacedValid = true;
-                ++m_roundtableCardPlacements;
-            }
-            placed = m_roundtableStripLinePlaced;
-        }
-    }
+    // Your frequency's line, beside its dial (strip design 3), when the dial is
+    // here, as placed for the details too.
+    const RoundtableStripLinePlacement placed = roundtableStripLineNow();
     const bool hasLine = !placed.line.isNull();
 
     const QFont labelFont = roundtableTagFont(p.device(), 11, QFont::Bold);
@@ -14515,9 +14593,10 @@ SpectrumWidget::RoundtableInspectorSpot SpectrumWidget::roundtableInspectorSpot(
     }
     // Lined up with your line when it is drawn here, whatever the details show;
     // else beside the dial on the flag's far side (strip design 5).
-    const bool lineDrawn = !layout.roundtableStrip.isNull() && !m_roundtableStripLineDrawn.line.isNull();
-    if (lineDrawn) {
-        spot.anchorLeft = m_roundtableStripLineDrawn.line.left();
+    // The line as the next paint draws it, so the details move in the same pass.
+    const QRect line = layout.roundtableStrip.isNull() ? QRect() : roundtableStripLineNow().line;
+    if (!line.isNull()) {
+        spot.anchorLeft = line.left();
     } else if (spot.flagFlipped) {
         const int width = std::min(kRoundtableInspectorWidth, std::max(0, below.width()));
         spot.anchorLeft = spot.dialX - kRoundtableDetailsDialGap - width;
@@ -19975,6 +20054,8 @@ void SpectrumWidget::updateVfoPositions()
         emit flagsRaised();
     }
     refreshReceiverFlagRegion();
+    // A tune, zoom or pan moves the dial: the details move with your line now.
+    announceRoundtableStripLine();
 }
 
 void SpectrumWidget::refreshReceiverFlagRegion()

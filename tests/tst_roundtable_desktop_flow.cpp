@@ -32,6 +32,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-18: Reports coming and going move neither your line nor its open
+//               details; a station joining moves both in the same pass. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: Placement checks pass the details' upward left edge;
 //               your own tag stays while its details are open. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1511,7 +1514,9 @@ private slots:
         // Before the stream: the directory's stations, no readings.
         QCOMPARE(peek()->viewForTest().card.kind, RoundtableCardModel::Kind::Talking);
         QCOMPARE(peek()->viewForTest().card.onFrequency.size(), qsizetype(2));
-        QVERIFY(peek()->viewForTest().card.rows.isEmpty());
+        // One place per station, none with a reading.
+        QCOMPARE(peek()->viewForTest().card.rows.size(), qsizetype(2));
+        for (const RoundtableCardRow& row : peek()->viewForTest().card.rows) { QVERIFY(!row.reported); }
         QCOMPARE(roundtableViewSubText(peek()->viewForTest()),
                  QStringLiteral("Viewing \u00b7 \u221211.4 kHz"));
 
@@ -1525,9 +1530,18 @@ private slots:
         QJsonObject view{{"id", QStringLiteral("usb-%1").arg(viewedHz)}, {"view", "frequency"}, {"family", "usb"},
             {"hz", viewedHz}, {"now", QJsonArray{turn}}, {"members", QJsonArray{talker, reporter}}};
         model->applyRoom(view);
-        QTRY_COMPARE_WITH_TIMEOUT(peek()->viewForTest().card.rows.size(), qsizetype(1), kWaitMs);
-        QCOMPARE(peek()->viewForTest().card.rows.first().call, QStringLiteral("W2ABC"));
-        QCOMPARE(peek()->viewForTest().card.rows.first().km.value_or(0), 2000);
+        // The reading lands in W2ABC's place.
+        const auto heard = [&]() {
+            QVector<RoundtableCardRow> rows;
+            for (const RoundtableCardRow& row : peek()->viewForTest().card.rows) {
+                if (row.reported) { rows.append(row); }
+            }
+            return rows;
+        };
+        QTRY_COMPARE_WITH_TIMEOUT(heard().size(), qsizetype(1), kWaitMs);
+        QCOMPARE(peek()->viewForTest().card.rows.size(), qsizetype(2));
+        QCOMPARE(heard().first().call, QStringLiteral("W2ABC"));
+        QCOMPARE(heard().first().km.value_or(0), 2000);
         QCOMPARE(peek()->viewForTest().card.onFrequency.first().name, QStringLiteral("VE3XYZ"));
         QVERIFY(peek()->viewForTest().card.onFrequency.first().keyed);
         QCOMPARE(peek()->viewForTest().card.onFrequency.at(1).offsetHz, qint64(20));
@@ -1542,8 +1556,11 @@ private slots:
         doubledView.insert("members", QJsonArray{talker, second, reporter});
         model->applyRoom(doubledView);
         QTRY_COMPARE_WITH_TIMEOUT(peek()->viewForTest().card.kind, RoundtableCardModel::Kind::Double, kWaitMs);
-        QVERIFY(!peek()->viewForTest().card.rows.first().km.has_value());
-        QCOMPARE(peek()->viewForTest().card.onFrequency.at(1).offsetHz, qint64(60));
+        QCOMPARE(heard().size(), qsizetype(1));
+        QVERIFY(!heard().first().km.has_value());
+        // By callsign: KD8LMN first.
+        QCOMPARE(peek()->viewForTest().card.onFrequency.first().name, QStringLiteral("KD8LMN"));
+        QCOMPARE(peek()->viewForTest().card.onFrequency.first().offsetHz, qint64(60));
         model->applyRoom(view);
 
         // ── The link drops: last known, still open ──
@@ -1688,7 +1705,8 @@ private slots:
         newerReporter.insert("reading", QJsonObject{{"turn", 1}, {"present", true}, {"dbm", -61}, {"t", g_now}});
         refreshedView.insert("members", QJsonArray{talker, newerReporter});
         model->applyRoom(refreshedView);
-        QTRY_COMPARE_WITH_TIMEOUT(peek()->viewForTest().card.rows.first().dbm, -61.0, kWaitMs);
+        // W2ABC's place, after VE3XYZ's.
+        QTRY_COMPARE_WITH_TIMEOUT(peek()->viewForTest().card.rows.last().dbm, -61.0, kWaitMs);
         QCOMPARE(peek()->viewForTest().panDbm.value_or(0.0), sampled);
         peekTimer->start();
         QTRY_COMPARE_WITH_TIMEOUT(peek()->viewForTest().panDbm.value_or(0.0), sampled + 20.0, kWaitMs);
@@ -3011,6 +3029,99 @@ private slots:
         draw();
         QCOMPARE(standsUnderTheStrip("strip back"), QString());
         peek()->closePeek();
+        model->detach();
+    }
+
+    // JJ's capture: near the right band edge, each report that came or went moved
+    // your line and dragged the open details and their buttons sideways, a frame
+    // late. Reports now move nothing; a station joining moves both at once.
+    void reportsComingAndGoingMoveNeitherYourLineNorItsDetails()
+    {
+        ReadingLink link;
+        RoundtableState state;
+        Everything p;
+        SliceModel* slice = p.model()->sliceById(p.sliceId());
+        QVERIFY(slice);
+        slice->setDspMode(DSPMode::USB);
+        slice->setFrequency(14200000);
+        RoundtableModel* model = p.model()->roundtableModel();
+        QVERIFY(model);
+        model->attachStation(&link, &state);
+        state.applyStationValue("linkState", static_cast<int>(RoundtableModel::LinkState::Live));
+        model->applyRooms({{"frequencyVersion", 1}, {"rooms", QJsonArray{}}});
+        const QString source = QStringLiteral("usb-14200000");
+        const auto member = [&](const char* ref, const char* call, bool keyed, bool you, std::optional<double> dbm) {
+            QJsonObject person{{"sourceRoom", source}, {"ref", ref}, {"callsign", call}, {"hz", 14200000},
+                               {"family", "usb"}, {"keyed", keyed}};
+            if (you) { person.insert("you", true); }
+            if (dbm) {
+                person.insert("reading", QJsonObject{{"turn", 1}, {"dbm", *dbm}, {"present", true}, {"t", g_now - 1000}});
+            }
+            return person;
+        };
+        const QJsonObject actor = member("tx", "W1AW", true, false, std::nullopt);
+        const QJsonObject turn{{"id", 1}, {"kind", "talking"}, {"sourceRoom", source}, {"hz", 14200000},
+                               {"start", g_now - 1000}, {"end", QJsonValue::Null}, {"talkers", QJsonArray{actor}}};
+        // `reports`: bit 0 W4ECN has a reading, bit 1 you do.
+        const auto apply = [&](int reports, bool joined) {
+            QJsonArray members{actor, member("a", "W4ECN", false, false, (reports & 1) ? std::optional<double>(-62.0) : std::nullopt),
+                               member("me", "KG4VCF", false, true, (reports & 2) ? std::optional<double>(-66.0) : std::nullopt)};
+            if (joined) { members.append(member("n", "AA4QQ", false, false, std::nullopt)); }
+            model->applyRoom(QJsonObject{{"id", source}, {"view", "frequency"}, {"family", "usb"}, {"hz", 14200000},
+                                         {"now", QJsonArray{turn}}, {"members", members}});
+        };
+        apply(0, false);
+        p.model()->setActiveSliceById(p.sliceId());
+        SpectrumWidget* pan = panOf(p.window());
+        QVERIFY(pan != nullptr);
+        settle();
+        QTRY_VERIFY_WITH_TIMEOUT(!pan->roundtableStripRectForTest().isNull(), kWaitMs);
+        // The dial near the right band edge, as in JJ's window.
+        pan->setFrequencyRange(14200000.0 - kPanSpanHz / 2.0 + 15000.0, kPanSpanHz);
+        settle();
+        const auto draw = [pan]() {
+            QImage image(pan->size(), QImage::Format_ARGB32_Premultiplied);
+            image.fill(Qt::black);
+            QPainter painter(&image);
+            pan->drawRoundtableTagsForTest(painter, pan->roundtableTagSpectrumRectForTest());
+        };
+        draw();
+        const QRect line = pan->roundtableStripLineForTest().line;
+        QVERIFY(!line.isNull());
+        QTest::mouseClick(pan, Qt::LeftButton, Qt::NoModifier, line.center());
+        auto* details = pan->findChild<RoundtableFrequencyPeek*>();
+        QVERIFY(details != nullptr && details->showsOwn());
+        QCoreApplication::processEvents();
+        const QRect opened = details->inspectorRect();
+        QCOMPARE(opened.left(), line.left());
+        const auto buttons = [details]() {
+            QList<QRect> rects;
+            for (const QString& name : {QStringLiteral("roundtablePeekTune"), QStringLiteral("roundtablePeekMessages"),
+                                        QStringLiteral("roundtablePeekMore"), QStringLiteral("roundtablePeekClose")}) {
+                QWidget* button = details->findChild<QWidget*>(name);
+                rects.append(button != nullptr ? button->geometry() : QRect());
+            }
+            return rects;
+        };
+        const QList<QRect> openedButtons = buttons();
+        for (const int reports : {1, 3, 2, 0, 1}) {
+            apply(reports, false);
+            g_now += 1000;
+            QCoreApplication::processEvents();
+            draw();
+            const QString what = QStringLiteral("reports %1").arg(reports);
+            QVERIFY2(pan->roundtableStripLineForTest().line == line, qPrintable(what));
+            QVERIFY2(details->inspectorRect() == opened, qPrintable(what));
+            QVERIFY2(buttons() == openedButtons, qPrintable(what));
+        }
+        // A station joins: the line changes and the details follow it before any paint.
+        apply(1, true);
+        const QRect moved = pan->roundtableStripLineNowForTest().line;
+        QVERIFY(moved != line);
+        QCOMPARE(details->inspectorRect().left(), moved.left());
+        draw();
+        QCOMPARE(pan->roundtableStripLineForTest().line, moved);
+        details->closePeek();
         model->detach();
     }
 

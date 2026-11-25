@@ -101,7 +101,7 @@ Open **Tools > Spot Hub**, select the **Roundtable** tab and select **Start**. T
 
 While Roundtable is on, each pan has a thin Roundtable strip between the frequency scale and the waterfall. The spectrum keeps its full height; the waterfall gives up the room. When the waterfall is too short to keep some of itself under the strip, the strip is left out; the Roundtable line on the slice's flag still opens the details. Each frequency with stations has a tag in the strip at its spot. Tags that would overlap fold into one `+N` tag. Click it to list its frequencies in a box over the waterfall, and click a row to look at that frequency.
 
-On the frequency your slice is tuned to, in its current mode, a line stands in the strip beside the slice's dial whenever someone is talking or has just talked. A quiet frequency shows only its tag. The line starts with who it is about, then one reading per listener side by side: callsign, signal and age, with a small meter under each reading. Listeners are listed nearest first. If the line cannot fit every reading, it ends with a count of the rest, such as **+2 more ›**.
+On the frequency your slice is tuned to, in its current mode, a line stands in the strip beside the slice's dial whenever someone is talking or has just talked. A quiet frequency shows only its tag. The line starts with who it is about and how long the turn has run (or how long ago it ended), then one place for each station on the frequency, side by side in callsign order with you last: callsign, signal and age, with a small meter under each. A station with no report of this turn yet keeps its place, dimmed, with a dash. Reports coming and going, a new talker and a turn ending change the words in place; the line and the details move only when a station joins or leaves, or when you tune, zoom or resize. If the line cannot fit every station, it ends with a count of the rest, such as **+2 more ›**.
 
 | The line or its details show | What it means |
 | --- | --- |
@@ -112,7 +112,8 @@ On the frequency your slice is tuned to, in its current mode, a line stands in t
 | **Last double**, with **Combined RF** | The overlap has ended. |
 | **Double ended 3s ago** | Shown for 8 seconds on the remaining talker's line. Its readings start fresh after the overlap. |
 | **Unknown** | A signal is on the air that nobody has been identified on. Roundtable does not guess who it is. |
-| **No readings** or **Waiting for readings**, in the details | Nobody has a report for this turn yet. It is not a reading of zero. |
+| A dimmed callsign with a dash | That station is on the frequency but has no report of this turn. It is not a reading of zero. |
+| **No readings** or **Waiting for readings**, in the details | Nobody is listed on the frequency yet. |
 
 Two stations keyed a few kilohertz apart in different rooms are not a double.
 
@@ -122,7 +123,7 @@ To change the units, open the **Roundtable** tab in Spot Hub and set **Signal fo
 
 ### Look at a frequency without tuning
 
-Click any tag, your own line in the strip, or the Roundtable line on any slice's flag. A box opens over the waterfall, just under the strip and lined up with your line, showing that frequency. When the waterfall is too short for it, the box opens upward over the spectrum instead. Your radio does not move. When it is not your frequency, the box says **Viewing** and how far away it is, with **‹ Back to my slice**. It lists who is **On frequency**, with **keyed** and each station's offset, then the readings with distance and bearing. When someone is on the air there, a **Your pan** row first shows the strongest signal your own panadapter sees in that sideband. It is blank while you transmit or when the frequency is off your pan.
+Click any tag, your own line in the strip, or the Roundtable line on any slice's flag. A box opens over the waterfall, just under the strip and lined up with your line, showing that frequency. When the waterfall is too short for it, the box opens upward over the spectrum instead. Your radio does not move. When it is not your frequency, the box says **Viewing** and how far away it is, with **‹ Back to my slice**. It lists who is **On frequency**, with **keyed** and each station's offset, then the readings with distance and bearing. A **Your pan** row first shows the strongest signal your own panadapter sees in that sideband while someone is on the air there. It shows a dash while nobody is on the air, while you transmit, or when the frequency is off your pan.
 
 **Tune slice A here** moves your slice there and closes the box. It is grayed while you transmit, when no radio is connected, and when the slice is already there. **Messages** opens the Roundtable panel on that frequency. The **⋯** button offers the same choices plus **Read reports**. Click the same thing again, select **×**, or press Escape to close the box. Clicking another tag switches the box to it. Clicking or dragging the band still tunes as usual and leaves the box open. You can look at a frequency while you are transmitting.
 

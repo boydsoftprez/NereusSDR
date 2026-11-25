@@ -11,6 +11,11 @@
 // transmit scene refuses to run if one exists).
 //
 // Modification history (NereusSDR):
+//   2026-11-18: The roundtable-steady-* scenes: JJ's frequency (an unknown
+//               signal, W4ECN and you on it) with 0, 1 and 2 reports, the dial
+//               near the pan's left and right ends, the details closed and
+//               open, to show nothing moves as reports come and go. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: Details opened upward are checked against their own left edge
 //               (past the flag, or the dial's other side) and the flags.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -7224,6 +7229,62 @@ struct WindowRoundtable {
                                      {QStringLiteral("messages"), QJsonArray{}}});
     }
 
+    // JJ's frequency from his capture, on 7.185 LSB: an unknown signal on the
+    // air, W4ECN and you on the frequency. `reports` says who has a reading of
+    // it: 0 nobody, 1 W4ECN, 2 W4ECN and you.
+    void stripPair(int reports)
+    {
+        rt.live(false);
+        if (model == nullptr) {
+            return;
+        }
+        static constexpr qint64 kDial = 7185000;
+        constexpr qint64 kTurn = 31;
+        const QString home = QStringLiteral("lsb-7184000");
+        const auto station = [&home](const QString& ref, const QString& call) {
+            return QJsonObject{{QStringLiteral("sourceRoom"), home}, {QStringLiteral("ref"), ref},
+                               {QStringLiteral("callsign"), call},   {QStringLiteral("hz"), kDial},
+                               {QStringLiteral("family"), QStringLiteral("lsb")},
+                               {QStringLiteral("keyed"), false}};
+        };
+        const QJsonArray stations{station(QStringLiteral("w4"), QStringLiteral("W4ECN")),
+                                  station(QStringLiteral("me"), QStringLiteral("KG4VCF"))};
+        model->applyRooms(QJsonObject{
+            {QStringLiteral("frequencyVersion"), 1},
+            {QStringLiteral("rooms"), QJsonArray{QJsonObject{{QStringLiteral("id"), home},
+                                                             {QStringLiteral("family"), QStringLiteral("lsb")},
+                                                             {QStringLiteral("state"), QStringLiteral("unknown")},
+                                                             {QStringLiteral("talkers"), QJsonArray{}},
+                                                             {QStringLiteral("stations"), stations}}}}});
+        QJsonArray members;
+        for (int i = 0; i < 2; ++i) {
+            QJsonObject member = stations.at(i).toObject();
+            member.insert(QStringLiteral("you"), i == 1);
+            if (i < reports) {
+                member.insert(QStringLiteral("reading"),
+                              QJsonObject{{QStringLiteral("turn"), kTurn}, {QStringLiteral("dbm"), i == 0 ? -62.0 : -66.0},
+                                          {QStringLiteral("present"), true},
+                                          {QStringLiteral("t"), kRoundtableNow - 3000}});
+            }
+            members.append(member);
+        }
+        const QJsonObject turn{{QStringLiteral("id"), kTurn},
+                               {QStringLiteral("kind"), QStringLiteral("unknown")},
+                               {QStringLiteral("hz"), kDial},
+                               {QStringLiteral("sourceRoom"), home},
+                               {QStringLiteral("start"), kRoundtableNow - 4000},
+                               {QStringLiteral("end"), QJsonValue::Null},
+                               {QStringLiteral("talkers"), QJsonArray{}}};
+        model->applyRoom(QJsonObject{{QStringLiteral("id"), QStringLiteral("lsb-%1").arg(kDial)},
+                                     {QStringLiteral("view"), QStringLiteral("frequency")},
+                                     {QStringLiteral("family"), QStringLiteral("lsb")},
+                                     {QStringLiteral("hz"), kDial},
+                                     {QStringLiteral("members"), members},
+                                     {QStringLiteral("now"), QJsonArray{turn}},
+                                     {QStringLiteral("earlier"), QJsonArray{}},
+                                     {QStringLiteral("messages"), QJsonArray{}}});
+    }
+
     void setLink(RoundtableModel::LinkState state, qint64 since)
     {
         rt.state.applyStationValue("linkSince", since);
@@ -7899,6 +7960,93 @@ void appendRoundtableScenes(QVector<Scene>& scenes)
     stripScene(QStringLiteral("roundtable-strip-details-short"), StripTalk::Talking, 5, 0.80f, 2,
                QStringLiteral("the details opened from your line with under 140 px of waterfall: they open "
                               "upward over the spectrum"));
+
+    // JJ's capture, steady: his frequency with 0, 1 and 2 reports, the dial near
+    // pan 1's right end (as in his window) and near its left end, the details
+    // closed and open. The line, its "Unknown" and the details stay put across
+    // the report counts.
+    const auto steadyScene = [&scenes](int reports, bool rightEnd, bool details) {
+        const QString name = QStringLiteral("roundtable-steady-r%1-%2-%3")
+                                 .arg(reports)
+                                 .arg(rightEnd ? QStringLiteral("right") : QStringLiteral("left"))
+                                 .arg(details ? QStringLiteral("open") : QStringLiteral("closed"));
+        scenes.append({name, QStringLiteral("2v"), false, [name, reports, rightEnd, details](SceneContext& ctx) {
+            onRoundtableClock([&] {
+                WindowRoundtable rt(ctx.model, true);
+                if (rt.model == nullptr) {
+                    ctx.failure = QStringLiteral("the window has no Roundtable model");
+                    return;
+                }
+                runWindowScene(ctx, twoBandPoses(), 0, [&](SceneContext&) { rt.stripPair(reports); });
+                SpectrumWidget* s = panOne(ctx);
+                if (!ctx.failure.isEmpty() || s == nullptr) {
+                    if (ctx.failure.isEmpty()) {
+                        ctx.failure = QStringLiteral("%1: no pan 1").arg(name);
+                    }
+                    return;
+                }
+                // The dial 90 px in from the pan's right or left end.
+                const double span = s->bandwidth();
+                const double savedCenter = s->centerFrequency();
+                const QRect spec = s->roundtableTagSpectrumRectForTest();
+                const double hzPerPixel = spec.width() > 0 ? span / spec.width() : 0.0;
+                const double fromDial = span / 2.0 - 90.0 * hzPerPixel;
+                s->setFrequencyRange(7185000.0 + (rightEnd ? -fromDial : fromDial), span);
+                pump(kFinalSettleMs);
+                const auto restore = [&]() {
+                    if (auto* open = s->findChild<RoundtableFrequencyPeek*>(); open != nullptr && open->isOpen()) {
+                        open->closePeek();
+                    }
+                    s->setFrequencyRange(savedCenter, span);
+                    pump(kTabSettleMs);
+                };
+                if (details) {
+                    QRect line;
+                    for (const auto& hit : s->roundtableTagHitsForTest()) {
+                        if (hit.kind == SpectrumWidget::RoundtableTagHit::Kind::Card) {
+                            line = hit.rect;
+                        }
+                    }
+                    if (line.isNull()) {
+                        ctx.failure = QStringLiteral("%1: no line in pan 1's strip to click").arg(name);
+                        restore();
+                        return;
+                    }
+                    sendMouse(s, QEvent::MouseButtonPress, line.center(), Qt::LeftButton, Qt::LeftButton);
+                    sendMouse(s, QEvent::MouseButtonRelease, line.center(), Qt::LeftButton, Qt::NoButton);
+                    pump(kFinalSettleMs);
+                }
+                captureWindow(ctx, name);
+                const RoundtableStripLinePlacement line = s->roundtableStripLineForTest();
+                QJsonObject check{{QStringLiteral("check"), QStringLiteral("roundtable-steady")},
+                                  {QStringLiteral("scene"), name},
+                                  {QStringLiteral("lineLeft"), line.line.left()},
+                                  {QStringLiteral("lineRight"), line.line.right()},
+                                  {QStringLiteral("readings"), line.readings},
+                                  {QStringLiteral("more"), line.moreReadings}};
+                if (auto* open = s->findChild<RoundtableFrequencyPeek*>(); open != nullptr && open->isOpen()) {
+                    const QRect rect = open->inspectorRect();
+                    check.insert(QStringLiteral("details"), QStringLiteral("%1,%2 %3x%4")
+                                                                .arg(rect.left()).arg(rect.top())
+                                                                .arg(rect.width()).arg(rect.height()));
+                }
+                ctx.checks.append(check);
+                ctx.notes.append(QStringLiteral("an unknown signal on 7.185 LSB, W4ECN and you on it, %1 of 2 reporting; "
+                                                "dial near pan 1's %2 end; details %3")
+                                     .arg(reports)
+                                     .arg(rightEnd ? QStringLiteral("right") : QStringLiteral("left"))
+                                     .arg(details ? QStringLiteral("open") : QStringLiteral("closed")));
+                restore();
+            });
+        }});
+    };
+    for (const bool rightEnd : {true, false}) {
+        for (const bool details : {false, true}) {
+            for (int reports = 0; reports <= 2; ++reports) {
+                steadyScene(reports, rightEnd, details);
+            }
+        }
+    }
 
     // Slice A's flag line: live in room 7.185 (six there, W1TLK talking),
     // two messages naming you, you transmitting there, offline and

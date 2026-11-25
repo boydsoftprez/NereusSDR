@@ -20,6 +20,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-18: The line holds still (JJ: "roundtable jumps around the
+//               screen"): one place per station whatever reports exist, a
+//               fixed head and status place, the side kept, the details moved
+//               in the same pass, tags as wide as their widest station. Model
+//               cases read the reported places. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-11-16: Review fixes: details opened upward stand past the flag, under
 //               the divider, opaque; the strip left out over a waterfall share
 //               under 58 px; a flag hanging into the strip moves your line and
@@ -293,6 +299,60 @@ RoundtableCardModel talkingCard(int rows = 3, RoundtableCardModel::Kind kind = R
 
 // A strip 1200 wide, as a pan's, with room above and below it.
 const QRect kStrip(0, 100, 1200, 30);
+
+// The frequency in JJ's capture: W4ECN and you on it. `reports` says which place
+// has a reading: bit 0 W4ECN, bit 1 you.
+RoundtableCardModel twoStationCard(RoundtableCardModel::Kind kind, int reports, quint64 hz = 7200000)
+{
+    using Kind = RoundtableCardModel::Kind;
+    RoundtableCardModel card;
+    card.kind = kind;
+    card.hz = hz;
+    card.clockMs = kind == Kind::LastTalker ? 0 : 3000;
+    card.endedAgoMs = kind == Kind::LastTalker ? 15000 : 0;
+    if (kind == Kind::Talking || kind == Kind::LastTalker) { card.keyed = {QStringLiteral("W4ECN")}; }
+    if (kind == Kind::You) { card.keyed = {QStringLiteral("KG4VCF")}; }
+    card.onFrequency = {RoundtableCardPerson{QStringLiteral("W4ECN"), kind == Kind::Talking, false, 0, QStringLiteral("r/w4ecn")},
+                        RoundtableCardPerson{QStringLiteral("KG4VCF"), kind == Kind::You, true, 0, QStringLiteral("r/me")}};
+    for (int i = 0; i < 2; ++i) {
+        RoundtableCardRow row;
+        row.call = card.onFrequency.at(i).name;
+        row.you = card.onFrequency.at(i).you;
+        row.id = card.onFrequency.at(i).id;
+        row.reported = ((reports >> i) & 1) != 0;
+        row.dbm = row.reported ? -62.0 - 4.0 * i : -121.0;
+        row.peakDbm = row.dbm;
+        row.hasPeak = row.reported;
+        row.ageMs = row.reported ? 3000 : 0;
+        card.rows.append(row);
+    }
+    return card;
+}
+
+// The same frequency once a third station joins.
+RoundtableCardModel threeStationCard(RoundtableCardModel::Kind kind, int reports)
+{
+    RoundtableCardModel card = twoStationCard(kind, reports);
+    card.onFrequency.insert(0, RoundtableCardPerson{QStringLiteral("AA4QQ"), false, false, 0, QStringLiteral("r/aa4qq")});
+    RoundtableCardRow row;
+    row.call = QStringLiteral("AA4QQ");
+    row.id = QStringLiteral("r/aa4qq");
+    row.reported = false;
+    row.dbm = -121.0;
+    row.peakDbm = row.dbm;
+    card.rows.insert(0, row);
+    return card;
+}
+
+// Only the places with a reading.
+QVector<RoundtableCardRow> reportedRows(const RoundtableCardModel& card)
+{
+    QVector<RoundtableCardRow> rows;
+    for (const RoundtableCardRow& row : card.rows) {
+        if (row.reported) { rows.append(row); }
+    }
+    return rows;
+}
 
 // The line placed in kStrip by `dialX`, then drawn on black.
 struct DrawnLine {
@@ -1024,14 +1084,14 @@ private slots:
         const QStringList calls{"K1A", "K2B", "K3C", "K4D", "K5E"};
         for (int i = 0; i < 5; ++i) { card.rows[i].call = calls.at(i); }
         const RoundtableStripLinePlacement placed
-            = placeRoundtableStripLine(card, kStrip, 600, false, QStringLiteral("dBm"), &device);
+            = placeRoundtableStripLine(card, kStrip, 200, false, QStringLiteral("dBm"), &device);
         QVERIFY(!placed.line.isNull());
         QCOMPARE(placed.readings, 5);
         QCOMPARE(placed.moreReadings, 0);
         QCOMPARE(placed.line.height(), 24);
         QCOMPARE(placed.line.top(), kStrip.top() + 3);
         // Beside the dial, 8 px off it, on one side or the other.
-        QVERIFY2(placed.line.left() == 608 || placed.line.right() + 1 == 592,
+        QVERIFY2(placed.line.left() == 208 || placed.line.right() + 1 == 192,
                  qPrintable(QStringLiteral("%1 to %2").arg(placed.line.left()).arg(placed.line.right())));
         QVERIFY(placed.line.left() >= kStrip.left() + 4);
         QVERIFY(placed.line.right() <= kStrip.right() - 4);
@@ -1178,6 +1238,143 @@ private slots:
         QCOMPARE(placeRoundtableStripLine(last, kStrip, 600, false, QStringLiteral("dBm"), &device), lastFirst);
     }
 
+    // JJ's capture: every report coming or going, a new talker, an unkey, a clock
+    // tick and a link note moved the line and the label. Now only the stations do.
+    void theLineHoldsStillAsReportsComeAndGo()
+    {
+        using Kind = RoundtableCardModel::Kind;
+        QImage device(1, 1, QImage::Format_ARGB32_Premultiplied);
+        const QString format = QStringLiteral("S-units");
+        for (const bool flipped : {true, false}) {
+            for (const int dialX : {150, 600, kStrip.right() + 1 - 230}) {
+                const RoundtableCardModel first = twoStationCard(Kind::Unknown, 0);
+                const RoundtableStripLinePlacement base
+                    = placeRoundtableStripLine(first, kStrip, dialX, flipped, format, &device);
+                QVERIFY(!base.line.isNull());
+                const RoundtableStripLineParts baseParts = roundtableStripLineParts(first, base, format, &device);
+                QVERIFY(!baseParts.status.isNull());
+                QCOMPARE(baseParts.readings.size() + base.moreReadings, qsizetype(2));
+
+                QList<RoundtableCardModel> cards;
+                for (const Kind kind : {Kind::Unknown, Kind::Talking, Kind::You, Kind::LastTalker}) {
+                    for (int reports = 0; reports < 4; ++reports) { cards.append(twoStationCard(kind, reports)); }
+                }
+                RoundtableCardModel card = twoStationCard(Kind::Unknown, 3);
+                card.clockMs = 9 * 60000 + 59000;
+                cards.append(card);
+                card = twoStationCard(Kind::LastTalker, 1);
+                card.endedAgoMs = 59 * 60000;
+                cards.append(card);
+                for (const QString& note : {QStringLiteral("Double ended 3s ago"), QStringLiteral("You are hidden")}) {
+                    card = twoStationCard(Kind::Talking, 1);
+                    card.note = note;
+                    cards.append(card);
+                }
+                for (const QString& note : {QStringLiteral("Reconnecting"), QStringLiteral("Offline since 23:08 UTC")}) {
+                    card = twoStationCard(Kind::Unknown, 2);
+                    card.frozen = true;
+                    card.note = note;
+                    cards.append(card);
+                }
+                for (const RoundtableCardModel& changed : std::as_const(cards)) {
+                    const RoundtableStripLinePlacement placed
+                        = placeRoundtableStripLine(changed, kStrip, dialX, flipped, format, &device);
+                    const QString what = QStringLiteral("kind %1 note '%2' at %3 flipped %4")
+                                             .arg(static_cast<int>(changed.kind)).arg(changed.note).arg(dialX).arg(flipped);
+                    QVERIFY2(placed == base, qPrintable(what));
+                    const RoundtableStripLineParts parts = roundtableStripLineParts(changed, placed, format, &device);
+                    QVERIFY2(parts.head == baseParts.head, qPrintable(what));
+                    QVERIFY2(parts.status == baseParts.status, qPrintable(what));
+                    QVERIFY2(parts.readings == baseParts.readings, qPrintable(what));
+                    QVERIFY2(parts.more == baseParts.more, qPrintable(what));
+                    QCOMPARE(roundtableStripLineSideOf(placed, dialX), roundtableStripLineSideOf(base, dialX));
+                }
+
+                // A station joining is a real change: a third place.
+                const RoundtableCardModel joined = threeStationCard(Kind::Unknown, 0);
+                const RoundtableStripLinePlacement more
+                    = placeRoundtableStripLine(joined, kStrip, dialX, flipped, format, &device);
+                QCOMPARE(more.readings + more.moreReadings, 3);
+            }
+        }
+    }
+
+    // A place with no reading keeps its callsign and shows a dash, no value or age.
+    void aPlaceWithNoReadingShowsItsCallsignAndADash()
+    {
+        QImage device(1, 1, QImage::Format_ARGB32_Premultiplied);
+        const RoundtableCardModel card = twoStationCard(RoundtableCardModel::Kind::Unknown, 1);
+        const RoundtableStripLinePlacement placed
+            = placeRoundtableStripLine(card, kStrip, 600, false, QStringLiteral("dBm"), &device);
+        const QStringList texts = lineTexts(card, placed);
+        QVERIFY2(texts.contains(QStringLiteral("W4ECN")), qPrintable(texts.join('|')));
+        QVERIFY2(texts.contains(QStringLiteral("You")), qPrintable(texts.join('|')));
+        QVERIFY2(texts.contains(roundtableNoReadingText()), qPrintable(texts.join('|')));
+        QCOMPARE(texts.count(roundtableNoReadingText()), 1);
+        QCOMPARE(texts.count(QStringLiteral("3s")), 1);
+    }
+
+    // The coordinator's case from JJ's two-minute capture: near the right band edge
+    // a talker with no reports went right of the dial, then flipped left.
+    void nearTheRightEdgeReportsArrivingNeverMoveTheSide()
+    {
+        using Kind = RoundtableCardModel::Kind;
+        QImage device(1, 1, QImage::Format_ARGB32_Premultiplied);
+        const int dialX = kStrip.right() + 1 - 260;
+        for (const bool flipped : {true, false}) {
+            const RoundtableStripLinePlacement talkerOnly
+                = placeRoundtableStripLine(twoStationCard(Kind::Unknown, 0), kStrip, dialX, flipped, QStringLiteral("dBm"), &device);
+            for (const int reports : {1, 3}) {
+                const RoundtableStripLinePlacement placed = placeRoundtableStripLine(
+                    twoStationCard(Kind::Unknown, reports), kStrip, dialX, flipped, QStringLiteral("dBm"), &device);
+                QCOMPARE(roundtableStripLineSideOf(placed, dialX), roundtableStripLineSideOf(talkerOnly, dialX));
+                QCOMPARE(placed.line, talkerOnly.line);
+            }
+        }
+
+        // On a pan, through setRoundtableCard: the line and the details' spot hold.
+        Pan pan;
+        const quint64 hz = 7200000 + 80000;
+        pan.flag->setFrequency(static_cast<double>(hz));
+        pan.widget.updateVfoPositions();
+        const QString room = QStringLiteral("frequency:lsb-7280000");
+        pan.widget.setRoundtableTags({}, RoundtableTagDisplay::Live);
+        pan.widget.setRoundtableCard(twoStationCard(Kind::Unknown, 0, hz), room);
+        pan.draw();
+        const QRect first = pan.widget.roundtableStripLineForTest().line;
+        QVERIFY(!first.isNull());
+        const int anchor = pan.widget.roundtableInspectorSpot(0, 0).anchorLeft;
+        for (const int reports : {1, 3, 2, 0}) {
+            pan.widget.setRoundtableCard(twoStationCard(Kind::Unknown, reports, hz), room);
+            QCOMPARE(pan.widget.roundtableStripLineNow().line, first);
+            pan.draw();
+            QCOMPARE(pan.widget.roundtableStripLineForTest().line, first);
+            QCOMPARE(pan.widget.roundtableInspectorSpot(0, 0).anchorLeft, anchor);
+        }
+    }
+
+    // A tune, zoom or join re-decides the side, keeping the one it has while the
+    // whole line still fits there.
+    void aPreferredSideIsKeptWhileTheWholeLineFits()
+    {
+        QImage device(1, 1, QImage::Format_ARGB32_Premultiplied);
+        const RoundtableCardModel card = twoStationCard(RoundtableCardModel::Kind::Unknown, 0);
+        // The flag's far side is the right: with no preference the line goes there.
+        const RoundtableStripLinePlacement free
+            = placeRoundtableStripLine(card, kStrip, 600, false, QStringLiteral("dBm"), &device);
+        QCOMPARE(free.line.left(), 608);
+        const RoundtableStripLinePlacement kept = placeRoundtableStripLine(
+            card, kStrip, 600, false, QStringLiteral("dBm"), &device, RoundtableStripLineSide::Either,
+            RoundtableStripLineSide::Left);
+        QCOMPARE(kept.line.right() + 1, 592);
+        QCOMPARE(roundtableStripLineSideOf(kept, 600), RoundtableStripLineSide::Left);
+        // No room for the whole line on the kept side: the rule decides again.
+        const RoundtableStripLinePlacement cramped = placeRoundtableStripLine(
+            card, kStrip, 60, false, QStringLiteral("dBm"), &device, RoundtableStripLineSide::Either,
+            RoundtableStripLineSide::Left);
+        QCOMPARE(cramped.line.left(), 68);
+    }
+
     // ---- Your frequency's line: drawing (D10, D11, D13, D15; strip design 3, 6) ----
 
     void aTalkingLineSitsInTheStripAndClickingItAsksForTheInspector()
@@ -1187,6 +1384,10 @@ private slots:
         RoundtableTag tag = tagAt(room, 7200000);
         tag.active = true;
         tag.stations = {QJsonObject{{"callsign", "W1AW"}}};
+        // Room for the head, its status place and three readings beside the dial.
+        pan.widget.resize(1800, 760);
+        pan.widget.setFrequencyRange(kPanCenterHz, kPanSpanHz);
+        pan.widget.updateVfoPositions();
         pan.widget.setRoundtableTags({tag}, RoundtableTagDisplay::Live);
         pan.widget.setRoundtableCard(talkingCard(), room);
         const QImage image = pan.draw();
@@ -1635,7 +1836,8 @@ private slots:
         QCOMPARE(byTag.anchorLeft, byTag.dialX + 8);
     }
 
-    // Your line appearing, moving sides or going re-places open details, after the paint.
+    // Your line appearing or moving re-places open details in the same pass: the
+    // spot already says where the next paint draws the line.
     void yourLineMovingReplacesTheDetails()
     {
         Pan pan;
@@ -1646,29 +1848,25 @@ private slots:
         QCoreApplication::processEvents();
         changed.clear();
         pan.widget.setRoundtableCard(talkingCard(), room);
-        pan.draw();
-        const QRect first = pan.widget.roundtableStripLineForTest().line;
+        // At once, before any paint.
+        QCOMPARE(changed.size(), 1);
+        const QRect first = pan.widget.roundtableStripLineNow().line;
         QVERIFY(!first.isNull());
-        // Queued: nothing during the paint, once after it.
-        QCOMPARE(changed.size(), 0);
-        QCoreApplication::processEvents();
-        QCOMPARE(changed.size(), 1);
         QCOMPARE(pan.widget.roundtableInspectorSpot(0, 0).anchorLeft, first.left());
+        pan.draw();
+        QCOMPARE(pan.widget.roundtableStripLineForTest().line, first);
         // The same line again says nothing.
+        pan.widget.setRoundtableCard(talkingCard(), room);
         pan.draw();
-        QCoreApplication::processEvents();
         QCOMPARE(changed.size(), 1);
-        // The dial near the right edge: the line moves with it.
+        // The dial near the right edge: the spot moves with the line before the paint.
         pan.widget.setFrequencyRange(7200000.0 - kPanSpanHz / 2.0 + 20000.0, kPanSpanHz);
-        QCoreApplication::processEvents();
-        const qsizetype before = changed.size();
-        pan.draw();
-        const QRect moved = pan.widget.roundtableStripLineForTest().line;
+        QVERIFY(changed.size() > 1);
+        const QRect moved = pan.widget.roundtableStripLineNow().line;
         QVERIFY(moved != first);
-        QCOMPARE(changed.size(), before);
-        QCoreApplication::processEvents();
-        QCOMPARE(changed.size(), before + 1);
         QCOMPARE(pan.widget.roundtableInspectorSpot(0, 0).anchorLeft, moved.left());
+        pan.draw();
+        QCOMPARE(pan.widget.roundtableStripLineForTest().line, moved);
     }
 
     // The line's right-click: the flag's own menu unless a frequency server asks for the short one.
@@ -1757,6 +1955,9 @@ private slots:
     void aDoubleLineHasStripedMeters()
     {
         Pan pan;
+        pan.widget.resize(1800, 760);
+        pan.widget.setFrequencyRange(kPanCenterHz, kPanSpanHz);
+        pan.widget.updateVfoPositions();
         pan.widget.setRoundtableTags({}, RoundtableTagDisplay::Live);
         RoundtableCardModel card = talkingCard(2, RoundtableCardModel::Kind::Double);
         card.rows[1].you = true;
@@ -1890,17 +2091,20 @@ private slots:
         }
     }
 
-    void theClockIsOnADoublesHeadOnly_data()
+    // The status place shows the live turn's clock on every live turn (it holds
+    // "Last heard" once the turn ends), so the place is never an empty gap.
+    void theClockShowsOnEveryLiveTurn_data()
     {
         QTest::addColumn<int>("kind");
         QTest::addColumn<bool>("clock");
         QTest::newRow("double") << static_cast<int>(RoundtableCardModel::Kind::Double) << true;
-        QTest::newRow("talking") << static_cast<int>(RoundtableCardModel::Kind::Talking) << false;
-        QTest::newRow("you") << static_cast<int>(RoundtableCardModel::Kind::You) << false;
-        QTest::newRow("unknown") << static_cast<int>(RoundtableCardModel::Kind::Unknown) << false;
+        QTest::newRow("talking") << static_cast<int>(RoundtableCardModel::Kind::Talking) << true;
+        QTest::newRow("you") << static_cast<int>(RoundtableCardModel::Kind::You) << true;
+        QTest::newRow("unknown") << static_cast<int>(RoundtableCardModel::Kind::Unknown) << true;
+        QTest::newRow("last talker") << static_cast<int>(RoundtableCardModel::Kind::LastTalker) << false;
     }
 
-    void theClockIsOnADoublesHeadOnly()
+    void theClockShowsOnEveryLiveTurn()
     {
         QFETCH(int, kind);
         QFETCH(bool, clock);
@@ -2124,6 +2328,41 @@ private slots:
         QCOMPARE(hitFor(pan.widget, shortName.roomId)->rect.width(), shortWidth);
     }
 
+    // A key or an unkey at another frequency renames its tag in place: it is as
+    // wide as its widest station's callsign, so neither it nor a neighbor moves.
+    void aTagHoldsItsWidthAsItsTalkerChanges()
+    {
+        Pan pan;
+        RoundtableTag tag = tagAt(QStringLiteral("frequency:lsb-7150000"), 7150000);
+        tag.stations = {QJsonObject{{"sourceRoom", "r"}, {"ref", "a"}, {"callsign", "K4A"}},
+                        QJsonObject{{"sourceRoom", "r"}, {"ref", "b"}, {"callsign", "WB4ABCD"}}};
+        tag.members = 2;
+        RoundtableTag neighbor = tagAt(QStringLiteral("frequency:lsb-7160000"), 7160000);
+        neighbor.label = QStringLiteral("N0XYZ");
+        neighbor.stations = {QJsonObject{{"sourceRoom", "r"}, {"ref", "c"}, {"callsign", "N0XYZ"}}};
+        neighbor.members = 1;
+        QList<QRect> rects;
+        const struct { const char* label; int state; QStringList keyed; } states[] = {
+            {"K4A", static_cast<int>(RoundtableGlyph::Quiet), {}},
+            {"K4A", static_cast<int>(RoundtableGlyph::Talking), {QStringLiteral("K4A")}},
+            {"WB4ABCD", static_cast<int>(RoundtableGlyph::Talking), {QStringLiteral("WB4ABCD")}},
+        };
+        for (const auto& state : states) {
+            tag.label = QString::fromLatin1(state.label);
+            tag.state = state.state;
+            tag.keyed = state.keyed;
+            pan.widget.setRoundtableTags({tag, neighbor}, RoundtableTagDisplay::Live);
+            pan.draw();
+            QVERIFY(hitFor(pan.widget, tag.roomId) != nullptr);
+            QVERIFY(hitFor(pan.widget, neighbor.roomId) != nullptr);
+            rects.append(hitFor(pan.widget, tag.roomId)->rect);
+            rects.append(hitFor(pan.widget, neighbor.roomId)->rect);
+        }
+        for (qsizetype i = 2; i < rects.size(); ++i) {
+            QCOMPARE(rects.at(i), rects.at(i % 2));
+        }
+    }
+
     void tagWidthsAreOnlyMeasuredForNewText()
     {
         Pan pan;
@@ -2173,6 +2412,9 @@ private slots:
     void onLowerSidebandTheLineIsPastTheFlagOnTheRight()
     {
         Pan pan;
+        // Room past the flag for the head, its status place and the readings.
+        pan.widget.resize(1800, 760);
+        pan.widget.setFrequencyRange(kPanCenterHz, kPanSpanHz);
         pan.flag->setMode(DSPMode::LSB);
         pan.widget.updateVfoPositions();
         pan.widget.refreshReceiverFlagRegion();
@@ -3263,7 +3505,8 @@ private slots:
         QCOMPARE(pan.widget.roundtableCardPlacementsForTest(), placements + 1);
     }
 
-    // A link note's new words are structure: the line is placed again at the new width.
+    // A link note's new words are structure: the line is placed again, at the same
+    // width, since the note's place is as wide as its widest words.
     void aNewLinkNotePlacesTheLineAgain()
     {
         Pan pan;
@@ -3286,7 +3529,7 @@ private slots:
         pan.draw();
         QCOMPARE(pan.widget.roundtableCardPlacementsForTest(), placements + 1);
         const RoundtableStripLinePlacement after = pan.widget.roundtableStripLineForTest();
-        QVERIFY2(after.line.width() > before.width(),
+        QVERIFY2(after.line == before,
                  qPrintable(QStringLiteral("line %1 wide, was %2").arg(after.line.width()).arg(before.width())));
         QVERIFY(lineTexts(offline, after).join(QLatin1Char('|')).contains(QStringLiteral("Offline since 14:02 UTC")));
     }
@@ -3341,14 +3584,17 @@ private slots:
         rig.view(7185000, {single}, {doubled}, {a, b, rx});
         RoundtableCardModel card = rig.card(7185000);
         QCOMPARE(card.kind, RoundtableCardModel::Kind::Talking);
-        QVERIFY(card.rows.isEmpty());
+        // Each station keeps its place, none with a reading yet.
+        QVERIFY(reportedRows(card).isEmpty());
+        QCOMPARE(card.rows.size(), qsizetype(3));
         QCOMPARE(card.note, QStringLiteral("Double ended 3s ago"));
-        // A new turn's readings arrive one by one.
+        // A new turn's readings arrive one by one, in their stations' places.
         const QJsonObject heard = cardReader("lsb-7184000", "rx", "VK3ABC", 6, -70, rig.now);
         rig.view(7185000, {single}, {doubled}, {a, b, heard});
         card = rig.card(7185000);
-        QCOMPARE(card.rows.size(), 1);
-        QCOMPARE(card.rows.first().dbm, -70.0);
+        QCOMPARE(card.rows.size(), qsizetype(3));
+        QCOMPARE(reportedRows(card).size(), qsizetype(1));
+        QCOMPARE(reportedRows(card).first().dbm, -70.0);
         rig.now = ended + 7999;
         QCOMPARE(rig.card(7185000).note, QStringLiteral("Double ended 7s ago"));
         rig.now = ended + 8000;
@@ -3456,21 +3702,29 @@ private slots:
         rig.view(7185000, {cardTurn(5, "talking", 7185000, "lsb-7184000", 100, {a})}, {},
                  {a, far, near, gone, stranger, otherTurn});
         RoundtableCardModel card = rig.card(7185000);
-        QCOMPARE(card.rows.size(), 2);
-        QCOMPARE(card.rows.at(0).call, QStringLiteral("KG4VCF"));
-        QVERIFY(card.rows.at(0).you);
-        QCOMPARE(card.rows.at(0).km, std::optional<int>(12));
-        QCOMPARE(card.rows.at(1).call, QStringLiteral("VK3ABC"));
-        QCOMPARE(card.rows.at(1).km, std::optional<int>(15000));
-        QCOMPARE(card.rows.at(1).bearingDeg, std::optional<int>(95));
-        QCOMPARE(card.rows.at(1).offsetHz, -40);
+        // One place per station on the frequency, by callsign with you last; only
+        // present listeners of this turn have a reading.
+        QCOMPARE(card.rows.size(), card.onFrequency.size());
+        for (qsizetype i = 0; i < card.rows.size(); ++i) {
+            QCOMPARE(card.rows.at(i).id, card.onFrequency.at(i).id);
+        }
+        QVERIFY(card.rows.last().you);
+        QVector<RoundtableCardRow> heard = reportedRows(card);
+        QCOMPARE(heard.size(), 2);
+        QCOMPARE(heard.at(1).call, QStringLiteral("KG4VCF"));
+        QVERIFY(heard.at(1).you);
+        QCOMPARE(heard.at(1).km, std::optional<int>(12));
+        QCOMPARE(heard.at(0).call, QStringLiteral("VK3ABC"));
+        QCOMPARE(heard.at(0).km, std::optional<int>(15000));
+        QCOMPARE(heard.at(0).bearingDeg, std::optional<int>(95));
+        QCOMPARE(heard.at(0).offsetHz, -40);
 
         // Combined RF: the same rows, no path, and no transmitter.
         const QJsonObject doubled = cardTurn(5, "doubled", 7185000, "lsb-7184000", 100, {a, b});
         rig.view(7185000, {doubled}, {}, {a, b, far, near, gone, stranger, otherTurn});
         card = rig.card(7185000);
         QCOMPARE(card.kind, RoundtableCardModel::Kind::Double);
-        QCOMPARE(card.rows.size(), 2);
+        QCOMPARE(reportedRows(card).size(), 2);
         for (const RoundtableCardRow& row : card.rows) {
             QVERIFY(!row.km.has_value());
             QVERIFY(!row.bearingDeg.has_value());
@@ -3481,8 +3735,8 @@ private slots:
         rig.view(7185000, {}, {ended}, {a, b, far});
         card = rig.card(7185000);
         QCOMPARE(card.kind, RoundtableCardModel::Kind::LastDouble);
-        QCOMPARE(card.rows.size(), 1);
-        QVERIFY(!card.rows.first().km.has_value());
+        QCOMPARE(reportedRows(card).size(), 1);
+        QVERIFY(!reportedRows(card).first().km.has_value());
     }
 
     void anOldRowLosesItsPeak()
@@ -3495,7 +3749,7 @@ private slots:
         rig.view(7185000, {turn}, {}, {a, atLimit, past});
         RoundtablePeakTracker peaks;
         RoundtableCardModel card = rig.card(7185000, &peaks);
-        QCOMPARE(card.rows.size(), 2);
+        QCOMPARE(reportedRows(card).size(), 2);
         QVERIFY(!card.rows.at(0).old);
         QVERIFY(card.rows.at(0).hasPeak);
         QCOMPARE(card.rows.at(0).peakDbm, -60.0);
