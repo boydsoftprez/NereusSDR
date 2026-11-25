@@ -44,7 +44,8 @@
 //                station there from the start. J.J. Boyd (KG4VCF),
 //                AI-assisted via Claude Code.
 //   2026-11-25 - The nets run on both sets of voices, a weak station's
-//                settled gain is checked against what it needs, and a word
+//                settled gain is checked against what it needs when its peaks
+//                stand at full scale, and its lift when they have room; a word
 //                tail when the station check comes late lifts nothing.
 //                J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
@@ -167,6 +168,33 @@ std::vector<float> randomBlock(int frames, std::uint32_t seed, float amp)
         v = u(rng);
     }
     return x;
+}
+
+// The gain over the second half of an over (its median).
+double settledGainDb(const Run& r, int a, int b)
+{
+    std::vector<double> gains(r.gainDb.begin() + blockOf(r, a + (b - a) / 2),
+                              r.gainDb.begin() + blockOf(r, b));
+    std::nth_element(gains.begin(), gains.begin() + gains.size() / 2, gains.end());
+    return gains[gains.size() / 2];
+}
+
+// How far the leveled peaks pass the ceiling: kCeiling, or a block's own
+// peak where it arrived higher.
+double worstOverCeiling(const std::vector<double>& in, const Run& r)
+{
+    double worst = -1.0;
+    const size_t block = static_cast<size_t>(r.blockFrames);
+    for (size_t i = 0; i < in.size(); i += block) {
+        double peakIn = 0.0;
+        double peakOut = 0.0;
+        for (size_t k = i; k < std::min(i + block, in.size()); ++k) {
+            peakIn = std::max(peakIn, std::abs(in[k]));
+            peakOut = std::max(peakOut, std::abs(r.audio[k]));
+        }
+        worst = std::max(worst, peakOut - std::max(RxLeveler::kCeiling, peakIn));
+    }
+    return worst;
 }
 
 }  // namespace
@@ -434,16 +462,19 @@ private slots:
                 QVERIFY2(change < -1.0, qPrintable(QStringLiteral("processed: %1 dB").arg(change)));
                 QVERIFY(change >= -RxLeveler::kAutoMaxCutDb - 0.5);
             } else if (s.snrDb < 40.0) {
-                // The settled gain is what the station needs to reach the
-                // target.
-                std::vector<double> gains(r.gainDb.begin() + blockOf(r, a + (b - a) / 2),
-                                          r.gainDb.begin() + blockOf(r, b));
-                std::nth_element(gains.begin(), gains.begin() + gains.size() / 2, gains.end());
-                const double gain = gains[gains.size() / 2];
+                // Its peaks already stand at full scale after the AGC, so the
+                // limiter holds them and the lift shows in the gain, which
+                // settles at what the station needs. A weak station with
+                // room is weakStationWithRoomComesUp.
+                const double gain = settledGainDb(r, a, b);
                 const double need = RxLeveler::kAutoTargetDb - before;
+                qInfo("full-scale weak over at %.1f s: needs %.2f dB, gain %.2f dB, change %.2f dB",
+                      a / kRate, need, gain, change);
                 QVERIFY2(std::abs(gain - need) < 1.5,
                          qPrintable(QStringLiteral("weak: needs %1 dB, gets %2 dB").arg(need).arg(gain)));
-                QVERIFY2(change > 2.5, qPrintable(QStringLiteral("weak: %1 dB").arg(change)));
+                const double pastCeiling = worstOverCeiling(n.audio, r);
+                qInfo("output peak over the ceiling: %.6f", pastCeiling);
+                QVERIFY2(pastCeiling <= 1e-4, qPrintable(QStringLiteral("peak over the ceiling by %1").arg(pastCeiling)));
                 QVERIFY(change <= RxLeveler::kAutoMaxBoostDb + 0.5);
             } else {
                 QVERIFY2(std::abs(change) < 2.0, qPrintable(QStringLiteral("natural: %1 dB").arg(change)));
@@ -456,6 +487,41 @@ private slots:
         QVERIFY2(maxAfter - minAfter < maxBefore - minBefore - 3.0,
                  qPrintable(QStringLiteral("spread %1 dB -> %2 dB")
                                 .arg(maxBefore - minBefore).arg(maxAfter - minAfter)));
+    }
+
+    // The same weak stations 10 dB lower at the leveler, their peaks well
+    // under full scale: the lift is heard, with room for all of it.
+    void weakStationWithRoomComesUp_data() { voiceSets(); }
+    void weakStationWithRoomComesUp()
+    {
+        QFETCH(int, set);
+        const UseVoices use(static_cast<Voices>(set));
+        const std::vector<Segment> segs = standardNet();
+        const Net n = buildNet(segs, -40.0, 77);
+        const Run r = runLeveler(n, autoParams());
+        size_t index = 0;
+        for (const Segment& s : segs) {
+            if (!s.station) {
+                continue;
+            }
+            const auto [a, b] = n.overs[index++];
+            if (s.processed || s.snrDb >= 40.0) {
+                continue;
+            }
+            const int settled = a + static_cast<int>(2.0 * kRate);
+            double peak = 0.0;
+            for (int i = settled; i < b; ++i) {
+                peak = std::max(peak, std::abs(n.audio[static_cast<size_t>(i)]));
+            }
+            const double peakDb = 20.0 * std::log10(std::max(peak, 1e-12));
+            const double before = activeLevelDb(n.voice, settled, b);
+            const double change = activeLevelDb(r.voice, settled, b) - before;
+            qInfo("weak over with room at %.1f s: peak %.2f dBFS, needs %.2f dB, gain %.2f dB, change %.2f dB",
+                  a / kRate, peakDb, RxLeveler::kAutoTargetDb - before, settledGainDb(r, a, b), change);
+            // The room is real: 2.5 dB of lift and more under the ceiling.
+            QVERIFY2(peakDb < -6.0, qPrintable(QStringLiteral("peak %1 dBFS").arg(peakDb)));
+            QVERIFY2(change > 2.5, qPrintable(QStringLiteral("weak: %1 dB").arg(change)));
+        }
     }
 
     // Near ADC overload the leveler may still cut, never lift.
