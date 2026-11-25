@@ -23,6 +23,9 @@
 //                firmware that puts the DAC on receiver 4. Verified on
 //                Apple silicon. Brian Sutton (W4KZO), AI-assisted via
 //                xAI Grok.
+//   2026-11-25 - Narrowed to firmware codes 14 to 19: TAPR's release notes
+//                give codes 20 to 28 four or five receivers. J.J. Boyd
+//                (KG4VCF), AI-assisted via Claude Code.
 //   2026-09-24 - Plan Task 11: applyDdcAssignment gives every Protocol 1
 //                model Thetis's own receiver layout (Hermes, HermesII and
 //                Orion classes, RedPitaya), from console.cs UpdateDDCs and
@@ -641,11 +644,11 @@ PsDdcConfig P1CodecStandard::applyPureSignalDdcConfig(
         case HPSDRModel::HERMES:
         case HPSDRModel::ANAN10:
         case HPSDRModel::ANAN100:
-            // Discovery versions before v2.9 do not have receiver 4, so the
-            // four-receiver request comes back as two receivers repeated and
-            // the DAC is not in the slots PureSignal reads. Those radios use
-            // the two-receiver map: feedback on DDC0, transmit monitor on DDC1.
-            if (hermesPureSignalOnTwoReceivers()) {
+            // Firmware v1.4 to v1.9 has two receivers, so the four-receiver
+            // request comes back as two receivers repeated and the DAC is not
+            // in the slots PureSignal reads. Those radios use the two-receiver
+            // map: feedback on DDC0, transmit monitor on DDC1.
+            if (hermesPureSignalOnTwoReceivers(model)) {
                 return psDdcConfigHermesIIClass(psEnabled, diversityEnabled, moxState,
                                                 rx1Rate, rx2Rate, rx2Enabled);
             }
@@ -1142,12 +1145,12 @@ DdcAssignment P1CodecStandard::applyDdcAssignment(
         //   case HPSDRModel.ANAN100:
         //       P1_rxcount = 4;                     // RX4 used for puresignal feedback
         //       nddc = 4;
-        // Firmware before v2.9 has no receiver 4. Same gate as
+        // Firmware v1.4 to v1.9 has two receivers. Same gate as
         // applyPureSignalDdcConfig, so the frame count and the pair agree.
         case HPSDRModel::HERMES:
         case HPSDRModel::ANAN10:
         case HPSDRModel::ANAN100:
-            if (hermesPureSignalOnTwoReceivers()) {
+            if (hermesPureSignalOnTwoReceivers(ctx.model)) {
                 return ddcAssignmentHermesIIClass(ctx, slices);
             }
             return ddcAssignmentHermesClass(ctx, slices);

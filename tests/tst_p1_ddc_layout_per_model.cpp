@@ -214,6 +214,8 @@ private slots:
     void slices_c_and_d_use_the_pair_slots_only_in_plain_receive();
     void pair_slots_carry_the_tx_frequency_while_ps_transmits_data();
     void pair_slots_carry_the_tx_frequency_while_ps_transmits();
+    void early_hermes_firmware_has_two_receivers_data();
+    void early_hermes_firmware_has_two_receivers();
 };
 
 void TestP1DdcLayoutPerModel::layout_matches_thetis_data()
@@ -284,6 +286,64 @@ void TestP1DdcLayoutPerModel::layout_matches_thetis()
                                     cfg.psFbDdc, cfg.txMonDdc, a.p1Diversity,
                                     cfg.p1RxCount, cfg.nDdc);
     QCOMPARE(fromPs, actual);
+}
+
+// A Hermes, ANAN-10 or ANAN-100 reporting firmware v1.4 to v1.9 (discovery
+// codes 14 to 19) has two receivers; every other code keeps Thetis's four.
+// TAPR/OpenHPSDR-Firmware [@e7c6584], "Protocol 1/Hermes/previous Hermes
+// versions/Release notes_v1.3 to v3.1.txt". 0 is an unknown version and 4 is
+// v0.4, which has five. Models outside the three never follow the rule.
+void TestP1DdcLayoutPerModel::early_hermes_firmware_has_two_receivers_data()
+{
+    QTest::addColumn<int>("model");
+    QTest::addColumn<int>("code");
+    QTest::addColumn<int>("receivers");
+    for (const ModelClass& m : kModels) {
+        const bool ruled = m.model == HPSDRModel::HERMES || m.model == HPSDRModel::ANAN10
+            || m.model == HPSDRModel::ANAN100;
+        for (const int code : {0, 4, 13, 14, 15, 19, 20, 28, 29}) {
+            const bool two = ruled && code >= 14 && code <= 19;
+            QTest::addRow("%s code %d", m.name, code)
+                << int(m.model) << code << (two ? 2 : m.nDdc);
+        }
+    }
+}
+
+void TestP1DdcLayoutPerModel::early_hermes_firmware_has_two_receivers()
+{
+    QFETCH(int, model);
+    QFETCH(int, code);
+    QFETCH(int, receivers);
+    const HPSDRModel hm = static_cast<HPSDRModel>(model);
+    const auto codec = codecFor(hm);
+    codec->setProtocol1FirmwareVersion(code);
+
+    CodecContext ctx{};
+    ctx.model           = hm;
+    ctx.puresignalRun   = true;
+    ctx.diversityStream = -1;
+    ctx.mox             = true;
+    ctx.p1AdcCntrl      = kAdc;
+    std::array<SliceConfig, 5> streams{};
+    streams[0].live = true;
+    streams[0].sampleRateHz = R1;
+
+    const DdcAssignment a = codec->applyDdcAssignment(ctx, streams);
+    const PsDdcConfig cfg = codec->applyPureSignalDdcConfig(
+        hm, true, false, true, R1, R2, false, quint8(C1), quint8(C2));
+    QCOMPARE(a.nDdc, receivers);
+    QCOMPARE(a.p1RxCount, receivers);
+    QCOMPARE(cfg.nDdc, receivers);
+    QCOMPARE(cfg.p1RxCount, receivers);
+    // The PureSignal pair is the last two receivers of the frame.
+    QCOMPARE(cfg.psFbDdc, receivers - 2);
+    QCOMPARE(cfg.txMonDdc, receivers - 1);
+    QCOMPARE(a.psFwdDdc, receivers - 2);
+    QCOMPARE(a.psRevDdc, receivers - 1);
+
+    // What P1RadioConnection logs on: never set for a radio left as it was.
+    QCOMPARE(codec->hermesPureSignalOnTwoReceivers(hm), receivers == 2
+             && hm != HPSDRModel::ANAN10E && hm != HPSDRModel::ANAN100B);
 }
 
 // Slices C and D (streams 2 and 3) take the PureSignal pair's slots in

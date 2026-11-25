@@ -21,6 +21,9 @@
 //                so an ANAN-10/100 below v2.9 opens PureSignal on two
 //                receivers. Verified on Apple silicon. Brian Sutton
 //                (W4KZO), AI-assisted via xAI Grok.
+//   2026-11-25 - Only firmware v1.4 to v1.9 on a Hermes, ANAN-10 or
+//                ANAN-100 does so, and only those are logged. J.J. Boyd
+//                (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-26 - Bank 17 carries the Anvelina DX open collector outputs:
 //                ctx.ocExtrasByte from setOcExtrasByte (J.J. Boyd KG4VCF,
 //                AI-assisted: Claude Code).
@@ -4316,7 +4319,7 @@ void P1RadioConnection::selectCodec()
     }
     if (auto* standard = dynamic_cast<P1CodecStandard*>(m_codec.get())) {
         standard->setProtocol1FirmwareVersion(m_radioInfo.firmwareVersion);
-        if (standard->hermesPureSignalOnTwoReceivers()) {
+        if (standard->hermesPureSignalOnTwoReceivers(m_hardwareProfile.model)) {
             qCInfo(lcConnection) << "P1: Hermes firmware"
                                  << m_radioInfo.firmwareVersion
                                  << "uses the two-receiver PureSignal map";
