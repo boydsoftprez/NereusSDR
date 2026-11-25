@@ -8,7 +8,7 @@ There are three kinds of recording:
 | --- | --- | --- |
 | **Contact** | **Record** on a slice flag | What you hear on that slice, and your own voice while you transmit. |
 | **Whole pan** | **SAVE** on the Digital Spectrum Recorder | A stretch of the whole band as the radio saw it. It replays like rewind, any station on it. |
-| **Sound** | **Save sound only** | The sound of slice A over a saved stretch, as MP3 or WAV. |
+| **Sound** | **Save sound only** | The sound of one slice over a saved stretch, as MP3 or WAV. |
 
 A window or phone connected to a Core without recordings shows every control described here, grayed, with **This Core needs an update for recordings.** Update the Core to use them. A desktop window running its own radio (not through a Core) has recordings too.
 
@@ -26,7 +26,7 @@ Any device can stop a recording any device started. Each slice records on its ow
 
 In Recording settings (below):
 
-- **Start recording by itself when I transmit** (off at first). While it is on, **Record** shows a hollow red ring and the tip reads **Waits for you to transmit**. Keying starts a recording on the slice you transmit on. Pressing **Record** while it waits starts one at once.
+- **Start recording by itself when I transmit** (off at first). While it is on, **Record** shows a hollow red ring and the tip reads **Waits for you to transmit**. On the phone the switch reads **Start by itself when I transmit**. Keying starts a recording on the slice you transmit on. Pressing **Record** while it waits starts one at once.
 - **Stop by itself after** a number of minutes **with nothing heard and no transmit** (on at first, after 2 minutes; 1 to 60). Quiet means you have not transmitted and the slice has heard nothing above its squelch. With squelch off, it means nothing more than 6 dB above the noise. The Kept notice says it stopped by itself.
 
 ### The name
@@ -79,7 +79,7 @@ Messages are recorded from the mic before processing, so each send gets your mic
 
 - **Recordings panel** (desktop: **Containers > Applets > Recordings**): the six latest, a play button on each, a red row while a slice records. Right-click a row for **Play**, **Rename…**, **Save a copy here…**, **Show in Finder** and **Delete…**.
 - **Recordings window** (**All recordings…**): totals for what is kept on the Core and its free space, a filter (**All**, **Contact**, **Whole pan**, **Sound**), search, and a table you can sort by any column. **Rename**, **Save sound only** (whole pan), **Save a copy here**, **Show in Finder** (only when the Core runs on this computer) and **Delete** for one or several.
-- **Phone and iPad:** **Tools > Recordings**. Filter, search, sort, a more button on each row, swipe left, **Select** for several, and the share sheet. A large whole-pan copy warns before it starts. On the iPad, a Recordings panel can also be shown in the right column; turn it on in **Setup > Recording settings**. It is off at first.
+- **Phone and iPad:** **Tools > Recordings**. Filter, search, sort, a more button on each row, swipe left, **Select** for several, and the share sheet. A large whole-pan copy warns before it starts. On the iPad, a Recordings panel can also be shown in the right column; turn on **Recordings panel in the column** in **Setup > Recording settings**. It is off at first.
 - A rename changes the shown name and the file name on every device.
 - **Delete** always asks first, and cannot be undone.
 - **Save a copy here** downloads a copy to this computer or phone. The original stays on the Core.
@@ -96,7 +96,9 @@ Desktop: **File > Settings... > Cores > Recordings**. Phone and iPad: **Setup > 
 | Where they are kept | Which disk; how many and how much space | The Core's own disk |
 | Playing back | Keying while a recording plays sends it on the air; which of EQ, compressor, leveler, CFC and phase rotator stay on while it goes out | Each off |
 
-An SD card is fine for recordings. If MP3 fails for any reason, the recording is kept as WAV and the Kept notice says **Kept as WAV: the MP3 encoder failed**.
+An SD card is fine for recordings. If MP3 fails for any reason, the recording is kept as WAV and the Kept notice says **Kept as WAV: the MP3 encoder failed**. A Core without an MP3 encoder offers WAV only and says so.
+
+**Show the VOICE button beside TUNE and MOX** on the desktop page, or **Show the VOICE button beside PTT** in the phone's **Tools > Voice Keyer**, takes VOICE off this device's main screen. The voice keyer panel and the hot keys still send messages.
 
 ## The Digital Spectrum Recorder
 
@@ -106,19 +108,21 @@ It is on at first on a new Core, using up to 10 GB on the Core's own disk. It st
 
 ### Go back in time
 
-1. Drag the time strip beside the waterfall back.
-2. Click or tap a signal. The slice moves to that frequency and plays it from that moment.
-3. The waterfall scrolls with the sound (its top row is the moment you hear), the spectrum shows the past with a **PAST** tag, and the S-meter follows.
+1. Drag the time strip beside the waterfall back and let go. The pan's slice plays from that moment on the frequency it is tuned to.
+2. To hear another signal, tune the slice: click or tap the signal, use the dial, or type a frequency. It plays from the moment you are at.
+3. The waterfall scrolls with the sound (its top row is the moment you hear), the spectrum shows the past, **PAST** shows on the pan (on the phone, on the slice flag), and the S-meter follows. Roundtable says **Paused while you listen to the past.**
 4. Press the red **LIVE** to return to live sound on the frequency you were on before.
 
-Further back than the window's own 20 minutes, the Core redraws the waterfall from its disk; the picture dims with **Drawing** while it does. The hours map beside the time strip shows every kept hour, newest at the top, shaded by how busy the band was, with a white mark where you are. Click or drag it to jump. Click a time on the strip to type one. Your own transmissions are kept too and marked on the waterfall, so a replayed contact has both sides.
+When it cannot play, the waterfall says why. **Nothing was kept at this frequency then.** means the recorder was running, but not over that frequency.
 
-PTT while rewound puts slice A live on the frequency you are playing, so you can call the station you went back to. **LIVE** still returns to where you were before.
+Further back than the window's own 20 minutes, the Core redraws the waterfall from its disk; the picture dims while it does. The hours map beside the time strip shows every kept hour, newest at the top, shaded by how busy the band was, with a white mark where you are. Click or drag it to jump. Click a time on the strip to type one. Your own transmissions are kept too and marked on the waterfall, so a replayed contact has both sides.
+
+Keying while rewound takes every rewound slice live, on the frequency it was playing, so you can call the station you went back to.
 
 ### Save a stretch
 
 1. Press **SAVE** above the hours map. A yellow bracket marks 10 minutes. Drag its ends or middle.
-2. The box shows the times, the length and the sizes. Choose **Save stretch (whole pan)**, **Save sound only (MP3)** (or **(WAV)**, following the Files choice in Recording settings), or **Cancel**.
+2. The box shows the times, the length and the sizes. Choose **Save stretch (whole pan)**, **Save sound only (MP3)** (or **(WAV)**, following the Files choice in Recording settings), or **Cancel**. On the phone, sound only saves the active slice, and the picture holds still while SAVE is open.
 
 A whole-pan stretch appears in Recordings and opens on the waterfall to replay like rewind. **Play its sound only** plays just its sound.
 

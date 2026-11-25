@@ -34,17 +34,22 @@ under **iPhone and iPad app** and reach phones and iPads with its next build.
   CW messages instead; **Ctrl+F1** to **F8** always send CW messages and
   **Ctrl+Shift+F1** to **F8** always send voice messages.
 - **Digital Spectrum Recorder.** The Core keeps the band on its disk in a
-  loop, 10 GB at first. Drag the waterfall back, click any signal and hear
-  it as it was; the waterfall, spectrum and S-meter go back with it. **LIVE**
-  returns, and PTT while you are back in time puts you live on the
-  frequency you were hearing. **SAVE** keeps a stretch of the whole band, or
+  loop, 10 GB at first. Drag the waterfall back and let go, and the slice
+  plays from that moment; tune to hear any other signal that was there. The
+  waterfall, spectrum and S-meter go back with it. **LIVE** returns, and PTT
+  while you are back in time puts you live on the frequency you were hearing. **SAVE** keeps a stretch of the whole band, or
   just its sound. **File > Settings... > Cores > Digital Spectrum Recorder**
   sets the disk and the size. It stays off on a Core whose only disk is an
   SD card, and starts off in a desktop window running its own radio.
 - A window or phone connected to an older Core shows these controls grayed
   with "This Core needs an update for recordings." MP3 files are made with
-  LAME and played with minimp3.
-  ([#797](https://github.com/boydsoftprez/NereusSDR/pull/797))
+  LAME and played with minimp3; a Core without LAME saves WAV and says so.
+- **VOICE can leave the main screen.** **Show the VOICE button beside TUNE and
+  MOX** in **Cores > Recordings**, or **Show the VOICE button beside PTT** in
+  the phone's **Tools > Voice Keyer**, takes it off that device. The voice
+  keyer panel and the hot keys still send messages.
+  ([#797](https://github.com/boydsoftprez/NereusSDR/pull/797),
+  [#808](https://github.com/boydsoftprez/NereusSDR/pull/808))
 
 ### Roundtable
 
@@ -57,6 +62,12 @@ under **iPhone and iPad app** and reach phones and iPads with its next build.
   the waterfall is too short.
   ([#804](https://github.com/boydsoftprez/NereusSDR/pull/804),
   [#805](https://github.com/boydsoftprez/NereusSDR/pull/805))
+- **The Roundtable strip holds still.** Your line keeps one place for each
+  station on the frequency, so it no longer jumps sideways, and drags its
+  details with it, every time a report comes or goes. Stations are now in
+  callsign order with you last; one with no report of this turn is dimmed,
+  with a dash.
+  ([#811](https://github.com/boydsoftprez/NereusSDR/pull/811))
 - **Larger Roundtable readings.** Signal readings are a size larger and easier
   to read. Thanks to Brian Sutton (W4KZO).
   ([#780](https://github.com/boydsoftprez/NereusSDR/pull/780))
@@ -99,8 +110,8 @@ under **iPhone and iPad app** and reach phones and iPads with its next build.
 
 - **Receive leveler (RXL).** On a voice net, RXL evens out how loud each
   station sounds, lifting a quiet voice and turning a loud one down, so you
-  can leave the AF slider alone. It lifts only while a station is on the
-  frequency, so the hiss between overs is not turned up. Turn it on with
+  can leave the AF slider alone. It lifts only while a station shows above the
+  noise, and lets go about a second after the voice stops. Turn it on with
   **RXL** on the flag's **DSP** tab; right-click it for the mode, the
   listening target and the most it may lift, and **More Settings…** for the
   rest. **File > Settings... > DSP > AGC/ALC** has a new **RX Leveler**
@@ -108,12 +119,25 @@ under **iPhone and iPad app** and reach phones and iPads with its next build.
   shows how much, such as **RXL +12 dB**. It starts off, so nothing changes
   until you turn it on, and each receiver keeps its own setting. It levels
   LSB, USB, DSB, AM and SAM and leaves the other modes as they are, and VAX
-  and TCI programs always get the plain audio. Written by Brian Sutton
-  (W4KZO).
+  and TCI programs always get the plain audio. Brian Sutton (W4KZO) wrote
+  the first version and its controls; the part that changes the audio was
+  then rebuilt.
   ([#786](https://github.com/boydsoftprez/NereusSDR/pull/786))
 
 ### Transmit
 
+- **Export and import one TX profile.** **Export…** and **Import…** in
+  **File > Settings... > Audio > TX Profile** save the selected profile to a
+  `.nereus-tx-profile` file and read one back. The file carries the profile's
+  sound, not how your radio is wired. **Diagnostics > Export / Import** has
+  **Open TX Profile…**. In a remote window, importing needs a 2026.11.2
+  Core; exporting works with older ones. Written by Brian Sutton (W4KZO).
+  ([#809](https://github.com/boydsoftprez/NereusSDR/pull/809))
+- **PureSignal on an early Hermes, ANAN-10 or ANAN-100.** With early firmware
+  that has only two receivers, PureSignal read a copy of a receiver instead of
+  its feedback. Those radios now use the two-receiver layout. Tried by Brian
+  on a Hermes reporting firmware code 15. Written by Brian Sutton (W4KZO).
+  ([#812](https://github.com/boydsoftprez/NereusSDR/pull/812))
 - **The SSB Mod Monitor marks its OVER level.** The envelope trace now shows a
   dashed line at the OVER threshold, so you can see how close peaks come to
   lighting the lamp. Thanks to Brian Sutton (W4KZO).
@@ -138,7 +162,25 @@ under **iPhone and iPad app** and reach phones and iPads with its next build.
   Recorder**; and the time strip, **LIVE** and **SAVE** on the waterfall. The
   iPad can also show a Recordings panel in its right column. Needs a
   2026.11.2 Core.
-  ([#797](https://github.com/boydsoftprez/NereusSDR/pull/797))
+  ([#797](https://github.com/boydsoftprez/NereusSDR/pull/797),
+  [#808](https://github.com/boydsoftprez/NereusSDR/pull/808))
+- **More room in the Roundtable panel on your own frequency.** The grayed
+  **Tune slice A here** button and its **Slice A is already here** note are
+  gone when the slice is already on that frequency, so the list and messages
+  reach down to the message box. Looking at another frequency still shows
+  **Tune slice A here** as before.
+- **The iPhone's Roundtable panel stays where you let go of its grab bar.**
+  Drag the bar to any height, from just one station showing up to full. A drag
+  well below the smallest height closes the panel. A tap on the bar goes
+  between full and your height, and the panel opens at your height again until
+  the app is closed. A receiver flag, a Roundtable tag, the talker card, LIVE,
+  SAVE or the dBm arrows that the panel's top edge would cut in half are hidden
+  until the edge moves off them.
+- **The Roundtable talker card on the band stays put on a busy frequency.** It
+  no longer jumps between under the receiver flag and beside it as reports come
+  and go, and it keeps its height when the first report arrives and when a new
+  one turns the last row into **+N more**.
+  ([#810](https://github.com/boydsoftprez/NereusSDR/pull/810))
 - **RXL on the phone and iPad.** The **Modes** tab has an **RXL** button
   beside **APF** and **RXL (receive leveler)** settings with **Off**,
   **Auto** and **Custom** and the gain it is adding now. The flag shows the

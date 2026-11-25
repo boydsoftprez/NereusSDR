@@ -19,16 +19,17 @@ To reduce pumping from a nearby strong signal, compare a slower mode or longer d
 
 ## Even out station loudness with RXL
 
-The receive leveler (RXL) rides each voice on a net toward one listening level. It lifts a quiet station and can turn a loud one down, so the AF slider stays your volume. It lifts only while a station is on the frequency, and never near ADC overload, so the noise between overs is not raised. It adds no delay.
+The receive leveler (RXL) rides each voice on a net toward one listening level. It lifts a quiet station and can turn a loud one down, so the AF slider stays your volume. It lifts only while a station shows above the noise, and never near ADC overload, and it starts letting go about a second after the voice stops. With the panadapter running, a neighbor poking into the filter's edge away from the carrier is left out of the reading; a neighbor strong enough to move the AGC still moves the level. It adds no delay.
 
-Turn it on with **RXL** on the selected flag's **DSP** tab. Right-click **RXL** for the mode, **Listening target** and **Maximum boost**, and **More Settings…** for the full **RX Leveler** section of **File > Settings... > DSP > AGC/ALC**:
+Turn it on with **RXL** on the selected flag's **DSP** tab. Right-click **RXL** for the mode, **Listening target** and **Maximum boost**, and **More Settings...** for the full **RX Leveler** section of **File > Settings... > DSP > AGC/ALC**:
 
 - **Off** leaves the audio exactly as it is. **Auto** uses the speech preset. **Custom** uses the settings below.
 - **Listening target**: the speech level every voice is moved toward, measured before the AF slider. -24 to -6 dB; Auto uses -12.
 - **Maximum boost**: the most RXL may lift a quiet voice. 0 to 30 dB; Auto uses 20.
 - **Maximum cut**: the most RXL may turn a loud voice down. 0 never turns a voice down. 0 to 12 dB; Auto uses 6.
-- **Attack** and **Release**: how quickly the gain moves. Auto uses 1000 ms and 600 ms.
-- **Gain now** shows what RXL is doing to this receiver: a plus figure is a lift, a minus figure a cut.
+- **Attack**: how quickly the gain rises when a voice is quiet. 300 to 5000 ms; Auto uses 1000.
+- **Release**: how quickly the gain lets go when a voice is louder, or after a pause. 200 to 3000 ms; Auto uses 600.
+- **Gain now** shows what RXL is doing to this receiver: a plus figure is a lift, a minus figure a cut. It reads **Gain now: off** with RXL off, and gives the reason in a mode RXL leaves alone.
 
 While RXL is on, the flag shows the same figure, such as **RXL +12 dB**. Hover over it for what it is doing.
 
