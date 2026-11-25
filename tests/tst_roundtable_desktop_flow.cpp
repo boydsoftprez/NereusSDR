@@ -47,7 +47,12 @@
 //   2026-11-16: Your frequency's line in the strip stays while the inspector is
 //               open, where the card on the spectrum gave way to it. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-25: Run as four ctest entries (TestFunctionGroups), past the
+//               120 s limit as one on a loaded Linux runner. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
+
+#include "TestFunctionGroups.h"
 
 #include <QtTest/QtTest>
 
@@ -3498,7 +3503,38 @@ int main(int argc, char** argv)
     app.setAttribute(Qt::AA_Use96Dpi, true);
     TstRoundtableDesktopFlow test;
     QTEST_SET_MAIN_SOURCE_PATH
-    return QTest::qExec(&test, argc, argv);
+    // 83 to 108 s by itself on GitHub's Linux runner and past ctest's 120 s
+    // there twice, every case that finished passing: each case builds a whole
+    // MainWindow (several a Core and a window of it too). Three groups run
+    // as their own ctest entries, tst_roundtable_desktop_flow_tags,
+    // _inspector and _hosting (tests/CMakeLists.txt); the rest, the two
+    // whole flows, as tst_roundtable_desktop_flow. The window of the Core's
+    // flow compares its screens with the Everything flow's, so those two
+    // stay together in the rest, in this order. The limit is not raised.
+    const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
+        test.metaObject(), app.arguments(), "NEREUS_ROUNDTABLE_DESKTOP_FLOW_GROUP",
+        {{QStringLiteral("tags"),
+          {QStringLiteral("frequencyTagsPresentStructureImmediatelyAndCoalesceSampleBursts"),
+           QStringLiteral("aTagViewsAFrequencyWithoutTuning"),
+           QStringLiteral("removingAPanEndsItsView"),
+           QStringLiteral("everyFlagOnTheInspectorsFrequencyReadsOpen"),
+           QStringLiteral("aFlagsSMeterChoiceIsThisWindowsAloneOnARadio"),
+           QStringLiteral("aFlagsSMeterChoiceIsThisWindowsAloneOnACore")}},
+         {QStringLiteral("inspector"),
+          {QStringLiteral("theInspectorsRoutesMoveNothingInTheEverythingPlacement"),
+           QStringLiteral("theInspectorsRoutesMoveNothingInAWindowOfTheCore"),
+           QStringLiteral("yourOwnInspectorFollowsTheActiveSliceToItsPan"),
+           QStringLiteral("theInspectorStaysOnThePanWhereYouOpenedIt"),
+           QStringLiteral("aMissingRadioIsNotCalledTransmitting"),
+           QStringLiteral("aFlagLineWithNoFrequencyShowsTheMenuGreyed"),
+           QStringLiteral("theFlagsSourceFollowsTheMeterChoice"),
+           QStringLiteral("theDetailsOpenOverTheWaterfallFromEveryRoute"),
+           QStringLiteral("aPanWithoutTheActiveSlicePlacesByItsOwnFlag")}},
+         {QStringLiteral("hosting"),
+          {QStringLiteral("aHostingWindowViewsAnotherSliceAndMovesNothing"),
+           QStringLiteral("aHostingWindowFollowsItsOwnSliceAndNeverThePhones"),
+           QStringLiteral("aRemoteWindowViewsAnotherSliceAndMovesNothing")}}});
+    return arguments ? QTest::qExec(&test, *arguments) : 1;
 }
 
 #include "tst_roundtable_desktop_flow.moc"

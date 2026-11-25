@@ -34,6 +34,10 @@
 //     click retunes only a slice this window controls.
 //     Settings are now this test's own and cleared after every row, since a
 //     pan's 500 ms save carried a wide pan into the next row's window.
+//   2026-11-25, J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//     the layout group's wideband flag cases run as their own entry,
+//     tst_desktop_station_window_wideband: the layout entry ran past the
+//     120 s limit on a loaded Linux runner.
 
 #include "UnusedLoopbackPort.h"
 #include "gui/HostingSliceActions.h"
@@ -3759,12 +3763,14 @@ int main(int argc, char** argv)
     QTEST_SET_MAIN_SOURCE_PATH
     // 95 s by itself at load 18 to 28, every case a hosting window of its
     // own at about 2 s (one with eight rows 16 s), and past ctest's 120 s
-    // in a loaded run with every case still passing. Eight groups run as
+    // in a loaded run with every case still passing. Nine groups run as
     // their own ctest entries, tst_desktop_station_window_host, _listen,
-    // _keying, _layout, _placed, _select, _pending and _badges
+    // _keying, _layout, _wideband, _placed, _select, _pending and _badges
     // (tests/CMakeLists.txt), 6 to 11 s each run two at a time at load 10
-    // to 18; the rest as tst_desktop_station_window (9 s). The limit is not
-    // raised.
+    // to 18; the rest as tst_desktop_station_window (9 s). _layout alone
+    // took 53 to 115 s on GitHub's Linux runner and once ran past 120 s
+    // (PR 809), so its wideband flag cases are _wideband (2026-11-25). The
+    // limit is not raised.
     const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
         test.metaObject(), app.arguments(), "NEREUS_DESKTOP_STATION_WINDOW_GROUP",
         {{QStringLiteral("host"),
@@ -3785,7 +3791,15 @@ int main(int argc, char** argv)
            QStringLiteral("hostVoxFollowsTheTransmitHolder")}},
          {QStringLiteral("layout"),
           {QStringLiteral("layoutChangeKeepsListeningToASliceOnARemainingPan"),
-           QStringLiteral("aPanNothingPicksAStreamForKeepsTheRateOfTheStreamItCarries"),
+           QStringLiteral("aWingClickNeverRetunesAnotherDevicesSlice"),
+           QStringLiteral("aWingClickNeverRetunesAListenedSlice"),
+           QStringLiteral("aWingClickRetunesThisWindowsOwnSliceWhileHosting"),
+           QStringLiteral("aRevealStillCentresThePanItOpensOnTheSlice"),
+           QStringLiteral("aRevealGrowDocksASliceKeyedToThePanItMakes"),
+           QStringLiteral("aPlacedListenedSliceIsNeverTheRemainingPansActiveSlice"),
+           QStringLiteral("aListenedSliceWhosePanIsGoneKeepsItsOwnShift")}},
+         {QStringLiteral("wideband"),
+          {QStringLiteral("aPanNothingPicksAStreamForKeepsTheRateOfTheStreamItCarries"),
            QStringLiteral("aPanNothingPicksAStreamForDoesNotRaiseWidebandForThatSlice"),
            QStringLiteral("aSliceLeavingThisWindowDropsItsPansWidebandFlag"),
            QStringLiteral("aSliceReturningToThisWindowRaisesItsPansWidebandFlagAgain"),
@@ -3795,14 +3809,7 @@ int main(int argc, char** argv)
            QStringLiteral("aMarkerOnlySliceNeverRaisesWideband"),
            QStringLiteral("takingAMarkerOnlySliceRaisesItsPansWidebandFlag"),
            QStringLiteral("takingAMarkerOnlySliceNobodyControlsRaisesItsPansWidebandFlag"),
-           QStringLiteral("quittingWhileHostingDoesNotRaiseAHeldDownWidebandFlag"),
-           QStringLiteral("aWingClickNeverRetunesAnotherDevicesSlice"),
-           QStringLiteral("aWingClickNeverRetunesAListenedSlice"),
-           QStringLiteral("aWingClickRetunesThisWindowsOwnSliceWhileHosting"),
-           QStringLiteral("aRevealStillCentresThePanItOpensOnTheSlice"),
-           QStringLiteral("aRevealGrowDocksASliceKeyedToThePanItMakes"),
-           QStringLiteral("aPlacedListenedSliceIsNeverTheRemainingPansActiveSlice"),
-           QStringLiteral("aListenedSliceWhosePanIsGoneKeepsItsOwnShift")}},
+           QStringLiteral("quittingWhileHostingDoesNotRaiseAHeldDownWidebandFlag")}},
          {QStringLiteral("placed"),
           {QStringLiteral("aPlacedListenedSliceTunedByItsControllerKeepsItsShiftAndThePansView"),
            QStringLiteral("aPlacedListenedSlicesEdgeMarkerStaysWhileTheOperatorTunes"),
