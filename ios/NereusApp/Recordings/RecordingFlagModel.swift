@@ -5,6 +5,12 @@
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-16: The armed ring drops its AUTO caption. J.J. Boyd (KG4VCF),
 //   AI-assisted via Claude Code.
+// 2026-11-17: PR 808 design calls, the playing bar's shorter names (the
+//   mode, then the frequency go first). J.J. Boyd (KG4VCF), AI-assisted
+//   via Claude Code.
+// 2026-11-19: A WAV kept by a Core with no MP3 encoder says so; "failed"
+//   only where an encoder failed (JJ's phone run of PR 808). J.J. Boyd
+//   (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -70,6 +76,9 @@ final class RecordingFlagModel {
         let positionMs: Int64
         let lengthMs: Int64
         let onAir: Bool
+        /// Shorter names for the bar when `title` does not fit, most kept
+        /// first: the mode goes, then the frequency (the flag shows it).
+        var shorter: [String] = []
 
         /// "0:12 / 3:25 · speaker", or "ON AIR · 0:12 / 3:25" while on the air.
         var detail: String {
@@ -160,7 +169,8 @@ final class RecordingFlagModel {
         }
         let entry = recent.values.lazy.flatMap { $0 }.first { $0.id == playback.id }
         return Bar(title: entry.map(Self.title(of:)) ?? "Recording", positionMs: playback.positionMs,
-                   lengthMs: playback.lengthMs, onAir: playback.onAir)
+                   lengthMs: playback.lengthMs, onAir: playback.onAir,
+                   shorter: entry.map(Self.shorterTitles(of:)) ?? [])
     }
 
     /// The notice under `slice`'s flag. A Kept notice gives way while the
@@ -300,7 +310,8 @@ final class RecordingFlagModel {
         }
         keptShown = kept.seq
         let title = "Kept in Recordings: " + kept.name + ", " + Self.lengthText(kept.lengthMs)
-        let reason = Self.keptReason(kept, quietMinutes: client.settings?.quietMinutes ?? 2)
+        let reason = Self.keptReason(kept, quietMinutes: client.settings?.quietMinutes ?? 2,
+                                     noMp3: client.settings?.noMp3 ?? false)
         post(.kept(id: kept.id, title: title, reason: reason), slice: kept.slice, now: now)
     }
 
@@ -345,8 +356,21 @@ final class RecordingFlagModel {
         return text
     }
 
+    /// Shorter names for the playing bar, most kept first: without the
+    /// mode ("7.236.400 K4ABC"), then the call alone ("K4ABC"), or the
+    /// frequency alone with no call (PR 808 screen walk).
+    nonisolated static func shorterTitles(of entry: RecordingEntry) -> [String] {
+        let frequency = BandSlice.frequencyText(hz: Double(entry.frequencyHz))
+        guard !entry.call.isEmpty else {
+            return entry.mode.isEmpty ? [] : [frequency]
+        }
+        return (entry.mode.isEmpty ? [] : [frequency + " " + entry.call]) + [entry.call]
+    }
+
     /// Why it stopped, in the desktop flag's words.
-    nonisolated static func keptReason(_ kept: RecordingsDocument.Kept, quietMinutes: Int) -> String {
+    /// `noMp3`: the Core says it has no MP3 encoder, so a WAV was not a failure.
+    nonisolated static func keptReason(_ kept: RecordingsDocument.Kept, quietMinutes: Int,
+                                       noMp3: Bool = false) -> String {
         switch kept.reason {
         case .device?:
             return stoppedOn(kept.device)
@@ -357,7 +381,7 @@ final class RecordingFlagModel {
         case .diskFull?:
             return "Stopped: the disk is full"
         case .wav?:
-            return "Kept as WAV: the MP3 encoder failed"
+            return noMp3 ? "Kept as WAV: this Core has no MP3 encoder" : "Kept as WAV: the MP3 encoder failed"
         case .here?, nil:
             // The Core's own window: on the phone it is never this device.
             return "Stopped on the Core"

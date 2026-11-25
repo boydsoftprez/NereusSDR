@@ -1,5 +1,14 @@
 // NereusSDR for iOS: what a flag's buttons open: the antenna menu, the more menu and the tab panels
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-11-17: PR 808, JJ's call: a flag's menus and panels end above PTT
+//   (\.pttClearance); on a band too short for that, their rows get PTT's
+//   height at their end to scroll clear of it. J.J. Boyd (KG4VCF),
+//   AI-assisted via Claude Code.
+// 2026-11-17: PR 808, the manager's call for a phone sideways: where a
+//   tab's panel cannot end above PTT, it takes the band's whole height,
+//   its title row starts right of PTT where PTT would sit on it, its rows
+//   start right of PTT and have room at their end to scroll clear of it. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -39,6 +48,10 @@ struct FlagPopoverLayer: View {
     let transmitReason: String?
     /// The WIDE chip's target, under which the more menu hangs when the chip opened it.
     var wideChip: CGRect?
+    /// Where PTT floats over the band; nil where none does.
+    var ptt: CGRect?
+    /// The room left at the band's foot for PTT (JJ, PR 808).
+    @Environment(\.pttClearance) private var pttClearance
 
     /// The menus' widths, at most (the board's).
     static let antennaMenuWidth: CGFloat = 320
@@ -46,6 +59,38 @@ struct FlagPopoverLayer: View {
     /// A menu's gap below its button, and its margin from the band's edges.
     static let belowButton: CGFloat = 4
     static let margin: CGFloat = 4
+    /// The least height a menu or panel keeps when it ends above PTT; on a
+    /// band shorter than that (a phone sideways) it keeps the band's foot and
+    /// its rows get PTT's height at their end to scroll up clear of it (JJ, PR 808).
+    static let leastAbovePtt: CGFloat = 160
+
+    static func endsAbovePtt(room: CGFloat, clearance: CGFloat) -> Bool {
+        room - clearance >= leastAbovePtt
+    }
+
+    /// A phone sideways whose band leaves a tab's panel under the flag too
+    /// little room above PTT (the manager's call, PR 808): the panel takes
+    /// the band's whole height, PTT stays over its foot and keys, and its
+    /// rows get PTT's height at their end to scroll clear.
+    static func takesWholeBand(sideways: Bool, room: CGFloat, clearance: CGFloat) -> Bool {
+        sideways && clearance > 0 && !endsAbovePtt(room: room, clearance: clearance)
+    }
+
+    /// A whole-band panel's rows start right of PTT, so no control is ever
+    /// under it (the manager's call, PR 808): PTT's right edge (the rows'
+    /// own inset gives the gap).
+    static func contentLeading(ptt: CGRect) -> CGFloat {
+        ptt.maxX
+    }
+
+    /// The panel's title row's leading room where PTT would sit on it: PTT's
+    /// right edge and a gap; nil where PTT stays below the row.
+    static func barLeading(ptt: CGRect?, barTop: CGFloat) -> CGFloat? {
+        guard let ptt, ptt.minY < barTop + FlagPanel.barHeight else {
+            return nil
+        }
+        return ptt.maxX + 8
+    }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -74,11 +119,18 @@ struct FlagPopoverLayer: View {
                         }
                     }
                 case .panel(_, let tab):
-                    let top = Self.panelTop(flag: flag, column: columns[open.sliceId])
+                    let below = Self.panelTop(flag: flag, column: columns[open.sliceId])
+                    let whole = Self.takesWholeBand(sideways: sideways, room: bandSize.height - below,
+                                                    clearance: pttClearance)
+                    let top = whole ? 0 : below
+                    let room = bandSize.height - top
+                    let abovePtt = !whole && Self.endsAbovePtt(room: room, clearance: pttClearance)
                     FlagPanel(controls: controls, modes: modes, rx: modes.rx, entry: entry, tab: tab,
-                              sideways: sideways, large: large)
+                              sideways: sideways, large: large, footRoom: abovePtt ? 0 : pttClearance,
+                              barLeading: whole ? Self.barLeading(ptt: ptt, barTop: top) : nil,
+                              contentLeading: whole ? ptt.map { Self.contentLeading(ptt: $0) } : nil)
                         .frame(width: bandSize.width)
-                        .frame(maxHeight: max(80, bandSize.height - top), alignment: .top)
+                        .frame(maxHeight: max(80, abovePtt ? room - pttClearance : room), alignment: .top)
                         .offset(y: top)
                 }
                 ModesPadLayer(modes: modes)
@@ -117,23 +169,27 @@ struct FlagPopoverLayer: View {
                       @ViewBuilder content: @escaping () -> some View) -> some View {
         let width = min(bandSize.width - 2 * Self.margin, width)
         let origin = Self.menuOrigin(under: button, width: width, alignRight: alignRight, bandWidth: bandSize.width)
-        return FlagMenuShell(content: content)
+        let room = bandSize.height - origin.y
+        let abovePtt = Self.endsAbovePtt(room: room, clearance: pttClearance)
+        return FlagMenuShell(footRoom: abovePtt ? 0 : pttClearance, content: content)
             .frame(width: width)
-            .frame(maxHeight: max(80, bandSize.height - origin.y - Self.margin), alignment: .top)
+            .frame(maxHeight: max(80, room - (abovePtt ? max(Self.margin, pttClearance) : Self.margin)), alignment: .top)
             .offset(x: origin.x, y: origin.y)
     }
 }
 
 /// A menu's frame, the board's `.fbt-menu`: scrolling only when the band is too short for it.
 private struct FlagMenuShell<Content: View>: View {
+    /// Room after the last row for PTT, on a band too short to end above it.
+    var footRoom: CGFloat = 0
     @ViewBuilder let content: () -> Content
 
     static var background: Color { ChromeColours.sheet }
 
     var body: some View {
         ViewThatFits(in: .vertical) {
-            inner
-            ScrollView { inner }
+            inner.padding(.bottom, footRoom)
+            ScrollView { inner.padding(.bottom, footRoom) }
         }
         .background(Self.background, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
         .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
@@ -489,15 +545,23 @@ struct FlagPanel: View {
     let tab: FlagTab
     let sideways: Bool
     let large: Bool
+    /// Room after the last row for PTT, on a band too short to end above it.
+    var footRoom: CGFloat = 0
+    /// The title row's leading room where PTT would sit on it; nil keeps its own.
+    var barLeading: CGFloat?
+    /// The rows' leading room right of PTT on a whole-band panel; nil keeps their own.
+    var contentLeading: CGFloat?
 
+    /// The title row's height.
+    static let barHeight: CGFloat = 44
     static let ground = ChromeColours.panel.opacity(0.97)
 
     var body: some View {
         VStack(spacing: 0) {
             bar
             ViewThatFits(in: .vertical) {
-                sections
-                ScrollView { sections }
+                sections.padding(.bottom, footRoom)
+                ScrollView { sections.padding(.bottom, footRoom) }
             }
             if let note = modes.note ?? rx.note {
                 Text(note)
@@ -545,9 +609,9 @@ struct FlagPanel: View {
             .accessibilityLabel("Close \(tab.title)")
             .accessibilityIdentifier("flagPanelClose")
         }
-        .padding(.leading, sideways ? 62 : 10)
+        .padding(.leading, max(sideways ? 62 : 10, barLeading ?? 0))
         .padding(.trailing, sideways ? 50 : 0)
-        .frame(height: 44)
+        .frame(height: Self.barHeight)
         .background(LinearGradient(stops: [.init(color: ChromeColours.titleTop, location: 0),
                                            .init(color: ChromeColours.titleMiddle, location: 0.5),
                                            .init(color: ChromeColours.titleBottom, location: 1)],
@@ -592,7 +656,8 @@ struct FlagPanel: View {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 88)
             }
         }
-        .padding(.horizontal, sideways ? 52 : 0)
+        .padding(.leading, max(sideways ? 52 : 0, contentLeading ?? 0))
+        .padding(.trailing, sideways ? 52 : 0)
         .padding(.bottom, 4)
     }
 

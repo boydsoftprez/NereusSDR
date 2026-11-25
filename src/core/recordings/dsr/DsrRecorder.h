@@ -20,6 +20,11 @@
 //             the moment it plays from (keptCentreHz, keptSpanHz), so a tune
 //             outside it can say why there is no sound. AI tooling:
 //             Anthropic Claude Code.
+// 2026-11-17  J.J. Boyd / KG4VCF; a lane's time is checked against the
+//             clock as signal arrives (kClockToleranceNs), so a receiver
+//             closed and reopened at the same rate starts again at the
+//             right time; streamRateHz for tests. AI tooling: Anthropic
+//             Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -110,6 +115,12 @@ public:
     static constexpr float kIqScale = 32767.0f;
     // At most this many seconds of transmit audio wait for a block.
     static constexpr int kTxAudioHeldSeconds = 10;
+    // How far a lane's time, counted from its samples, may stray from the
+    // clock before what is held is written and the time starts again from
+    // the clock: above a drain's jitter and the tap ring's 0.68 s at
+    // 1536 kHz, well under a block. A receiver closed and reopened at the
+    // same rate leaves a gap this large or larger.
+    static constexpr qint64 kClockToleranceNs = 1000000000;
 
     DsrRecorder();
     ~DsrRecorder();
@@ -165,6 +176,14 @@ public:
     // still inside.
     void setAccepting(bool on);
     bool accepting() const { return m_accepting.load(std::memory_order_acquire); }
+    // The rate setStream last gave `receiver` (0: not streaming).
+    int streamRateHz(int receiver) const
+    {
+        if (receiver < 0 || receiver >= kMaxReceivers) {
+            return 0;
+        }
+        return m_lanes[static_cast<size_t>(receiver)].rateHz.load(std::memory_order_acquire);
+    }
     quint64 overflows() const;
     quint64 overflows(int receiver) const;
 

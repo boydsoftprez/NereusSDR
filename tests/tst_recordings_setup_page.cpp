@@ -17,19 +17,36 @@
 //   2026-11-15 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 8.
+//   2026-11-17 - J.J. Boyd (KG4VCF), JJ's request: the VOICE button
+//                 switch, this computer's own, on by default, kept in
+//                 AppSettings and usable with no Core. AI-assisted
+//                 implementation via Anthropic Claude Code.
+//   2026-11-17 - J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code: the disk drop-down under repeated
+//                 Core updates with accessibility on and a stale accessible
+//                 cell (PR 808 crash).
+//   2026-11-19 - J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code: a Core with no MP3 encoder shows WAV.
 // =================================================================
 
+#include <QAbstractItemView>
+#include <QAccessible>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QGroupBox>
 #include <QJsonArray>
 #include <QLabel>
+#include <QLoggingCategory>
 #include <QPushButton>
+#include <QScopeGuard>
+#include <QStandardItemModel>
 #include <QSignalSpy>
 #include <QSpinBox>
 #include <QTest>
 
+#include "core/AppSettings.h"
 #include "fakes/FakeRecordingsAccess.h"
+#include "gui/recordings/VoiceButton.h"
 #include "gui/setup/RecordingsSetupPage.h"
 
 using namespace NereusSDR;
@@ -88,6 +105,8 @@ private slots:
     void onAirSwitchesWaitForVersionTwo();
     void notConnectedDimsEveryGroup();
     void olderCoreSaysWhy();
+    void voiceButtonSwitchIsThisComputers();
+    void coreUpdatesDoNotRebuildTheDisks();
 };
 
 void TestRecordingsSetupPage::groupsAndDefaults()
@@ -234,6 +253,22 @@ void TestRecordingsSetupPage::sizesAndNameFollowTheFormat()
     access.setDocument(withSetting(defaultDocument(), QStringLiteral("format"), QStringLiteral("wav")));
     QCOMPARE(page.formatSizeLabel()->text(), QStringLiteral("Full quality, bigger. About 173 MB an hour."));
     QCOMPARE(page.nameExample()->text(), QStringLiteral("2026-11-15 1432Z 7.236.400 LSB K4ABC.wav"));
+
+    // A Core with no MP3 encoder (`mp3` false) keeps MP3 as WAV: WAV shows,
+    // MP3 is greyed, the line says why, and nothing is sent (PR 808).
+    access.setDocument(withSetting(defaultDocument(), QStringLiteral("mp3"), false));
+    QCOMPARE(page.formatCombo()->currentText(), QStringLiteral("WAV"));
+    const auto* model = qobject_cast<QStandardItemModel*>(page.formatCombo()->model());
+    QVERIFY(model != nullptr);
+    QVERIFY(!model->item(0)->isEnabled());
+    QCOMPARE(page.formatSizeLabel()->text(),
+             QStringLiteral("Full quality, bigger. About 173 MB an hour. This Core has no MP3 encoder."));
+    QCOMPARE(page.nameExample()->text(), QStringLiteral("2026-11-15 1432Z 7.236.400 LSB K4ABC.wav"));
+    QVERIFY(access.settingsSent.isEmpty());
+    // With one again, MP3 is back.
+    access.setDocument(defaultDocument());
+    QCOMPARE(page.formatCombo()->currentText(), QStringLiteral("MP3"));
+    QVERIFY(model->item(0)->isEnabled());
 }
 
 void TestRecordingsSetupPage::disksAndSdCardNote()
@@ -326,6 +361,84 @@ void TestRecordingsSetupPage::olderCoreSaysWhy()
         QVERIFY(!g->isEnabled());
         QCOMPARE(g->toolTip(), QStringLiteral("This Core needs an update for recordings."));
     }
+}
+
+// The VOICE button switch: on by default, written to this computer's
+// AppSettings as "True" / "False" and never sent to the Core, usable with
+// no Core, and a page opened later shows what was chosen.
+void TestRecordingsSetupPage::voiceButtonSwitchIsThisComputers()
+{
+    AppSettings::instance().remove(VoiceButton::shownSettingKey());
+    FakeRecordingsAccess access;
+    access.setState(RecordingsAccess::State::NotConnected);
+    RecordingsSetupPage page(&access);
+    QCheckBox* box = page.voiceButtonBox();
+    QVERIFY(box != nullptr);
+    QCOMPARE(box->text(), QStringLiteral("Show the VOICE button beside TUNE and MOX"));
+    QVERIFY(box->isChecked());
+    QVERIFY(box->isEnabled());
+    QVERIFY(!page.groups().contains(qobject_cast<QGroupBox*>(box->parentWidget())));
+
+    box->setChecked(false);
+    QCOMPARE(AppSettings::instance().value(VoiceButton::shownSettingKey()).toString(), QStringLiteral("False"));
+    QVERIFY(access.settingsSent.isEmpty());
+    {
+        RecordingsSetupPage later(&access);
+        QVERIFY(!later.voiceButtonBox()->isChecked());
+    }
+    box->setChecked(true);
+    QCOMPARE(AppSettings::instance().value(VoiceButton::shownSettingKey()).toString(), QStringLiteral("True"));
+    QVERIFY(access.settingsSent.isEmpty());
+}
+
+// PR 808 crash: the same disks with new free figures change only the words
+// in place; other disks reset the list's model instead of removing rows,
+// which crashed Qt's accessibility with a stale cell (see
+// tst_dsr_setup_page).
+void TestRecordingsSetupPage::coreUpdatesDoNotRebuildTheDisks()
+{
+    // Qt warns when it meets the stale cell planted below, then skips it:
+    // expected here, so that category is quiet.
+    QLoggingCategory::setFilterRules(QStringLiteral("qt.accessibility.core.warning=false"));
+    QAccessible::setActive(true);
+    const auto off = qScopeGuard([] {
+        QAccessible::setActive(false);
+        QLoggingCategory::setFilterRules(QString());
+    });
+    FakeRecordingsAccess access;
+    access.setDocument(defaultDocument());
+    RecordingsSetupPage page(&access);
+    QComboBox* combo = page.diskCombo();
+    QCOMPARE(combo->count(), 2);
+
+    const auto staleCell = [combo] {
+        QAccessibleInterface* list = QAccessible::queryAccessibleInterface(combo->view());
+        QVERIFY(list != nullptr && list->tableInterface() != nullptr);
+        QVERIFY(list->child(0) != nullptr && list->child(1) != nullptr);
+        QAccessible::deleteAccessibleInterface(QAccessible::uniqueId(list->child(0)));
+    };
+    staleCell();
+    QSignalSpy removed(combo->model(), &QAbstractItemModel::rowsRemoved);
+    QSignalSpy reset(combo->model(), &QAbstractItemModel::modelReset);
+
+    QJsonArray disks =
+        defaultDocument().value(QStringLiteral("settings")).toObject().value(QStringLiteral("disks")).toArray();
+    for (int n = 1; n <= 3; ++n) {
+        disks[0] = disk(QStringLiteral("/"), QStringLiteral("SSD"), (412 - n) * kGb, true);
+        access.setDocument(withSetting(defaultDocument(), QStringLiteral("disks"), disks));
+        QCOMPARE(combo->itemText(0), QStringLiteral("The Core's own disk (SSD, %1 GB free)").arg(412 - n));
+    }
+    QCOMPARE(reset.count(), 0);
+    QCOMPARE(removed.count(), 0);
+
+    disks.append(disk(QStringLiteral("/Volumes/NVMe"), QStringLiteral("USB disk: NVMe"), 1800 * kGb, false));
+    access.setDocument(withSetting(defaultDocument(), QStringLiteral("disks"), disks));
+    QCOMPARE(reset.count(), 1);
+    QCOMPARE(removed.count(), 0);
+    QCOMPARE(combo->count(), 3);
+    QCOMPARE(combo->currentIndex(), 0);
+    QCOMPARE(combo->itemData(2).toString(), QStringLiteral("/Volumes/NVMe"));
+    QVERIFY(access.settingsSent.isEmpty());
 }
 
 QTEST_MAIN(TestRecordingsSetupPage)

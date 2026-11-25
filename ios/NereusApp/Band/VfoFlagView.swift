@@ -6,6 +6,9 @@
 // 2026-10-25: Roundtable plan Task 19, on an iPad with the applet column
 // showing, the line scrolls the column to the Roundtable applet. J.J. Boyd
 // (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: PR 808 part 2, PAST and its time in the top line while the
+// pan shows the past (DsrFlagPastChip), the flag's height unchanged.
+// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -195,6 +198,9 @@ struct VfoFlagView: View {
     /// iPad with the applet column showing, scrolls the column to the
     /// Roundtable applet (spec 11.4).
     var openRoundtable: (() -> Void)?
+    /// The pan's recorder: while it shows the past, PAST and its time sit
+    /// in the top line over the filter width and TX (PR 808); nil shows none.
+    var past: DsrPanModel?
 
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.roundtableInColumn) private var roundtableInColumn
@@ -242,6 +248,13 @@ struct VfoFlagView: View {
         // An older Core's RADE reason, or the Core's reason for no RADE
         // decoder, takes a second line, measured once drawn.
         return entry.rade?.wraps == true ? height + olderRadeExtra : height
+    }
+
+    /// Where PAST sits in the top line: centred over the filter width and
+    /// TX, under the slice's colour line, above their words.
+    static func pastChipOrigin(_ metrics: FlagMetrics) -> CGSize {
+        let centre = (metrics.diversity.minX + metrics.transmit.maxX) / 2
+        return CGSize(width: centre - DsrFlagPastChip.size.width / 2, height: FlagMetrics.top + 2)
     }
 
     /// The older Core's RADE reason's second line, before it is measured.
@@ -304,6 +317,12 @@ struct VfoFlagView: View {
         }
         .overlay(alignment: .top) {
             Rectangle().fill(colour).frame(height: 2).padding(.horizontal, 1)
+        }
+        .overlay(alignment: .topLeading) {
+            if let past {
+                DsrFlagPastChip(model: past)
+                    .offset(Self.pastChipOrigin(metrics))
+            }
         }
         .contentShape(Rectangle())
         // Each button its own element, named with its slice.

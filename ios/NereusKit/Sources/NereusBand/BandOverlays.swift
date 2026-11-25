@@ -1,5 +1,9 @@
 // NereusSDR for iOS: what the renderer draws around the Core's frame: the axes, the plan, the palette and the settings
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-11-17: liveSpectrumHidden, for the recorder's past spectrum.
+// 2026-11-17: pastTrace, the past spectrum drawn as the live trace is (PR 808).
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import CoreGraphics
 import NereusModels
@@ -36,6 +40,15 @@ public struct BandOverlays: Equatable, Sendable {
     public var waterfallTimeAxis: WaterfallTimeAxis?
     /// The 3D view, while the pan draws it; nil draws the flat spectrum.
     public var stacked: StackedTraceOverlay?
+    /// The live trace, its peak hold and the Core's extras are left out
+    /// (the recorder's past spectrum takes their place); the grid, scales,
+    /// strip and markers still draw.
+    public var liveSpectrumHidden = false
+    /// While the live spectrum is left out: the recorder's past spectrum,
+    /// drawn as the live trace is (its colour, fill, gradient and width),
+    /// over the frequencies `pastTraceCoverage` spans.
+    public var pastTrace: [Float]?
+    public var pastTraceCoverage: BandCoverage?
 
     /// What the band shows while paused.
     public static let pausedText = "Paused"

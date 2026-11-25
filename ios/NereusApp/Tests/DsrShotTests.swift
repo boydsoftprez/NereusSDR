@@ -37,8 +37,399 @@ struct DsrShotTests {
         }
     }
 
+    /// What the pan shows in a picture: the frames above, and for the
+    /// screen walk the past paused, the band's own look back, and each
+    /// reason the past cannot play, as its note on the waterfall.
+    enum PanState: String, CaseIterable, Sendable {
+        case live
+        case past
+        case paused
+        case drawing
+        case save
+        case olderCore = "older-core"
+        case ipadPast = "ipad-past"
+        case lookBack = "look-back"
+        case off = "reason-off"
+        case gone = "reason-gone"
+        case rate = "reason-rate"
+        case diversity = "reason-diversity"
+        case noFrequency = "reason-no-frequency"
+
+        /// The frames the screen walk draws at each phone shape.
+        static let walked: [PanState] = [.live, .paused, .past, .save, .lookBack, .off, .gone, .rate, .diversity,
+                                         .noFrequency]
+
+        /// The note the Core or the model shows on the waterfall, for a reason frame.
+        var note: String? {
+            switch self {
+            case .off: return DsrPanModel.offReason
+            case .gone: return "That moment is no longer kept."
+            case .rate: return "That moment was kept at another sample rate."
+            case .diversity: return "Turn diversity off to rewind that slice."
+            case .noFrequency: return DsrPanModel.noFrequencyReason
+            default: return nil
+            }
+        }
+    }
+
     @Test(arguments: Frame.allCases)
     func thePanShowsTheRecorder(_ frame: Frame) async throws {
+        let state: PanState
+        switch frame {
+        case .live: state = .live
+        case .past: state = .past
+        case .drawing: state = .drawing
+        case .save: state = .save
+        case .olderCore: state = .olderCore
+        case .ipadPast: state = .ipadPast
+        }
+        try await shootPan(state, size: frame.size, type: .large, name: frame.description)
+    }
+
+    /// The screen walk (PR 808): each pan frame at the smallest and largest
+    /// iPhone, upright and sideways, at the default text size and one step
+    /// larger, written as `dsr-phone-walk-<state>-<shape>.png`.
+    @Test(arguments: PanState.walked, WalkShape.all)
+    func thePanAtEachShape(_ state: PanState, _ shape: WalkShape) async throws {
+        try await shootPan(state, size: shape.pan, type: shape.type, name: "dsr-phone-walk-\(state.rawValue)-\(shape)")
+    }
+
+    /// For a simulator video of the motion (PR 808 screen walk): with
+    /// `NEREUS_MOTION` set (`TEST_RUNNER_NEREUS_MOTION`), the past plays on a
+    /// running clock for eight seconds, the Core answering each spectrum and
+    /// rows ask, then a finger drags the strip for a second and a half.
+    /// Without it the test does nothing.
+    @Test func pastMotion() async throws {
+        guard let wanted = ProcessInfo.processInfo.environment["NEREUS_MOTION"], !wanted.isEmpty else {
+            return
+        }
+        // The small upright phone, so the whole pan fits a small simulator's screen.
+        let small = WalkShape(small: true, sideways: false, larger: false)
+        try await shootPan(.past, size: small.screen, type: .large, name: "dsr-phone-motion", motion: true)
+    }
+
+    /// Where the pan's slices stand for the PAST-on-the-flag pictures (PR 808
+    /// part 2), on the shots' band of 7.2205 to 7.2685 MHz.
+    enum FlagCase: String, CaseIterable, Sendable {
+        /// The flag hangs right of its slice, at the band's left.
+        case flagLeft = "flag-left"
+        /// The flag hangs left of its slice, at the band's right.
+        case flagRight = "flag-right"
+        /// Two slices close together: one flag folds to its one-line tag.
+        case folded
+        /// The only slice is off this band: no flag, so the PAST tag shows on the spectrum.
+        case noFlag = "no-flag"
+        /// Two slices apart, each with its full flag.
+        case twoSlices = "two-slices"
+
+        /// Each slice's index and frequency; the first is active.
+        var slices: [(Int, Double)] {
+            switch self {
+            case .flagLeft: return [(0, 7_224_000)]
+            case .flagRight: return [(0, 7_265_000)]
+            case .folded: return [(0, 7_236_400), (1, 7_238_000)]
+            case .noFlag: return [(0, 7_300_000)]
+            case .twoSlices: return [(0, 7_226_000), (1, 7_262_000)]
+            }
+        }
+    }
+
+    /// PAST and its time on every flag's top line and folded tag, and the
+    /// PAST tag only where no flag shows (PR 808 part 2), on the small and
+    /// the big iPhone upright, as `dsr-phone-past-on-<case>-<shape>.png`.
+    @Test(arguments: FlagCase.allCases, [false, true])
+    func pastOnTheFlag(_ flagCase: FlagCase, _ big: Bool) async throws {
+        let shape = WalkShape(small: !big, sideways: false, larger: false)
+        try await shootPan(.past, size: shape.pan, type: shape.type, name: "dsr-phone-past-on-\(flagCase.rawValue)-\(shape)",
+                           slices: flagCase.slices) { model, band, _, _ in
+            #expect(model.inPast)
+            #expect(band.viewHeld())
+        }
+    }
+
+    /// A folded tag keeps off the frequency scale's numbers and, in the past,
+    /// off the play label (PR 808 final overlaps): two slices, folded close
+    /// together and apart, live and in the past, at every walk shape, as
+    /// `dsr-phone-tags-<case>-<live|past>-<shape>.png`.
+    @Test(arguments: [FlagCase.folded, .twoSlices], WalkShape.all)
+    func tagsKeepOffTheScale(_ flagCase: FlagCase, _ shape: WalkShape) async throws {
+        for past in [false, true] {
+            try await shootPan(past ? .past : .live, size: shape.pan, type: shape.type,
+                               name: "dsr-phone-tags-\(flagCase.rawValue)-\(past ? "past" : "live")-\(shape)",
+                               slices: flagCase.slices) { model, _, _, _ in
+                #expect(model.inPast == past)
+            }
+        }
+    }
+
+    /// A saved whole-pan stretch open (the Core's `dsr.stretch`, as a saved
+    /// recording plays): the chip on the flag and the folded tag reads SAVED,
+    /// not PAST (PR 808 final overlaps), as
+    /// `dsr-phone-saved-on-folded-<shape>.png`. SAVE's own bracket, still
+    /// being chosen, is not a saved stretch, so it keeps PAST.
+    @Test func savedOnTheFlag() async throws {
+        let shape = WalkShape(small: true, sideways: false, larger: false)
+        try await shootPan(.past, size: shape.pan, type: shape.type, name: "dsr-phone-saved-on-folded-\(shape)",
+                           slices: FlagCase.folded.slices) { model, _, _, rig in
+            let moment = model.playedMoment ?? model.top
+            let entry: [String: Any] = ["slice": 0, "utcNs": Int64((moment * 1e9).rounded()), "frequencyHz": 7_240_500,
+                                        "liveFrequencyHz": 7_236_400]
+            var dsr = DsrTests.dsrPart(rewound: [entry])
+            dsr["stretch"] = ["id": "r-1", "fromUtcNs": Int64(((moment - 60) * 1e9).rounded()),
+                              "toUtcNs": Int64(((moment + 60) * 1e9).rounded())]
+            RecordingFlagTests.publish(rig, DsrTests.document(dsr: dsr), revision: 3)
+            model.documentChanged()
+            #expect(await ShotWait.until { model.client.dsr?.stretch != nil })
+            #expect(model.inPast)
+        }
+    }
+
+    /// The band's view holds while in the past (PR 808 part 2, JJ's video:
+    /// the scale jumped 5 kHz as the rewind retuned the slice): a new
+    /// context centre and a retuned slice leave it where it was; live, it
+    /// follows the Core again.
+    @Test func theViewHoldsInThePast() async throws {
+        let shape = WalkShape(small: true, sideways: false, larger: false)
+        try await shootPan(.past, size: shape.pan, type: shape.type, name: "dsr-phone-view-held") { model, band, mirror, _ in
+            let held = band.view
+            mirror.apply(FlagButtonsShotTests.slice(0, hz: 7_237_400, active: true))
+            band.receive(.context(try #require(BandFlagShotTests.context(centreHz: BandFlagShotTests.centre + 5_000))))
+            #expect(band.view == held)
+            #expect(await ShotWait.until { model.inPast })
+            #expect(band.view == held)
+            // A zoom asked in the past moves it.
+            let zoomed = TuneGestures.View(centerHz: held.centerHz, spanHz: held.spanHz / 2)
+            band.requestView(zoomed)
+            #expect(band.view == zoomed)
+        }
+    }
+
+    /// The past over a slow link (PR 808 part 2, JJ on cellular): the past
+    /// plays for six seconds with each answer held back by `delayMs`. The
+    /// spectrum keeps its last picture between answers (never empty once
+    /// the first came), the view never moves, and "Drawing" never covers
+    /// the picture. Prints how often the spectrum changed and the largest
+    /// share of the picture still waiting.
+    @Test(arguments: [100, 800])
+    func thePastOverASlowLink(_ delayMs: Int) async throws {
+        let shape = WalkShape(small: true, sideways: false, larger: false)
+        try await shootPan(.past, size: shape.pan, type: shape.type,
+                           name: "dsr-phone-slow-link-\(delayMs)ms") { model, band, _, rig in
+            let geometry = try #require(band.pointGeometry(size: shape.pan)?.geometry)
+            let base = model.clock()
+            let start = CACurrentMediaTime()
+            model.clock = { base + (CACurrentMediaTime() - start) }
+            let delay = Double(delayMs) / 1000
+            var seen: [Int: Double] = [:]
+            var answered: Set<Int> = []
+            let view = band.view
+            var spectra = 0
+            var emptySamples = 0
+            var samples = 0
+            var mostWaiting = 0.0
+            var drawingShown = false
+            var lastFrame: DsrPastFrames?
+            var gaps: [Double] = []
+            var lastChange = CACurrentMediaTime()
+            while CACurrentMediaTime() < start + 6 {
+                let now = CACurrentMediaTime()
+                let all = rig.sent.invokes
+                for index in 0..<all.count where !answered.contains(index) {
+                    let asked = seen[index] ?? now
+                    seen[index] = asked
+                    guard now - asked >= delay else {
+                        continue
+                    }
+                    answered.insert(index)
+                    let invoke = all[index]
+                    func number(_ name: String) -> Int64? {
+                        invoke.args.first { $0.name == name }.flatMap { entry in
+                            if case .i64(let value) = entry.value { return value }
+                            return nil
+                        }
+                    }
+                    switch invoke.verb {
+                    case "dsr.spectrum":
+                        let moment = Double(number("utcNs") ?? 0) / 1e9
+                        await Flag.answer(rig, index, values: Self.frames([moment], geometry: geometry))
+                    case "dsr.rows":
+                        // As the Core answers: the rows asked for, from the newest down.
+                        let to = Double(number("toUtcNs") ?? 0) / 1e9
+                        let from = Double(number("fromUtcNs") ?? 0) / 1e9
+                        let count = Int(min(number("rowCount") ?? 0, 600))
+                        let spp = max(model.secondsPerPoint, 0.001)
+                        let moments = (0..<count).map { to - Double($0) * spp }.filter { $0 >= from - spp / 2 }
+                        let values = await Task.detached { Self.frames(moments, geometry: geometry) }.value
+                        await Flag.answer(rig, index, values: values)
+                    default:
+                        break
+                    }
+                }
+                samples += 1
+                if model.pastSpectrum == nil {
+                    emptySamples += 1
+                }
+                if let frame = model.pastSpectrum, frame.utcNs != lastFrame?.utcNs {
+                    spectra += 1
+                    gaps.append(now - lastChange)
+                    lastChange = now
+                    lastFrame = frame
+                }
+                mostWaiting = max(mostWaiting, model.missingShare)
+                drawingShown = drawingShown || model.drawingText != nil
+                #expect(band.view == view)
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            let longest = gaps.dropFirst().max() ?? 0
+            print("slow link \(delayMs) ms: \(spectra) past spectra in 6 s, longest hold \(String(format: "%.2f", longest)) s, "
+                  + "empty in \(emptySamples) of \(samples) samples, most waiting \(String(format: "%.2f", mostWaiting)), "
+                  + "Drawing shown \(drawingShown)")
+            #expect(emptySamples == 0)
+            #expect(!drawingShown)
+            #expect(spectra >= 2)
+        }
+    }
+
+    /// JJ's phone run of PR 808, round A, on the small iPhone upright, as
+    /// `dsr-phone-jj-a-<case>.png`: the past zoomed out and zoomed in (the
+    /// Core asked again for the new span and the picture filled across it),
+    /// the past over a slow link after a zoom (the rows at the play point
+    /// drawn first), and a folded tag near the band's right edge in the past
+    /// and back at LIVE (on the same side of its line both times).
+    enum RoundA: String, CaseIterable, Sendable {
+        case zoomOut = "zoom-out"
+        case zoomIn = "zoom-in"
+        case slowLink = "slow-link"
+        case flagPast = "flag-past"
+        case flagLive = "flag-live"
+    }
+
+    @Test(arguments: RoundA.allCases)
+    func jjRoundA(_ step: RoundA) async throws {
+        let shape = WalkShape(small: true, sideways: false, larger: false)
+        // Slice B folded beside slice A, its line where its one-line tag fits on
+        // its right, but not with PAST at its end.
+        let slices: [(Int, Double)]? = step == .flagPast || step == .flagLive
+            ? [(0, 7_243_000), (1, 7_245_000)] : nil
+        try await shootPan(.past, size: shape.pan, type: shape.type, name: "dsr-phone-jj-a-\(step.rawValue)",
+                           slices: slices) { model, band, _, rig in
+            switch step {
+            case .zoomOut, .zoomIn, .slowLink:
+                let held = band.view
+                let span = step == .zoomIn ? held.spanHz / 2 : held.spanHz * 2
+                band.requestView(TuneGestures.View(centerHz: held.centerHz, spanHz: span))
+                let geometry = try #require(band.pointGeometry(size: shape.pan)?.geometry)
+                #expect(abs(geometry.spanHz - span) < 1)
+                let wanted = DsrPanView(fftSize: 4096, windowType: 1, centreHz: Int64(held.centerHz.rounded()),
+                                        spanHz: Int64(span.rounded()), pixels: 402)
+                model.panView = { wanted }
+                // The sound plays on a running clock.
+                let base = model.clock()
+                let start = CACurrentMediaTime()
+                model.clock = { base + (CACurrentMediaTime() - start) }
+                if step == .slowLink {
+                    // Each answer comes 0.8 s late.
+                    var topDrawn = 0
+                    var samples = 0
+                    var firstAnswer: Double?
+                    try await answerAsks(rig, model, geometry: geometry, seconds: 6, delay: 0.8) { now in
+                        if firstAnswer == nil, !model.rows.isEmpty {
+                            firstAnswer = now
+                        }
+                        if let firstAnswer, now > firstAnswer + 0.5 {
+                            samples += 1
+                            if model.row(at: model.top) != nil {
+                                topDrawn += 1
+                            }
+                        }
+                    }
+                    print("slow link round A: the play point's row drawn in \(topDrawn) of \(samples) samples")
+                    #expect(samples > 0 && Double(topDrawn) >= 0.9 * Double(samples))
+                    #expect(model.rowsView == wanted && model.row(at: model.top) != nil)
+                } else {
+                    try await answerAsks(rig, model, geometry: geometry, seconds: 5, delay: 0) { _ in }
+                    #expect(model.rowsView == wanted)
+                    #expect(model.missingShare == 0 && model.drawingText == nil)
+                    // The rows span the whole new view.
+                    let layout = try #require(model.rowsLayout)
+                    #expect(abs(Double(layout.count) * layout.hzPerBin - span) < span * 0.01)
+                }
+            case .flagPast:
+                #expect(model.inPast)
+            case .flagLive:
+                let live = Task { await model.goLive() }
+                let (index, _) = try #require(await DsrTests.invoke(rig, "dsr.live"))
+                print("flag live, LIVE asked: inPast \(model.inPast), played \(String(describing: model.playedMoment)), "
+                      + "mine \(model.mine.sorted()), rewound \(model.client.dsr?.rewound.map(\.slice) ?? [])")
+                await Flag.answer(rig, index)
+                await live.value
+                print("flag live, LIVE answered: inPast \(model.inPast), played \(String(describing: model.playedMoment)), "
+                      + "mine \(model.mine.sorted()), rewound \(model.client.dsr?.rewound.map(\.slice) ?? [])")
+                // As the Core does: the slice is no longer listed rewound.
+                RecordingFlagTests.publish(rig, DsrTests.document(dsr: DsrTests.dsrPart()), revision: 3)
+                model.documentChanged()
+                #expect(await ShotWait.until { model.client.dsr?.rewound.isEmpty == true })
+                model.tick()
+                print("flag live, listed live: inPast \(model.inPast), mine \(model.mine.sorted())")
+                #expect(!model.inPast)
+            }
+        }
+    }
+
+    /// Answers the recorder's asks for `seconds`, each `delay` seconds after
+    /// it went, as the Core does: rows asked for from the newest down, and
+    /// the past spectrum; `sample` runs between rounds with the time.
+    private func answerAsks(_ rig: Flag.Rig, _ model: DsrPanModel, geometry: BandGeometry, seconds: Double,
+                            delay: Double, sample: (Double) -> Void) async throws {
+        let start = CACurrentMediaTime()
+        var seen: [Int: Double] = [:]
+        var answered: Set<Int> = []
+        while CACurrentMediaTime() < start + seconds {
+            let now = CACurrentMediaTime()
+            let all = rig.sent.invokes
+            for index in 0..<all.count where !answered.contains(index) {
+                let invoke = all[index]
+                guard invoke.verb == "dsr.rows" || invoke.verb == "dsr.spectrum" else {
+                    continue
+                }
+                let asked = seen[index] ?? now
+                seen[index] = asked
+                guard now - asked >= delay else {
+                    continue
+                }
+                answered.insert(index)
+                func number(_ name: String) -> Int64? {
+                    invoke.args.first { $0.name == name }.flatMap { entry in
+                        if case .i64(let value) = entry.value { return value }
+                        return nil
+                    }
+                }
+                if invoke.verb == "dsr.spectrum" {
+                    let moment = Double(number("utcNs") ?? 0) / 1e9
+                    await Flag.answer(rig, index, values: Self.frames([moment], geometry: geometry))
+                } else {
+                    let to = Double(number("toUtcNs") ?? 0) / 1e9
+                    let from = Double(number("fromUtcNs") ?? 0) / 1e9
+                    let count = Int(min(number("rowCount") ?? 0, 600))
+                    let spp = max(model.secondsPerPoint, 0.001)
+                    let moments = (0..<count).map { to - Double($0) * spp }.filter { $0 >= from - spp / 2 }
+                    let values = await Task.detached { Self.frames(moments, geometry: geometry) }.value
+                    await Flag.answer(rig, index, values: values)
+                }
+            }
+            model.tick()
+            sample(CACurrentMediaTime())
+            if delay == 0, model.missingShare == 0, !model.awaitingRows, CACurrentMediaTime() > start + 1 {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+    }
+
+    private func shootPan(_ frame: PanState, size: CGSize, type: DynamicTypeSize, name: String,
+                          motion: Bool = false, slices: [(Int, Double)]? = nil,
+                          check: ((DsrPanModel, BandModel, MirrorStore, Flag.Rig) async throws -> Void)? = nil)
+        async throws {
         let mirror = MirrorStore(send: { _ in })
         mirror.apply(.hello(LinkMessage.Hello(major: 1, minor: 11, settingsSchema: 0, peer: "nereusd")))
         mirror.apply(.capabilities(LinkMessage.Capabilities(properties: [
@@ -51,29 +442,42 @@ struct DsrShotTests {
             .init(ordinal: 0, name: "json", value: .utf8(json)),
             .init(ordinal: 1, name: "revision", value: .i64(1)),
         ])))
-        mirror.apply(FlagButtonsShotTests.slice(0, hz: 7_236_400, active: true))
+        for (index, hz) in slices ?? [(0, 7_236_400)] {
+            mirror.apply(FlagButtonsShotTests.slice(index, hz: hz, active: index == 0))
+        }
         let main = MainScreenModel(mirror: mirror, settings: SettingsProxyClient(send: { _ in }), commands: nil,
                                    operations: BandSubscriber.Operations(subscribe: { _ in }, unsubscribe: { _ in },
                                                                           retuneClarity: { _ in }))
-        let (rig, model, _) = await DsrTests.pan(version: frame == .olderCore ? 3 : 4)
+        let (rig, model, _) = await DsrTests.pan(version: frame == .olderCore ? 3 : 4,
+                                                 dsr: DsrTests.dsrPart(enabled: frame != .off))
         let band = main.band
         model.ownSeconds = { [weak band] in band?.mostLookBackSeconds ?? 0 }
         model.lookBack = { [weak band] seconds in band?.lookBack(seconds: seconds) }
+        band.liveSpectrumHidden = { [weak model] in model?.hidesLiveSpectrum ?? false }
+        // As AppModel wires it: the past spectrum drawn by the band's renderer.
+        band.pastTrace = { [weak model] in model?.pastTrace }
+        model.pastSpectrumChanged = { [weak band] in band?.pastTraceChanged() }
+        band.viewHeld = { [weak model] in model?.inPast ?? false }
         band.endpointId = 1
         let context = try #require(BandFlagShotTests.context())
         band.receive(.context(context))
-        #expect(await ShotWait.until { main.slices.entries.count == 1 && main.slices.catalog != nil })
+        let sliceCount = (slices ?? [(0, 7_236_400)]).count
+        #expect(await ShotWait.until { main.slices.entries.count == sliceCount && main.slices.catalog != nil })
         let settings = PhoneSettings(defaults: UserDefaults(suiteName: "DsrShotTests") ?? .standard)
 
-        let size = frame.size
         let window = try BandFlagShotTests.window(size: size)
         let root = ZStack {
             BandView(model: band)
             BandGestureLayer(band: band, slices: main.slices, settings: settings, tuning: main.tuning,
-                             foreign: main.foreign, flagControls: main.flagControls, dsr: model)
+                             foreign: main.foreign, sideways: size.width > size.height,
+                             zoomBesideStrip: size.width > size.height,
+                             flagControls: main.flagControls, dsr: model)
+            // As Pan 1 has it: the strip's LIVE is the only one.
+            BandReadouts(band: band, lookBackLive: false)
         }
         .frame(width: size.width, height: size.height)
         .background(Color.black)
+        .dynamicTypeSize(type)
         let host = UIHostingController(rootView: root)
         host.safeAreaRegions = []
         host.view.frame = CGRect(origin: .zero, size: size)
@@ -90,7 +494,7 @@ struct DsrShotTests {
         let geometry = try #require(band.pointGeometry(size: size)?.geometry)
 
         // The hours, once the map has asked.
-        if frame != .olderCore {
+        if frame != .olderCore, frame != .off {
             let (hoursIndex, _) = try #require(await DsrTests.invoke(rig, "dsr.hours"))
             await Flag.answer(rig, hoursIndex, values: Self.hours())
             #expect(await ShotWait.until { !model.hours.isEmpty })
@@ -99,7 +503,7 @@ struct DsrShotTests {
         switch frame {
         case .live:
             #expect(!model.liveLit)
-        case .past, .ipadPast:
+        case .past, .ipadPast, .paused:
             // Half an hour back, Slice A playing from a signal there.
             model.drag(from: model.top, by: -1_800 / model.secondsPerPoint)
             model.dragEnded()
@@ -107,13 +511,16 @@ struct DsrShotTests {
             try await answerRows(rig, model, geometry: geometry, share: 1)
             let (spectrumIndex, _) = try #require(await DsrTests.invoke(rig, "dsr.spectrum"))
             await Flag.answer(rig, spectrumIndex, values: Self.frames([model.top], geometry: geometry))
-            // Rewound from this device, so the picture follows the sound.
-            try await DsrTests.rewindHere(rig, model, moment: model.top, revision: 2)
+            if frame != .paused {
+                // Rewound from this device, so the picture follows the sound.
+                try await DsrTests.rewindHere(rig, model, moment: model.top, revision: 2)
+            }
             if frame == .ipadPast {
-                model.toggleSave()
+                model.toggleSave(stripPoints: model.waterfallPoints)
             }
             #expect(await ShotWait.until { model.pastSpectrum != nil && model.drawingText == nil })
-            #expect(model.rewound != nil && model.liveLit)
+            #expect(frame == .paused ? !model.followsSound : model.rewound != nil)
+            #expect(model.liveLit)
         case .drawing:
             model.drag(from: model.top, by: -3_600 / model.secondsPerPoint)
             model.dragEnded()
@@ -121,14 +528,79 @@ struct DsrShotTests {
             try await answerRows(rig, model, geometry: geometry, share: 0.3)
             #expect(await ShotWait.until { model.drawingText != nil && !model.rows.isEmpty })
         case .save:
-            model.toggleSave()
+            // As SAVE's tap does: the bracket opens inside the strip.
+            model.toggleSave(stripPoints: model.waterfallPoints)
             #expect(model.saving)
         case .olderCore:
             model.toggleSave()
             #expect(model.note == RecordingsClient.updateReason && !model.saving)
+        case .lookBack:
+            // The Display sheet's Look back, within the band's own minutes: the strip's LIVE is red.
+            band.lookBack(seconds: 20)
+            #expect(await ShotWait.until { band.lookBackLines > 0 })
+        case .off, .gone, .rate, .diversity, .noFrequency:
+            model.showNote(try #require(frame.note))
+            #expect(model.note == frame.note)
+        }
+        if motion {
+            try await playPast(rig, model, geometry: geometry)
+        }
+        if let check {
+            try await check(model, band, mirror, rig)
         }
         await ShotWait.laidOut(window)
-        try RadeFlagShotTests.write(window, name: frame.description)
+        try RadeFlagShotTests.write(window, name: name)
+    }
+
+    /// The past playing on a running clock, then a finger on the strip (``pastMotion()``).
+    private func playPast(_ rig: Flag.Rig, _ model: DsrPanModel, geometry: BandGeometry) async throws {
+        let base = model.clock()
+        let start = CACurrentMediaTime()
+        model.clock = { base + (CACurrentMediaTime() - start) }
+        var answered = rig.sent.invokes.count
+        func answerAsks() async {
+            let all = rig.sent.invokes
+            for index in answered..<all.count {
+                let moment = model.playedMoment ?? model.top
+                switch all[index].verb {
+                case "dsr.spectrum":
+                    await Flag.answer(rig, index, values: Self.frames([moment], geometry: geometry))
+                case "dsr.rows":
+                    // As the Core answers: the rows asked for, from the newest down.
+                    // (Rows around the played moment instead left the asked
+                    // stretch's newest rows out, and the model does not ask twice.)
+                    func number(_ name: String) -> Int64? {
+                        all[index].args.first { $0.name == name }.flatMap { entry in
+                            if case .i64(let value) = entry.value { return value }
+                            return nil
+                        }
+                    }
+                    let to = Double(number("toUtcNs") ?? 0) / 1e9
+                    let from = Double(number("fromUtcNs") ?? 0) / 1e9
+                    let count = Int(min(number("rowCount") ?? 0, 600))
+                    let spp = max(model.secondsPerPoint, 0.001)
+                    let moments = (0..<count).map { to - Double($0) * spp }.filter { $0 >= from - spp / 2 }
+                    // Made off the main thread: in a debug build making the rows
+                    // takes long enough to stall the picture the video watches.
+                    let values = await Task.detached { Self.frames(moments, geometry: geometry) }.value
+                    await Flag.answer(rig, index, values: values)
+                default:
+                    break
+                }
+            }
+            answered = all.count
+        }
+        while CACurrentMediaTime() < start + 8 {
+            await answerAsks()
+            try await Task.sleep(for: .milliseconds(8))
+        }
+        let from = model.top
+        for step in 1...90 {
+            model.drag(from: from, by: Double(step) * 2)
+            await answerAsks()
+            try await Task.sleep(for: .milliseconds(16))
+        }
+        try await Task.sleep(for: .milliseconds(500))
     }
 
     /// Letting go plays Slice A from the top (rewind plays on release): the
@@ -164,7 +636,7 @@ struct DsrShotTests {
 
     /// The Core's rows across the band's width: the noise, a few signals
     /// that come and go, and a stretch you transmitted.
-    static func frames(_ moments: [Double], geometry: BandGeometry, rowsLeft: Int = 0,
+    nonisolated static func frames(_ moments: [Double], geometry: BandGeometry, rowsLeft: Int = 0,
                        next: Int64 = 0) -> [LinkMessage.PropertyEntry] {
         let bins = Int(geometry.size.width)
         let hzPerBin = geometry.spanHz / Double(bins)
@@ -220,12 +692,84 @@ struct DsrShotTests {
                 }
             }
         }
+        // The disk row at an iPhone 17 Pro's width upright and sideways, at
+        // the default text size and one step larger: "Disk" keeps its width
+        // and the menu stays compact.
+        for (width, way) in [(CGFloat(402), "upright"), (CGFloat(874), "sideways")] {
+            for (type, size) in [(DynamicTypeSize.large, "default"), (DynamicTypeSize.xLarge, "larger")] {
+                let (_, model) = await DsrTests.setup(dsr: DsrTests.dsrPart(disk: "/media/ssd"),
+                                                      disks: [DsrTests.sdCard, DsrTests.ssd])
+                let probe = SetupLayoutProbe()
+                try await shoot("dsr-phone-setup-\(way)-\(size)", height: 1500, width: width, type: type) {
+                    NavigationStack {
+                        DsrSetupPage(model: model)
+                    }
+                    .environment(\.setupLayoutProbe, probe)
+                }
+                let label = try #require(probe.frame("Disk", .label))
+                let value = try #require(probe.frame("Disk", .value))
+                // One line of "Disk", beside the menu, and the menu no wider than half the row.
+                #expect(label.height < 2 * UIFont.preferredFont(forTextStyle: .body).lineHeight, "\(way) \(size)")
+                #expect(label.width >= 28, "\(way) \(size): Disk is \(label.width) wide")
+                #expect(value.width <= width * 0.6, "\(way) \(size): the menu is \(value.width) wide")
+            }
+        }
+    }
+
+    /// The screen walk (PR 808): the time sheet and Setup > Digital Spectrum
+    /// Recorder (connected, an older Core, not connected) at each phone
+    /// shape, written as `dsr-phone-walk-<page>-<shape>.png`. The pages are
+    /// drawn whole, taller than the screen, so every group can be read.
+    @Test(arguments: WalkShape.all)
+    func pagesAtEachShape(_ shape: WalkShape) async throws {
+        let width = shape.screen.width
+        let (_, pan, _) = await DsrTests.pan()
+        pan.openTimeSheet()
+        try await shoot("dsr-phone-walk-time-\(shape)", height: DsrTimeSheet.height, tabBar: false, width: width,
+                        type: shape.type) {
+            DsrTimeSheet(model: pan)
+        }
+        for (name, version, connected) in [("setup", Int64(4), true), ("setup-older-core", Int64(3), true),
+                                           ("setup-not-connected", Int64(4), false)] {
+            let (_, model) = await DsrTests.setup(version: version, dsr: DsrTests.dsrPart(disk: "/media/ssd"),
+                                                  disks: [DsrTests.sdCard, DsrTests.ssd], connected: connected)
+            try await shoot("dsr-phone-walk-\(name)-\(shape)", height: 1500, width: width, type: shape.type,
+                            sideways: shape.sideways) {
+                NavigationStack {
+                    DsrSetupPage(model: model)
+                }
+            }
+        }
+    }
+
+    /// PR 808: Setup > Digital Spectrum Recorder at the first accessibility
+    /// text size (JJ's phone) on a big phone upright and sideways and a small
+    /// one upright, with a named disk and with a disk the Core shows by a long
+    /// path, written as `dsr-phone-walk-setup-ax1-<screen>-<disk>.png`.
+    @Test func setupAtAccessibilityText() async throws {
+        let longPath: [String: Any] = ["root": RecordingsPagesShotTests.longDiskRoot, "name": "",
+                                       "free": 812_000_000_000, "total": 1_000_000_000_000, "sd": false,
+                                       "own": false]
+        for screen in RecordingsPagesShotTests.largeTypeScreens {
+            for (disk, chosen, disks) in [("named-disk", "/media/ssd", [DsrTests.sdCard, DsrTests.ssd]),
+                                          ("long-disk-path", RecordingsPagesShotTests.longDiskRoot,
+                                           [DsrTests.sdCard, longPath])] {
+                let (_, model) = await DsrTests.setup(dsr: DsrTests.dsrPart(disk: chosen), disks: disks)
+                try await shoot("dsr-phone-walk-setup-ax1-\(screen.name)-\(disk)", height: 2400, width: screen.width,
+                                type: .accessibility1, sideways: screen.sideways) {
+                    NavigationStack {
+                        DsrSetupPage(model: model)
+                    }
+                }
+            }
+        }
     }
 
     /// One page on an upright phone, over the Setup tab's bar, written with `NEREUS_MAIN_SHOTS` set.
-    private func shoot<Content: View>(_ name: String, height: CGFloat, tabBar: Bool = true,
+    private func shoot<Content: View>(_ name: String, height: CGFloat, tabBar: Bool = true, width: CGFloat = 402,
+                                      type: DynamicTypeSize = .large, sideways: Bool = false,
                                       @ViewBuilder content: () -> Content) async throws {
-        let size = CGSize(width: 402, height: height)
+        let size = CGSize(width: width, height: height)
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(origin: .zero, size: size)
@@ -233,11 +777,12 @@ struct DsrShotTests {
         let root = VStack(spacing: 0) {
             content()
             if tabBar {
-                TabBar(selection: .constant(.setup), sideways: false)
+                TabBar(selection: .constant(.setup), sideways: sideways)
             }
         }
         .background(ChromeColours.page)
         .preferredColorScheme(.dark)
+        .dynamicTypeSize(type)
         let host = ShotHosting.host(root)
         host.view.frame = CGRect(origin: .zero, size: size)
         window.rootViewController = host

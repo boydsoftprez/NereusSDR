@@ -3,6 +3,9 @@
 // Modification history (NereusSDR):
 // 2026-11-16: Recording plan Task 16, the phone's playing bar.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: PR 808 design calls, the name drops the mode, then the
+//   frequency, before it is cut. J.J. Boyd (KG4VCF), AI-assisted via
+//   Claude Code.
 
 import NereusBand
 import NereusModels
@@ -44,11 +47,15 @@ struct PlayingBar: View {
         let onAir = bar.onAir
         HStack(spacing: 6) {
             VStack(alignment: .leading, spacing: 1) {
-                Text(bar.title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Color.white)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                // The whole name when it fits, else a shorter one (the mode,
+                // then the frequency go first), cut only as a last resort.
+                ViewThatFits(in: .horizontal) {
+                    ForEach([bar.title] + bar.shorter, id: \.self) { name in
+                        title(name).fixedSize()
+                    }
+                    title(bar.shorter.last ?? bar.title)
+                        .truncationMode(.tail)
+                }
                 // Proportional with even digits, so "ON AIR · 0:12 / 3:25" fits beside Others and Stop.
                 Text(bar.detail)
                     .font(.system(size: 10).monospacedDigit())
@@ -109,6 +116,13 @@ struct PlayingBar: View {
     /// The slice's number from its letter, for the empty list's words.
     private var sliceIndex: Int {
         Int((letter.unicodeScalars.first?.value ?? 65) - 65)
+    }
+
+    private func title(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(Color.white)
+            .lineLimit(1)
     }
 
     private func chip(_ title: String, ink: Color, ground: Color) -> some View {

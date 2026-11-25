@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // 2026-10-29: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
 //   label every positive tracked away stretch, including short app switches.
+// 2026-11-17: J.J. Boyd (KG4VCF), AI-assisted via Claude Code:
+//   a stretch inside one minute names its seconds (PR 808).
 
 import Combine
 import Foundation
@@ -400,12 +402,17 @@ final class SessionController: ObservableObject {
     }
 
     /// "Locked 19:42 to 20:15 · sound only" (spec section 5.5 item 12), or
-    /// "In another app ..." when the phone was not locked meanwhile.
+    /// "In another app ..." when the phone was not locked meanwhile. A
+    /// stretch that starts and ends in the same minute names its seconds,
+    /// not "19:32 to 19:32" (PR 808).
     static func awayText(from start: Date, to end: Date, locked: Bool, timeZone: TimeZone = .current) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = timeZone
+        if formatter.string(from: start) == formatter.string(from: end) {
+            formatter.dateFormat = "HH:mm:ss"
+        }
         let place = locked ? "Locked" : "In another app"
         return "\(place) \(formatter.string(from: start)) to \(formatter.string(from: end)) \u{00B7} sound only"
     }

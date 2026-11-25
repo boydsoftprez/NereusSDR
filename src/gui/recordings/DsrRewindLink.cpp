@@ -19,6 +19,9 @@
 //                 plays from the top row (sliceTuned); playing, a frequency
 //                 outside what was kept then says so on the waterfall.
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-19 - J.J. Boyd (KG4VCF): on a Core with no MP3 encoder the save
+//                 box's sound only says WAV, as it is saved (JJ's phone run,
+//                 PR 808). AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/recordings/DsrRewindLink.h"
@@ -243,9 +246,10 @@ void DsrRewindLink::refresh()
     const double usedBytes = dsr.value(QStringLiteral("usedBytes")).toDouble(0.0);
     const QJsonObject settings = m_access ? m_access->document().value(QStringLiteral("settings")).toObject()
                                           : QJsonObject();
+    // A Core with no MP3 encoder (`mp3` false) saves the sound as WAV.
     m_spectrum->setDsrSaveEstimates(keptMs > 0 ? usedBytes / double(keptMs) : 0.0,
-                                    settings.value(QStringLiteral("format")).toString()
-                                        == QLatin1String("wav"));
+                                    settings.value(QStringLiteral("format")).toString() == QLatin1String("wav")
+                                        || !settings.value(QStringLiteral("mp3")).toBool(true));
     const int s = slice();
     bool listed = false;
     qint64 playedNs = 0;

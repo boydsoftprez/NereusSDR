@@ -24,6 +24,37 @@
 // 2026-11-16: A drag in from the right edge over the recorder's time strip
 // is the edge's swipe again (or moves the band with the edge Off).
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: The recorder strip's LIVE is red while the band's own waterfall
+// looks back. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: Screen walk for PR 808, SAVE's panel stops left of the time
+//   strip, so its handles stay free. J.J. Boyd (KG4VCF), AI-assisted via
+//   Claude Code.
+// 2026-11-17: PR 808 design calls, zoom left of the time strip on a
+//   sideways phone; the PAST tag keeps clear of the flags. J.J. Boyd
+//   (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: PR 808 sheet overlap: the time strip draws under the flags'
+//   menus and panels and the step menu; on the main screen SAVE's panel
+//   is drawn over PTT and VOICE (savePanelHere); the dial and its step box
+//   wait while a flag's menu or panel or a sheet is open (sheetOver).
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: PR 808 part 2: PAST on every flag and folded tag (the tag on
+//   the spectrum only where no flag shows it, clear of the edge markers);
+//   Roundtable's tags keep off other devices' slice labels; a sideways
+//   flag panel with no room above PTT takes the whole band.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: PR 808 final overlaps: a folded tag keeps off the frequency
+//   scale and, in the past, the play label; the play label drops below a
+//   flag over it. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-19: Fixes after JJ's phone run of PR 808: a folded tag carries
+//   PAST only where the chip keeps it on its own side of its dial line, so
+//   the tag no longer jumps sides when the past starts or ends (the PAST tag
+//   on the spectrum shows where no flag or tag carries it).
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-19: Round B of those fixes: a full flag ends left of the dBm
+//   scale's arrows, so its slice letter is never under them; the Kept notice
+//   sits at the waterfall's top, clear of the talker cards and the tags at
+//   the spectrum's foot; SAVE's panel names the active slice it saves.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import NereusBand
@@ -90,6 +121,9 @@ struct BandGestureLayer: View {
     var leadingInset: CGFloat = 0
     /// The button column over this band, and whether it is folded; nil when there is none.
     var buttonColumnFolded: Bool?
+    /// A phone held sideways: zoom sits left of the recorder's time strip
+    /// (``DialLayer/zoomOrigin(kind:waterfall:sideways:trailingInset:uprightWidth:besideStrip:)``).
+    var zoomBesideStrip = false
     /// The pan's display, which a drag up or down on the frequency-scale
     /// row (the split) or on the dBm scale moves; nil leaves those places to
     /// pan the band, as everywhere else.
@@ -153,6 +187,13 @@ struct BandGestureLayer: View {
     /// The Digital Spectrum Recorder's strip, map and past picture (Pan 1
     /// only; the recording design's sections 6.7 and 6.8); nil shows none.
     var dsr: DsrPanModel?
+    /// SAVE's panel is drawn here, at the band's foot; false when the
+    /// screen draws it over its own floating buttons instead (MainScreen,
+    /// PR 808: nothing floats over the save banner).
+    var savePanelHere = true
+    /// A sheet is open over the band (the screen's drop sheets): the dial
+    /// and its step box wait under it, as under a flag's menu or panel (JJ, PR 808).
+    var sheetOver = false
     @Environment(\.uprightBandWidth) private var uprightWidth
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -185,11 +226,16 @@ struct BandGestureLayer: View {
             }
         }
         .overlay {
-            if let tuning, settings.dialKind != .off {
-                GeometryReader { proxy in
-                    if let axes = band.pointGeometry(size: proxy.size) {
-                        DialLayer(tuning: tuning, slices: slices, settings: settings, layout: axes.layout,
-                                  sideways: sideways, trailingInset: trailingInset, strip: dialStrip)
+            if let tuning, settings.dialKind != .off, !sheetOver, dsr?.saving != true {
+                // While a flag's menu or panel is open the dial and its step box
+                // wait, so they never cover its controls (JJ, PR 808); PTT stays.
+                // They wait under the Save banner too, which would cover part of them.
+                DialGate(controls: flagControls) {
+                    GeometryReader { proxy in
+                        if let axes = band.pointGeometry(size: proxy.size) {
+                            DialLayer(tuning: tuning, slices: slices, settings: settings, layout: axes.layout,
+                                      sideways: sideways, trailingInset: trailingInset, strip: dialStrip)
+                        }
                     }
                 }
             }
@@ -200,9 +246,14 @@ struct BandGestureLayer: View {
             }
         }
         .overlay(alignment: .bottom) {
-            if let dsr, dsr.saving {
-                // SAVE's panel; the handles on the strip stay free above it.
-                DsrSavePanel(model: dsr, sliceFrequencyHz: slices.entries.first { $0.id == 0 }?.slice.frequencyHz)
+            if savePanelHere, let dsr, dsr.saving {
+                // SAVE's panel, left of the strip and the hours map, so the
+                // handles on the strip stay free beside it: on a short pan
+                // (a small phone, or sideways) the panel stood over them.
+                // Sound only saves the active slice (JJ's phone run, PR 808).
+                DsrSavePanel(model: dsr, sliceLetter: slices.active?.slice.letter ?? "A",
+                             sliceFrequencyHz: slices.active?.slice.frequencyHz)
+                    .padding(.trailing, trailingInset + DsrStripPlace.stripWidth + DsrStripPlace.mapWidth)
             }
         }
         .sheet(isPresented: Binding(get: { dsr?.timeSheetOpen ?? false },
@@ -241,12 +292,36 @@ struct BandGestureLayer: View {
         let measured = flagHeights
         let column = FlagLayout.sideColumnSize(button: FlagSideButtons.diameter(large: large))
         let olderRade = Set(entries.filter { $0.rade?.wraps == true }.map(\.id))
+        // In the past each folded tag ends with PAST (PR 808).
+        let pastShows = dsr?.inPast == true
+        // A folded tag never sits on the frequency scale's numbers, nor on
+        // the play label ("▶ time Slice A") at the waterfall's top while it
+        // shows: one that would drops below them (PR 808 final overlaps).
+        let scaleRow = CGRect(x: 0, y: layout.frequencyScale.minY, width: layout.size.width,
+                              height: layout.frequencyScale.height)
+        let tagKeepOut = [scaleRow]
+            + (pastShows && dsr?.followsSound == true ? [DsrPictureLayer.playLabelRoom(waterfall: layout.waterfall)] : [])
+        // The dBm scale's arrows at the band's top right sit over the flags:
+        // a full flag beside them ends at their left (JJ's phone run, PR 808,
+        // the slice letter was half under them).
+        let arrowsRect = layout.dbmArrows.offsetBy(dx: -trailingInset, dy: 0)
         func place(top: CGFloat) -> [FlagPlacement] {
             FlagLayout.layout(slices: entries.map(\.slice), activeSliceId: slices.activeSliceId,
                               geometry: geometry,
                               foldedSize: { slice in
-                                  entries.first(where: { $0.id == slice.id }).map(FoldedTagView.size(for:))
-                                    ?? FlagLayout.foldedSize(frequencyText: slice.frequencyText)
+                                  guard let entry = entries.first(where: { $0.id == slice.id }) else {
+                                      return FlagLayout.foldedSize(frequencyText: slice.frequencyText)
+                                  }
+                                  // PAST grows the tag only where it stays on its own side of its line.
+                                  let usual = FoldedTagView.size(for: entry)
+                                  guard pastShows else {
+                                      return usual
+                                  }
+                                  let grown = FoldedTagView.size(for: entry, past: true)
+                                  return FlagLayout.keepsSide(lineX: geometry.x(forHz: slice.frequencyHz),
+                                                              width: Double(usual.width), wider: Double(grown.width),
+                                                              bandWidth: Double(geometry.size.width),
+                                                              lowerSideband: slice.lowerSideband) ? grown : usual
                               },
                               flagHeight: { slice in
                                   let fixed = expected[slice.id] ?? FlagLayout.flagSize.height
@@ -258,7 +333,9 @@ struct BandGestureLayer: View {
                                   }
                                   return measured[slice.id] ?? fixed
                               },
-                              sideColumn: column, top: top)
+                              sideColumn: column, top: top, keepOut: tagKeepOut,
+                              fullRight: arrowsRect.width > 0 && top < arrowsRect.maxY
+                                  ? Double(arrowsRect.minX) - Double(FlagLayout.sideGap) : nil)
         }
         // While another slice's band shows, the flags start under Back to
         // your band; sideways, where the band is short, they stay at the top
@@ -307,13 +384,16 @@ struct BandGestureLayer: View {
         // The dBm scale's arrows where DbmScaleArrows draws them: sideways, in from the rounded edge.
         let arrows = layout.dbmArrows.offsetBy(dx: -trailingInset, dy: 0)
         let dialKind = tuning == nil ? DialKind.off : settings.dialKind
+        let besideStrip = zoomBesideStrip && dsr != nil
         let zoomAt = DialLayer.zoomOrigin(kind: dialKind, waterfall: layout.waterfall, sideways: sideways,
-                                          trailingInset: trailingInset, uprightWidth: uprightWidth)
+                                          trailingInset: trailingInset, uprightWidth: uprightWidth,
+                                          besideStrip: besideStrip)
         // The band's own controls, which the edge markers keep clear of:
         // zoom and the dial as DialLayer places them (the one list the keyed
         // meters keep clear of too), and PTT.
         let controls = DialLayer.controlFrames(kind: dialKind, waterfall: layout.waterfall, sideways: sideways,
-                                               trailingInset: trailingInset, uprightWidth: uprightWidth)
+                                               trailingInset: trailingInset, uprightWidth: uprightWidth,
+                                               besideStrip: besideStrip)
             + [PttButton.frame(bandSize: layout.size, leadingInset: leadingInset)]
         let edgeRects = EdgeMarkers.rects(shown.edges, spectrumFoot: layout.spectrum.maxY,
                                           bandWidth: geometry.size.width, avoid: rects, sideways: sideways,
@@ -346,7 +426,18 @@ struct BandGestureLayer: View {
             if let dsr {
                 // The past over the waterfall, under everything that takes a touch.
                 DsrPictureLayer(model: dsr, band: band, layout: layout, geometry: geometry, place: dsrPlace,
-                                sliceLetter: slices.active?.slice.letter ?? "A")
+                                sliceLetter: slices.active?.slice.letter ?? "A",
+                                // Every flag and folded tag shows PAST; the tag only where none does.
+                                // (A slice placed off the band's edge shows no flag.)
+                                pastOnFlag: flags.contains { entry, placement in
+                                    placement.rect.intersects(CGRect(origin: .zero, size: layout.size))
+                                        && (!placement.isFolded || Self.tagCarriesPast(entry, rect: placement.rect))
+                                },
+                                flags: flagAndTagRects,
+                                avoid: flagAndTagRects + markerRects + edgeRects
+                                    + (buttonColumnFolded.map { [BandColumnLayout.frame(bandHeight: layout.size.height,
+                                                                                         leadingInset: leadingInset,
+                                                                                         folded: $0)] } ?? []))
             }
             if let txFilterHz {
                 txFilter(txFilterHz, layout: layout, geometry: geometry)
@@ -375,7 +466,9 @@ struct BandGestureLayer: View {
                                    tickFoot: layout.strip.minY,
                                    flagRects: placements.map(\.rect) + columns.values.sorted { $0.minX < $1.minX }, keyed: keyed,
                                    sliceLetter: slices.active?.slice.letter ?? "A",
+                                   // Other devices' slice labels share the tag row's height (PR 808: tags piled on them).
                                    panKeepOut: [arrows] + markerRects
+                                    + others.compactMap { BandMenuHit.stationRect($0.slice, geometry: geometry, layout: layout) }
                                     + (buttonColumnFolded.map { [BandColumnLayout.frame(bandHeight: layout.size.height,
                                                                                          leadingInset: leadingInset, folded: $0)] } ?? []),
                                    usableWidth: arrows.minX,
@@ -412,8 +505,9 @@ struct BandGestureLayer: View {
                                            : RecordingFlagLayer.Item(slice: entry.id, letter: entry.slice.letter,
                                                                      flag: placement.rect)
                                    },
-                                   bandWidth: geometry.size.width, openAll: openAllRecordings,
-                                   openSettings: openRecordingSettings)
+                                   bandWidth: geometry.size.width, waterfallTop: layout.waterfall.minY,
+                                   waterfallRight: dsr == nil ? nil : dsrPlace.map.minX,
+                                   openAll: openAllRecordings, openSettings: openRecordingSettings)
             }
             EdgeMarkers(slices: slices, edges: shown.edges, spectrumFoot: layout.spectrum.maxY,
                         bandWidth: geometry.size.width, avoid: rects, sideways: sideways, large: large,
@@ -424,11 +518,15 @@ struct BandGestureLayer: View {
             if let flagControls, let store = flagControls.store {
                 WideChipLayer(store: store, controls: flagControls, rect: chipRect, large: large)
             }
-            if !dialStrip {
+            if !dialStrip, !sheetOver, dsr?.saving != true {
                 // Under the Roundtable sheet zoom waits with the band; the strip keeps PTT and the dial only.
-                ZoomButtons(zoomOut: { zoom(by: 1 / TuneGestures.buttonZoomFactor, geometry: geometry) },
-                            zoomIn: { zoom(by: TuneGestures.buttonZoomFactor, geometry: geometry) })
-                    .offset(x: zoomAt.x, y: zoomAt.y)
+                // Like the dial, zoom waits while a flag's menu or panel, a sheet or the
+                // Save banner is open, so it is never half covered (JJ, PR 808).
+                DialGate(controls: flagControls) {
+                    ZoomButtons(zoomOut: { zoom(by: 1 / TuneGestures.buttonZoomFactor, geometry: geometry) },
+                                zoomIn: { zoom(by: TuneGestures.buttonZoomFactor, geometry: geometry) })
+                        .offset(x: zoomAt.x, y: zoomAt.y)
+                }
             }
             if let tuning {
                 // Over the flags: a tap outside the step menu closes it, and a drag there moves the band.
@@ -448,23 +546,27 @@ struct BandGestureLayer: View {
             // open menu or panel (a slider, a scroll) is that control's
             // alone and never moves, tunes or zooms the band behind it.
             ZStack(alignment: .topLeading) {
+                if let dsr {
+                    // Over the band's drag: a drag on the strip moves time, never the band.
+                    // A drag in from the right edge stays the band's swipe (spec 11.3).
+                    // Under the flags' menus and panels and the step menu: they cover it
+                    // as they cover the band (PR 808, the strip was drawn over them).
+                    DsrStripLayer(model: dsr, place: dsrPlace,
+                                  secondsPerPoint: Double(band.settings.waterfallPeriodMs) / 1000,
+                                  edge: stripEdge(layout: layout, geometry: geometry, entries: entries,
+                                                  placements: placements),
+                                  bandLooksBack: band.lookBackLines > 0)
+                }
                 if let flagControls {
                     FlagPopoverLayer(controls: flagControls, slices: slices, flags: fullFlags, columns: columns,
                                      // The whole band, waterfall included: menus and panels hang over it.
                                      bandSize: layout.size, sideways: sideways, large: large,
-                                     transmitReason: transmitReason, wideChip: chipRect)
+                                     transmitReason: transmitReason, wideChip: chipRect,
+                                     ptt: PttButton.frame(bandSize: layout.size, leadingInset: leadingInset))
                 }
                 if let tuning {
                     StepMenuLayer(tuning: tuning, flags: flags, bandWidth: geometry.size.width, large: large,
                                   part: .menu)
-                }
-                if let dsr {
-                    // Over the band's drag: a drag on the strip moves time, never the band.
-                    // A drag in from the right edge stays the band's swipe (spec 11.3).
-                    DsrStripLayer(model: dsr, place: dsrPlace,
-                                  secondsPerPoint: Double(band.settings.waterfallPeriodMs) / 1000,
-                                  edge: stripEdge(layout: layout, geometry: geometry, entries: entries,
-                                                  placements: placements))
                 }
             }
         }
@@ -584,7 +686,8 @@ struct BandGestureLayer: View {
                         openRoundtable: toggleRoundtableLine.map { toggle in {
                             controls?.close()
                             toggle(id)
-                        } })
+                        } },
+                        past: dsr)
                 .onTapGesture(coordinateSpace: .local) { point in
                     // Even if an ancestor recognises the tap, the DIV target never selects its band slice.
                     guard !entry.diversityOn || !FlagMetrics(large: large).diversity.contains(point) else { return }
@@ -629,9 +732,16 @@ struct BandGestureLayer: View {
             FoldedTagView(entry: entry, activate: {
                 controls?.close()
                 slices.activate(id)
-            }, openDiversity: { controls?.openDiversity(entry) })
+            }, openDiversity: { controls?.openDiversity(entry) },
+               past: Self.tagCarriesPast(entry, rect: rect) ? dsr : nil)
                 .offset(x: rect.minX, y: rect.minY)
         }
+    }
+
+    /// The folded tag was laid out with room for PAST at its end: the chip
+    /// kept it on its own side of its line (``FlagLayout/keepsSide``).
+    static func tagCarriesPast(_ entry: BandSlicesModel.Entry, rect: CGRect) -> Bool {
+        rect.width >= FoldedTagView.size(for: entry, past: true).width - 0.5
     }
 
     /// The TX filter while keyed (the board's `.pan__tx`): a wash in the
@@ -1141,6 +1251,31 @@ struct StepMenuLayer: View {
 
 /// The open number pad at the foot of the band, over a clear layer whose
 /// tap closes it.
+/// Draws the dial only while no flag has a menu or panel open.
+private struct DialGate<Content: View>: View {
+    let controls: FlagControls?
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        if let controls {
+            Observing(controls: controls, content: content)
+        } else {
+            content()
+        }
+    }
+
+    private struct Observing: View {
+        @ObservedObject var controls: FlagControls
+        @ViewBuilder let content: () -> Content
+
+        var body: some View {
+            if controls.open == nil {
+                content()
+            }
+        }
+    }
+}
+
 private struct PadLayer: View {
     @ObservedObject var tuning: BandTuningModel
 

@@ -13,6 +13,9 @@
 // region edits, for the region question. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-08: band stack follow-up, the start-on-Panadapter flag for the UI
 // tests' band launches. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-18: PR 808, a Core with recordings, its document from the UI test,
+// for Setup > Recording settings at large text. J.J. Boyd (KG4VCF),
+// AI-assisted via Claude Code.
 
 #if DEBUG
 import Combine
@@ -21,6 +24,7 @@ import SwiftUI
 import NereusLink
 import NereusMedia
 import NereusMirror
+import NereusModels
 
 /// With ``argument`` on a debug build's command line (beside
 /// ``ConnectionFlow/showBandArgument``), the band shows one slice, A on
@@ -148,6 +152,10 @@ enum UITestBand {
     /// `resources/setup/display.json`), so the Display pill and Setup's eight
     /// Display pages show as they do with a Core.
     static let displayEnvironment = "NEREUS_UITEST_DISPLAY"
+    /// Beside ``argument``: the Core offers recordings (version 3), its
+    /// document the JSON this holds, so Setup > Recording settings shows as
+    /// it does with a Core.
+    static let recordingsEnvironment = "NEREUS_UITEST_RECORDINGS"
     static let centreHz = 7_244_500.0
     static let spanHz = 48_000.0
     static let sliceHz = 7_236_400.0
@@ -171,6 +179,7 @@ enum UITestBand {
             FileManager.default.contents(atPath: path).flatMap { String(data: $0, encoding: .utf8) }
         }
         let roundtable = arguments.contains(roundtableArgument)
+        let recordings = environment[recordingsEnvironment].flatMap { $0.isEmpty ? nil : $0 }
         let bandStack = arguments.contains(bandStackArgument) ? environment[bandStackEnvironment].flatMap { path in
             FileManager.default.contents(atPath: path).flatMap { String(data: $0, encoding: .utf8) }
         } : nil
@@ -214,6 +223,7 @@ enum UITestBand {
           + (roundtable ? [.init(ordinal: 12, name: RoundtableModel.capabilityName, value: .i64(roundtableFrequency ? 2 : 1))] : [])
           + (bandSelect ? [.init(ordinal: 13, name: PanSheetModel.bandSelectCapability, value: .i64(1))] : [])
           + (bandStack == nil ? [] : [.init(ordinal: 14, name: BandStack.capability, value: .i64(1))])
+          + (recordings == nil ? [] : [.init(ordinal: 16, name: RecordingsClient.capabilityName, value: .i64(3))])
           + (general == nil ? [] : [.init(ordinal: 4, name: "setupDescriptionVersion", value: .i64(30)),
                                     .init(ordinal: 15, name: "transmitSettingsVersion", value: .i64(9))]))))
         if let bandStack {
@@ -326,8 +336,23 @@ enum UITestBand {
                 .init(ordinal: 5, name: "sliceRooms", value: .utf8(#"{"0":"\#(roundtableRoomId)"}"#)),
             ])))
         }
+        if let recordings {
+            mirror.apply(.schema(LinkMessage.Schema(className: "RecordingsFacade", fields: [
+                .init(ordinal: 0, name: "json", kind: .utf8), .init(ordinal: 1, name: "revision", kind: .i64),
+            ])))
+            mirror.apply(.objectCreate(LinkMessage.ObjectCreate(key: RecordingsDocument.objectKey,
+                                                               className: "RecordingsFacade", properties: [
+                .init(ordinal: 0, name: "json", value: .utf8(recordings)),
+                .init(ordinal: 1, name: "revision", value: .i64(1)),
+            ])))
+        }
         mirror.apply(.snapshotComplete)
         mirror.handle(.stateChanged(.ready))
+        if recordings != nil {
+            // The recordings client hears the session's events from the app, not the mirror.
+            app.recordings.handle(.stateChanged(.receivingSnapshot))
+            app.recordings.handle(.stateChanged(.ready))
+        }
         if bandMenu || keyed {
             linkForBandMenu(app, keyed: keyed, takesRegion: general != nil)
         }

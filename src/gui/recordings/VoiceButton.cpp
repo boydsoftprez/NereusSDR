@@ -16,6 +16,9 @@
 //                 mockup: an older Core dims VOICE as a whole, and held
 //                 elsewhere the box's messages dim with Take transmit live.
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-17 - J.J. Boyd (KG4VCF), JJ's request: VoiceButtonShown takes
+//                 VOICE out of the row and TUNE and MOX close up.
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/recordings/VoiceButton.h"
@@ -42,6 +45,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "core/AppSettings.h"
 #include "gui/StyleConstants.h"
 #include "gui/applets/TxKeyingSection.h"
 #include "models/recordings/RecordingsAccess.h"
@@ -221,9 +225,56 @@ VoiceButton::VoiceButton(TxKeyingSection* section, RecordingsAccess* access)
     }
     buildBox();
     setAccess(access);
+    // Setup > Recordings' switch, as it is written and as it stands now.
+    m_settingsObserver = AppSettings::instance().addWriteObserver([this](const QString& key) {
+        if (key == shownSettingKey()) {
+            applyShownSetting();
+        }
+    });
+    // Switched off, VOICE leaves the row now. Left on (the default), the row
+    // is built exactly as it was before the switch: nothing touches the part,
+    // so a row and its container copies lay out the same.
+    if (!shownSetting()) {
+        applyShownSetting();
+    }
 }
 
-VoiceButton::~VoiceButton() = default;
+VoiceButton::~VoiceButton()
+{
+    if (m_settingsObserver >= 0) {
+        AppSettings::instance().removeWriteObserver(m_settingsObserver);
+    }
+}
+
+QString VoiceButton::shownSettingKey()
+{
+    return QStringLiteral("VoiceButtonShown");
+}
+
+bool VoiceButton::shownSetting()
+{
+    return AppSettings::instance().value(shownSettingKey(), QStringLiteral("True")).toString()
+        != QLatin1String("False");
+}
+
+void VoiceButton::setShownSetting(bool shown)
+{
+    AppSettings::instance().setValue(shownSettingKey(), shown ? QStringLiteral("True") : QStringLiteral("False"));
+}
+
+// VOICE leaves the row, or comes back, through the row's own "voice" part,
+// the path a container copy's hide takes; the row closes up around it.
+void VoiceButton::applyShownSetting()
+{
+    if (m_section == nullptr) {
+        return;
+    }
+    const bool shown = shownSetting();
+    if (!shown && boxOpen()) {
+        closeBox();
+    }
+    m_section->parts().setDynamicVisible(QStringLiteral("voice"), shown);
+}
 
 QPushButton* VoiceButton::button() const
 {

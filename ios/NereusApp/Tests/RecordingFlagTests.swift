@@ -331,6 +331,9 @@ struct RecordingFlagTests {
         #expect(RecordingFlagModel.keptReason(kept(.quiet), quietMinutes: 1) == "Stopped by itself after one quiet minute")
         #expect(RecordingFlagModel.keptReason(kept(.diskFull), quietMinutes: 2) == "Stopped: the disk is full")
         #expect(RecordingFlagModel.keptReason(kept(.wav), quietMinutes: 2) == "Kept as WAV: the MP3 encoder failed")
+        // A Core with no MP3 encoder did not fail (JJ's phone run, PR 808).
+        #expect(RecordingFlagModel.keptReason(kept(.wav), quietMinutes: 2, noMp3: true)
+                    == "Kept as WAV: this Core has no MP3 encoder")
         #expect(RecordingFlagModel.keptReason(kept(.here), quietMinutes: 2) == "Stopped on the Core")
         #expect(RecordingFlagModel.lengthText(3_723_000) == "1:02:03")
     }

@@ -170,6 +170,34 @@ struct BandRowClockTests {
         }
     }
 
+    /// PR 808: a stretch the band was not sent (the phone in another app)
+    /// ends how far back the band's own picture runs whole: the recorder
+    /// draws the past from the Core past it, not the band's black gap.
+    @Test("the band's own whole reach stops at a gap in its rows")
+    func continuousReachStopsAtAGap() throws {
+        let band = try Self.band(stacked: false)
+        band.settings.waterfallPeriodMs = 100
+        var now = 1000.0
+        band.lineClock = { now }
+        band.receive(.context(try #require(BandFlagShotTests.context(fps: 10))))
+        // 30 s of rows, three minutes away, then 60 s more.
+        for sequence in 0..<300 {
+            now = 1000 + Double(sequence) / 10
+            band.receive(.displayFrame(Self.capture(sequence: UInt32(sequence + 1),
+                                                    stamp: UInt64(sequence + 1) * 100_000_000)))
+        }
+        for sequence in 0..<600 {
+            now = 1210 + Double(sequence) / 10
+            band.receive(.displayFrame(Self.capture(sequence: UInt32(sequence + 301),
+                                                    stamp: 210_000_000_000 + UInt64(sequence) * 100_000_000)))
+        }
+        _ = band.prepareToDraw(size: CGSize(width: 400, height: 200), scale: 1)
+        #expect(band.mostLookBackSeconds > 200)
+        // Back to the gap, less the picture's own height.
+        #expect(band.continuousLookBackSeconds < 60)
+        #expect(band.continuousLookBackSeconds > 30)
+    }
+
     @Test("rewind reaches old low-FPS history through a newer high-FPS viewport")
     func mixedRateRewindReachesOlderHistory() throws {
         let band = try Self.band(stacked: false)

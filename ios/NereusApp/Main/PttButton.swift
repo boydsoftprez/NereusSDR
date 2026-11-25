@@ -21,6 +21,9 @@
 // band under it to tune, and only a touch that lands in the circle
 // (inFace) can key. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
+// 2026-11-17: PR 808, JJ's call: sheets and panels over the band end above
+//   PTT (sheetClearance, \.pttClearance), so PTT stays and keys while they
+//   are open. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 import NereusLink
 import SwiftUI
 import UIKit
@@ -69,6 +72,10 @@ struct PttButton: View {
     static let inset: CGFloat = 14
     /// Its inset from the band's foot.
     static let bottomInset: CGFloat = 12
+    /// The room a sheet or panel over the band leaves at the band's foot,
+    /// so PTT stays clear of its controls and keys while it is open (JJ,
+    /// PR 808): PTT, its inset and a 6-point gap.
+    static let sheetClearance: CGFloat = bottomInset + diameter + 6
 
     /// Where it sits on a band of `bandSize`, `leadingInset` in from the phone's rounded edge.
     static func frame(bandSize: CGSize, leadingInset: CGFloat) -> CGRect {
@@ -792,4 +799,11 @@ final class PttTapView: UIView {
     func end() {
         reader.cancel()
     }
+}
+
+extension EnvironmentValues {
+    /// How far above the band's foot a sheet or panel over the band ends,
+    /// clear of PTT (``PttButton/sheetClearance``); 0 where no PTT floats
+    /// over the band (pictures that host the band alone).
+    @Entry var pttClearance: CGFloat = 0
 }

@@ -6,6 +6,12 @@
 // 2026-11-16: JJ's ruling on PR 797: an imported file is sent as imported (a fixed level
 //   on the air), a clip from this phone's microphone is not. J.J. Boyd (KG4VCF),
 //   AI-assisted via Claude Code.
+// 2026-11-17: The switch that takes VOICE off the main screen (JJ's request),
+//   kept on this device. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: Screen walk for PR 808, Record's "Recording 0:03" keeps to one
+//   line on a small phone. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: PR 808 design calls, "This iPad's mic" on an iPad. J.J. Boyd
+//   (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -589,6 +595,8 @@ struct VoiceKeyerPage: View {
     @Bindable var model: VoiceKeyerModel
     /// Take transmit, while another station holds it.
     var take: TransmitTakeModel?
+    /// This device's own settings: whether VOICE shows on the main screen.
+    var settings: PhoneSettings?
 
     var body: some View {
         // The clock runs only while a message goes out.
@@ -663,7 +671,7 @@ struct VoiceKeyerPage: View {
             }
             ConnectChrome.Note(text: VoiceKeyerModel.pageNote)
             SpotHubPage.Heading(text: "Record", tag: .core).padding(.top, 4)
-            RecordCard(model: model, enabled: enabled)
+            RecordCard(model: model, enabled: enabled, isPad: settings?.isPad ?? false)
                 .opacity(enabled ? 1 : WorkspacePalette.disabledOpacity)
             SpotHubPage.Heading(text: "Messages", tag: .core).padding(.top, 8)
             SpotHubPage.Card {
@@ -726,7 +734,33 @@ struct VoiceKeyerPage: View {
                 .opacity(model.repeatOn ? 1 : WorkspacePalette.disabledOpacity)
             }
             .opacity(enabled ? 1 : WorkspacePalette.disabledOpacity)
+            if let settings {
+                VoiceButtonSwitch(settings: settings).padding(.top, 8)
+            }
             ConnectChrome.Note(text: VoiceKeyerModel.footNote).padding(.top, 4)
+        }
+    }
+}
+
+/// Whether the round VOICE shows beside PTT on the main screen: this
+/// device's own choice, on by default, live with no Core and with an older
+/// one. Off, the voice keyer still works from this page.
+struct VoiceButtonSwitch: View {
+    @ObservedObject var settings: PhoneSettings
+
+    nonisolated static let title = "Show the VOICE button beside PTT"
+    nonisolated static let detail = "Off, the messages are still here in Tools > Voice Keyer."
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SpotHubPage.Heading(text: settings.isPad ? "On this iPad" : "On this phone", tag: .thisPhone)
+            SpotHubPage.Card {
+                SpotHubPage.SettingRow(title: Self.title, detail: Self.detail) {
+                    SpotHubPage.OnOff(isOn: settings.voiceButtonShown, identifier: "voiceKeyer.showVoiceButton") {
+                        settings.voiceButtonShown.toggle()
+                    }
+                }
+            }
         }
     }
 }
@@ -735,6 +769,8 @@ struct VoiceKeyerPage: View {
 private struct RecordCard: View {
     let model: VoiceKeyerModel
     let enabled: Bool
+    /// On an iPad the mic is the iPad's.
+    var isPad = false
 
     var body: some View {
         let recording = model.recorder.isRecording
@@ -773,6 +809,9 @@ private struct RecordCard: View {
                             Text(recording ? "Recording " + RecordingFlagModel.lengthText(model.recorder.elapsedMs)
                                  : "Record")
                                 .monospacedDigit()
+                                // One line on a small phone, where "0:03" wrapped under "Recording".
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
                         }
                         .font(.system(size: 16, weight: .semibold))
                         .frame(maxWidth: .infinity)
@@ -795,14 +834,14 @@ private struct RecordCard: View {
                     .accessibilityIdentifier("voiceKeyer.stop")
                 }
                 HStack(spacing: 8) {
-                    Text("This phone's mic")
+                    Text(isPad ? "This iPad's mic" : "This phone's mic")
                         .font(.system(size: 12))
                         .foregroundStyle(ChromeColours.textDim)
                         .fixedSize()
                     LevelBar(level: Double(model.recorder.level))
                 }
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("This phone's microphone level")
+                .accessibilityLabel(isPad ? "This iPad's microphone level" : "This phone's microphone level")
                 .accessibilityValue("\(Int(model.recorder.level * 100)) percent")
             }
             .padding(.horizontal, 10)

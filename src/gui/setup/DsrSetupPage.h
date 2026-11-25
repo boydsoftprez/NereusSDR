@@ -35,6 +35,8 @@
 //   2026-11-16 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 26.
+//   2026-11-17 - J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code: m_diskFiller (PR 808 crash fix).
 // =================================================================
 
 #include <QJsonArray>
@@ -60,6 +62,8 @@ class QSpinBox;
 class QTimer;
 
 namespace NereusSDR {
+
+class DiskComboFiller;
 
 /// The recorder's loop as a bar: what is kept (blue), where it writes now
 /// (a white head) and, once full, the red stretch it erases next. Between
@@ -197,6 +201,7 @@ private:
     QLabel* m_status = nullptr;
     QLabel* m_sdWarning = nullptr;
     QComboBox* m_disk = nullptr;
+    DiskComboFiller* m_diskFiller = nullptr;
     QPushButton* m_scan = nullptr;
     QSlider* m_sizeSlider = nullptr;
     QSpinBox* m_sizeSpin = nullptr;

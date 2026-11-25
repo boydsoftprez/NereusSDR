@@ -27,6 +27,10 @@
 //                 sound only starts with the signal.
 //   2026-11-16 - J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code. Renaming or deleting an opened stretch closes it.
+//   2026-11-19 - J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. Sound only keeps the slice asked for (Slice B), and
+//                 a slice not kept is refused in its own letter (JJ's phone
+//                 run, PR 808).
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -103,13 +107,16 @@ RecordingVolume volume(const QString& root, bool own)
 class FakeRadio final : public DsrRewindHost {
 public:
     qint64 frequency = kPlayHz;
+    // Slice B, when open, on the same receiver (PR 808).
+    bool sliceB = false;
+    qint64 frequencyB = kPlayHz;
     RxDspWorker* worker = nullptr;
     std::shared_ptr<DsrReplay> held;
 
-    bool sliceOpen(int slice) const override { return slice == 0; }
+    bool sliceOpen(int slice) const override { return slice == 0 || (sliceB && slice == 1); }
     qint64 sliceFrequencyHz(int) const override { return frequency; }
     void setSliceFrequencyHz(int, qint64 hz) override { frequency = hz; }
-    int sliceReceiver(int slice) const override { return slice == 0 ? 0 : -1; }
+    int sliceReceiver(int slice) const override { return sliceOpen(slice) ? 0 : -1; }
     qint64 receiverCentreHz(int receiver) const override { return receiver == 0 ? kKeptCentreHz : 0; }
     int receiverRateHz(int receiver) const override { return receiver == 0 ? kRate : 0; }
     bool sliceOnDiversity(int) const override { return false; }
@@ -124,10 +131,10 @@ public:
     }
     bool sliceSound(int slice, DsrSoundSettings* out) const override
     {
-        if (slice != 0 || out == nullptr) {
+        if (!sliceOpen(slice) || out == nullptr) {
             return false;
         }
-        out->frequencyHz = frequency;
+        out->frequencyHz = slice == 1 ? frequencyB : frequency;
         out->dspMode = static_cast<int>(DSPMode::USB);
         out->filterLowHz = 100.0;
         out->filterHighHz = 3000.0;
@@ -484,6 +491,46 @@ private slots:
             ++quiet;
         }
         QVERIFY2(quiet < size_t(rate / 20), qPrintable(QStringLiteral("%1 quiet samples at the start").arg(quiet)));
+#endif
+    }
+
+    // Sound only of the slice asked for (JJ's phone run, PR 808: the phone
+    // on Slice B saved Slice A): Slice B's sound, named for Slice B's
+    // frequency; a slice that is not open is refused in its own letter.
+    void soundOnlyKeepsTheSliceAskedFor()
+    {
+        RecordingService svc(nullptr);
+        FakeRadio* radio = prepare(svc);
+        radio->sliceB = true;
+        radio->frequencyB = kPlayHz - 500;   // USB: the carrier is 1500 Hz
+        keepCarrier(svc, 8);
+        const DsrRingFile& ring = svc.dsrRecorder()->ring();
+        const qint64 from = ring.oldestUtcNs(0) + kNs;
+        const qint64 to = from + 5 * kNs;
+        QString note;
+        QString why;
+        QVERIFY(!svc.saveStretch(from, to, false, &note, &why, 2));
+        QCOMPARE(why, QStringLiteral("Slice C is not on a frequency kept in that stretch."));
+        QCOMPARE(RecordingService::saveSliceReason(0), QString::fromLatin1(RecordingService::kSaveSliceReason));
+#ifndef HAVE_WDSP
+        QSKIP("Built without WDSP.");
+#else
+        QSignalSpy saved(&svc, &RecordingService::stretchSaved);
+        QVERIFY2(svc.saveStretch(from, to, false, &note, &why, 1), qPrintable(why));
+        QVERIFY(QTest::qWaitFor([&] { return !saved.isEmpty(); }, kSaveWaitMs));
+        const std::optional<RecordingEntry> e = svc.store()->find(saved.first().first().toString());
+        QVERIFY(e.has_value());
+        QCOMPARE(e->kind, RecordingKind::Sound);
+        QCOMPARE(e->sliceId, 1);
+        QCOMPARE(e->frequencyHz, kPlayHz - 500);
+        int rate = 0;
+        const std::vector<qint16> s = wavSamples(QDir(svc.store()->folder()).filePath(e->fileName), &rate);
+        QVERIFY(!s.empty());
+        double rms = 0.0;
+        double share = 0.0;
+        const double hz = toneHz(s, rate, 2.0, &rms, &share);
+        QVERIFY2(std::abs(hz - 1500.0) <= 10.0 && share > 0.5,
+                 qPrintable(QStringLiteral("tone %1 Hz, %2 of the sound").arg(hz).arg(share)));
 #endif
     }
 

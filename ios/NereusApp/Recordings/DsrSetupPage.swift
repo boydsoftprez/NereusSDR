@@ -6,6 +6,11 @@
 // 2026-11-16: Recording plan fix round: the Size slider starts at the Core's
 //   1 GB, and the erase note clears on a reconnect or another Core.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: The Disk row keeps "Disk" on one line and its menu compact:
+//   the closed menu names the disk only (diskShortText), the open menu keeps
+//   each disk's free space. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: Screen walk for PR 808, the page's title is drawn inline, where
+//   it wraps, not cut short. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusMirror
@@ -204,6 +209,26 @@ final class DsrSetupModel {
         return choices
     }
 
+    /// The chosen disk as the closed menu names it: short, so the row stays
+    /// compact; the open menu's choices carry the free space.
+    var diskShortText: String {
+        let chosen = disk
+        guard let found = (client.settings?.disks ?? []).first(where: { ($0.own ? "" : $0.root) == chosen }) else {
+            return chosen.isEmpty ? "Core's own disk" : chosen
+        }
+        return Self.diskShortText(found)
+    }
+
+    nonisolated static func diskShortText(_ disk: RecordingsDocument.Disk) -> String {
+        if disk.sd {
+            return "SD card"
+        }
+        if !disk.name.isEmpty {
+            return disk.name
+        }
+        return disk.own ? "Core's own disk" : disk.root
+    }
+
     // MARK: Changes
 
     func setEnabled(_ on: Bool) async {
@@ -337,7 +362,8 @@ struct DsrSetupPage: View {
                 .setupGreyed(!usable)
             erase
         }
-        .setupPageTitle(DsrSetupModel.title)
+        // Inline, where it wraps: the bar's large title cut it short on every phone.
+        .setupPageTitle(DsrSetupModel.title, wraps: true)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 SetupTagBadge(tag: .core)
@@ -381,20 +407,50 @@ struct DsrSetupPage: View {
         }
     }
 
+    /// "Disk" at its own width beside a compact menu: closed, it names the
+    /// disk; open, each choice carries its free space (as the Setup menu
+    /// rows look, ``SetupMenuRow``).
+    private var diskRow: some View {
+        SetupValueRowLayout(probe: "Disk") {
+            Text("Disk")
+                .fixedSize()
+        } value: {
+            Menu {
+                Picker("Disk", selection: Binding(get: { model.disk }, set: { root in
+                    Task { await model.setDisk(root) }
+                })) {
+                    ForEach(model.diskChoices, id: \.root) { choice in
+                        Text(choice.text).tag(choice.root)
+                    }
+                }
+                .pickerStyle(.inline)
+            } label: {
+                HStack(spacing: 4) {
+                    Text(model.diskShortText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.footnote.weight(.semibold))
+                }
+                .foregroundStyle(WorkspacePalette.textPrimary)
+                .padding(.horizontal, 10)
+                .frame(minHeight: SetupStepButton.height)
+                .background { WorkspaceFace(.raised) }
+            }
+            .accessibilityLabel("Disk")
+            .accessibilityValue(model.diskShortText)
+        }
+        // As SetupMenuRow greys a row that cannot change.
+        .setupGreyed(model.reason != nil)
+        .accessibilityIdentifier("dsrSetup.disk")
+    }
+
     private var whereKept: some View {
         SetupPanelSection("Where it is kept", tag: .core,
                           note: "It is always erasing. Whatever size you pick, the recorder keeps only the newest "
                               + "stretch and erases the oldest as it goes. To keep something, save it from the "
                               + "time strip.") {
-            Picker("Disk", selection: Binding(get: { model.disk }, set: { root in
-                Task { await model.setDisk(root) }
-            })) {
-                ForEach(model.diskChoices, id: \.root) { choice in
-                    Text(choice.text).tag(choice.root)
-                }
-            }
-            .setupMenuRow("Disk")
-            .accessibilityIdentifier("dsrSetup.disk")
+            diskRow
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline) {
                     Text("Size")

@@ -12,10 +12,41 @@
 // 2026-11-16: A drag in from the right edge over the strip is the band's
 //   edge swipe (spec 11.3), not time (DsrStripEdge). J.J. Boyd (KG4VCF),
 //   AI-assisted via Claude Code.
+// 2026-11-17: Fixes after JJ's phone run of PR 797: the picture and the past
+//   spectrum follow the sound every display frame (DsrFrameLink), the strip's
+//   LIVE is red while the band's own waterfall looks back (the band's own
+//   LIVE no longer draws over it), and the past spectrum replaces the live
+//   one instead of veiling it; the time strip's ticks move every display
+//   frame, live and in the past, not on the 250 ms tick.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: The time strip redraws every display frame only in the past or
+//   while a rewind plays; live it is back to its old pace (the phone's heat).
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: Screen walk for PR 808, the strip's times are written below
+//   SAVE, never over it. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: PR 808 design calls, the PAST tag moves clear of a flag and
+//   its round buttons. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: PR 808 sheet overlap: SAVE opens its bracket inside the
+//   strip and its handles stay on it; the past spectrum is drawn by the
+//   band's renderer, not here.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: PR 808 part 2, PAST and its time go on every flag's top line
+//   and folded tag on the pan (DsrFlagPastChip); the PAST tag on the
+//   spectrum shows only where no flag does. J.J. Boyd (KG4VCF), AI-assisted
+//   via Claude Code.
+// 2026-11-17: PR 808 final overlaps: the play label's room
+//   (playLabelRoom), which the folded tags keep off; a full flag over it
+//   moves the label below the flag. J.J. Boyd (KG4VCF), AI-assisted via
+//   Claude Code.
+// 2026-11-19: Fixes after JJ's phone run of PR 808 (round B): "Drawing"
+//   dims the whole waterfall's width, so the past picture below the strip's
+//   foot (beside zoom) no longer shows brighter than the rest.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import CoreGraphics
 import NereusBand
 import NereusModels
+import QuartzCore
 import SwiftUI
 
 /// Where the recorder's controls sit on the waterfall (the phone mockup):
@@ -95,6 +126,11 @@ struct DsrStripLayer: View {
     var secondsPerPoint: Double = 0.1
     /// The band's edge zone; nil leaves every drag on the strip to time.
     var edge: DsrStripEdge?
+    /// The band's own waterfall looks back (the Display sheet's Look back):
+    /// LIVE is red, as the band's own LIVE was, and brings it back.
+    var bandLooksBack = false
+    /// Steps the picture with the sound every display frame while in the past.
+    @State private var frameLink = DsrFrameLink()
     @State private var dragStart: Double?
     @State private var mapFinger: CGFloat?
     /// What the drag on the strip is: not yet known, time, or the edge's.
@@ -164,13 +200,35 @@ struct DsrStripLayer: View {
                 try? await Task.sleep(for: .milliseconds(250))
             }
         }
+        .onChange(of: model.inPast, initial: true) { _, past in
+            if past {
+                // Stopped when the past ends or the strip goes away.
+                frameLink.start { [model] period in
+                    model.frame(periodSeconds: period)
+                }
+            } else {
+                frameLink.stop()
+            }
+        }
+        .onDisappear {
+            frameLink.stop()
+        }
     }
 
     // MARK: The strip
 
     private var strip: some View {
-        Canvas { context, size in
-            Self.drawStrip(context, size: size, model: model)
+        // In the past, or while a rewind plays, the strip redraws every display
+        // frame and moves as the picture's top does, which the display link
+        // steps every frame while the sound plays and the finger moves while it
+        // drags. Live it redraws only as its values change, as before, to keep
+        // the phone cool (stripRunsEveryFrame).
+        TimelineView(.animation(minimumInterval: DsrPanModel.defaultFrameSeconds,
+                                paused: !model.stripRunsEveryFrame)) { _ in
+            let top = model.top
+            Canvas { context, size in
+                Self.drawStrip(context, size: size, model: model, top: top)
+            }
         }
         .frame(width: place.strip.width, height: place.strip.height)
         .contentShape(Rectangle())
@@ -239,16 +297,20 @@ struct DsrStripLayer: View {
     /// same on every radio.
     static let tickSteps: [Double] = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600]
 
+    /// The highest a time is written on the strip, in points from its top:
+    /// under SAVE (31 down, 22 tall) with half a label's height to spare.
+    /// It was 16, under LIVE only, so a time could be written over SAVE.
+    static let labelTop: CGFloat = 31 + DsrStripPlace.buttonSize.height + 6
+
     /// The strip's ticks and times: a tick each step, the time on every
     /// minute (or every other tick when the picture is short), the moments
     /// you transmitted as a red edge and SAVE's bracket in yellow.
-    static func drawStrip(_ context: GraphicsContext, size: CGSize, model: DsrPanModel) {
+    static func drawStrip(_ context: GraphicsContext, size: CGSize, model: DsrPanModel, top: Double) {
         let past = model.inPast
         context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Color(red: 12 / 255, green: 13 / 255,
                                                                                  blue: 20 / 255, opacity: 0.86)))
         context.fill(Path(CGRect(x: 0, y: 0, width: 1, height: size.height)), with: .color(Color(white: 0.17)))
         let spp = max(model.secondsPerPoint, 0.001)
-        let top = model.top
         let bottom = top - Double(size.height) * spp
         let step = tickSteps.first { $0 / spp >= 30 } ?? 3600
         let labelEvery = step / spp >= 60 ? step : step * 2
@@ -258,7 +320,8 @@ struct DsrStripLayer: View {
             let full = (moment / labelEvery).rounded() * labelEvery == moment
             context.fill(Path(CGRect(x: 1, y: y, width: full ? 7 : 4, height: 1)),
                          with: .color(full ? Color(white: 0.6) : Color(white: 0.33)))
-            if full, y > 16, y < Double(size.height) - 34 {
+            // Clear of LIVE and SAVE at the strip's top and the clock at its foot.
+            if full, y > Double(labelTop), y < Double(size.height) - 34 {
                 let text = labelEvery >= 60 ? DsrPanModel.hm(moment) : ":" + String(DsrPanModel.hms(moment).suffix(2))
                 context.draw(Text(text)
                     .font(.system(size: 10, design: .monospaced))
@@ -293,15 +356,16 @@ struct DsrStripLayer: View {
             Button {
                 Task { await model.goLive() }
             } label: {
-                DsrButtonLabel(text: "LIVE", look: model.liveLit ? .red : .plain, size: DsrStripPlace.buttonSize)
+                DsrButtonLabel(text: "LIVE", look: model.liveLit || bandLooksBack ? .red : .plain,
+                               size: DsrStripPlace.buttonSize)
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("dsr.live")
             .accessibilityLabel("Live")
-            .accessibilityHint(model.liveLit ? "Back to live" : "Already live")
+            .accessibilityHint(model.liveLit || bandLooksBack ? "Back to live" : "Already live")
             .offset(x: place.live.minX, y: place.live.minY)
             Button {
-                model.toggleSave()
+                model.toggleSave(stripPoints: Double(place.strip.height))
             } label: {
                 DsrButtonLabel(text: "SAVE", look: model.saving ? .yellowOn : .yellow, size: DsrStripPlace.buttonSize)
                     .opacity(usable ? 1 : 0.42)
@@ -375,10 +439,49 @@ struct DsrStripLayer: View {
         }
         let moment = which == 0 ? bracket.0 : bracket.1
         let y = place.waterfall.minY + (model.top - moment) / max(model.secondsPerPoint, 0.001)
-        guard y >= place.waterfall.minY - 2, y <= place.waterfall.maxY + 2 else {
+        guard y >= place.waterfall.minY - 2 else {
             return nil
         }
-        return y
+        // A handle never leaves the strip: a bracket that runs on below it (the
+        // shortest stretch at a fast waterfall) keeps its handle above the clock (PR 808).
+        return min(y, place.strip.maxY - CGFloat(DsrPanModel.bracketClockRoomPoints))
+    }
+}
+
+/// A display link for the recorder's picture: while the past shows it calls
+/// back once a display frame, at the band's own pace (30 to 60 a second),
+/// with the frame's length in seconds.
+@MainActor
+final class DsrFrameLink {
+    private var link: CADisplayLink?
+
+    func start(_ step: @escaping @MainActor (Double) -> Void) {
+        stop()
+        let link = CADisplayLink(target: Target(step), selector: #selector(Target.step(_:)))
+        // The band's own display link's range (BandView): never faster than 60 a second.
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+        link.add(to: .main, forMode: .common)
+        self.link = link
+    }
+
+    func stop() {
+        link?.invalidate()
+        link = nil
+    }
+
+    /// The display link holds its target strongly; the target holds only the step.
+    /// On the main actor, as the band's own link target is (BandView's LinkTarget): the link runs on the main run loop.
+    @MainActor
+    private final class Target: NSObject {
+        let call: @MainActor (Double) -> Void
+
+        init(_ call: @escaping @MainActor (Double) -> Void) {
+            self.call = call
+        }
+
+        @objc func step(_ link: CADisplayLink) {
+            call(link.targetTimestamp - link.timestamp)
+        }
     }
 }
 
@@ -440,9 +543,39 @@ struct DsrClockGlyph: View {
 
 /// What the past puts over the band, under the flags and touching nothing:
 /// the Core's rows over the waterfall, SAVE's yellow band, "Drawing", the
-/// PAST tag and the past spectrum, the line of the moment played, and the
-/// recorder's notes.
+/// PAST tag, the line of the moment played, and the recorder's notes. The
+/// past spectrum is the band's own trace, drawn by its renderer
+/// (``DsrPanModel/pastTrace``, PR 808).
 struct DsrPictureLayer: View {
+    /// The play label's offset inside the play line's frame.
+    static let playLabelInset = CGSize(width: 4, height: 3)
+    /// The room the play label ("▶ hh:mm:ss  Slice X", 10.5-point
+    /// monospaced at a fixed size, about 128 points) takes, with a little
+    /// over: what the folded tags keep off (PR 808 final overlaps).
+    static let playLabelSize = CGSize(width: 140, height: 17)
+
+    /// The gap kept between the play label and a flag it drops below.
+    static let playLabelGap: CGFloat = 3
+
+    /// Where the play label sits on a waterfall at `waterfall`, as
+    /// ``playLine`` draws it: at the waterfall's top, or below any flag or
+    /// folded tag in `below` that would cover it (a full flag taller than
+    /// a sideways spectrum hangs over the waterfall's top).
+    static func playLabelRoom(waterfall: CGRect, below: [CGRect] = []) -> CGRect {
+        var room = CGRect(x: waterfall.minX + playLabelInset.width, y: waterfall.minY + 1 + playLabelInset.height,
+                          width: playLabelSize.width, height: playLabelSize.height)
+        var moved = true
+        while moved {
+            moved = false
+            for rect in below where rect.minX < room.maxX && room.minX < rect.maxX
+                && rect.minY < room.maxY && room.minY < rect.maxY {
+                room.origin.y = rect.maxY + playLabelGap
+                moved = true
+            }
+        }
+        return room
+    }
+
     let model: DsrPanModel
     @ObservedObject var band: BandModel
     let layout: BandLayout
@@ -450,6 +583,19 @@ struct DsrPictureLayer: View {
     let place: DsrStripPlace
     /// The letter of the slice that plays.
     var sliceLetter = "A"
+    /// A flag or folded tag on this pan shows PAST (``DsrFlagPastChip``),
+    /// so the PAST tag on the spectrum stays away (PR 808).
+    var pastOnFlag = false
+    /// The flags and folded tags, which the play label drops below (PR 808 final overlaps).
+    var flags: [CGRect] = []
+    /// What the PAST tag keeps clear of: the flags with their round
+    /// buttons, folded tags, the button column and
+    /// the edge markers (PR 808 screen walk). With no flag on the pan it
+    /// stays at the spectrum's top left, moved clear of those.
+    var avoid: [CGRect] = []
+
+    /// The PAST tag's measured size.
+    @State private var tagSize = CGSize(width: 104, height: 20)
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -462,10 +608,7 @@ struct DsrPictureLayer: View {
                     .background(Color.black.frame(width: layout.waterfall.width, height: layout.waterfall.height)
                         .offset(x: layout.waterfall.minX, y: layout.waterfall.minY), alignment: .topLeading)
             }
-            if model.inPast, let spectrum = model.pastSpectrum {
-                pastSpectrum(spectrum)
-            }
-            if model.inPast {
+            if model.inPast, !pastOnFlag {
                 pastTag
             }
             if let stretch = model.stretch {
@@ -475,9 +618,14 @@ struct DsrPictureLayer: View {
                 playLine
             }
             if let text = model.drawingText {
+                // The whole waterfall's width: the strip and map cover their
+                // own column, but below the strip's foot (beside zoom) the
+                // picture showed undimmed, a brighter strip (PR 808, round B).
                 Color.black.opacity(0.55)
+                    .frame(width: layout.waterfall.width, height: layout.waterfall.height)
+                    .offset(x: layout.waterfall.minX, y: layout.waterfall.minY)
+                DsrNote(text: text)
                     .frame(width: place.picture.width, height: place.picture.height)
-                    .overlay(DsrNote(text: text))
                     .offset(x: place.picture.minX, y: place.picture.minY)
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier("dsr.drawing")
@@ -507,8 +655,9 @@ struct DsrPictureLayer: View {
         let settings = band.drawnSettings
         let table = DsrPastPicture.table(settings: settings, catalog: band.catalog)
         let levels = band.effectiveWaterfallLevels ?? settings.manualLevels
-        guard let image = DsrPastPicture.image(model: model, width: rowsLayout.count,
-                                               height: Int(layout.waterfall.height), table: table, levels: levels) else {
+        guard let image = DsrPastPicture.cachedImage(model: model, width: rowsLayout.count,
+                                                     height: Int(layout.waterfall.height), table: table,
+                                                     levels: levels) else {
             return nil
         }
         let left = geometry.x(forHz: rowsLayout.firstHz - rowsLayout.hzPerBin / 2)
@@ -520,45 +669,60 @@ struct DsrPictureLayer: View {
 
     private var pastTag: some View {
         let moment = model.playedMoment ?? model.top
+        let place = Self.pastTagPlace(spectrum: layout.spectrum, size: tagSize, avoid: avoid)
         return HStack(spacing: 5) {
             Text(model.client.dsr?.stretch != nil ? "SAVED" : "PAST")
                 .font(.system(size: 10.5, weight: .bold))
                 .tracking(0.6)
                 .foregroundStyle(WorkspacePalette.keyedRim)
-            Text(DsrPanModel.hms(moment))
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(Color(red: 1, green: 0.82, blue: 0.82))
+            if !place.compact {
+                Text(DsrPanModel.hms(moment))
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(Color(red: 1, green: 0.82, blue: 0.82))
+            }
         }
         .padding(.horizontal, 6)
         .frame(height: 20)
         .background(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).fill(Color(red: 58 / 255, green: 13 / 255, blue: 13 / 255)))
         .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).stroke(DsrColours.red))
-        .offset(x: layout.spectrum.minX + 5, y: layout.spectrum.minY + 4)
+        .fixedSize()
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
+            // The full tag's size; the compact one is never measured into it.
+            if !place.compact {
+                tagSize = size
+            }
+        }
+        .offset(place.origin)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("dsr.pastTag")
     }
 
-    /// The past spectrum over the live one, which dims under it.
-    private func pastSpectrum(_ frame: DsrPastFrames) -> some View {
-        Canvas { context, size in
-            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.black.opacity(0.6)))
-            guard frame.rowCount > 0, frame.binCount > 1 else {
-                return
+    /// The PAST tag without its time: "PAST" alone, where the whole tag has no room.
+    static let compactTagSize = CGSize(width: 44, height: 20)
+
+    /// Where the PAST tag sits (PR 808 screen walk): the spectrum's top
+    /// left, else beside or under whatever covers that (a flag and its round
+    /// buttons); with no room for the whole tag, "PAST" alone in the first
+    /// clear place; the top left again when nothing is clear.
+    static func pastTagPlace(spectrum: CGRect, size: CGSize, avoid: [CGRect]) -> (origin: CGSize, compact: Bool) {
+        let gap: CGFloat = 5
+        let top = spectrum.minY + 4
+        let blocks = avoid.filter { $0.intersects(spectrum) }
+        for (tagSize, compact) in [(size, false), (compactTagSize, true)] {
+            func clear(_ x: CGFloat, _ y: CGFloat) -> Bool {
+                let tag = CGRect(x: x, y: y, width: tagSize.width, height: tagSize.height)
+                return tag.minX >= spectrum.minX && tag.maxX <= spectrum.maxX - gap && tag.maxY <= spectrum.maxY
+                    && !blocks.contains { $0.insetBy(dx: -2, dy: -2).intersects(tag) }
             }
-            var trace = Path()
-            for bin in 0..<frame.binCount {
-                let hz = frame.firstBinHz + Double(bin) * frame.hzPerBin
-                let point = CGPoint(x: geometry.x(forHz: hz), y: geometry.y(forDbm: Double(frame.dbm(row: 0, bin: bin))))
-                if bin == 0 {
-                    trace.move(to: point)
-                } else {
-                    trace.addLine(to: point)
+            let xs = [spectrum.minX + gap] + blocks.map { $0.minX - gap - tagSize.width }.sorted()
+                + blocks.map { $0.maxX + gap }.sorted()
+            for y in [top] + blocks.map({ $0.maxY + gap }).sorted() {
+                if let x = xs.first(where: { clear($0, y) }) {
+                    return (CGSize(width: x, height: y), compact)
                 }
             }
-            context.stroke(trace, with: .color(Color(white: 0.92)), lineWidth: 1.2)
         }
-        .frame(width: layout.spectrum.width, height: layout.spectrum.height)
-        .offset(x: layout.spectrum.minX, y: layout.spectrum.minY)
+        return (CGSize(width: spectrum.minX + gap, height: top), false)
     }
 
     private func bracketBand(_ stretch: (from: Double, to: Double)) -> some View {
@@ -577,6 +741,10 @@ struct DsrPictureLayer: View {
 
     private var playLine: some View {
         let moment = model.playedMoment ?? model.top
+        let lineTop = layout.waterfall.minY + 1
+        let room = Self.playLabelRoom(waterfall: CGRect(x: place.picture.minX, y: layout.waterfall.minY,
+                                                        width: place.picture.width, height: layout.waterfall.height),
+                                      below: flags)
         return ZStack(alignment: .topLeading) {
             Rectangle()
                 .fill(Color.white.opacity(0.85))
@@ -587,9 +755,51 @@ struct DsrPictureLayer: View {
                 .padding(.horizontal, 4)
                 .padding(.vertical, 1)
                 .background(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).fill(Color.black.opacity(0.6)))
-                .offset(x: 4, y: 3)
+                .offset(x: Self.playLabelInset.width, y: room.minY - lineTop)
         }
-        .offset(x: place.picture.minX, y: layout.waterfall.minY + 1)
+        .offset(x: place.picture.minX, y: lineTop)
+    }
+}
+
+/// PAST (SAVED for an opened stretch) and the moment played, small, in a
+/// flag's top line over its filter width and TX, and at the end of a
+/// folded tag (PR 808, the manager's call: the past is the whole pan's
+/// state, so every flag on the pan shows it). Draws nothing live; takes no
+/// touch, so the flag's buttons under it keep theirs.
+struct DsrFlagPastChip: View {
+    let model: DsrPanModel
+
+    /// The chip's size, fixed so the folded tag's width is known before it draws.
+    static let size = CGSize(width: 84, height: 12)
+    /// The gap before it at the end of a folded tag.
+    static let foldedGap: CGFloat = 6
+
+    var body: some View {
+        if model.inPast {
+            TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+                chip
+            }
+            .allowsHitTesting(false)
+        }
+    }
+
+    private var chip: some View {
+        HStack(spacing: 4) {
+            Text(model.client.dsr?.stretch != nil ? "SAVED" : "PAST")
+                .font(.system(size: 8.5, weight: .bold))
+                .tracking(0.4)
+                .foregroundStyle(WorkspacePalette.keyedRim)
+            Text(DsrPanModel.hms(model.playedMoment ?? model.top))
+                .font(.system(size: 8.5, design: .monospaced))
+                .foregroundStyle(Color(red: 1, green: 0.82, blue: 0.82))
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.8)
+        .frame(width: Self.size.width, height: Self.size.height)
+        .background(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).fill(Color(red: 58 / 255, green: 13 / 255, blue: 13 / 255)))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).stroke(DsrColours.red, lineWidth: 0.75))
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("dsr.flagPast")
     }
 }
 
@@ -628,6 +838,30 @@ enum DsrPastPicture {
     static func index(dbm: Float, levels: WaterfallHistory.Levels) -> Int {
         let span = max(levels.highDbm - levels.lowDbm, 1)
         return Int(min(255, max(0, ((dbm - levels.lowDbm) / span * 255).rounded())))
+    }
+
+    /// ``image(model:width:height:table:levels:)``, drawn again only when the
+    /// rows, the top's line, the size, the colours or the levels change: the
+    /// picture's top moves every display frame while the sound plays, but
+    /// its lines change only as the top crosses into the next one.
+    @MainActor
+    static func cachedImage(model: DsrPanModel, width: Int, height: Int, table: [UInt8],
+                            levels: WaterfallHistory.Levels) -> CGImage? {
+        let spp = max(model.secondsPerPoint, 0.001)
+        let top = model.top
+        // The rows at the picture's top and foot stand for the lines between.
+        let ends = [top, top - Double(max(0, height - 1)) * spp].map { model.row(at: $0)?.utcNs ?? 0 }
+        let line = Int64((top / spp).rounded())
+        let key = "\(model.rowsRevision)|\(line)|\(ends[0])|\(ends[1])|\(spp)|\(width)|\(height)|\(table.hashValue)|"
+            + "\(levels.lowDbm)|\(levels.highDbm)"
+        if let cache = model.pictureCache, cache.key == key {
+            return cache.image
+        }
+        guard let image = image(model: model, width: width, height: height, table: table, levels: levels) else {
+            return nil
+        }
+        model.pictureCache = (key, image)
+        return image
     }
 
     @MainActor

@@ -3835,7 +3835,10 @@ Notes on the keys:
   each time the list changes, `count`, `usedBytes`, `freeBytes`, `folder`)
   and `settings` (`keepMyVoice`, `sidesApart`, `autoStart`, `autoStop`,
   `quietMinutes`, `format` `mp3` or `wav`, `disk` with "" for the Core's own,
-  `disks`: `root`, `name`, `free`, `total`, `sd`, `own`, and from version 2
+  `disks`: `root`, `name`, `free`, `total`, `sd`, `own`, `mp3`, false on a
+  Core that cannot write MP3 (built without LAME), so every MP3 is kept as
+  WAV and the `wav` reason means no encoder rather than a failed one (left
+  out by an older Core), and from version 2
   the on-air switches `onAirUseTxEq`, `onAirUseCompressor`, `onAirUseLeveler`,
   `onAirUseCfc`, `onAirUsePhaseRotator`, each false by default: while a
   recording goes on the air the TX EQ, compressor, leveler, CFC and phase
@@ -6677,7 +6680,7 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `dsr.rows` | `slice` i64, `fromUtcNs` i64, `toUtcNs` i64, `rowCount` i64, `fftSize` i64, `windowType` i64, `centreHz` i64, `spanHz` i64, `pixels` i64 | `recordingsVersion` | 4 | 11 |
 | `dsr.spectrum` | `slice` i64, `utcNs` i64, `fftSize` i64, `windowType` i64, `centreHz` i64, `spanHz` i64, `pixels` i64 | `recordingsVersion` | 4 | 11 |
 | `dsr.hours` | none | `recordingsVersion` | 4 | 11 |
-| `dsr.saveStretch` | `fromUtcNs` i64, `toUtcNs` i64, `kind` utf8 | `recordingsVersion` | 4 | 11 |
+| `dsr.saveStretch` | `fromUtcNs` i64, `toUtcNs` i64, `kind` utf8, `slice` i64 (optional) | `recordingsVersion` | 4 | 11 |
 | `recordings.saveSoundOnly` | `id` utf8 | `recordingsVersion` | 4 | 11 |
 | `recordings.openStretch` | `id` utf8 | `recordingsVersion` | 4 | 11 |
 | `dsr.eraseAll` | none | `recordingsVersion` | 4 | 11 |
@@ -7188,8 +7191,10 @@ These command groups need a sentence beyond the table:
   saves that stretch of the Digital Spectrum Recorder as a recording, on the
   recordings worker. `WholePan` copies every receiver's kept I/Q for it out
   of the loop into the recordings folder, where the loop never overwrites
-  it; `Sound` keeps Slice A's sound over it, demodulated as Slice A is set,
-  in the Files format. Only what is still kept is saved. Accepted, the
+  it; `Sound` keeps the sound of `slice` (Slice A when it is left out) over
+  it, demodulated as that slice is set, in the Files format; a slice not on
+  a frequency kept then is refused ("Slice B is not on a frequency kept in
+  that stretch."). Only what is still kept is saved. Accepted, the
   result's `values` carry `note`, the Core's words for what it is doing
   ("Saving 14:00 to 14:10 UTC to Recordings, whole pan.", or "Only 14:02 to
   14:10 UTC is still kept. Saving that part to Recordings, sound only as

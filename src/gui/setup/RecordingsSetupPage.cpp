@@ -14,12 +14,24 @@
 //   2026-11-15 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 8.
+//   2026-11-17 - J.J. Boyd (KG4VCF), JJ's request: the VOICE button group,
+//                 this computer's switch for VOICE in the TUNE / MOX row.
+//                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-17 - J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code: the disk drop-down is filled in
+//                 place through DiskComboFiller instead of cleared on every
+//                 Core update, which crashed under Qt accessibility (PR 808).
+//   2026-11-19 - J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code: on a Core with no MP3 encoder the
+//                 format shows WAV, MP3 is greyed and the size line says why
+//                 (JJ's phone run, PR 808).
 // =================================================================
 
 #include "gui/setup/RecordingsSetupPage.h"
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QStandardItemModel>
 #include <QDateTime>
 #include <QDir>
 #include <QGroupBox>
@@ -40,6 +52,8 @@
 #include "core/recordings/RecordingNames.h"
 #include "core/recordings/RecordingSettings.h"
 #include "gui/recordings/RecordingsWindow.h"
+#include "gui/recordings/VoiceButton.h"
+#include "gui/setup/DiskComboFiller.h"
 
 namespace NereusSDR {
 
@@ -118,6 +132,7 @@ RecordingsSetupPage::RecordingsSetupPage(RecordingsAccess* access, QWidget* pare
     buildFiles();
     buildWhere();
     buildPlayingBack();
+    buildVoiceButton();
 
     setAccess(access);
 }
@@ -264,6 +279,7 @@ void RecordingsSetupPage::buildWhere()
     m_disk->setObjectName(QStringLiteral("recordingsDisk"));
     m_disk->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     diskRow->addWidget(m_disk, 1);
+    m_diskFiller = new DiskComboFiller(m_disk, [this] { showDocument(); }, this);
     layout->addLayout(diskRow);
     connect(m_disk, &QComboBox::currentIndexChanged, this, [this](int) {
         showDependentText();
@@ -337,6 +353,22 @@ void RecordingsSetupPage::buildPlayingBack()
     layout->addWidget(m_onAirNote);
 }
 
+// This computer's own: not in m_groups, so no Core, or an older one, leaves
+// it usable.
+void RecordingsSetupPage::buildVoiceButton()
+{
+    QGroupBox* group = addSection(QStringLiteral("VOICE button"));
+    auto* layout = group->layout();
+    m_voiceButton = new QCheckBox(QStringLiteral("Show the VOICE button beside TUNE and MOX"), group);
+    m_voiceButton->setObjectName(QStringLiteral("recordingsShowVoiceButton"));
+    m_voiceButton->setChecked(VoiceButton::shownSetting());
+    layout->addWidget(m_voiceButton);
+    connect(m_voiceButton, &QCheckBox::toggled, this, [](bool on) { VoiceButton::setShownSetting(on); });
+    layout->addWidget(noteLabel(QStringLiteral("This computer only. With it off, the Voice keyer panel and the hot "
+                                               "keys still send your messages."),
+                                group));
+}
+
 void RecordingsSetupPage::setAccess(RecordingsAccess* access)
 {
     for (const QMetaObject::Connection& c : std::as_const(m_accessConnections)) {
@@ -381,10 +413,23 @@ void RecordingsSetupPage::showDocument()
         m_autoStart->setChecked(settings.value(QStringLiteral("autoStart")).toBool(false));
         m_autoStop->setChecked(settings.value(QStringLiteral("autoStop")).toBool(true));
         m_quiet->setValue(settings.value(QStringLiteral("quietMinutes")).toInt(2));
-        m_format->setCurrentIndex(settings.value(QStringLiteral("format")).toString() == QLatin1String("wav") ? 1 : 0);
+        // A Core with no MP3 encoder (`mp3` false) keeps every MP3 as WAV:
+        // WAV shows, and MP3 stays in the list, greyed.
+        m_noMp3 = !settings.value(QStringLiteral("mp3")).toBool(true);
+        if (auto* model = qobject_cast<QStandardItemModel*>(m_format->model())) {
+            if (QStandardItem* mp3 = model->item(0)) {
+                mp3->setEnabled(!m_noMp3);
+            }
+        }
+        m_format->setCurrentIndex(
+            settings.value(QStringLiteral("format")).toString() == QLatin1String("wav") || m_noMp3 ? 1 : 0);
 
-        m_disk->clear();
+        // The disks, filled in place: this runs on every update from the
+        // Core (about once a second while the recorder runs), so the list
+        // is only rebuilt when its disks change, and never while it is
+        // open (DiskComboFiller).
         const QString chosen = samePath(settings.value(QStringLiteral("disk")).toString());
+        QList<DiskComboItem> items;
         int chosenIndex = -1;
         for (const QJsonValue& value : settings.value(QStringLiteral("disks")).toArray()) {
             const QJsonObject disk = value.toObject();
@@ -399,22 +444,21 @@ void RecordingsSetupPage::showDocument()
             } else {
                 text = QStringLiteral("%1 (%2 free)").arg(name.isEmpty() ? root : name, free);
             }
-            m_disk->addItem(text, root);
-            const int index = m_disk->count() - 1;
-            m_disk->setItemData(index, disk.value(QStringLiteral("sd")).toBool(), Qt::UserRole + 1);
-            m_disk->setItemData(index, disk.value(QStringLiteral("free")).toInteger(), Qt::UserRole + 2);
+            items.append(DiskComboItem{text, root, disk.value(QStringLiteral("sd")).toBool(),
+                                       disk.value(QStringLiteral("free")).toInteger(), true});
             if (samePath(root) == chosen) {
-                chosenIndex = index;
+                chosenIndex = static_cast<int>(items.size()) - 1;
             }
         }
         if (chosenIndex < 0 && !chosen.isEmpty()) {
             // The chosen disk is not mounted on the Core now: show it, so
             // the page does not claim another disk is in use.
-            m_disk->addItem(QStringLiteral("%1 (not on the Core now)").arg(QDir::toNativeSeparators(chosen)),
-                            QDir::toNativeSeparators(chosen));
-            chosenIndex = m_disk->count() - 1;
+            items.append(DiskComboItem{
+                QStringLiteral("%1 (not on the Core now)").arg(QDir::toNativeSeparators(chosen)),
+                QDir::toNativeSeparators(chosen), QVariant(), QVariant(), true});
+            chosenIndex = static_cast<int>(items.size()) - 1;
         }
-        m_disk->setCurrentIndex(std::max(chosenIndex, m_disk->count() > 0 ? 0 : -1));
+        m_diskFiller->fill(items, std::max(chosenIndex, items.isEmpty() ? -1 : 0));
 
         for (QCheckBox* box : std::as_const(m_onAir)) {
             const QSignalBlocker blocker(box);
@@ -471,8 +515,10 @@ void RecordingsSetupPage::showDependentText()
         : QStringLiteral("A recording runs until you press Record again.");
     m_startStopSummary->setText(starts + QLatin1Char(' ') + stops);
 
-    m_formatSize->setText(wav ? QStringLiteral("Full quality, bigger. About %1 MB an hour.").arg(mbPerHour)
-                              : QStringLiteral("Small, plays anywhere. About %1 MB an hour.").arg(mbPerHour));
+    m_formatSize->setText(
+        (wav ? QStringLiteral("Full quality, bigger. About %1 MB an hour.").arg(mbPerHour)
+             : QStringLiteral("Small, plays anywhere. About %1 MB an hour.").arg(mbPerHour))
+        + (m_noMp3 ? QStringLiteral(" This Core has no MP3 encoder.") : QString()));
     m_nameExample->setText(recordingBaseName(kExampleStartUtc, kExampleFrequencyHz, QStringLiteral("LSB"),
                                              QStringLiteral("K4ABC"))
                            + (wav ? QStringLiteral(".wav") : QStringLiteral(".mp3")));

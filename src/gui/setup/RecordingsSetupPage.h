@@ -34,11 +34,23 @@
 // five on-air switches need recordingsVersion 2 and are disabled with the
 // access's reason until the Core offers it.
 //
+// One group is this computer's own, not the Core's: "VOICE button", whose
+// switch shows or hides VOICE in the TX panel's TUNE / MOX row
+// (VoiceButton::shownSettingKey(), AppSettings, on by default). It stays
+// usable with no Core or an older one, and is not in groups().
+//
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-11-15 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 8.
+//   2026-11-17 - J.J. Boyd (KG4VCF), JJ's request: this computer's switch
+//                 for VOICE in the TUNE / MOX row. AI-assisted
+//                 implementation via Anthropic Claude Code.
+//   2026-11-17 - J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code: m_diskFiller (PR 808 crash fix).
+//   2026-11-19 - J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code: m_noMp3 (a Core with no MP3 encoder).
 // =================================================================
 
 #include <QJsonObject>
@@ -59,6 +71,8 @@ class QPushButton;
 class QSpinBox;
 
 namespace NereusSDR {
+
+class DiskComboFiller;
 
 class NEREUS_GUI_EXPORT RecordingsSetupPage : public SetupPage {
     Q_OBJECT
@@ -94,6 +108,7 @@ public:
     QPushButton* recordingsButton() const { return m_recordings; }
     QLabel* playingBackSentence() const { return m_onAirSentence; }
     QList<QCheckBox*> onAirBoxes() const { return m_onAir; }
+    QCheckBox* voiceButtonBox() const { return m_voiceButton; }
 
 signals:
     /// Recordings › was clicked: open the Recordings window.
@@ -105,6 +120,7 @@ private:
     void buildFiles();
     void buildWhere();
     void buildPlayingBack();
+    void buildVoiceButton();
     void showDocument();
     void showAvailability();
     void showDependentText();
@@ -125,8 +141,11 @@ private:
     QLabel* m_startStopSummary = nullptr;
     QComboBox* m_format = nullptr;
     QLabel* m_formatSize = nullptr;
+    // The Core has no MP3 encoder (the document's settings `mp3` false).
+    bool m_noMp3 = false;
     QLabel* m_nameExample = nullptr;
     QComboBox* m_disk = nullptr;
+    DiskComboFiller* m_diskFiller = nullptr;
     QLabel* m_sdNote = nullptr;
     QProgressBar* m_usageBar = nullptr;
     QLabel* m_usage = nullptr;
@@ -134,6 +153,7 @@ private:
     QLabel* m_onAirSentence = nullptr;
     QLabel* m_onAirNote = nullptr;
     QList<QCheckBox*> m_onAir;
+    QCheckBox* m_voiceButton = nullptr;
 };
 
 }  // namespace NereusSDR

@@ -1,5 +1,14 @@
 // NereusSDR for iOS: the fold rule: where each slice's flag sits, and which flags fold to a one-line tag
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-11-19: keepsSide, whether a wider tag stays on the same side of its
+//   line, so the recorder's PAST chip never moves a tag across its dial line
+//   (JJ's phone run of PR 808). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-19: fullRight, where a full flag must end: the dBm scale's arrows
+//   at the band's top right hid the flag's slice letter (JJ's phone run of
+//   PR 808): it slides left to end at their edge, keeping its side of its
+//   line, so sideways both flags stay full.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import CoreGraphics
 
@@ -102,14 +111,22 @@ public enum FlagLayout {
     /// keeps `flagSize`'s width. `sideColumn` is the round buttons' column
     /// beside each full flag, part of the flag's footprint. `top` is where
     /// the flags start: below the Back to your band bar while the band
-    /// shows another slice's display.
+    /// shows another slice's display. `keepOut` is what a folded tag never
+    /// sits on (the frequency scale, the recorder's play label): a tag that
+    /// would land on one drops below it, as below a flag (PR 808).
+    /// `fullRight` is where a full flag must end when it is less than the
+    /// band's width (the dBm scale's arrows at the top right): a flag that
+    /// would run past it keeps its side of its line and slides left to end
+    /// there, so its slice letter is never under them (PR 808).
     public static func layout(slices: [BandSlice], activeSliceId: Int?, geometry: BandGeometry,
                               flagSize: CGSize = FlagLayout.flagSize,
                               foldedSize: (BandSlice) -> CGSize = { FlagLayout.foldedSize(frequencyText: $0.frequencyText) },
                               flagHeight: (BandSlice) -> CGFloat = { _ in FlagLayout.flagSize.height },
-                              sideColumn: CGSize = FlagLayout.sideColumnSize(), top: CGFloat = 0)
+                              sideColumn: CGSize = FlagLayout.sideColumnSize(), top: CGFloat = 0,
+                              keepOut: [CGRect] = [], fullRight: Double? = nil)
         -> [FlagPlacement] {
         let width = Double(geometry.size.width)
+        let fullWidth = min(width, fullRight ?? width)
         // The active slice first, then the others in slice order.
         let order = slices.indices.sorted { a, b in
             let aActive = slices[a].id == activeSliceId
@@ -125,13 +142,22 @@ public enum FlagLayout {
             let slice = slices[index]
             let lineX = geometry.x(forHz: slice.frequencyHz)
             let isActive = slice.id == activeSliceId
-            let full = CGRect(x: sideX(lineX: lineX, width: Double(flagSize.width), bandWidth: width,
-                                       lowerSideband: slice.lowerSideband),
-                              y: top, width: flagSize.width, height: flagHeight(slice))
-            let footprint = full.union(sideColumnRect(flag: full, lineX: lineX, bandWidth: width, column: sideColumn))
-            if isActive || !placed.contains(where: { overlaps($0, footprint) }) {
+            func footprint(_ flag: CGRect) -> CGRect {
+                flag.union(sideColumnRect(flag: flag, lineX: lineX, bandWidth: width, column: sideColumn))
+            }
+            var fullX = sideX(lineX: lineX, width: Double(flagSize.width), bandWidth: width,
+                              lowerSideband: slice.lowerSideband)
+            if fullRight != nil {
+                // Under the arrows the flag keeps its side and slides left to end at their edge, at
+                // most their width off its line: turned to the other side it would land on the
+                // other flag sideways and fold it (CI, FlagButtonsShotTests' landscape frames).
+                fullX = min(fullX, max(0, fullWidth - Double(flagSize.width)))
+            }
+            let full = CGRect(x: fullX, y: top, width: flagSize.width, height: flagHeight(slice))
+            let fullFootprint = footprint(full)
+            if isActive || !placed.contains(where: { overlaps($0, fullFootprint) }) {
                 // A full flag always sits at the top; one that would land on another folds instead.
-                placed.append(footprint)
+                placed.append(fullFootprint)
                 result[index] = .full(full)
                 continue
             }
@@ -142,7 +168,7 @@ public enum FlagLayout {
             var moved = true
             while moved {
                 moved = false
-                for other in placed where overlaps(other, rect) {
+                for other in placed + keepOut where overlaps(other, rect) {
                     rect.origin.y = other.maxY + stackGap
                     moved = true
                 }
@@ -174,6 +200,32 @@ public enum FlagLayout {
             return x
         }
         return min(max(x, 0), max(0, bandWidth - width))
+    }
+
+    /// A tag `wider` than its usual `width` hangs on the same side of its
+    /// line at `lineX` as the usual one, without being pushed back over the
+    /// line by the band's edge: what grows the tag (the recorder's PAST
+    /// chip) then never moves it across its line, so the tag does not jump
+    /// sides when the past starts or ends.
+    public static func keepsSide(lineX: Double, width: Double, wider: Double, bandWidth: Double,
+                                 lowerSideband: Bool) -> Bool {
+        let usual = sideX(lineX: lineX, width: width, bandWidth: bandWidth, lowerSideband: lowerSideband)
+        let grown = sideX(lineX: lineX, width: wider, bandWidth: bandWidth, lowerSideband: lowerSideband)
+        // Right of the line: starts at it; left: ends at it. Either way within half a point.
+        func side(_ x: Double, _ w: Double) -> Int? {
+            if abs(x - lineX) < 0.5 {
+                return 1
+            }
+            if abs(x + w - lineX) < 0.5 {
+                return -1
+            }
+            return nil
+        }
+        guard let before = side(usual, width) else {
+            // The usual tag already sits pushed in by an edge: the grown one keeps its left edge.
+            return abs(grown - usual) < 0.5
+        }
+        return side(grown, wider) == before
     }
 
     /// True when the two rectangles share some area (touching edges do not).

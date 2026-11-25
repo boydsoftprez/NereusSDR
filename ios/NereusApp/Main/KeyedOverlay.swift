@@ -3,6 +3,9 @@
 // Modification history (NereusSDR):
 // 2026-10-24: Roundtable plan Task 17, the gauges' foot told to the band,
 // so the Roundtable sheet drops below them. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: PR 808 design calls, the keyed gauges know zoom sits left of
+//   the time strip on a sideways phone. J.J. Boyd (KG4VCF), AI-assisted
+//   via Claude Code.
 
 import Foundation
 import NereusBand
@@ -46,6 +49,8 @@ struct KeyedOverlay: View {
     /// The tuning dial on the band (off with no tuning), whose knob or
     /// thumbwheel and zoom the gauges beside a held PTT keep clear of.
     var dialKind: DialKind = .off
+    /// A phone held sideways with the recorder's strip: zoom sits left of it.
+    var zoomBesideStrip = false
     /// Told where the keyed gauges end on the band while keyed, and nil
     /// once unkeyed: the Roundtable sheet drops below them (spec 11.3, U3).
     var gaugesFoot: ((CGFloat?) -> Void)?
@@ -89,7 +94,7 @@ struct KeyedOverlay: View {
                                                     bandControls: DialLayer.controlFrames(
                                                         kind: dialKind, waterfall: layout.waterfall,
                                                         sideways: sideways, trailingInset: trailingInset,
-                                                        uprightWidth: uprightWidth),
+                                                        uprightWidth: uprightWidth, besideStrip: zoomBesideStrip),
                                                     minHeight: height - max(0, reasonsFull - Self.reasonsLeast))
             // How much shorter the panel is drawn than its own height. The
             // height measured below is put back to the panel's own, so the

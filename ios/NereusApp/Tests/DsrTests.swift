@@ -1,7 +1,9 @@
 // NereusSDR for iOS: the Digital Spectrum Recorder on the pan and its Setup page against a recordings client fed by hand
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 
+import CoreGraphics
 import Foundation
+import NereusBand
 import NereusLink
 import NereusMirror
 import NereusModels
@@ -108,7 +110,8 @@ struct DsrTests {
     // MARK: The pan
 
     /// Dragged back past the band's own minute, the Core draws the picture:
-    /// its rows come in chunks, "Drawing" shows while a quarter or more
+    /// its rows come in chunks, at most one answer's worth an ask, the top
+    /// first (PR 808 round A); "Drawing" shows while a quarter or more
     /// waits, and goes once the rest arrive.
     @Test func draggedBackTheRowsArriveInChunksWithDrawing() async throws {
         let (rig, model, looks) = await Self.pan()
@@ -119,18 +122,28 @@ struct DsrTests {
         model.dragEnded()
         let (first, ask) = try #require(await Self.invoke(rig, "dsr.rows"))
         #expect(Self.argument(ask, "pixels") == .i64(402) && Self.argument(ask, "centreHz") == .i64(7_236_000))
+        // One answer's worth: 196608 bytes of 2-byte points 402 wide, from the top down.
+        #expect(Self.argument(ask, "rowCount") == .i64(244))
+        #expect(Self.argument(ask, "toUtcNs") == .i64(Int64((model.top * 1e9).rounded())))
         #expect(model.drawingText == "Digital Spectrum Recorder: drawing 13:03")
         let top = model.top
         let moments = (0..<Int(Self.points)).map { top - Double($0) * Self.spp }
-        await RecordingFlagTests.answer(rig, first, values: Self.rows(Array(moments.prefix(100)), rowsLeft: 283,
+        await RecordingFlagTests.answer(rig, first, values: Self.rows(Array(moments.prefix(100)), rowsLeft: 144,
                                                                       next: Int64((moments[100] * 1e9).rounded())))
         #expect(await Eventually.holds { model.row(at: moments[50]) != nil })
         #expect(model.drawingText != nil)
-        // The rest, asked for from where the first chunk ended.
+        // The rest of that ask, asked for from where the first chunk ended.
         let (second, more) = try #require(await Self.invoke(rig, "dsr.rows", after: first + 1))
-        #expect(Self.argument(more, "rowCount") == .i64(283))
-        await RecordingFlagTests.answer(rig, second, values: Self.rows(Array(moments.dropFirst(100)), rowsLeft: 0,
+        #expect(Self.argument(more, "rowCount") == .i64(144))
+        await RecordingFlagTests.answer(rig, second, values: Self.rows(Array(moments[100..<244]), rowsLeft: 0,
                                                                        next: 0))
+        // The next piece at once: the rest of the picture.
+        let (third, next) = try #require(await Self.invoke(rig, "dsr.rows", after: second + 1))
+        #expect(Self.argument(next, "rowCount") == .i64(139))
+        #expect(Self.argument(next, "toUtcNs") == .i64(Int64((moments[244] * 1e9).rounded())))
+        #expect(model.drawingText != nil)
+        await RecordingFlagTests.answer(rig, third, values: Self.rows(Array(moments.dropFirst(244)), rowsLeft: 0,
+                                                                      next: 0))
         #expect(await Eventually.holds { model.drawingText == nil })
         #expect(model.missingShare == 0 && model.rowsLayout?.count == 3)
     }
@@ -405,7 +418,7 @@ struct DsrTests {
         #expect(model.saveDetail == "1 min 30 s. Drag the yellow handles on the time strip to change it.")
         #expect(model.wholePanSize == "69 MB, every signal")
         #expect(model.soundTitle == "Sound only (MP3)")
-        #expect(model.soundSize(sliceFrequencyHz: 7_236_400) == "Slice A at 7.236.400, about 1 MB")
+        #expect(model.soundSize(sliceLetter: "A", sliceFrequencyHz: 7_236_400) == "Slice A at 7.236.400, about 1 MB")
         model.moveHandle(0, toPointsDown: 10)
         #expect(model.stretch?.to == Self.now - 5)
         // A fast waterfall still brackets the shortest stretch, 30 s.
@@ -422,9 +435,126 @@ struct DsrTests {
         let (index, sent) = try #require(await Self.invoke(rig, "dsr.saveStretch"))
         #expect(Self.argument(sent, "fromUtcNs") == .i64(Int64(((Self.now - 125) * 1e9).rounded())))
         #expect(Self.argument(sent, "kind") == .utf8("Sound"))
+        // Slice A is not named, so a Core from before `slice` still takes it.
+        #expect(Self.argument(sent, "slice") == nil)
         await RecordingFlagTests.answer(rig, index, values: [.init(name: "note", value: .utf8("Saving to Recordings."))])
         await save.value
         #expect(!model.saving && model.note == "Saving to Recordings.")
+    }
+
+    /// PR 808: SAVE opens with both handles inside the strip (the lower one
+    /// above the clock). Round B (JJ's phone run): live, the picture holds
+    /// still at the moment SAVE opened, so the bracket and its handles stay
+    /// put as time runs, moved or not; closing SAVE goes live again.
+    @Test func saveFitsTheStripAndHoldsTheLivePicture() async throws {
+        let (_, model, _) = await Self.pan()
+        var now = Self.now
+        model.clock = { now }
+        model.toggleSave(stripPoints: 200)
+        // The lower handle 150 points down, 50 above the strip's foot.
+        let opened = try #require(model.stretch)
+        #expect(opened.from == now - 150 * Self.spp && opened.to == now - 70 * Self.spp)
+        #expect(model.inPast && model.top == Self.now)
+        now += 20
+        model.frame(periodSeconds: 1.0 / 60)
+        model.tick()
+        #expect(model.top == Self.now)
+        #expect(model.stretch?.from == opened.from && model.stretch?.to == opened.to)
+        model.moveHandle(0, toPointsDown: 60)
+        let held = try #require(model.stretch)
+        now += 20
+        model.frame(periodSeconds: 1.0 / 60)
+        #expect(model.top == Self.now)
+        #expect(model.stretch?.from == held.from && model.stretch?.to == held.to)
+        model.cancelSave()
+        #expect(!model.saving && model.viewTop == nil && !model.inPast)
+    }
+
+    /// JJ's phone run of PR 808 (recording efc0f521): SAVE open while a
+    /// rewind plays. The picture holds still while the sound plays on, so
+    /// the handles stay under the finger; a drag on the strip beside them
+    /// moves only the picture, never the sound (the play time stepped back
+    /// 4 s); closing SAVE brings the picture back to the sound.
+    @Test func saveHoldsThePictureWhileTheSoundPlays() async throws {
+        let (rig, model, _) = await Self.pan()
+        var now = Self.now
+        model.clock = { now }
+        model.drag(from: model.top, by: -1_000)
+        model.dragEnded()
+        let start = model.top
+        let (index, _) = try #require(await Self.invoke(rig, "dsr.rewind"))
+        await RecordingFlagTests.answer(rig, index)
+        #expect(await Eventually.holds { model.mine.contains(0) })
+        RecordingFlagTests.publish(rig, Self.document(dsr: Self.dsrPart(rewound: Self.rewound(Int64(start * 1e9)))),
+                                   revision: 2)
+        model.documentChanged()
+        now += 2
+        model.frame(periodSeconds: 1.0 / 60)
+        #expect(model.top == start + 2 && model.picturePlays)
+
+        model.toggleSave(stripPoints: 200)
+        let held = model.top
+        let opened = try #require(model.stretch)
+        // The handles' places on the strip: points below the picture's top.
+        let handles = ((held - opened.to) / Self.spp, (held - opened.from) / Self.spp)
+        now += 3
+        model.frame(periodSeconds: 1.0 / 60)
+        model.tick()
+        #expect(model.top == held && !model.picturePlays)
+        #expect(model.playedMoment == start + 5)
+        let still = try #require(model.stretch)
+        #expect((model.top - still.to) / Self.spp == handles.0 && (model.top - still.from) / Self.spp == handles.1)
+
+        // A finger on the strip beside a handle: the picture moves, the sound does not.
+        let before = rig.sent.invokes.count
+        model.drag(from: model.top, by: -60)
+        model.dragEnded()
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(!rig.sent.invokes.dropFirst(before).contains { $0.verb == "dsr.seek" || $0.verb == "dsr.rewind" })
+        #expect(model.playedMoment == start + 5)
+
+        model.cancelSave()
+        model.frame(periodSeconds: 1.0 / 60)
+        #expect(model.top == start + 5 && model.picturePlays)
+    }
+
+    /// JJ's phone run of PR 808: on Slice B the sound button read "Slice A"
+    /// and the Core saved Slice A. It names the active slice and sends it.
+    @Test func soundOnlySavesTheActiveSlice() async throws {
+        let (rig, model, _) = await Self.pan()
+        model.activeSlice = { 1 }
+        model.toggleSave()
+        #expect(model.soundSize(sliceLetter: "B", sliceFrequencyHz: 7_195_000) == "Slice B at 7.195.000, about 1 MB")
+        let save = Task { await model.save(.sound) }
+        let (index, sent) = try #require(await Self.invoke(rig, "dsr.saveStretch"))
+        #expect(Self.argument(sent, "slice") == .i64(1))
+        await RecordingFlagTests.answer(rig, index, values: [.init(name: "note", value: .utf8("Saving."))])
+        await save.value
+        // The whole pan names no slice.
+        model.toggleSave()
+        let whole = Task { await model.save(.wholePan) }
+        let (wholeIndex, wholeSent) = try #require(await Self.invoke(rig, "dsr.saveStretch", after: index + 1))
+        #expect(Self.argument(wholeSent, "slice") == nil)
+        await RecordingFlagTests.answer(rig, wholeIndex, values: [.init(name: "note", value: .utf8("Saving."))])
+        await whole.value
+    }
+
+    /// JJ's phone run of PR 808: on a Core with no MP3 encoder the panel
+    /// offered "Sound only (MP3)". It says WAV, at WAV's size, and why.
+    @Test func aCoreWithNoMp3EncoderSavesSoundAsWav() async throws {
+        let (rig, model, _) = await Self.pan()
+        var document = Self.document(dsr: Self.dsrPart())
+        if var settings = document["settings"] as? [String: Any] {
+            settings["mp3"] = false
+            document["settings"] = settings
+        }
+        RecordingFlagTests.publish(rig, document, revision: 2)
+        #expect(await Eventually.holds { model.client.settings?.mp3 == false })
+        model.toggleSave()
+        #expect(model.soundFormat == .wav && model.soundTitle == "Sound only (WAV)")
+        #expect(model.saveDetail.hasSuffix(" " + DsrPanModel.noMp3Note))
+        // 90 s of 24 kHz 16-bit WAV.
+        #expect(model.soundSize(sliceLetter: "A", sliceFrequencyHz: nil) == "Slice A, about 4 MB")
     }
 
     /// The clock's sheet takes a typed time, says when one is too old, and
@@ -481,47 +611,433 @@ struct DsrTests {
         model.dragEnded()
         let (first, _) = try #require(await Self.invoke(rig, "dsr.rows"))
         let top = model.top
-        let moments = (0..<100).map { top - Double($0) * Self.spp }
-        await RecordingFlagTests.answer(rig, first, values: Self.rows(moments, rowsLeft: 0, next: 0))
+        let moments = (0..<Int(Self.points)).map { top - Double($0) * Self.spp }
+        await RecordingFlagTests.answer(rig, first, values: Self.rows(Array(moments.prefix(100)), rowsLeft: 0, next: 0))
+        // The rest of the picture is the next piece (one answer's worth an ask).
+        let (second, _) = try #require(await Self.invoke(rig, "dsr.rows", after: first + 1))
+        await RecordingFlagTests.answer(rig, second, values: Self.rows(Array(moments[244..<254]), rowsLeft: 0, next: 0))
         #expect(await Eventually.holds { !model.awaitingRows && model.row(at: moments[50]) != nil })
         #expect(model.drawingText == nil && model.missingShare == 0)
         model.dragEnded()
         model.tick()
         try? await Task.sleep(for: .milliseconds(50))
-        #expect(Self.count(rig, "dsr.rows") == 1)
+        #expect(Self.count(rig, "dsr.rows") == 2)
         // Another display asks again; a refusal is remembered the same way.
         model.panView = { DsrPanView(fftSize: 4096, windowType: 1, centreHz: 7_236_000, spanHz: 96_000, pixels: 402) }
         model.dragEnded()
-        let (second, _) = try #require(await Self.invoke(rig, "dsr.rows", after: first + 1))
-        await RecordingFlagTests.answer(rig, second, accepted: false, reason: "Nothing is kept there.")
+        let (third, _) = try #require(await Self.invoke(rig, "dsr.rows", after: second + 1))
+        await RecordingFlagTests.answer(rig, third, accepted: false, reason: "Nothing is kept there.")
         #expect(await Eventually.holds { !model.awaitingRows })
         #expect(model.note == "Nothing is kept there." && model.drawingText == nil)
         model.dragEnded()
+        model.tick()
         try? await Task.sleep(for: .milliseconds(50))
-        #expect(Self.count(rig, "dsr.rows") == 2)
+        #expect(Self.count(rig, "dsr.rows") == 3)
     }
 
-    /// While the sound plays the past spectrum is asked again at the
-    /// desktop's interval, one ask at a time.
-    @Test func thePastSpectrumKeepsUpWhileTheSoundPlays() async throws {
+    /// While the sound plays the picture's top moves every display frame
+    /// and the past spectrum is asked once a frame, never two at a time;
+    /// an answer that comes a frame or more late asks again at once, for the
+    /// moment playing then. The 250 ms tick asks for none.
+    @Test func thePastSpectrumFollowsTheDisplayFrames() async throws {
         let (rig, model, _) = await Self.pan()
         var now = Self.now
         model.clock = { now }
+        let period = 1.0 / 60
         try await Self.rewindHere(rig, model, moment: Self.now - 600, revision: 2)
         let (first, _) = try #require(await Self.invoke(rig, "dsr.spectrum"))
+        // The first ask is still with the Core: no second.
+        model.frame(periodSeconds: period)
         model.tick()
         try? await Task.sleep(for: .milliseconds(50))
         #expect(Self.count(rig, "dsr.spectrum") == 1)
         await RecordingFlagTests.answer(rig, first, values: Self.rows([Self.now - 600], rowsLeft: 0, next: 0))
         #expect(await Eventually.holds { model.pastSpectrum != nil })
-        now += 0.25
-        model.tick()
-        #expect(model.viewTop == Self.now - 599.75)
-        #expect(await Eventually.holds { Self.count(rig, "dsr.spectrum") == 2 })
-        now += 0.25
-        model.tick()
+        // Answered within the frame: nothing more until the next frame.
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(Self.count(rig, "dsr.spectrum") == 1)
+        now += period
+        model.frame(periodSeconds: period)
+        #expect(abs((model.viewTop ?? 0) - (Self.now - 600 + period)) < 1e-6)
+        let (second, ask) = try #require(await Self.invoke(rig, "dsr.spectrum", after: first + 1))
+        #expect(Self.argument(ask, "utcNs") == .i64(Int64(((Self.now - 600 + period) * 1e9).rounded())))
+        // Frames go on while it is with the Core: the picture moves, no second ask.
+        for _ in 0..<5 {
+            now += period
+            model.frame(periodSeconds: period)
+        }
+        #expect(abs((model.viewTop ?? 0) - (Self.now - 600 + 6 * period)) < 1e-6)
         try? await Task.sleep(for: .milliseconds(50))
         #expect(Self.count(rig, "dsr.spectrum") == 2)
+        // Late: the next is asked at once, for the moment playing now, without waiting for a frame.
+        await RecordingFlagTests.answer(rig, second, values: Self.rows([Self.now - 600], rowsLeft: 0, next: 0))
+        let (_, again) = try #require(await Self.invoke(rig, "dsr.spectrum", after: second + 1))
+        #expect(Self.argument(again, "utcNs") == .i64(Int64(((Self.now - 600 + 6 * period) * 1e9).rounded())))
+        // The tick never asks for the spectrum.
+        let asked = Self.count(rig, "dsr.spectrum")
+        now += period / 2
+        model.tick()
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(Self.count(rig, "dsr.spectrum") == asked)
+    }
+
+    /// Playing at a steady pace near the edge of the band's own minute,
+    /// whose reach moves by a line as lines come and go, the picture stays
+    /// with whoever drew it: the Core's rows never swap with the band's own.
+    /// Brought well inside the band's own minute, the band draws it again.
+    @Test func whoDrawsThePictureDoesNotFlipWhilePlaying() async throws {
+        let (rig, model, _) = await Self.pan()
+        var now = Self.now
+        model.clock = { now }
+        var reach = 60.0
+        model.ownSeconds = { reach }
+        // Just past the band's own reach (a quarter of a point of slack, at 0.5 s a point).
+        try await Self.rewindHere(rig, model, moment: Self.now - 60.3, revision: 2)
+        #expect(model.coreDraws && model.followsSound)
+        var seen: Set<Bool> = []
+        for step in 0..<120 {
+            now += 1.0 / 60
+            // The band's reach steps by a line either way as its lines arrive and drop.
+            reach = step % 2 == 0 ? 60 + Self.spp : 60 - Self.spp
+            model.frame(periodSeconds: 1.0 / 60)
+            if step % 15 == 0 {
+                model.tick()
+            }
+            seen.insert(model.coreDraws)
+        }
+        #expect(seen == [true])
+        // Within the band's own minute by more than the slack, the band draws it.
+        reach = 60
+        model.drag(from: model.top, by: 30 / Self.spp)
+        #expect(!model.coreDraws && model.inPast)
+    }
+
+    /// While the past shows the live spectrum is hidden, also before the
+    /// first past answer; live again it shows.
+    @Test func theLiveSpectrumHidesWhileThePastShows() async throws {
+        let (rig, model, _) = await Self.pan()
+        #expect(!model.hidesLiveSpectrum)
+        try await Self.rewindHere(rig, model, moment: Self.now - 600, revision: 2)
+        #expect(model.hidesLiveSpectrum && model.pastSpectrum == nil)
+        let live = Task { await model.goLive() }
+        let (index, _) = try #require(await Self.invoke(rig, "dsr.live"))
+        await RecordingFlagTests.answer(rig, index)
+        await live.value
+        #expect(!model.hidesLiveSpectrum)
+    }
+
+    // MARK: JJ's phone run of PR 808, round A
+
+    static func number(_ invoke: LinkMessage.CommandInvoke, _ name: String) -> Int64? {
+        if case .i64(let value)? = argument(invoke, name) {
+            return value
+        }
+        return nil
+    }
+
+    /// Answers a rows ask as the Core does: the rows asked for, from the newest down.
+    static func answerAsked(_ rig: Rig, _ index: Int, spp: Double = spp) async {
+        let invoke = rig.sent.invokes[index]
+        let to = Double(number(invoke, "toUtcNs") ?? 0) / 1e9
+        let from = Double(number(invoke, "fromUtcNs") ?? 0) / 1e9
+        let count = Int(number(invoke, "rowCount") ?? 0)
+        let moments = (0..<count).map { to - Double($0) * spp }.filter { $0 >= from - spp / 2 }
+        await RecordingFlagTests.answer(rig, index, values: rows(moments, rowsLeft: 0, next: 0))
+    }
+
+    /// Rewind with a slow reply (JJ's phone run: the top of the past went
+    /// black): while the first ask is with the Core the sound plays on; once
+    /// it is answered the next ask is for the rows at the play point and
+    /// ahead of it, not the rest of the picture, so the top is drawn.
+    @Test func aSlowReplyAsksForThePlayPointFirst() async throws {
+        let (rig, model, _) = await Self.pan()
+        var now = Self.now
+        model.clock = { now }
+        try await Self.rewindHere(rig, model, moment: Self.now - 600, revision: 2)
+        let (first, _) = try #require(await Self.invoke(rig, "dsr.rows"))
+        // Five seconds of sound while the Core is still drawing: no second ask meanwhile.
+        for _ in 0..<20 {
+            now += 0.25
+            model.tick()
+        }
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(Self.count(rig, "dsr.rows") == 1)
+        let top = try #require(model.viewTop)
+        #expect(abs(top - (Self.now - 595)) < 1e-6 && model.row(at: top) == nil)
+        await Self.answerAsked(rig, first)
+        let (second, ask) = try #require(await Self.invoke(rig, "dsr.rows", after: first + 1))
+        // The play point and the lead ahead of it, a small piece. That ask
+        // took 5 s, so the lead is four asks' time, at most 10 s, not the 2 s
+        // a quick link gets.
+        #expect(abs(model.rowsAskSeconds - 5) < 1e-6)
+        #expect(model.leadSeconds == DsrPanModel.mostAheadSeconds)
+        let to = Double(Self.number(ask, "toUtcNs") ?? 0) / 1e9
+        let from = Double(Self.number(ask, "fromUtcNs") ?? 0) / 1e9
+        #expect(abs(to - (top + model.leadSeconds)) < Self.spp / 2)
+        #expect(from <= top && (Self.number(ask, "rowCount") ?? 0) <= Int(2 * model.leadSeconds / Self.spp))
+        await Self.answerAsked(rig, second)
+        #expect(await Eventually.holds { model.row(at: top) != nil })
+        // The rows below the play point come next, newest first.
+        let (third, below) = try #require(await Self.invoke(rig, "dsr.rows", after: second + 1))
+        #expect(Double(Self.number(below, "toUtcNs") ?? 0) / 1e9 < from)
+        await Self.answerAsked(rig, third)
+    }
+
+    /// On a slow link the rows ahead are asked again while two asks' time
+    /// is left, so the one under way and the next both land before the
+    /// sound reaches the end of the lead; on a quick link at half the lead.
+    @Test func aSlowLinkAsksTheLeadAgainInTime() async throws {
+        let (rig, model, _) = await Self.pan()
+        var now = Self.now
+        model.clock = { now }
+        #expect(model.leadSeconds == DsrPanModel.aheadSeconds)
+        #expect(model.refillSeconds == DsrPanModel.aheadSeconds / 2)
+        try await Self.rewindHere(rig, model, moment: Self.now - 600, revision: 2)
+        let (first, _) = try #require(await Self.invoke(rig, "dsr.rows"))
+        now += 0.8
+        await Self.answerAsked(rig, first)
+        #expect(await Eventually.holds { model.rowsAskSeconds > 0 })
+        #expect(abs(model.rowsAskSeconds - 0.8) < 1e-6)
+        #expect(abs(model.leadSeconds - 3.2) < 1e-6)
+        #expect(abs(model.refillSeconds - (1.6 + Self.spp)) < 1e-6)
+    }
+
+    /// LIVE while the sound plays: the picture stops following the sound at
+    /// once and is live when the Core's answer comes, even when the display
+    /// ticks while the answer is on its way and the Core lists the slice
+    /// rewound until after it answers (JJ's phone run, PR 808: PAST stayed
+    /// after LIVE).
+    @Test func liveAnsweredLeavesThePast() async throws {
+        let (rig, model, _) = await Self.pan()
+        var now = Self.now
+        model.clock = { now }
+        try await Self.rewindHere(rig, model, moment: Self.now - 600, revision: 2)
+        #expect(model.inPast && model.playedMoment != nil)
+        let live = Task { await model.goLive() }
+        let (index, _) = try #require(await Self.invoke(rig, "dsr.live"))
+        for _ in 0..<4 {
+            now += 0.25
+            model.tick()
+            model.frame(periodSeconds: 1.0 / 60)
+            #expect(!model.inPast)
+        }
+        await RecordingFlagTests.answer(rig, index)
+        await live.value
+        #expect(!model.inPast)
+        RecordingFlagTests.publish(rig, Self.document(dsr: Self.dsrPart()), revision: 3)
+        model.documentChanged()
+        model.tick()
+        #expect(!model.inPast && model.playedMoment == nil)
+    }
+
+    /// A zoom or a pan in the past asks the Core again at once for the new
+    /// span, dropping the ask under way (JJ's phone run: zoomed out, the
+    /// waterfall kept the old middle strip and "Drawing" stayed): zoom out,
+    /// zoom in and a pan both ways, while the sound plays and while paused,
+    /// where the past spectrum is asked again too.
+    @Test func aZoomOrPanInThePastAsksAgain() async throws {
+        let (rig, model, _) = await Self.pan()
+        var now = Self.now
+        model.clock = { now }
+        try await Self.rewindHere(rig, model, moment: Self.now - 600, revision: 2)
+        var (last, _) = try #require(await Self.invoke(rig, "dsr.rows"))
+        let base = Self.view
+        let views = [
+            DsrPanView(fftSize: 4096, windowType: 1, centreHz: base.centreHz, spanHz: 96_000, pixels: 402),
+            DsrPanView(fftSize: 4096, windowType: 1, centreHz: base.centreHz, spanHz: 24_000, pixels: 402),
+            DsrPanView(fftSize: 4096, windowType: 1, centreHz: base.centreHz + 10_000, spanHz: 24_000, pixels: 402),
+            DsrPanView(fftSize: 4096, windowType: 1, centreHz: base.centreHz - 10_000, spanHz: 24_000, pixels: 402),
+        ]
+        for view in views {
+            // The ask before is still with the Core.
+            now += 0.5
+            model.panView = { view }
+            model.tick()
+            func forView(_ invoke: LinkMessage.CommandInvoke) -> Bool {
+                invoke.verb == "dsr.rows" && Self.argument(invoke, "spanHz") == .i64(view.spanHz)
+                    && Self.argument(invoke, "centreHz") == .i64(view.centreHz)
+            }
+            _ = await Eventually.holds { rig.sent.invokes.dropFirst(last + 1).contains(where: forView) }
+            let index = try #require(rig.sent.invokes.indices.dropFirst(last + 1).first { forView(rig.sent.invokes[$0]) })
+            let ask = rig.sent.invokes[index]
+            #expect(Self.argument(ask, "spanHz") == .i64(view.spanHz) && Self.argument(ask, "centreHz") == .i64(view.centreHz))
+            // The play point first.
+            #expect(Double(Self.number(ask, "toUtcNs") ?? 0) / 1e9 >= model.top)
+            #expect(model.rowsView == view && model.rows.isEmpty)
+            await Self.answerAsked(rig, index)
+            #expect(await Eventually.holds { model.row(at: model.top) != nil })
+            last = index
+        }
+
+        // Paused: one answer's worth at a time; the past spectrum is asked again with the new display.
+        let (paused, still, _) = await Self.pan()
+        still.drag(from: still.top, by: -1_000)
+        still.dragEnded()
+        let (rows, _) = try #require(await Self.invoke(paused, "dsr.rows"))
+        await Self.answerAsked(paused, rows)
+        let (rest, _) = try #require(await Self.invoke(paused, "dsr.rows", after: rows + 1))
+        await Self.answerAsked(paused, rest)
+        #expect(await Eventually.holds { still.missingShare == 0 && still.drawingText == nil })
+        let spectra = Self.count(paused, "dsr.spectrum")
+        let wide = views[0]
+        still.panView = { wide }
+        still.tick()
+        let (again, ask) = try #require(await Self.invoke(paused, "dsr.rows", after: rest + 1))
+        #expect(Self.argument(ask, "spanHz") == .i64(96_000) && Self.argument(ask, "rowCount") == .i64(244))
+        #expect(still.drawingText != nil)
+        #expect(await Eventually.holds { Self.count(paused, "dsr.spectrum") == spectra + 1 })
+        await Self.answerAsked(paused, again)
+        let (fill, _) = try #require(await Self.invoke(paused, "dsr.rows", after: again + 1))
+        await Self.answerAsked(paused, fill)
+        // "Drawing" goes once the new span is drawn.
+        #expect(await Eventually.holds { still.drawingText == nil && still.missingShare == 0 })
+    }
+
+    /// Moments newer than the recorder has kept come back without rows:
+    /// they are asked again a little later, not remembered as never kept.
+    @Test func momentsNotYetKeptAreAskedAgain() async throws {
+        let (rig, model, _) = await Self.pan()
+        var now = Self.now
+        model.clock = { now }
+        // The recorder has kept up to ten seconds ago.
+        var dsr = Self.dsrPart()
+        dsr["newestUtcMs"] = Int64((Self.now - 10) * 1000)
+        RecordingFlagTests.publish(rig, Self.document(dsr: dsr), revision: 2)
+        #expect(await Eventually.holds { model.client.dsr?.newestUtcMs == Int64((Self.now - 10) * 1000) })
+        model.ownSeconds = { 0 }
+        model.drag(from: model.top, by: -5 / Self.spp)
+        model.dragEnded()
+        let (first, ask) = try #require(await Self.invoke(rig, "dsr.rows"))
+        let to = Double(Self.number(ask, "toUtcNs") ?? 0) / 1e9
+        #expect(abs(to - (Self.now - 5)) < 1e-6)
+        // Only what is ten seconds old or older comes back.
+        let kept = (0..<244).map { to - Double($0) * Self.spp }.filter { $0 <= Self.now - 10 }
+        await RecordingFlagTests.answer(rig, first, values: Self.rows(kept, rowsLeft: 0, next: 0))
+        // The newer moments are asked for again (not kept as never kept)...
+        let (second, retry) = try #require(await Self.invoke(rig, "dsr.rows", after: first + 1))
+        #expect(abs(Double(Self.number(retry, "toUtcNs") ?? 0) / 1e9 - to) < 1e-6)
+        await RecordingFlagTests.answer(rig, second, values: Self.rows([Self.now - 200], rowsLeft: 0, next: 0))
+        #expect(await Eventually.holds { !model.awaitingRows })
+        // ...but the same ask not again at once.
+        model.tick()
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(Self.count(rig, "dsr.rows") == 2 && model.row(at: to) == nil)
+        // A second on, it is.
+        now += DsrPanModel.reaskSeconds
+        model.tick()
+        let (_, again) = try #require(await Self.invoke(rig, "dsr.rows", after: second + 1))
+        #expect(abs(Double(Self.number(again, "toUtcNs") ?? 0) / 1e9 - to) < 1e-6)
+    }
+
+    /// Two neighbouring answers' rows are drawn on one scale: the same
+    /// level is the same colour, whichever answer brought it (JJ's lighter
+    /// square: not the drawing).
+    @Test func neighbouringAnswersDrawOnOneScale() async throws {
+        let (_, model, _) = await Self.pan()
+        model.drag(from: model.top, by: -1_000)
+        let top = model.top
+        let view = Self.view
+        func frame(_ moments: [Double]) -> DsrPastFrames {
+            DsrPastFrames(slice: 0, firstBinHz: 7_212_000, hzPerBin: 16_000, binCount: 3,
+                          utcNs: moments.map { Int64(($0 * 1e9).rounded()) }, transmit: moments.map { _ in false },
+                          tenthsDb: [Int16](repeating: -900, count: moments.count * 3))
+        }
+        model.received(frame((0..<4).map { top - Double($0) * Self.spp }), view: view)
+        model.received(frame((4..<8).map { top - Double($0) * Self.spp }), view: view)
+        let table = (0..<(256 * 4)).map { UInt8($0 % 256) }
+        let image = try #require(DsrPastPicture.image(model: model, width: 3, height: 8, table: table,
+                                                      levels: .init(lowDbm: -130, highDbm: -50)))
+        let data = try #require(image.dataProvider?.data as Data?)
+        let rows = (0..<8).map { Array(data[($0 * 12)..<($0 * 12 + 12)]) }
+        #expect(Set(rows).count == 1)
+    }
+
+    /// A reply that comes late, for a moment the sound has passed, never
+    /// moves the play point back: rows and a past spectrum for an older
+    /// moment leave it where the sound is.
+    @Test func aLateReplyNeverMovesThePlayPointBack() async throws {
+        let (rig, model, _) = await Self.pan()
+        var now = Self.now
+        model.clock = { now }
+        try await Self.rewindHere(rig, model, moment: Self.now - 600, revision: 2)
+        let (rows, _) = try #require(await Self.invoke(rig, "dsr.rows"))
+        let (spectrum, _) = try #require(await Self.invoke(rig, "dsr.spectrum"))
+        now += 3
+        model.tick()
+        let played = try #require(model.playedMoment)
+        await RecordingFlagTests.answer(rig, rows, values: Self.rows([Self.now - 630, Self.now - 631], rowsLeft: 0, next: 0))
+        await RecordingFlagTests.answer(rig, spectrum, values: Self.rows([Self.now - 630], rowsLeft: 0, next: 0))
+        #expect(await Eventually.holds { model.pastSpectrum != nil })
+        model.tick()
+        model.frame(periodSeconds: 1.0 / 60)
+        #expect(model.playedMoment == played && model.viewTop == played)
+    }
+
+    /// Entering the past, the spectrum holds the last live trace until the
+    /// first past one comes (JJ's phone run: two empty frames), then shows
+    /// the past one; live again, the live trace.
+    @Test func enteringThePastHoldsTheLastLiveTrace() async throws {
+        let band = BandModel()
+        band.endpointId = 1
+        band.receive(.context(try #require(BandFlagShotTests.context())))
+        band.receive(.displayFrame(BandFixturesApp.frame(level: -100, sequence: 1, samples: 1_206)))
+        var hidden = false
+        var past: (trace: [Float], coverage: BandCoverage)?
+        band.liveSpectrumHidden = { hidden }
+        band.pastTrace = { past }
+        #expect(band.overlays(scale: 3).pastTrace == nil)
+        hidden = true
+        #expect(band.overlays(scale: 3).pastTrace == [Float](repeating: -100, count: 1_206))
+        // Live frames still arriving do not show through.
+        band.receive(.displayFrame(BandFixturesApp.frame(level: -90, sequence: 2, samples: 1_206)))
+        #expect(band.overlays(scale: 3).pastTrace == [Float](repeating: -100, count: 1_206))
+        past = ([-80, -80], BandCoverage(centerHz: BandFlagShotTests.centre, spanHz: BandFlagShotTests.span))
+        #expect(band.overlays(scale: 3).pastTrace == [-80, -80])
+        hidden = false
+        past = nil
+        #expect(band.overlays(scale: 3).pastTrace == nil)
+        // The next time, the live trace of then.
+        hidden = true
+        #expect(band.overlays(scale: 3).pastTrace == [Float](repeating: -90, count: 1_206))
+    }
+
+    /// The time strip redraws every display frame only in the past or while
+    /// this device's rewind plays; live, and live again after LIVE, it keeps
+    /// its old pace (the phone's heat). Another device's rewind leaves it live.
+    @Test func theStripRunsEveryFrameOnlyInThePast() async throws {
+        let (rig, model, _) = await Self.pan()
+        model.tick()
+        #expect(!model.inPast && !model.stripRunsEveryFrame)
+        // Dragged back, paused in the past.
+        model.drag(from: model.top, by: -200)
+        #expect(model.inPast && model.stripRunsEveryFrame)
+        model.dragEnded()
+        let (index, _) = try #require(await Self.invoke(rig, "dsr.rewind"))
+        await RecordingFlagTests.answer(rig, index, accepted: false, reason: "No.")
+        #expect(await Eventually.holds { model.note == "No." })
+        #expect(model.inPast && !model.followsSound && model.stripRunsEveryFrame)
+        // Nothing plays here, so LIVE asks the Core for nothing.
+        await model.goLive()
+        #expect(!model.inPast && !model.stripRunsEveryFrame)
+        // This device's rewind playing.
+        try await Self.rewindHere(rig, model, moment: Self.now - 600, revision: 2)
+        model.frame(periodSeconds: DsrPanModel.defaultFrameSeconds)
+        #expect(model.followsSound && model.stripRunsEveryFrame)
+        let before = rig.sent.invokes.count
+        let live = Task { await model.goLive() }
+        let (liveIndex, _) = try #require(await Self.invoke(rig, "dsr.live", after: before))
+        await RecordingFlagTests.answer(rig, liveIndex)
+        await live.value
+        RecordingFlagTests.publish(rig, Self.document(dsr: Self.dsrPart()), revision: 3)
+        model.documentChanged()
+        model.tick()
+        #expect(!model.inPast && !model.stripRunsEveryFrame)
+        // Another device's rewind of the active slice: the picture stays live.
+        let theirs = Self.rewound(Int64((Self.now - 600) * 1e9))
+        RecordingFlagTests.publish(rig, Self.document(dsr: Self.dsrPart(rewound: theirs)), revision: 4)
+        model.documentChanged()
+        model.tick()
+        #expect(model.rewound != nil && !model.inPast && !model.stripRunsEveryFrame)
     }
 
     /// The hours are asked once the recorder is usable, not again on every
