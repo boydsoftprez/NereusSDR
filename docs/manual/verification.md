@@ -164,6 +164,8 @@ The 8 November 2026 update, checked against source at `67530efee`, which is not 
 
 The later 8 November 2026 update, checked against source at `163d08931`, added chapter 10's **Keys, knobs and controllers** section, the band stack keys in chapter 3, and the hot key menu items, shortcut note and availability rows in chapter 12. No application was run for this text, and no MIDI device, knob or deck plugin was tried.
 
+The 2026.11.2 update added text only, written against the pull requests' code: chapter 21 (recordings, the voice keyer and the Digital Spectrum Recorder, PRs 797 and 808; on-screen labels checked in the code, the rest from the design and commit notes), the receive leveler (chapters 3, 7 and 13, PR 786), the slim frequency row (chapter 10, PR 806), the clear container background and the scaling S-Meter dial (chapter 10, PR 779), the SSB Mod Monitor's OVER line (chapter 14, PR 781), and chapter 12's Setup rows. PR 797 brings its own changes to chapter 10's voice keys and chapter 12's missing list. No application was run for this text and no figure shows these changes.
+
 ## Evidence still required for publication
 
 Complete the [remaining release screenshot plan](images/README.md) and live

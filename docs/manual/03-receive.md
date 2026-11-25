@@ -202,6 +202,7 @@ click for receive-only filter selection.
 | **SPEAKERS**, **PHONES** | Select which configured playback destination carries this receiver. |
 | AGC mode | Set how automatic gain responds and recovers. |
 | **AGC-T** | Set the AGC threshold, which in use is similar to traditional RF gain. Right-click the slider, on the flag or in the RX applet, to open **File > Settings... > DSP > AGC/ALC**. |
+| **RXL** | On the flag's **DSP** tab. Evens out station loudness on a voice net. Right-click for its mode and levels. See [Even out station loudness with RXL](13-receiver-dsp.md#even-out-station-loudness-with-rxl). |
 | **AUTO** | Derive AGC-T adjustment from the measured noise floor. In the RX applet, right-click **AUTO** to open **File > Settings... > DSP > AGC/ALC**; a left-click still turns it on and off. |
 | **SQL** and threshold | Switch the SSB-style squelch and set its threshold on a 0 to 100 scale. Check this when spectrum is active but audio is absent. |
 

@@ -2,6 +2,55 @@
 
 ## [Unreleased]
 
+Changes since desktop/Core 2026.11.1. Update the Core and desktop together.
+The iPhone and iPad app is delivered separately. Changes in that app are listed
+under **iPhone and iPad app** and reach phones and iPads with its next build.
+
+[Website](https://nereussdr.com/) · [User guide](https://nereussdr.com/manual/) · [Discord](https://discord.gg/m35ERjwRe)
+
+### Recordings
+
+- **Record your contacts.** Press **Record** on any slice flag and the Core
+  records what you hear on that slice, with your own voice while you
+  transmit, as MP3 or WAV. Every window and phone on the Core sees it
+  recording and can stop it. It can start by itself when you transmit and
+  stop after a quiet stretch. Files are named with the date, time,
+  frequency, mode and, from Roundtable, the other station's call, such as
+  `2026-11-15 1432Z 7.236.400 LSB K4ABC.mp3`. **Play** on the flag plays a
+  recording through the speakers of the device that pressed it, and
+  right-click **Play** lists the slice's last eight. The **Recordings** panel
+  and window find, rename, copy and delete them. **File > Settings... >
+  Cores > Recordings** chooses the disk, MP3 or WAV, and whether the two
+  sides are kept together or apart.
+- **Send a recording on the air.** Key while a recording plays and it goes
+  out instead of your mic, from where it was playing, at a fixed level.
+  Unkey and it comes back to your speaker. EQ, compressor, leveler, CFC and
+  phase rotator are off while it goes out, each with a switch to keep it on.
+- **Voice keyer.** Eight voice messages, kept on the Core. Record them in
+  the **Voice keyer** panel and send them from the panel, from the new
+  **VOICE** button beside TUNE and MOX, or with **F1** to **F8**. The radio
+  keys, sends and unkeys by itself, and **Repeat** sends again after a wait.
+  **VOICE**, Escape, PTT or MOX stops it. In CW modes **F1** to **F8** send
+  CW messages instead; **Ctrl+F1** to **F8** always send CW messages and
+  **Ctrl+Shift+F1** to **F8** always send voice messages.
+- **Digital Spectrum Recorder.** The Core keeps the band on its disk in a
+  loop, 10 GB at first. Drag the waterfall back and let go, and the slice
+  plays from that moment; tune to hear any other signal that was there. The
+  waterfall, spectrum and S-meter go back with it. **LIVE** returns, and PTT
+  while you are back in time puts you live on the frequency you were hearing. **SAVE** keeps a stretch of the whole band, or
+  just its sound. **File > Settings... > Cores > Digital Spectrum Recorder**
+  sets the disk and the size. It stays off on a Core whose only disk is an
+  SD card, and starts off in a desktop window running its own radio.
+- A window or phone connected to an older Core shows these controls grayed
+  with "This Core needs an update for recordings." MP3 files are made with
+  LAME and played with minimp3; a Core without LAME saves WAV and says so.
+- **VOICE can leave the main screen.** **Show the VOICE button beside TUNE and
+  MOX** in **Cores > Recordings**, or **Show the VOICE button beside PTT** in
+  the phone's **Tools > Voice Keyer**, takes it off that device. The voice
+  keyer panel and the hot keys still send messages.
+  ([#797](https://github.com/boydsoftprez/NereusSDR/pull/797),
+  [#808](https://github.com/boydsoftprez/NereusSDR/pull/808))
+
 ### Roundtable
 
 - **Roundtable moves off the spectrum on the desktop.** While Roundtable is on,
@@ -11,6 +60,145 @@
   keeps its full height; the waterfall gives up the room. Click the line or a
   tag and the details open over the waterfall, or upward over the spectrum when
   the waterfall is too short.
+  ([#804](https://github.com/boydsoftprez/NereusSDR/pull/804),
+  [#805](https://github.com/boydsoftprez/NereusSDR/pull/805))
+- **The Roundtable strip holds still.** Your line keeps one place for each
+  station on the frequency, so it no longer jumps sideways, and drags its
+  details with it, every time a report comes or goes. Stations are now in
+  callsign order with you last; one with no report of this turn is dimmed,
+  with a dash.
+  ([#811](https://github.com/boydsoftprez/NereusSDR/pull/811))
+- **Larger Roundtable readings.** Signal readings are a size larger and easier
+  to read. Thanks to Brian Sutton (W4KZO).
+  ([#780](https://github.com/boydsoftprez/NereusSDR/pull/780))
+
+### Display
+
+- **A slimmer frequency row.** The frequency numbers under the spectrum sit in
+  a row about half as tall, in plain white-gray instead of bold yellow, with
+  short ticks along its top edge. The spectrum and waterfall share the room it
+  frees. A larger number size in Setup still makes the row grow. If you never
+  chose a color, the old yellow is cleared once and the new color shows; a
+  color you chose is kept. The frame rate counter and the Hz/bin readout use
+  the same color. The phone keeps its yellow numbers.
+  ([#806](https://github.com/boydsoftprez/NereusSDR/pull/806))
+- **Smoother waterfall on Intel Macs.** On a Mac with an Intel processor the
+  waterfall could scroll in jumps, because it was drawn together with the
+  whole window. It is now drawn on its own. Apple silicon Macs, Windows and
+  Linux are unchanged. Thanks to Brian Sutton (W4KZO).
+  ([#775](https://github.com/boydsoftprez/NereusSDR/pull/775),
+  [#793](https://github.com/boydsoftprez/NereusSDR/pull/793))
+
+### Meters and containers
+
+- **An S-Meter dial that fits its container.** **S-Meter dial (scales)** is the
+  same dial, sized to the container, with **Alignment** at **Top**, **Center**
+  or **Bottom**. Thanks to Brian Sutton (W4KZO).
+- **Clear container background.** A container's new **Transparent background**
+  setting leaves the meters solid and clears the rest, so a floating container
+  shows the desktop behind it. Containers without it look as before. Thanks to
+  Brian Sutton (W4KZO).
+  ([#779](https://github.com/boydsoftprez/NereusSDR/pull/779),
+  [#795](https://github.com/boydsoftprez/NereusSDR/pull/795))
+- **RX Attenuator in a tall container.** In a container taller than one line,
+  the **S-ATT** caption now stays beside its control instead of sliding below
+  it. Thanks to Brian Sutton (W4KZO).
+  ([#783](https://github.com/boydsoftprez/NereusSDR/pull/783),
+  [#796](https://github.com/boydsoftprez/NereusSDR/pull/796))
+
+### Receive
+
+- **Receive leveler (RXL).** On a voice net, RXL evens out how loud each
+  station sounds, lifting a quiet voice and turning a loud one down, so you
+  can leave the AF slider alone. It lifts only while a station shows above the
+  noise, and lets go about a second after the voice stops. Turn it on with
+  **RXL** on the flag's **DSP** tab; right-click it for the mode, the
+  listening target and the most it may lift, and **More Settings…** for the
+  rest. **File > Settings... > DSP > AGC/ALC** has a new **RX Leveler**
+  section with **Off**, **Auto** and **Custom**. While it works, the flag
+  shows how much, such as **RXL +12 dB**. It starts off, so nothing changes
+  until you turn it on, and each receiver keeps its own setting. It levels
+  LSB, USB, DSB, AM and SAM and leaves the other modes as they are, and VAX
+  and TCI programs always get the plain audio. Brian Sutton (W4KZO) wrote
+  the first version and its controls; the part that changes the audio was
+  then rebuilt.
+  ([#786](https://github.com/boydsoftprez/NereusSDR/pull/786))
+
+### Transmit
+
+- **Export and import one TX profile.** **Export…** and **Import…** in
+  **File > Settings... > Audio > TX Profile** save the selected profile to a
+  `.nereus-tx-profile` file and read one back. The file carries the profile's
+  sound, not how your radio is wired. **Diagnostics > Export / Import** has
+  **Open TX Profile…**. In a remote window, importing needs a 2026.11.2
+  Core; exporting works with older ones. Written by Brian Sutton (W4KZO).
+  ([#809](https://github.com/boydsoftprez/NereusSDR/pull/809))
+- **PureSignal on an early Hermes, ANAN-10 or ANAN-100.** With early firmware
+  that has only two receivers, PureSignal read a copy of a receiver instead of
+  its feedback. Those radios now use the two-receiver layout. Tried by Brian
+  on a Hermes reporting firmware code 15. Written by Brian Sutton (W4KZO).
+  ([#812](https://github.com/boydsoftprez/NereusSDR/pull/812))
+- **The SSB Mod Monitor marks its OVER level.** The envelope trace now shows a
+  dashed line at the OVER threshold, so you can see how close peaks come to
+  lighting the lamp. Thanks to Brian Sutton (W4KZO).
+  ([#781](https://github.com/boydsoftprez/NereusSDR/pull/781))
+
+### Windows connected to a Core
+
+- **Sound keeps playing while you move windows.** Moving, opening or closing
+  a window or panel could hold up the speaker audio from the Core long enough
+  for it to drop out and fade back in. Speaker audio now arrives on its own
+  thread, so window work no longer interrupts it. Thanks to Brian Sutton
+  (W4KZO).
+  ([#776](https://github.com/boydsoftprez/NereusSDR/pull/776),
+  [#794](https://github.com/boydsoftprez/NereusSDR/pull/794))
+
+### iPhone and iPad app
+
+- **Recordings, the voice keyer and going back in time.** **Record** and
+  **Play** on the slice flag, with a playing bar under it while a recording
+  plays; **VOICE** beside PTT; **Tools > Recordings** and **Tools > Voice
+  Keyer**; **Setup > Recording settings** and **Setup > Digital Spectrum
+  Recorder**; and the time strip, **LIVE** and **SAVE** on the waterfall. The
+  iPad can also show a Recordings panel in its right column. Needs a
+  2026.11.2 Core.
+  ([#797](https://github.com/boydsoftprez/NereusSDR/pull/797),
+  [#808](https://github.com/boydsoftprez/NereusSDR/pull/808))
+- **More room in the Roundtable panel on your own frequency.** The grayed
+  **Tune slice A here** button and its **Slice A is already here** note are
+  gone when the slice is already on that frequency, so the list and messages
+  reach down to the message box. Looking at another frequency still shows
+  **Tune slice A here** as before.
+- **The iPhone's Roundtable panel stays where you let go of its grab bar.**
+  Drag the bar to any height, from just one station showing up to full. A drag
+  well below the smallest height closes the panel. A tap on the bar goes
+  between full and your height, and the panel opens at your height again until
+  the app is closed. A receiver flag, a Roundtable tag, the talker card, LIVE,
+  SAVE or the dBm arrows that the panel's top edge would cut in half are hidden
+  until the edge moves off them.
+- **The Roundtable talker card on the band stays put on a busy frequency.** It
+  no longer jumps between under the receiver flag and beside it as reports come
+  and go, and it keeps its height when the first report arrives and when a new
+  one turns the last row into **+N more**.
+  ([#810](https://github.com/boydsoftprez/NereusSDR/pull/810))
+- **RXL on the phone and iPad.** The **Modes** tab has an **RXL** button
+  beside **APF** and **RXL (receive leveler)** settings with **Off**,
+  **Auto** and **Custom** and the gain it is adding now. The flag shows the
+  lift while RXL is on. Tapping a flag's slice letter now folds the flag, as
+  on the desktop. An older Core shows RXL grayed.
+  ([#786](https://github.com/boydsoftprez/NereusSDR/pull/786))
+- **A cooler phone with the waterfall up.** The app did a lot of repeat work
+  while the band was on screen: checking the whole waterfall history several
+  times a frame, rebuilding the slice list on every signal reading, redrawing
+  the band when nothing had changed, and updating hidden tabs. In a test with
+  the first three of these fixes, the app went from nearly all of one
+  processor core to about half, and the phone stayed cool. Nothing on screen
+  looks or works differently.
+  ([#787](https://github.com/boydsoftprez/NereusSDR/pull/787),
+  [#788](https://github.com/boydsoftprez/NereusSDR/pull/788),
+  [#789](https://github.com/boydsoftprez/NereusSDR/pull/789),
+  [#790](https://github.com/boydsoftprez/NereusSDR/pull/790),
+  [#791](https://github.com/boydsoftprez/NereusSDR/pull/791))
 
 ## [2026.11.1] - 2026-11-08
 

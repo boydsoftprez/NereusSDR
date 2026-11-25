@@ -68,7 +68,7 @@ class RendererTest(unittest.TestCase):
             } | {'guides/'+name+'.html' for name in (
                 'install-core-sbc', 'tx-eq-cfc', 'upgrading-to-2026.10.0', 'upgrading-to-2026.10.1', 'upgrading-to-2026.10.2', 'upgrading-to-2026.11.0', 'contributing-with-ai', 'remote-access')} | {'roundtable/api.html'}
             self.assertEqual(set(pages), expected)
-            self.assertEqual(len(pages), 30)
+            self.assertEqual(len(pages), 31)
             for route, page in pages.items():
                 self.assertEqual(page.canonical, ['https://nereussdr.com/' + route])
                 self.assertEqual(page.styles, ['/assets/css/site.css', '/manual/manual.css'])
@@ -97,7 +97,7 @@ class RendererTest(unittest.TestCase):
             self.assertFalse((output / 'manual/site.css').exists())
             manifest_path = output / 'manual/source-map.json'
             manifest = json.loads(manifest_path.read_text())
-            self.assertEqual(len(manifest['pages']), 30)
+            self.assertEqual(len(manifest['pages']), 31)
             for kind in ('pages', 'images', 'downloads'):
                 for entry in manifest[kind]:
                     original = ROOT / entry['source']
@@ -233,7 +233,7 @@ class RendererTest(unittest.TestCase):
             result = render(RENDERER, Path(directory))
             self.assertEqual(result.returncode, 0, result.stderr)
             index = Path(directory) / 'index.html'
-            self.assertIn('User manual<br>NereusSDR 2026.11.1', index.read_text())
+            self.assertIn('User manual<br>NereusSDR 2026.11.2', index.read_text())
             self.assertEqual(Page(index.read_text()).styles, ['site.css', 'manual.css'])
             check = subprocess.run([sys.executable, str(ROOT / 'docs/manual/check_manual.py'),
                                     '--preview', directory], capture_output=True, text=True)

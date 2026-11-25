@@ -67,6 +67,7 @@ Tap **Modes** in the tab bar. It is a single vertically scrolling page, arranged
 | **Front end** ATT / S-ATT / A-ATT | Chooses preamp/attenuator behavior; radio-provided preamp, step-attenuation range and antenna choices vary by Core/radio | Read selected button, dB value and antenna; unavailable hardware/features are omitted or explained |
 | **AGC** and **AGC-T** | Chooses the Core's AGC mode and threshold; **AUTO** enables automatic threshold control when offered | Lit AGC/AUTO and threshold readout; AUTO may show its selected threshold information |
 | **Noise** | Toggles listed noise controls (for example NB, NR variants, ANF, SNB), NNR state and APF where offered | Lit state, warnings/reasons, NNR processing warnings with explicit model/off choices, and any older Core limit; a grayed control names the missing capability |
+| **RXL** | The **RXL** button beside **APF** turns the receive leveler on; **RXL (receive leveler)** chooses **Off**, **Auto** or **Custom**, shows **Gain now**, and holds the Custom levels ([details](13-receiver-dsp.md#even-out-station-loudness-with-rxl)) | Lit RXL and the flag's lift figure; an older Core shows RXL grayed with its reason |
 | **Audio** | AF Gain, left/right **Pan**, **MUTE**, **BIN** binaural, **SQL** and squelch level; **SPEAKERS/PHONES** select the Core output route | Confirm lit switch, slider readback and audible change; Core speakers/headphones are distinct from this phone's route |
 | **RIT / XIT** | Enables receive/transmit incremental offset independently; arrows change by the slice step, value opens numeric entry, **0** clears it | Lit amber RIT/XIT and signed offset; after clearing, value returns to zero |
 | **DIG / RTTY** | Provides DIG offset and RTTY mark/shift only where active mode/Core allows them | Read displayed hertz values; inactive controls show an explanation |
@@ -184,6 +185,7 @@ know, and Connection and performance remains useful for the phone's own link.
 | **TCI Server**, **VAX Audio** | [Digital application routing](09-tools.md). Operate services/devices on the Core computer. |
 | **Connection and performance** | [Read paths and audio delivery](11-troubleshooting.md). Phone and available Core measurements. |
 | **Support Bundle** | [Collect and share evidence](11-troubleshooting.md). Lists phone/Core files before sharing. |
+| **Recordings**, **Voice Keyer** | [Recordings and the voice keyer](21-recordings.md): the Core's recordings and the eight voice messages. **VOICE** beside PTT sends a message; **Record** and **Play** sit beside the slice flag. Needs a Core with recordings. |
 | **Rotor** | [Turn the antenna](#turn-the-antenna-with-the-rotor-page): heading, presets and nudges. Core accessory; needs a 2026.10.1 Core. |
 
 For more detailed receiver parameters after the Modes quick controls, use

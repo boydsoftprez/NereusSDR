@@ -7,23 +7,23 @@ verbatim from `CLAUDE.md` as of commit 86a1b20d6.
 
 ## Current status
 
-2026.11.1 is the current desktop and Core release; the table below lists what it adds
-to 2026.11.0. 2026.11.0 combined the work since 2026.10.1,
+2026.11.1 is the current desktop and Core release; the first table below lists what it adds
+to 2026.11.0, and the second what 2026.11.2, now being prepared, adds to 2026.11.1. 2026.11.0 combined the work since 2026.10.1,
 including remote display codec v2, audio-aligned remote RX meters, CW and
 remote transmit recovery, frequency-first Roundtable and signal units,
 receiver and container state, and phone display fixes. NNR retains the
 selected model and offers an operator choice on a measured warning. The phone
 also labels **Previous band** and recognizes the Core's empty default-pan
-identity for Max Bin. Phone 2026.10.1 build 9645 is in TestFlight testing;
-its version is independent of the desktop release. The
+identity for Max Bin. Phone 2026.11.1 build 10066 was uploaded to App Store
+Connect on 2026-11-09 (PR 773 set its version to match the desktop release). The
 [release summary](../MASTER-PLAN.md) records the scope and deferred work.
 
 ### In 2026.11.1, since 2026.11.0
 
 Tagged `v2026.11.1` at `9014aead0` (2026-11-08). The release PR, 767, merged as
 `d87e023c0`; PR 770 then fixed the Windows and Linux ARM release builds, and the
-tag moved to its merge. The GitHub release stays a draft until J.J. Boyd
-publishes it.
+tag moved to its merge. J.J. Boyd published the GitHub release on 2026-11-09,
+and the website (PR 772) went live with it the same day.
 [CHANGELOG.md](../../CHANGELOG.md) under `[2026.11.1]` has the operator wording.
 
 | Work | PRs | Verification so far |
@@ -65,10 +65,43 @@ PR 749's exports reach no production connection across a DLL, and its certificat
 key seam has no production caller, so Windows and Core behavior stay as they were.
 The Windows signal fix still needs a Windows test run; PR 749 names it.
 
-### Open, not in 2026.11.1
+### In 2026.11.2, since 2026.11.1
 
-Open pull requests left out of 2026.11.1: 753 (Cinnamon file
-choosers), 754 (container dialog when adding a meter).
+Scope set by J.J. Boyd on 2026-11-17, with Brian Sutton's 786, 809 and 812 confirmed
+on 2026-11-22. [CHANGELOG.md](../../CHANGELOG.md) under
+`[Unreleased]` has the operator wording; the release turns it into `[2026.11.2]`.
+
+| Work | PRs | Verification so far |
+| --- | --- | --- |
+| Recordings on the Core: contact recorder per slice, playback on the pressing device, sending a recording on the air, voice keyer M1 to M8 with VOICE and F1 to F8, Digital Spectrum Recorder with rewind and SAVE; desktop, phone and iPad | 797 | Each task's tests and one combined pass on macOS; one whole-branch review and fix round. Merged with every hardware row in its evidence document still pending. Adds LAME (MP3 encoding, Core only) and minimp3. Touches transmit and the core RX path (rewind feeds the demodulator from the disk). |
+| Rewind and recorder fixes from J.J. Boyd's iPhone runs, a switch for the VOICE button, sound-only saves of the active slice, WAV when the Core has no MP3 encoder | 808 | Follows faults J.J. Boyd saw on an iPhone. Tests and simulator captures. No hardware result recorded for the finished branch; the MP3 and slice parts need a new Core. |
+| Roundtable panel on the iPhone: no grayed Tune on your own frequency, stays where let go, steady talker card | 810 | iPhone simulator tests and pictures, one iPad simulator check. Not yet on a real phone. Ships with the next phone build. |
+| Roundtable strip line and details hold still on the desktop | 811 | Focused tests and captures. Not yet on a live frequency or a radio. |
+| Export and import one TX profile (Brian Sutton W4KZO) | 809 | Tests. Brian's plan ticks export and import on the Core machine; a remote window, new Core or older, is not ticked. |
+| PureSignal on Hermes, ANAN-10 and ANAN-100 with early two-receiver firmware (Brian Sutton W4KZO) | 812 | Brian ran it on a Hermes at firmware code 15. Newer Hermes firmware and the ANAN-10E are not ticked. Being narrowed to codes below 20 on two-receiver boards; at `c4f815cf4` it still covers codes below 29. Touches transmit feedback. |
+| Roundtable strip under the frequency scale on the desktop, and its review fixes | 804, 805 | Focused tests and `roundtable-*` capture scenes on a Mac. Not run on a radio per the PRs. |
+| Slim frequency row with ticks and white-gray numbers | 806 | Focused tests and three capture scenes; look picked by J.J. Boyd from a mockup. Not looked at on a radio per the PR. Clears a stored old-yellow default once. |
+| Receive leveler (RXL), Brian Sutton (W4KZO)'s feature with a rebuilt engine; desktop, remote and phone; phone flag folds on the slice letter | 786 | Leveler model tests. J.J. Boyd's on-air check (steady with nobody talking, weak stations lift) came before the filter-edge change and the 2026-11-22 review fixes; no on-air result is recorded for those. Ships off. Touches the core RX path after AGC. |
+| Intel Mac waterfall presented on its own (Brian Sutton W4KZO) | 775, 793 | Tests; Brian's Intel MacBook Pro. Apple silicon path unchanged. |
+| Speaker audio from the Core on its own thread while windows move (Brian Sutton W4KZO) | 776, 794 | Tests on a Mac. Touches the remote speaker audio path. |
+| S-Meter dial (scales) and Transparent background for containers (Brian Sutton W4KZO) | 779, 795 | Tests and captures on a Mac. |
+| Roundtable readings at 12 px (Brian Sutton W4KZO) | 780 | Tests. |
+| SSB Mod Monitor OVER line (Brian Sutton W4KZO) | 781 | Monitor tests. Desktop only. |
+| RX Attenuator caption stays on its control in a tall container (Brian Sutton W4KZO) | 783, 796 | Tests. |
+| Phone heat: waterfall timeline check, meter readings, band drawing, Modes tab, Roundtable history | 787, 788, 789, 790, 791 | Phone tests; about 96% to 52% of one core on an iPhone with 787 to 789 (Debug build). No Release build measured. Ships with the next phone build. |
+
+Also on main, with no operator-facing change and so no release note: PR 771
+(manual gaps), PR 772 (website for 2026.11.1), PR 773 (phone app version
+2026.11.1), PR 792, 801, 802 and 803 (tests fitted to the hosted Linux runner,
+MediaNotReady cases and phone test waits) and PR 799 (Windows CI finds the
+OpenSSL 4 DLLs) and PR 807 (builds with Qt older than 6.7 again).
+
+### Not in 2026.11.2
+
+- The Flex 8600M work.
+- 816, a Setup page for new slice defaults (Brian Sutton W4KZO).
+- 753 Cinnamon file choosers on Linux source builds and 754 the container
+  dialog when adding a meter on Linux stay open for their reporters.
 
 The remaining text is an archived reference copied from the earlier agent
 context. Its phase scheduling, release status and class inventories can be
