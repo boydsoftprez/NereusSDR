@@ -7587,11 +7587,10 @@ These command groups need a sentence beyond the table:
   `txProfile.select`. Its refusals: "Give the transmit profile a name.",
   "Use a transmit profile name of 64 characters or fewer.", "Use a
   transmit profile name without tabs, line breaks or other control
-  characters.", "A transmit profile name cannot hold these double
-  underscores. Use single underscores instead." (a name whose keys the
-  settings file would read back as other keys, such as `Rig__c` or
-  `__u0042__`; `My__Profile` and `plan c` are taken; the same rules hold
-  for `txProfile.save`), "The transmit profile is too large." (`keysJson` over 256
+  characters.", "The settings file cannot keep this transmit profile
+  name. Use a different name." (a name whose keys the settings file would
+  read back as other keys, such as `plan c` or `Rig__c`; `My__Profile` is
+  taken; the same rules hold for `txProfile.save`), "The transmit profile is too large." (`keysJson` over 256
   KiB), "The transmit profile was not understood." (`keysJson` not a JSON
   object), "A setting in the transmit profile is not text.", "The
   transmit profile has no settings." (no key the Core keeps), a value its

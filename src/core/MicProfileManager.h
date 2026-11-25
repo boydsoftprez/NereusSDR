@@ -195,8 +195,8 @@ public:
     /// profile, in plain words, or empty when it can: empty, longer than
     /// kMaxProfileNameLength, or holding a control character (a tab, a
     /// line break) or a character that is not text, or one whose keys
-    /// would not come back from the settings file (it reads __c__ or
-    /// __u0042__ in a key back as one character). "My__Profile" is fine.
+    /// would not come back from the settings file ("plan c", "Rig__c").
+    /// "My__Profile" is fine.
     /// Needs no radio: a remote window knows no radio address.
     static QString profileNameRefusal(const QString& name);
 

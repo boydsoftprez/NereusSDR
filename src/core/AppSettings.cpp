@@ -66,15 +66,8 @@
 //                 ends, so a background save still writing at exit no
 //                 longer leaves the Windows process waiting forever.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
-//   2026-11-22 - encodeXmlKey() escapes every other character an XML
-//                 element name cannot hold as __uXXXX__ (a tab, a line
-//                 break, a leading digit), so no key can make the file
-//                 unreadable; the fixed tokens are unchanged. J.J. Boyd
-//                 (KG4VCF), AI-assisted via Claude Code.
-//   2026-11-25 - decodeXmlKey() reads an element name once, left to right,
-//                 so a key such as "plan c/MicGain" loads as itself;
-//                 keySurvivesFile() says whether a key does. J.J. Boyd
-//                 (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-25 - keySurvivesFile(); how keys are written and read is
+//                 unchanged. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -264,14 +257,6 @@ void AppSettings::seedDaemonProfileMarker()
 //   ':' '/' '[' ']' '+' ' ' '?' '&' '#' '(' ')' ',' '@' '!' '*' '\'' '"'
 //   '=' ';' '<' '>' '{' '}' '|' '$' '%' '^' '~' '`' '\\'
 //
-// Every other character an XML 1.0 element name cannot hold (a control
-// character, a character outside NameChar, a character past U+FFFF, which
-// QXmlStreamReader refuses in a name, or a NameChar that cannot start a
-// name, such as a leading digit) is written as __uXXXX__: its code point
-// in upper-case hex, four digits, or six past U+FFFF. A lone surrogate is
-// written as its own code unit. The fixed tokens above keep their spelling,
-// so files written before 2026-11-22 load as they did.
-//
 // Bug fix 2026-04-30: pre-fix builds wrote element names with literal '+',
 // causing QXmlStreamReader to bail mid-file, silently dropping every
 // element after the first malformed one (in particular all radios/* keys
@@ -280,31 +265,11 @@ void AppSettings::seedDaemonProfileMarker()
 // after upgrade — once the next save() runs they are well-formed.
 // ---------------------------------------------------------------------------
 
-// XML 1.0 (Fifth Edition) section 2.3, productions [4] and [4a], without
-// [#x10000-#xEFFFF]: QXmlStreamReader refuses a character past U+FFFF in a
-// name ("Invalid XML name."), so those are escaped too.
-static bool isXmlNameStartChar(char32_t c)
-{
-    return c == U':' || c == U'_' || (c >= U'A' && c <= U'Z') || (c >= U'a' && c <= U'z')
-        || (c >= 0xC0 && c <= 0xD6) || (c >= 0xD8 && c <= 0xF6) || (c >= 0xF8 && c <= 0x2FF)
-        || (c >= 0x370 && c <= 0x37D) || (c >= 0x37F && c <= 0x1FFF)
-        || (c >= 0x200C && c <= 0x200D) || (c >= 0x2070 && c <= 0x218F)
-        || (c >= 0x2C00 && c <= 0x2FEF) || (c >= 0x3001 && c <= 0xD7FF)
-        || (c >= 0xF900 && c <= 0xFDCF) || (c >= 0xFDF0 && c <= 0xFFFD);
-}
-
-static bool isXmlNameChar(char32_t c)
-{
-    return isXmlNameStartChar(c) || c == U'-' || c == U'.' || (c >= U'0' && c <= U'9')
-        || c == 0xB7 || (c >= 0x300 && c <= 0x36F) || (c >= 0x203F && c <= 0x2040);
-}
-
 static QString encodeXmlKey(const QString& key)
 {
     QString out;
     out.reserve(key.size());
-    for (qsizetype i = 0; i < key.size(); ++i) {
-        const QChar c = key.at(i);
+    for (QChar c : key) {
         switch (c.unicode()) {
             case ':':  out += QLatin1String("__c__");     break;
             case '/':  out += QLatin1String("__s__");     break;
@@ -336,96 +301,45 @@ static QString encodeXmlKey(const QString& key)
             case '~':  out += QLatin1String("__tilde__"); break;
             case '`':  out += QLatin1String("__bt__");    break;
             case '\\': out += QLatin1String("__bs__");    break;
-            default: {
-                char32_t point = c.unicode();
-                qsizetype units = 1;
-                if (c.isHighSurrogate() && i + 1 < key.size() && key.at(i + 1).isLowSurrogate()) {
-                    point = QChar::surrogateToUcs4(c, key.at(i + 1));
-                    units = 2;
-                }
-                const bool allowed = out.isEmpty() ? isXmlNameStartChar(point)
-                                                   : isXmlNameChar(point);
-                if (allowed) {
-                    out += key.mid(i, units);
-                } else {
-                    out += QLatin1String("__u")
-                         + QString::number(point, 16).toUpper().rightJustified(
-                               point > 0xFFFF ? 6 : 4, QLatin1Char('0'))
-                         + QLatin1String("__");
-                }
-                i += units - 1;
-                break;
-            }
+            default:   out += c;                          break;
         }
     }
     return out;
 }
 
-// The character a word between two double underscores stands for (the fixed
-// tokens above), or -1.
-static int tokenCharacter(QStringView word)
-{
-    struct Token {
-        const char* word;
-        char character;
-    };
-    static constexpr Token kTokens[] = {
-        {"c", ':'},     {"s", '/'},     {"lb", '['},    {"rb", ']'},
-        {"plus", '+'},  {"sp", ' '},    {"qm", '?'},    {"amp", '&'},
-        {"hash", '#'},  {"lp", '('},    {"rp", ')'},    {"cm", ','},
-        {"at", '@'},    {"excl", '!'},  {"ast", '*'},   {"sq", '\''},
-        {"dq", '"'},    {"eq", '='},    {"sc", ';'},    {"lt", '<'},
-        {"gt", '>'},    {"lc", '{'},    {"rc", '}'},    {"pipe", '|'},
-        {"dlr", '$'},   {"pct", '%'},   {"caret", '^'}, {"tilde", '~'},
-        {"bt", '`'},    {"bs", '\\'},
-    };
-    for (const Token& token : kTokens) {
-        if (word == QLatin1String(token.word)) {
-            return token.character;
-        }
-    }
-    return -1;
-}
-
-// One pass from left to right: a token that has been read is never read
-// again as part of the next one. Replacing the tokens one kind at a time
-// over the whole name read the "__c__" in "plan__sp__c__s__MicGain" (the
-// key "plan c/MicGain") as a colon.
 static QString decodeXmlKey(const QString& tag)
 {
-    const QLatin1String mark("__");
-    QString out;
-    out.reserve(tag.size());
-    qsizetype i = 0;
-    while (i < tag.size()) {
-        const qsizetype end = QStringView(tag).mid(i, 2) == mark ? tag.indexOf(mark, i + 2) : -1;
-        if (end > i + 2) {
-            const QStringView word = QStringView(tag).mid(i + 2, end - i - 2);
-            const int character = tokenCharacter(word);
-            if (character >= 0) {
-                out += QLatin1Char(static_cast<char>(character));
-                i = end + 2;
-                continue;
-            }
-            // The __uXXXX__ escapes (four hex digits, or six past U+FFFF).
-            static const QRegularExpression escaped(
-                QStringLiteral("\\Au([0-9A-F]{6}|[0-9A-F]{4})\\z"));
-            const QRegularExpressionMatch match = escaped.match(word.toString());
-            if (match.hasMatch()) {
-                const char32_t point = match.capturedView(1).toUInt(nullptr, 16);
-                if (point > 0xFFFF) {
-                    out += QChar(QChar::highSurrogate(point));
-                    out += QChar(QChar::lowSurrogate(point));
-                } else {
-                    out += QChar(static_cast<char16_t>(point));
-                }
-                i = end + 2;
-                continue;
-            }
-        }
-        out += tag.at(i);
-        ++i;
-    }
+    QString out = tag;
+    out.replace(QLatin1String("__c__"),     QLatin1String(":"));
+    out.replace(QLatin1String("__s__"),     QLatin1String("/"));
+    out.replace(QLatin1String("__lb__"),    QLatin1String("["));
+    out.replace(QLatin1String("__rb__"),    QLatin1String("]"));
+    out.replace(QLatin1String("__plus__"),  QLatin1String("+"));
+    out.replace(QLatin1String("__sp__"),    QLatin1String(" "));
+    out.replace(QLatin1String("__qm__"),    QLatin1String("?"));
+    out.replace(QLatin1String("__amp__"),   QLatin1String("&"));
+    out.replace(QLatin1String("__hash__"),  QLatin1String("#"));
+    out.replace(QLatin1String("__lp__"),    QLatin1String("("));
+    out.replace(QLatin1String("__rp__"),    QLatin1String(")"));
+    out.replace(QLatin1String("__cm__"),    QLatin1String(","));
+    out.replace(QLatin1String("__at__"),    QLatin1String("@"));
+    out.replace(QLatin1String("__excl__"),  QLatin1String("!"));
+    out.replace(QLatin1String("__ast__"),   QLatin1String("*"));
+    out.replace(QLatin1String("__sq__"),    QLatin1String("'"));
+    out.replace(QLatin1String("__dq__"),    QLatin1String("\""));
+    out.replace(QLatin1String("__eq__"),    QLatin1String("="));
+    out.replace(QLatin1String("__sc__"),    QLatin1String(";"));
+    out.replace(QLatin1String("__lt__"),    QLatin1String("<"));
+    out.replace(QLatin1String("__gt__"),    QLatin1String(">"));
+    out.replace(QLatin1String("__lc__"),    QLatin1String("{"));
+    out.replace(QLatin1String("__rc__"),    QLatin1String("}"));
+    out.replace(QLatin1String("__pipe__"),  QLatin1String("|"));
+    out.replace(QLatin1String("__dlr__"),   QLatin1String("$"));
+    out.replace(QLatin1String("__pct__"),   QLatin1String("%"));
+    out.replace(QLatin1String("__caret__"), QLatin1String("^"));
+    out.replace(QLatin1String("__tilde__"), QLatin1String("~"));
+    out.replace(QLatin1String("__bt__"),    QLatin1String("`"));
+    out.replace(QLatin1String("__bs__"),    QLatin1String("\\"));
     return out;
 }
 
@@ -1229,7 +1143,11 @@ QString AppSettings::keyFromXmlTag(const QString& tag)
 
 bool AppSettings::keySurvivesFile(const QString& key)
 {
-    return decodeXmlKey(encodeXmlKey(key)) == key;
+    // The element as the loader meets it: a name the XML reader takes, and
+    // one that reads back as this key.
+    const QString tag = encodeXmlKey(key);
+    QXmlStreamReader xml(QStringLiteral("<%1/>").arg(tag));
+    return xml.readNextStartElement() && xml.name() == tag && decodeXmlKey(tag) == key;
 }
 
 bool AppSettings::validateLocalXml(const QByteArray& input, QString* error)

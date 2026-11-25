@@ -667,11 +667,11 @@ void TstTxProfileSelect::saveRefusesABadName()
     result = s.invoke("txProfile.save", {nameArg(QString(65, QLatin1Char('y')))});
     QVERIFY(!result.accepted);
     QCOMPARE(result.reason, QStringLiteral("Use a transmit profile name of 64 characters or fewer."));
-    result = s.invoke("txProfile.save", {nameArg(QStringLiteral("__u0042__"))});
+    result = s.invoke("txProfile.save", {nameArg(QStringLiteral("plan c"))});
     QVERIFY(!result.accepted);
     QCOMPARE(result.reason,
-             QStringLiteral("A transmit profile name cannot hold these double underscores. "
-                            "Use single underscores instead."));
+             QStringLiteral("The settings file cannot keep this transmit profile name. "
+                            "Use a different name."));
     QCOMPARE(s.coreProfiles().profileNames().size(), count);
     // The window does not send one.
     QVERIFY(!s.windowProfiles().saveProfile(QStringLiteral("Tab\tName"), &s.window.transmitModel()));
@@ -1266,8 +1266,8 @@ void TstTxProfileSelect::refusalsArePlainWords()
           QStringLiteral("Use a transmit profile name of 64 characters or fewer."),
           QStringLiteral("Use a transmit profile name without tabs, line breaks or other "
                          "control characters."),
-          QStringLiteral("A transmit profile name cannot hold these double underscores. "
-                         "Use single underscores instead."),
+          QStringLiteral("The settings file cannot keep this transmit profile name. "
+                         "Use a different name."),
           QStringLiteral("The transmit profile's leveler setting is not on or off."),
           QStringLiteral("The Core has no radio to keep transmit profiles for."),
           QStringLiteral("Update this app to change transmit profiles on this Core."),

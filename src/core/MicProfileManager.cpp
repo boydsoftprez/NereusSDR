@@ -1052,12 +1052,12 @@ QString MicProfileManager::profileNameRefusal(const QString& name)
         }
     }
     // The settings file spells characters a key cannot hold as words
-    // between two double underscores (__plus__, __u0042__; AppSettings
-    // encodeXmlKey), and reads any such word back as its character. A name
-    // whose keys would not come back as themselves would lose its profile.
+    // between two double underscores (__plus__; AppSettings encodeXmlKey),
+    // and reads any such word back as its character, "plan c" among them. A
+    // name whose keys would not come back would lose its profile.
     if (!profileNameSurvivesFile(name)) {
-        return QStringLiteral("A transmit profile name cannot hold these double underscores. "
-                              "Use single underscores instead.");
+        return QStringLiteral("The settings file cannot keep this transmit profile name. "
+                              "Use a different name.");
     }
     return {};
 }

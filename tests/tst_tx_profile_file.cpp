@@ -19,7 +19,7 @@
 //                 and reloads. J.J. Boyd (KG4VCF), AI-assisted via Claude
 //                 Code.
 //   2026-11-25 - Only a name whose keys would not come back is refused;
-//                 the names that met an escape save and reload; an old
+//                 "plan c" among them, the rest save and reload; an old
 //                 profile with double underscores selects and deletes. J.J.
 //                 Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
@@ -328,16 +328,19 @@ private slots:
             << QStringLiteral("Use a transmit profile name of 64 characters or fewer.");
         QTest::newRow("blank") << QStringLiteral("   ")
             << QStringLiteral("Give the transmit profile a name.");
-        // The settings file reads either back as another name ("B", and
-        // "D-104+CPDR").
-        const QString underscores =
-            QStringLiteral("A transmit profile name cannot hold these double underscores. "
-                           "Use single underscores instead.");
-        QTest::newRow("escaped letter") << QStringLiteral("__u0042__") << underscores;
-        QTest::newRow("escaped word") << QStringLiteral("D-104__plus__CPDR") << underscores;
+        // The settings file reads each back as another key.
+        const QString cannotKeep =
+            QStringLiteral("The settings file cannot keep this transmit profile name. "
+                           "Use a different name.");
+        for (const char* name : {"plan c", "c", "Rig s", "A lb B", "Heil plus gate", "_c_",
+                                 "D-104__plus__CPDR"}) {
+            QTest::newRow(name) << QString::fromLatin1(name) << cannotKeep;
+        }
+        // Past U+FFFF, which the XML reader refuses in a name.
+        QTest::newRow("emoji") << QString::fromUcs4(U"Desk \U0001F4FB") << cannotKeep;
         // Meets the "/" after it: "Rig__c__s__MicGain" reads "Rig:s__MicGain".
-        QTest::newRow("ends in a short code") << QStringLiteral("Rig__c") << underscores;
-        QTest::newRow("commas made underscores") << QStringLiteral("Rig,,c") << underscores;
+        QTest::newRow("ends in a short code") << QStringLiteral("Rig__c") << cannotKeep;
+        QTest::newRow("commas made underscores") << QStringLiteral("Rig,,c") << cannotKeep;
     }
 
     // Save and import share the name rule, and so does a file's name.
@@ -378,8 +381,8 @@ private slots:
     void aNameSavesAndReloads_data()
     {
         QTest::addColumn<QString>("name");
-        for (const char* name : {"Desk_Night", "plan c", "c", "Rig s", "A lb B", "Heil plus gate",
-                                 "_c_", "My__Profile", "a__b"}) {
+        for (const char* name : {"Desk_Night", "SSB 2.8k CFC", "D-104+CPDR", "My__Profile", "a__b",
+                                 "Rig__sp", "__u0042__"}) {
             QTest::newRow(name) << QString::fromLatin1(name);
         }
     }
@@ -559,8 +562,8 @@ private slots:
               QStringLiteral("Use a transmit profile name of 64 characters or fewer."),
               QStringLiteral("Use a transmit profile name without tabs, line breaks or other "
                              "control characters."),
-              QStringLiteral("A transmit profile name cannot hold these double underscores. "
-                             "Use single underscores instead."),
+              QStringLiteral("The settings file cannot keep this transmit profile name. "
+                             "Use a different name."),
               QStringLiteral("The active transmit profile changed while you were choosing the "
                              "file. Nothing was saved or exported."),
               QStringLiteral("Another export is still waiting for the Core. Try again when it "

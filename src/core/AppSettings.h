@@ -236,9 +236,9 @@ public:
     // writes "audio/DspRate" as <audio__s__DspRate>. The support bundle
     // reads the file directly and checks keys, not element names.
     static QString keyFromXmlTag(const QString& tag);
-    // Whether `key` comes back as itself from the settings file. A key that
-    // already holds the text of an escape (a literal "__c__" or "__u0042__")
-    // does not.
+    // Whether `key` comes back as itself from the settings file. Some do not:
+    // the file reads "plan__sp__c__s__MicGain" ("plan c/MicGain") with a
+    // colon, and the XML reader refuses some characters in a name.
     static bool keySurvivesFile(const QString& key);
     bool importLocalXml(const QByteArray& xml, QString* error = nullptr);
 
