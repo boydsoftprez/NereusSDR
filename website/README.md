@@ -109,6 +109,26 @@ It writes the sizes and the date into `public/index.html` from
 `gh release view`, refuses a draft or prerelease, and changes nothing if the
 page links a file the release does not have. Commit the result.
 
+## Copy prepared ahead of a release
+
+Text for work that has not merged yet waits on the home page in hidden
+`<template data-pending="...">` blocks, keyed by PR number, so the page can be
+reviewed early and still shows only what has shipped. `release-blocks.py`
+switches them:
+
+```sh
+website/release-blocks.py list             # what is waiting
+website/release-blocks.py on 786           # PR 786 merged: show its copy
+website/release-blocks.py off 797          # PR 797 waits: delete its copy
+website/release-blocks.py cut 2026.11.2    # at the release
+```
+
+`cut` refuses while any PR block is undecided. It then removes the copy marked
+`<!-- cut:retire -->`, shows the `cut` blocks, writes the version and moves the
+download links. Publish the release, run `website/bake-release.py v<version>`
+for the date and file sizes, and rebuild the manual with
+`python3 docs/manual/build_preview.py --website`.
+
 ## Deploy
 
 ```sh
