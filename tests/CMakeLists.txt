@@ -3132,6 +3132,11 @@ nereus_add_test(tst_panadapter_applet_slice_assoc)
 # A file of its own because these build the whole window more than once per
 # function, and tst_panadapter_stack_layouts is already split for load.
 nereus_add_test(tst_window_layout_restart)
+# Sixteen windows in all: 82 to 100 s on GitHub's Linux runner and past the
+# 120 s limit there (PR 809, run 45056656010), so three entries of the same
+# binary (the limit is not raised; groups in the test's main()).
+nereus_split_test(tst_window_layout_restart ENV NEREUS_WINDOW_LAYOUT_RESTART_GROUP
+    GROUPS panel zoom)
 
 nereus_add_test(tst_panadapter_stack_layouts fakes/LoopbackTransport.cpp)
 # CI load round, 2026-10-26: the whole run took 63 to 73 s on a quiet Linux
@@ -9861,11 +9866,14 @@ nereus_add_test(tst_desktop_station_window)
 # HostingSliceActions::hasTakeBackForTest.
 target_compile_definitions(tst_desktop_station_window PRIVATE NEREUS_BUILD_TESTS)
 # Every case a hosting window of its own: 95 s by itself at load 18 to 28
-# and past the 120 s limit in a loaded run; nine entries of the same binary
-# (the limit is not raised; groups in the test's main()).
+# and past the 120 s limit in a loaded run; ten entries of the same binary
+# (the limit is not raised; groups in the test's main()). The layout entry
+# alone took 53 to 115 s on GitHub's Linux runner and ran past 120 s there
+# (PR 809, run 45056656010), so its wideband flag cases are an entry of
+# their own.
 nereus_split_test(tst_desktop_station_window
-    ENV NEREUS_DESKTOP_STATION_WINDOW_GROUP GROUPS host listen keying layout placed
-        select pending badges)
+    ENV NEREUS_DESKTOP_STATION_WINDOW_GROUP GROUPS host listen keying layout wideband
+        placed select pending badges)
 nereus_add_test(tst_receive_layout_store)
 nereus_add_test(tst_receive_layout_hydration)
 nereus_add_test(tst_receive_layout_runtime)
@@ -10357,6 +10365,13 @@ nereus_add_test(tst_roundtable_desktop_flow
     EXTRA_LABELS session)
 target_compile_definitions(tst_roundtable_desktop_flow PRIVATE NEREUS_BUILD_TESTS
     NEREUS_ROUNDTABLE_CONFORMANCE_DIR="${CMAKE_SOURCE_DIR}/roundtable/conformance/v1")
+# Every case a whole MainWindow (some a Core and a window of it too): 83 to
+# 108 s on GitHub's Linux runner and past the 120 s limit there twice (PR 786
+# run 45063104302, PR 809 run 45056656010), so four entries of the same
+# binary; the two whole flows stay together in the rest (the limit is not
+# raised; groups in the test's main()).
+nereus_split_test(tst_roundtable_desktop_flow ENV NEREUS_ROUNDTABLE_DESKTOP_FLOW_GROUP
+    GROUPS tags inspector hosting)
 # Roundtable plan Task 11: Roundtable on the station link: the
 # stationRoundtableVersion capability and `roundtable` object only for a
 # peer that declared roundtable, the thirteen verbs, the room streams and

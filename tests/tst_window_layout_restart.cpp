@@ -10,7 +10,12 @@
 // Modification history (NereusSDR):
 //   2026-11-05 - Created for the persistence audit. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-11-25 - Run as three ctest entries (TestFunctionGroups), past the
+//                 120 s limit as one on a loaded Linux runner. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
+#include "TestFunctionGroups.h"
+
 #include <QtTest/QtTest>
 
 #include <QApplication>
@@ -373,5 +378,25 @@ private slots:
     }
 };
 
-QTEST_MAIN(TstWindowLayoutRestart)
+int main(int argc, char** argv)
+{
+    QApplication app(argc, argv);
+    app.setAttribute(Qt::AA_Use96Dpi, true);
+    TstWindowLayoutRestart test;
+    QTEST_SET_MAIN_SOURCE_PATH
+    // Sixteen whole MainWindows in all: 82 to 100 s by itself on GitHub's
+    // Linux runner and past ctest's 120 s there once, every case that
+    // finished passing. Two groups run as their own ctest entries,
+    // tst_window_layout_restart_panel (six windows) and _zoom (four)
+    // (tests/CMakeLists.txt); the rest (six) as tst_window_layout_restart.
+    // The limit is not raised.
+    const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
+        test.metaObject(), app.arguments(), "NEREUS_WINDOW_LAYOUT_RESTART_GROUP",
+        {{QStringLiteral("panel"), {QStringLiteral("panelHideComesBackAfterARestart")}},
+         {QStringLiteral("zoom"),
+          {QStringLiteral("zoomSliderFollowsTheActivePan"),
+           QStringLiteral("zoomSliderFollowsATransmitViewSwap"),
+           QStringLiteral("zoomSliderShowsTheSavedSpanAfterARestart")}}});
+    return arguments ? QTest::qExec(&test, *arguments) : 1;
+}
 #include "tst_window_layout_restart.moc"
