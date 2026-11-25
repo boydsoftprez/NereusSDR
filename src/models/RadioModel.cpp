@@ -24,6 +24,8 @@
 //                 name with a control character or over 64 characters, and
 //                 import passes on the manager's own reason for a value.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-25 - The window's profile manager learns each request's command
+//                 id. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-17 - txProfile.import (importTxProfileForStation) and the
 //                 window's import request to the Core. Brian Sutton
 //                 (W4KZO), AI-assisted via xAI Grok.
@@ -8354,6 +8356,8 @@ void RadioModel::mirrorTxProfilesFromStation()
             }
             if (!outcome.sent) {
                 reportStationSliceCommandRejected(outcome.reason);
+            } else {
+                m_micProfileMgr->noteStationRequestSent(outcome.commandId);
             }
             return outcome.sent;
         });

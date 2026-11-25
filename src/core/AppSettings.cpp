@@ -71,6 +71,10 @@
 //                 break, a leading digit), so no key can make the file
 //                 unreadable; the fixed tokens are unchanged. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-25 - decodeXmlKey() reads an element name once, left to right,
+//                 so a key such as "plan c/MicGain" loads as itself;
+//                 keySurvivesFile() says whether a key does. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -357,63 +361,72 @@ static QString encodeXmlKey(const QString& key)
     return out;
 }
 
+// The character a word between two double underscores stands for (the fixed
+// tokens above), or -1.
+static int tokenCharacter(QStringView word)
+{
+    struct Token {
+        const char* word;
+        char character;
+    };
+    static constexpr Token kTokens[] = {
+        {"c", ':'},     {"s", '/'},     {"lb", '['},    {"rb", ']'},
+        {"plus", '+'},  {"sp", ' '},    {"qm", '?'},    {"amp", '&'},
+        {"hash", '#'},  {"lp", '('},    {"rp", ')'},    {"cm", ','},
+        {"at", '@'},    {"excl", '!'},  {"ast", '*'},   {"sq", '\''},
+        {"dq", '"'},    {"eq", '='},    {"sc", ';'},    {"lt", '<'},
+        {"gt", '>'},    {"lc", '{'},    {"rc", '}'},    {"pipe", '|'},
+        {"dlr", '$'},   {"pct", '%'},   {"caret", '^'}, {"tilde", '~'},
+        {"bt", '`'},    {"bs", '\\'},
+    };
+    for (const Token& token : kTokens) {
+        if (word == QLatin1String(token.word)) {
+            return token.character;
+        }
+    }
+    return -1;
+}
+
+// One pass from left to right: a token that has been read is never read
+// again as part of the next one. Replacing the tokens one kind at a time
+// over the whole name read the "__c__" in "plan__sp__c__s__MicGain" (the
+// key "plan c/MicGain") as a colon.
 static QString decodeXmlKey(const QString& tag)
 {
-    QString out = tag;
-    out.replace(QLatin1String("__c__"),     QLatin1String(":"));
-    out.replace(QLatin1String("__s__"),     QLatin1String("/"));
-    out.replace(QLatin1String("__lb__"),    QLatin1String("["));
-    out.replace(QLatin1String("__rb__"),    QLatin1String("]"));
-    out.replace(QLatin1String("__plus__"),  QLatin1String("+"));
-    out.replace(QLatin1String("__sp__"),    QLatin1String(" "));
-    out.replace(QLatin1String("__qm__"),    QLatin1String("?"));
-    out.replace(QLatin1String("__amp__"),   QLatin1String("&"));
-    out.replace(QLatin1String("__hash__"),  QLatin1String("#"));
-    out.replace(QLatin1String("__lp__"),    QLatin1String("("));
-    out.replace(QLatin1String("__rp__"),    QLatin1String(")"));
-    out.replace(QLatin1String("__cm__"),    QLatin1String(","));
-    out.replace(QLatin1String("__at__"),    QLatin1String("@"));
-    out.replace(QLatin1String("__excl__"),  QLatin1String("!"));
-    out.replace(QLatin1String("__ast__"),   QLatin1String("*"));
-    out.replace(QLatin1String("__sq__"),    QLatin1String("'"));
-    out.replace(QLatin1String("__dq__"),    QLatin1String("\""));
-    out.replace(QLatin1String("__eq__"),    QLatin1String("="));
-    out.replace(QLatin1String("__sc__"),    QLatin1String(";"));
-    out.replace(QLatin1String("__lt__"),    QLatin1String("<"));
-    out.replace(QLatin1String("__gt__"),    QLatin1String(">"));
-    out.replace(QLatin1String("__lc__"),    QLatin1String("{"));
-    out.replace(QLatin1String("__rc__"),    QLatin1String("}"));
-    out.replace(QLatin1String("__pipe__"),  QLatin1String("|"));
-    out.replace(QLatin1String("__dlr__"),   QLatin1String("$"));
-    out.replace(QLatin1String("__pct__"),   QLatin1String("%"));
-    out.replace(QLatin1String("__caret__"), QLatin1String("^"));
-    out.replace(QLatin1String("__tilde__"), QLatin1String("~"));
-    out.replace(QLatin1String("__bt__"),    QLatin1String("`"));
-    out.replace(QLatin1String("__bs__"),    QLatin1String("\\"));
-    // The __uXXXX__ escapes (four hex digits, or six past U+FFFF).
-    static const QRegularExpression escaped(
-        QStringLiteral("__u([0-9A-F]{6}|[0-9A-F]{4})__"));
-    if (!out.contains(QLatin1String("__u"))) {
-        return out;
-    }
-    QString decoded;
-    decoded.reserve(out.size());
-    qsizetype from = 0;
-    QRegularExpressionMatchIterator it = escaped.globalMatch(out);
-    while (it.hasNext()) {
-        const QRegularExpressionMatch match = it.next();
-        decoded += QStringView(out).mid(from, match.capturedStart() - from);
-        const char32_t point = match.captured(1).toUInt(nullptr, 16);
-        if (point > 0xFFFF) {
-            decoded += QChar(QChar::highSurrogate(point));
-            decoded += QChar(QChar::lowSurrogate(point));
-        } else {
-            decoded += QChar(static_cast<char16_t>(point));
+    const QLatin1String mark("__");
+    QString out;
+    out.reserve(tag.size());
+    qsizetype i = 0;
+    while (i < tag.size()) {
+        const qsizetype end = QStringView(tag).mid(i, 2) == mark ? tag.indexOf(mark, i + 2) : -1;
+        if (end > i + 2) {
+            const QStringView word = QStringView(tag).mid(i + 2, end - i - 2);
+            const int character = tokenCharacter(word);
+            if (character >= 0) {
+                out += QLatin1Char(static_cast<char>(character));
+                i = end + 2;
+                continue;
+            }
+            // The __uXXXX__ escapes (four hex digits, or six past U+FFFF).
+            static const QRegularExpression escaped(
+                QStringLiteral("\\Au([0-9A-F]{6}|[0-9A-F]{4})\\z"));
+            const QRegularExpressionMatch match = escaped.match(word.toString());
+            if (match.hasMatch()) {
+                const char32_t point = match.capturedView(1).toUInt(nullptr, 16);
+                if (point > 0xFFFF) {
+                    out += QChar(QChar::highSurrogate(point));
+                    out += QChar(QChar::lowSurrogate(point));
+                } else {
+                    out += QChar(static_cast<char16_t>(point));
+                }
+                i = end + 2;
+                continue;
+            }
         }
-        from = match.capturedEnd();
+        out += tag.at(i);
+        ++i;
     }
-    decoded += QStringView(out).mid(from);
-    return decoded;
+    return out;
 }
 
 // One-shot recovery for files written by pre-2026-04-30 builds. Scan the
@@ -1212,6 +1225,11 @@ QByteArray AppSettings::exportLocalXml(QString* error) const
 QString AppSettings::keyFromXmlTag(const QString& tag)
 {
     return decodeXmlKey(tag);
+}
+
+bool AppSettings::keySurvivesFile(const QString& key)
+{
+    return decodeXmlKey(encodeXmlKey(key)) == key;
 }
 
 bool AppSettings::validateLocalXml(const QByteArray& input, QString* error)

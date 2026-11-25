@@ -14,6 +14,10 @@
 //               import's refusal, and that of the save an export waits on,
 //               are shown by the page alone. J.J. Boyd (KG4VCF),
 //               AI-assisted via Claude Code.
+//   2026-11-25: Only while that page is still open: it claims its own
+//               requests by command id, and a refused import no longer
+//               resets the profile combos. J.J. Boyd (KG4VCF), AI-assisted
+//               via Claude Code.
 //   2026-11-17: requestTxProfileImport (txProfile.import, transmitSettings
 //               Version 17). Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 //   2026-11-16: Recording plan Task 22: the dsr.* verbs (rewind sound) are
@@ -2638,9 +2642,9 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
     if (!m_radioModel.isNull()) {
         // Fix wave GUI-I6: nothing of the retired session is on its way.
         m_radioModel->transmitModel().setTunePowerForTxBandWriteInFlight(false);
-        // Nor the save an export waited on.
+        // Nor the requests the TX Profile page waited on.
         if (MicProfileManager* profiles = m_radioModel->micProfileManager()) {
-            profiles->setStationExportSaveWaiting(false);
+            profiles->releaseAllStationRequests();
         }
     }
     m_controlTakeBacks.clear();
@@ -9083,18 +9087,14 @@ void StationClient::handleCommandResult(const SessionMessage& message)
                     : message.reason);
         }
     }
-    // The TX Profile page shows the refusal of an import, and of the save
-    // an export waits on, itself (onStationRequestFinished, below): no
-    // toast, and no word to the receive chooser.
+    // An open TX Profile page shows the refusal of its import, and of the
+    // save its export waits on, itself (onStationRequestFinished, below): no
+    // toast, and no word to the receive chooser. Neither moved a combo, so
+    // the profile combos need no reset.
     MicProfileManager* const pageProfiles =
         m_radioModel.isNull() ? nullptr : m_radioModel->micProfileManager();
-    const bool txProfilePageRequest = pending.verb == "txProfile.import"
-        || (pending.verb == "txProfile.save" && pageProfiles
-            && pageProfiles->stationExportSaveWaiting());
-    if (!message.accepted && pageProfiles && pending.verb == "txProfile.import") {
-        // As below: the combos show the Core's active profile again.
-        pageProfiles->reportStationRequestRefused();
-    }
+    const bool txProfilePageRequest = pending.verb.startsWith("txProfile.") && pageProfiles
+        && pageProfiles->stationRequestClaimed(message.commandId);
     if (!message.accepted && !m_radioModel.isNull() && !ioBoardRequest
         && !filterResponseRequest && !spotRequest && !recordRequest && !radioRequest
         && !supportRequest && !txProfilePageRequest
@@ -9167,8 +9167,8 @@ void StationClient::handleCommandResult(const SessionMessage& message)
                 : pending.verb == "txProfile.save"                     ? Request::Save
                 : pending.verb == "txProfile.delete"                   ? Request::Delete
                                                                        : Request::Select;
-            profiles->reportStationRequestFinished(request, message.accepted,
-                                                   message.reason);
+            profiles->reportStationRequestFinished(request, message.commandId,
+                                                   message.accepted, message.reason);
         }
     }
 

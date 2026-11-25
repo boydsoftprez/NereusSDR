@@ -42,6 +42,9 @@
 //                 saved and keeps the edits, a cancelled file keeps them
 //                 too, and the file name avoids Windows' reserved names.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-25 - An active profile changed while export's file is chosen
+//                 stops the export. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Claude Code.
 
 #include <QtTest/QtTest>
 #include <QApplication>
@@ -792,6 +795,60 @@ private slots:
         QCOMPARE(storedValue(QStringLiteral("Default"), QStringLiteral("MicGain")), before);
         page.exportButton()->click();
         QCOMPARE(asked, 2);
+    }
+
+    // Another program or device selects a profile while the file is being
+    // chosen: neither profile is saved over and no file is written.
+    void exportStopsWhenTheActiveProfileChangesDuringTheDialog()
+    {
+        TransmitModel tx;
+        tx.setMicGainDb(-7);
+        MicProfileManager mgr;
+        mgr.setMacAddress(kMacA);
+        mgr.load();
+        QVERIFY(mgr.saveProfile(QStringLiteral("Desk"), &tx));
+        tx.setMicGainDb(-21);
+        QVERIFY(mgr.saveProfile(QStringLiteral("Mobile"), &tx));
+        QVERIFY(mgr.setActiveProfile(QStringLiteral("Desk"), &tx));
+        RadioModel rm;
+        connectRadio(rm);
+        TxProfileSetupPage page(&rm, &mgr, &tx);
+        page.setUnsavedPromptHook([](const QString&) {
+            return TxProfileSetupPage::UnsavedPromptResult::Yes;
+        });
+        tx.setMicGainDb(-4);
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("Desk.nereus-tx-profile"));
+        page.setExportPathHook([&] {
+            mgr.setActiveProfile(QStringLiteral("Mobile"), &tx);
+            tx.setMicGainDb(-9);
+            return path;
+        });
+        bool ok = true;
+        QString shown;
+        page.setFileResultHook([&](bool success, const QString& text) {
+            ok = success;
+            shown = text;
+        });
+        page.exportButton()->click();
+        QVERIFY(!ok);
+        QCOMPARE(shown, QStringLiteral("The active transmit profile changed while you were "
+                                       "choosing the file. Nothing was saved or exported."));
+        QVERIFY(!QFile::exists(path));
+        QCOMPARE(storedValue(QStringLiteral("Desk"), QStringLiteral("MicGain")), QStringLiteral("-7"));
+        QCOMPARE(storedValue(QStringLiteral("Mobile"), QStringLiteral("MicGain")),
+                 QStringLiteral("-21"));
+        QCOMPARE(tx.micGainDb(), -9);
+        QCOMPARE(mgr.activeProfileName(), QStringLiteral("Mobile"));
+        // The later edit is still unsaved.
+        bool asked = false;
+        page.setUnsavedPromptHook([&asked](const QString&) {
+            asked = true;
+            return TxProfileSetupPage::UnsavedPromptResult::Cancel;
+        });
+        page.exportButton()->click();
+        QVERIFY(asked);
     }
 
     // The file carries no wiring key.

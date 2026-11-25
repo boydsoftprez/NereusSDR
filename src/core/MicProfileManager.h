@@ -83,6 +83,11 @@
 //                 (stationRequestFinished). A name with two underscores in
 //                 a row is refused; setStationExportSaveWaiting. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-25 - A name is refused only when its keys would not come back
+//                 from the settings file. stationRequestFinished carries
+//                 the command id; claimStationRequest replaces
+//                 setStationExportSaveWaiting. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived handler logic
@@ -93,6 +98,7 @@
 #include "core/NereusCoreExport.h"
 #include <QHash>
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QVariant>
@@ -188,10 +194,10 @@ public:
     /// Why `name` (as normalizedProfileName gives it) cannot name a
     /// profile, in plain words, or empty when it can: empty, longer than
     /// kMaxProfileNameLength, or holding a control character (a tab, a
-    /// line break) or a character that is not text, or holding two
-    /// underscores in a row (the settings file reads __plus__ or __u0042__
-    /// in a key back as one character, so such a name would load as
-    /// another one).
+    /// line break) or a character that is not text, or one whose keys
+    /// would not come back from the settings file (it reads __c__ or
+    /// __u0042__ in a key back as one character). "My__Profile" is fine.
+    /// Needs no radio: a remote window knows no radio address.
     static QString profileNameRefusal(const QString& name);
 
     /// The keys that describe how this radio is wired (the mic jack, PTT,
@@ -279,16 +285,24 @@ public:
     void applyStationActiveProfile(const QString& name);
     /// The Core refused a request: the combos show its active profile again.
     void reportStationRequestRefused();
-    /// The Core answered a request (txProfile.*): stationRequestFinished.
-    void reportStationRequestFinished(StationRequest request, bool accepted,
+    /// The Core answered request `commandId` (txProfile.*):
+    /// stationRequestFinished. Ends the claim on it.
+    void reportStationRequestFinished(StationRequest request, quint32 commandId, bool accepted,
                                       const QString& reason);
-    /// A remote window: the TX Profile page waits for the Core's answer to
-    /// the save an export needs, and shows its refusal itself. While set,
-    /// StationClient keeps a refused txProfile.save out of its general
-    /// refusal notices. The Core's answer to a save
-    /// (reportStationRequestFinished) clears it.
-    void setStationExportSaveWaiting(bool waiting);
-    bool stationExportSaveWaiting() const { return m_stationExportSaveWaiting; }
+    /// The requester sent a request under this command id.
+    void noteStationRequestSent(quint32 commandId);
+    /// The command id of the latest request sent.
+    quint32 lastStationRequestId() const { return m_lastStationRequestId; }
+    /// A remote window: the TX Profile page sent request `commandId` and
+    /// shows the Core's answer itself. While it is claimed, StationClient
+    /// keeps its refusal out of the general refusal notices. A page that
+    /// closes releases its claims, so the refusal is shown after all; a
+    /// dropped link releases every claim.
+    void claimStationRequest(quint32 commandId);
+    void releaseStationRequest(quint32 commandId);
+    void releaseAllStationRequests();
+    bool stationRequestClaimed(quint32 commandId) const
+    { return m_claimedStationRequests.contains(commandId); }
 
 signals:
     /// Emitted when the dirty/clean state of the active profile changes.
@@ -310,8 +324,8 @@ signals:
 
     /// A remote window: the Core answered one request, with its reason
     /// when it refused.
-    void stationRequestFinished(MicProfileManager::StationRequest request, bool accepted,
-                                const QString& reason);
+    void stationRequestFinished(MicProfileManager::StationRequest request, quint32 commandId,
+                                bool accepted, const QString& reason);
 
 private:
     /// Read the profile-name manifest from AppSettings.  Empty list means
@@ -356,7 +370,8 @@ private:
     StationRequester m_stationRequester;
     QStringList m_stationNames;
     QString m_stationActive;
-    bool m_stationExportSaveWaiting{false};
+    quint32 m_lastStationRequestId{0};
+    QSet<quint32> m_claimedStationRequests;
 };
 
 } // namespace NereusSDR

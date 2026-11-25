@@ -59,6 +59,8 @@
 //   2026-10-22 - Slice<N>/RfGain documented as -20..120, the AGC-T range
 //                SliceModel::setRfGain now keeps. J.J. Boyd (KG4VCF), with
 //                AI-assisted transformation via Claude Code.
+//   2026-11-25 - keySurvivesFile(). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Claude Code.
 // =================================================================
 
 //=================================================================
@@ -234,6 +236,10 @@ public:
     // writes "audio/DspRate" as <audio__s__DspRate>. The support bundle
     // reads the file directly and checks keys, not element names.
     static QString keyFromXmlTag(const QString& tag);
+    // Whether `key` comes back as itself from the settings file. A key that
+    // already holds the text of an escape (a literal "__c__" or "__u0042__")
+    // does not.
+    static bool keySurvivesFile(const QString& key);
     bool importLocalXml(const QByteArray& xml, QString* error = nullptr);
 
     // Setup > Diagnostics > Import All Settings. Reads the file at `path`,

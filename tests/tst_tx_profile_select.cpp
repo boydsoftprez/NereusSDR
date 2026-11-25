@@ -42,6 +42,15 @@
 //                                    export; the Core refuses a name with
 //                                    two underscores in a row. AI tooling:
 //                                    Claude Code.
+//   2026-11-25  J.J. Boyd / KG4VCF  The page's claims by command id: an
+//                                    ordinary save's answer never completes
+//                                    an export, a second export waits, and
+//                                    a closed page leaves the refusal to
+//                                    the general notice; edits made during
+//                                    the save, or behind a refused import,
+//                                    stay unsaved; an active profile that
+//                                    changed during the file dialog stops
+//                                    the export. AI tooling: Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -217,6 +226,13 @@ private slots:
     void remoteImportRefusalShowsOnThePage();
     void remoteExportSaveRefusalShowsOnThePageAlone();
     void aDroppedLinkForgetsTheWaitingExport();
+    void remoteExportStopsWhenTheActiveProfileChanges();
+    void aSecondExportWaitsForTheFirst();
+    void anOrdinarySavesAnswerDoesNotCompleteAnExport();
+    void editsDuringTheExportsSaveStayUnsaved();
+    void aRefusedImportKeepsTheEditsUnsaved();
+    void aClosedPageLeavesTheRefusalToTheWindow();
+    void doubleUnderscoreProfilesSelectAndDelete();
     void importIsDisabledOnACoreAtVersion16();
     void wrongArgumentsAreNotUnderstood();
     void aRefusedSelectShowsTheCoresProfileAgain();
@@ -654,7 +670,8 @@ void TstTxProfileSelect::saveRefusesABadName()
     result = s.invoke("txProfile.save", {nameArg(QStringLiteral("__u0042__"))});
     QVERIFY(!result.accepted);
     QCOMPARE(result.reason,
-             QStringLiteral("Use a transmit profile name without two underscores in a row."));
+             QStringLiteral("A transmit profile name cannot hold these double underscores. "
+                            "Use single underscores instead."));
     QCOMPARE(s.coreProfiles().profileNames().size(), count);
     // The window does not send one.
     QVERIFY(!s.windowProfiles().saveProfile(QStringLiteral("Tab\tName"), &s.window.transmitModel()));
@@ -872,7 +889,8 @@ void TstTxProfileSelect::remoteExportSaveRefusalShowsOnThePageAlone()
     QCOMPARE(shown, kOnAir);
     QVERIFY(!QFile::exists(path));
     QCOMPARE(chooser.count(), 0);
-    QVERIFY(!s.windowProfiles().stationExportSaveWaiting());
+    QVERIFY(!s.windowProfiles().stationRequestClaimed(
+        s.windowProfiles().lastStationRequestId()));
     // Still unsaved: the next export asks again.
     page.setExportPathHook([] { return QString(); });
     page.exportButton()->click();
@@ -902,17 +920,246 @@ void TstTxProfileSelect::aDroppedLinkForgetsTheWaitingExport()
     int results = 0;
     page.setFileResultHook([&results](bool, const QString&) { ++results; });
     page.exportButton()->click();
-    QVERIFY(s.windowProfiles().stationExportSaveWaiting());
+    const quint32 id = s.windowProfiles().lastStationRequestId();
+    QVERIFY(id != 0);
+    QVERIFY(s.windowProfiles().stationRequestClaimed(id));
     // Before the answer can arrive.
     s.client->disconnectFromStation(QStringLiteral("test"));
-    QVERIFY(!s.windowProfiles().stationExportSaveWaiting());
+    QVERIFY(!s.windowProfiles().stationRequestClaimed(id));
     QVERIFY(s.windowProfiles().isStationMirror());
     // A later save's answer.
     s.windowProfiles().reportStationRequestFinished(MicProfileManager::StationRequest::Save,
-                                                    true, {});
+                                                    id, true, {});
     QTest::qWait(100);
     QCOMPARE(results, 0);
     QVERIFY(!QFile::exists(path));
+}
+
+namespace {
+
+// A remote window's TX Profile page on "Desk" (stored at -13 dB) with the
+// Core's live level since moved to -2, so the page holds unsaved edits.
+struct ExportingPage {
+    explicit ExportingPage(Session& s)
+        : session(s)
+    {
+        TransmitModel& coreTx = s.core->transmitModel();
+        coreTx.setMicGainDb(-21);
+        s.coreProfiles().saveProfile(QStringLiteral("Mobile"), &coreTx);
+        coreTx.setMicGainDb(-13);
+        s.coreProfiles().saveProfile(QStringLiteral("Desk"), &coreTx);
+        s.coreProfiles().setActiveProfile(QStringLiteral("Desk"), &coreTx);
+    }
+    bool open()
+    {
+        if (!session.connect()
+            || !QTest::qWaitFor([this] {
+                   return session.windowProfiles().activeProfileName() == QStringLiteral("Desk");
+               })) {
+            return false;
+        }
+        page = std::make_unique<TxProfileSetupPage>(&session.window, &session.windowProfiles(),
+                                                    &session.window.transmitModel());
+        page->setTransmitSettingsPermittedAt(kTransmitSettingsTxProfileFileVersion, true, {});
+        page->setUnsavedPromptHook([this](const QString&) {
+            ++asked;
+            return answer;
+        });
+        page->setExportPathHook([this] { return path(); });
+        page->setFileResultHook([this](bool success, const QString& text) {
+            ++results;
+            ok = success;
+            shown = text;
+        });
+        session.core->transmitModel().setMicGainDb(-2);
+        return dir.isValid() && QTest::qWaitFor([this] {
+            return session.window.transmitModel().micGainDb() == -2;
+        });
+    }
+    QString path() const { return dir.filePath(QStringLiteral("Desk.nereus-tx-profile")); }
+
+    Session& session;
+    QTemporaryDir dir;
+    std::unique_ptr<TxProfileSetupPage> page;
+    TxProfileSetupPage::UnsavedPromptResult answer{TxProfileSetupPage::UnsavedPromptResult::Yes};
+    int asked{0};
+    int results{0};
+    bool ok{false};
+    QString shown;
+};
+
+}  // namespace
+
+// Another device selects a profile while this window chooses the file.
+void TstTxProfileSelect::remoteExportStopsWhenTheActiveProfileChanges()
+{
+    Session s(m_securityDir.path(), this);
+    ExportingPage e(s);
+    QVERIFY(e.open());
+    e.page->setExportPathHook([&] {
+        s.coreProfiles().setActiveProfile(QStringLiteral("Mobile"), &s.core->transmitModel());
+        [&s] {
+            QTRY_COMPARE(s.windowProfiles().activeProfileName(), QStringLiteral("Mobile"));
+        }();
+        return e.path();
+    });
+    e.page->exportButton()->click();
+    QCOMPARE(e.results, 1);
+    QVERIFY(!e.ok);
+    QCOMPARE(e.shown, QStringLiteral("The active transmit profile changed while you were "
+                                     "choosing the file. Nothing was saved or exported."));
+    // Round trip the link: nothing was sent.
+    QVERIFY(!s.invoke("txProfile.select", {nameArg(QStringLiteral("Nobody"))}).accepted);
+    QVERIFY(!QFile::exists(e.path()));
+    QCOMPARE(storedField(QStringLiteral("Desk"), QStringLiteral("MicGain")), QStringLiteral("-13"));
+    QCOMPARE(storedField(QStringLiteral("Mobile"), QStringLiteral("MicGain")), QStringLiteral("-21"));
+}
+
+void TstTxProfileSelect::aSecondExportWaitsForTheFirst()
+{
+    Session s(m_securityDir.path(), this);
+    ExportingPage e(s);
+    QVERIFY(e.open());
+    e.page->exportButton()->click();
+    QCOMPARE(e.results, 0);
+    const QString other = e.dir.filePath(QStringLiteral("Other.nereus-tx-profile"));
+    e.page->setExportPathHook([other] { return other; });
+    e.page->exportButton()->click();
+    QCOMPARE(e.results, 1);
+    QVERIFY(!e.ok);
+    QCOMPARE(e.shown, QStringLiteral("Another export is still waiting for the Core. "
+                                     "Try again when it has finished."));
+    QCOMPARE(e.asked, 1);
+    QTRY_COMPARE(e.results, 2);
+    QVERIFY2(e.ok, qPrintable(e.shown));
+    QVERIFY(QFile::exists(e.path()));
+    QVERIFY(!QFile::exists(other));
+    // The first is done: another may start.
+    e.page->exportButton()->click();
+    QCOMPARE(e.results, 3);
+    QVERIFY2(e.ok, qPrintable(e.shown));
+    QVERIFY(QFile::exists(other));
+}
+
+void TstTxProfileSelect::anOrdinarySavesAnswerDoesNotCompleteAnExport()
+{
+    Session s(m_securityDir.path(), this);
+    ExportingPage e(s);
+    QVERIFY(e.open());
+    e.page->exportButton()->click();
+    const quint32 exportId = s.windowProfiles().lastStationRequestId();
+    QVERIFY(exportId != 0);
+    // Another save's answer comes first.
+    s.windowProfiles().reportStationRequestFinished(MicProfileManager::StationRequest::Save,
+                                                    exportId + 1000, true, {});
+    QVERIFY(s.windowProfiles().stationRequestClaimed(exportId));
+    QCoreApplication::sendPostedEvents(e.page.get());
+    QCOMPARE(e.results, 0);
+    QVERIFY(!QFile::exists(e.path()));
+    QTRY_COMPARE(e.results, 1);
+    QVERIFY2(e.ok, qPrintable(e.shown));
+    QCOMPARE(readProfileFile(e.path()).keys.value(QStringLiteral("MicGain")), QStringLiteral("-2"));
+}
+
+void TstTxProfileSelect::editsDuringTheExportsSaveStayUnsaved()
+{
+    Session s(m_securityDir.path(), this);
+    ExportingPage e(s);
+    QVERIFY(e.open());
+    e.page->exportButton()->click();
+    QCOMPARE(e.asked, 1);
+    // After the save left, before its answer.
+    s.window.transmitModel().setMicGainDb(-5);
+    QCOMPARE(e.results, 0);
+    QTRY_COMPARE(e.results, 1);
+    QVERIFY2(e.ok, qPrintable(e.shown));
+    QCOMPARE(readProfileFile(e.path()).keys.value(QStringLiteral("MicGain")), QStringLiteral("-2"));
+    // The later edit is still unsaved.
+    e.answer = TxProfileSetupPage::UnsavedPromptResult::Cancel;
+    e.page->exportButton()->click();
+    QCOMPARE(e.asked, 2);
+}
+
+void TstTxProfileSelect::aRefusedImportKeepsTheEditsUnsaved()
+{
+    Session s(m_securityDir.path(), this);
+    ExportingPage e(s);
+    QVERIFY(e.open());
+    const QString file = writeProfileFile(e.dir, QStringLiteral("On Air"),
+        QJsonObject{{QStringLiteral("MicGain"), QStringLiteral("-19")}});
+    e.page->setImportPathHook([file] { return file; });
+    e.answer = TxProfileSetupPage::UnsavedPromptResult::No;
+    s.keyCore();
+    QTRY_VERIFY(s.core->moxController()->isMox());
+    e.page->importButton()->click();
+    QCOMPARE(e.asked, 1);
+    QTRY_COMPARE(e.results, 1);
+    s.unkeyCore();
+    QVERIFY(!e.ok);
+    QCOMPARE(e.shown, kOnAir);
+    // The general refusal path, as for a request the page did not send.
+    s.windowProfiles().reportStationRequestRefused();
+    QCOMPARE(e.page->profileCombo()->currentText(), QStringLiteral("Desk"));
+    e.answer = TxProfileSetupPage::UnsavedPromptResult::Cancel;
+    e.page->exportButton()->click();
+    QCOMPARE(e.asked, 2);
+}
+
+// Setup closes while its page waits: the refusal goes to the window's
+// general notice, once, for an import and for an export's save.
+void TstTxProfileSelect::aClosedPageLeavesTheRefusalToTheWindow()
+{
+    Session s(m_securityDir.path(), this);
+    QSignalSpy notice(&s.window, &RadioModel::sliceAddRejected);
+    ExportingPage e(s);
+    QVERIFY(e.open());
+    const QString file = writeProfileFile(e.dir, QStringLiteral("On Air"),
+        QJsonObject{{QStringLiteral("MicGain"), QStringLiteral("-19")}});
+    e.page->setImportPathHook([file] { return file; });
+    e.answer = TxProfileSetupPage::UnsavedPromptResult::No;
+    s.keyCore();
+    QTRY_VERIFY(s.core->moxController()->isMox());
+    notice.clear();
+    e.page->importButton()->click();
+    const quint32 importId = s.windowProfiles().lastStationRequestId();
+    QVERIFY(s.windowProfiles().stationRequestClaimed(importId));
+    e.answer = TxProfileSetupPage::UnsavedPromptResult::Yes;
+    e.page->exportButton()->click();
+    const quint32 exportId = s.windowProfiles().lastStationRequestId();
+    QVERIFY(exportId != importId);
+    QVERIFY(s.windowProfiles().stationRequestClaimed(exportId));
+    e.page.reset();
+    QVERIFY(!s.windowProfiles().stationRequestClaimed(importId));
+    QVERIFY(!s.windowProfiles().stationRequestClaimed(exportId));
+    QTRY_COMPARE(notice.count(), 2);
+    s.unkeyCore();
+    QCOMPARE(e.results, 0);
+    QVERIFY(!QFile::exists(e.path()));
+}
+
+// Profiles an earlier build named with double underscores: a remote window
+// selects and deletes them, whether the name could be saved now or not.
+void TstTxProfileSelect::doubleUnderscoreProfilesSelectAndDelete()
+{
+    Session s(m_securityDir.path(), this);
+    auto& settings = AppSettings::instance();
+    const QStringList names{QStringLiteral("My__Profile"), QStringLiteral("Rig__c")};
+    const QString manifest = QStringLiteral("hardware/%1/tx/profile/_names").arg(kMac);
+    for (const QString& name : names) {
+        settings.setValue(manifest, settings.value(manifest).toString() + QLatin1Char(',') + name);
+    }
+    // Published again, the added names with them.
+    s.core->scopeTxProfiles(kMac);
+    QVERIFY(s.connect());
+    QTRY_VERIFY(s.windowProfiles().profileNames().contains(names.last()));
+    for (const QString& name : names) {
+        SessionMessage result = s.invoke("txProfile.select", {nameArg(name)});
+        QVERIFY2(result.accepted, qPrintable(result.reason));
+        QCOMPARE(s.coreProfiles().activeProfileName(), name);
+        result = s.invoke("txProfile.delete", {nameArg(name)});
+        QVERIFY2(result.accepted, qPrintable(result.reason));
+        QVERIFY(!s.coreProfiles().profileNames().contains(name));
+    }
 }
 
 void TstTxProfileSelect::importIsDisabledOnACoreAtVersion16()
@@ -1019,6 +1266,8 @@ void TstTxProfileSelect::refusalsArePlainWords()
           QStringLiteral("Use a transmit profile name of 64 characters or fewer."),
           QStringLiteral("Use a transmit profile name without tabs, line breaks or other "
                          "control characters."),
+          QStringLiteral("A transmit profile name cannot hold these double underscores. "
+                         "Use single underscores instead."),
           QStringLiteral("The transmit profile's leveler setting is not on or off."),
           QStringLiteral("The Core has no radio to keep transmit profiles for."),
           QStringLiteral("Update this app to change transmit profiles on this Core."),

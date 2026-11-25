@@ -18,6 +18,10 @@
 //                 a row is refused and one with a single underscore saves
 //                 and reloads. J.J. Boyd (KG4VCF), AI-assisted via Claude
 //                 Code.
+//   2026-11-25 - Only a name whose keys would not come back is refused;
+//                 the names that met an escape save and reload; an old
+//                 profile with double underscores selects and deletes. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -327,9 +331,13 @@ private slots:
         // The settings file reads either back as another name ("B", and
         // "D-104+CPDR").
         const QString underscores =
-            QStringLiteral("Use a transmit profile name without two underscores in a row.");
+            QStringLiteral("A transmit profile name cannot hold these double underscores. "
+                           "Use single underscores instead.");
         QTest::newRow("escaped letter") << QStringLiteral("__u0042__") << underscores;
         QTest::newRow("escaped word") << QStringLiteral("D-104__plus__CPDR") << underscores;
+        // Meets the "/" after it: "Rig__c__s__MicGain" reads "Rig:s__MicGain".
+        QTest::newRow("ends in a short code") << QStringLiteral("Rig__c") << underscores;
+        QTest::newRow("commas made underscores") << QStringLiteral("Rig,,c") << underscores;
     }
 
     // Save and import share the name rule, and so does a file's name.
@@ -367,11 +375,20 @@ private slots:
         }
     }
 
-    // A name with one underscore survives the settings file: saved, written
-    // to disk, read back, and the same profile again.
-    void aNameWithOneUnderscoreSavesAndReloads()
+    void aNameSavesAndReloads_data()
     {
-        const QString name = QStringLiteral("Desk_Night");
+        QTest::addColumn<QString>("name");
+        for (const char* name : {"Desk_Night", "plan c", "c", "Rig s", "A lb B", "Heil plus gate",
+                                 "_c_", "My__Profile", "a__b"}) {
+            QTest::newRow(name) << QString::fromLatin1(name);
+        }
+    }
+
+    // A name survives the settings file: saved, written to disk, read back,
+    // and the same profile again.
+    void aNameSavesAndReloads()
+    {
+        QFETCH(QString, name);
         QVERIFY(MicProfileManager::profileNameRefusal(name).isEmpty());
         {
             MicProfileManager mgr;
@@ -415,6 +432,40 @@ private slots:
         TransmitModel tx;
         QVERIFY(mgr.setActiveProfile(name, &tx));
         QCOMPARE(tx.micGainDb(), -21);
+    }
+
+    // Two commas become two underscores, which most names may hold.
+    void twoCommasAreTaken()
+    {
+        const QString name = MicProfileManager::normalizedProfileName(QStringLiteral("a,,b"));
+        QCOMPARE(name, QStringLiteral("a__b"));
+        QVERIFY(MicProfileManager::profileNameRefusal(name).isEmpty());
+    }
+
+    // A profile an earlier build saved under a name with double
+    // underscores, refused now or not, can still be selected and deleted.
+    void anExistingDoubleUnderscoreProfileSelectsAndDeletes()
+    {
+        MicProfileManager mgr;
+        mgr.setMacAddress(kMac);
+        mgr.load();
+        auto& settings = AppSettings::instance();
+        const QString manifest = QStringLiteral("hardware/%1/tx/profile/_names").arg(kMac);
+        const QStringList names{QStringLiteral("My__Profile"), QStringLiteral("Rig__c")};
+        for (const QString& name : names) {
+            settings.setValue(manifest, settings.value(manifest).toString()
+                                            + QLatin1Char(',') + name);
+            settings.setValue(field(name, QStringLiteral("MicGain")), QStringLiteral("-23"));
+        }
+        for (const QString& name : names) {
+            TransmitModel tx;
+            QVERIFY2(mgr.setActiveProfile(name, &tx), qPrintable(name));
+            QCOMPARE(mgr.activeProfileName(), name);
+            QCOMPARE(tx.micGainDb(), -23);
+            QVERIFY2(mgr.deleteProfile(name), qPrintable(name));
+            QVERIFY(!mgr.profileNames().contains(name));
+            QVERIFY(!settings.contains(field(name, QStringLiteral("MicGain"))));
+        }
     }
 
     void badValuesAreRefusedNamingTheSetting_data()
@@ -508,6 +559,12 @@ private slots:
               QStringLiteral("Use a transmit profile name of 64 characters or fewer."),
               QStringLiteral("Use a transmit profile name without tabs, line breaks or other "
                              "control characters."),
+              QStringLiteral("A transmit profile name cannot hold these double underscores. "
+                             "Use single underscores instead."),
+              QStringLiteral("The active transmit profile changed while you were choosing the "
+                             "file. Nothing was saved or exported."),
+              QStringLiteral("Another export is still waiting for the Core. Try again when it "
+                             "has finished."),
               QStringLiteral("Connect a radio to import a transmit profile."),
               QStringLiteral("The transmit profile was stored but could not be selected."),
               QStringLiteral("The transmit profile's leveler setting is not on or off."),

@@ -68,6 +68,10 @@
 //                 edits marked unsaved until its save is done and forgets
 //                 a waiting answer when the link drops. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-25 - Waiting imports and the waiting export are matched by
+//                 command id and released with the page; edits are counted
+//                 so a save never hides a later one. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived semantics are
@@ -75,8 +79,11 @@
 
 #include "gui/SetupPage.h"
 
+#include <QHash>
+#include <QPointer>
 #include <QString>
 #include <functional>
+#include <optional>
 
 class QComboBox;
 class QLabel;
@@ -109,7 +116,7 @@ public:
                                  MicProfileManager* profileMgr,
                                  TransmitModel* tx,
                                  QWidget* parent = nullptr);
-    ~TxProfileSetupPage() override = default;
+    ~TxProfileSetupPage() override;
 
     // ── Test accessors (always-on) ──────────────────────────────────────────
     QComboBox*   profileCombo() const { return m_combo; }
@@ -229,8 +236,10 @@ private:
     // `path` and says how it went.
     void writeExportFile(const QString& name, const QString& path);
     // A remote window: the Core answered an import or a save for export.
-    void onStationRequestFinished(int request, bool accepted, const QString& reason);
-    // A remote window whose link dropped: no answer will come.
+    void onStationRequestFinished(int request, quint32 commandId, bool accepted,
+                                  const QString& reason);
+    // A remote window whose link dropped, or a page that closes: no answer
+    // will come to this page.
     void clearPendingStationRequests();
     // The import result, with a note when keys this build does not know
     // were left out.
@@ -239,7 +248,7 @@ private:
     QString chooseImportPath();
 
     // ── Wiring ──────────────────────────────────────────────────────────────
-    MicProfileManager* m_profileMgr{nullptr};
+    QPointer<MicProfileManager> m_profileMgr;
     TransmitModel*     m_tx{nullptr};
 
     // ── Widgets ─────────────────────────────────────────────────────────────
@@ -267,13 +276,26 @@ private:
     // user input without needing a real focus event.
     bool m_simulateUserChangeForTest{false};
 
-    // A remote window: the import sent to the Core (name, keys this build
-    // does not know), and the export waiting for the Core's save (name,
-    // path). Empty names when none is waiting.
-    QString m_pendingImportName;
-    int     m_pendingImportUnknownKeys{0};
-    QString m_pendingExportName;
-    QString m_pendingExportPath;
+    // Edits seen so far, and times a profile was loaded over the edits.
+    int m_edits{0};
+    int m_profileLoads{0};
+    // The active profile as the manager last reported it.
+    QString m_knownActiveProfile;
+
+    // A remote window: the imports sent to the Core, by command id, and the
+    // export waiting for the Core's save (m_edits as the save was sent).
+    struct PendingImport {
+        QString name;
+        int     unknownKeys;
+    };
+    struct PendingExport {
+        quint32 commandId;
+        QString name;
+        QString path;
+        int     edits;
+    };
+    QHash<quint32, PendingImport> m_pendingImports;
+    std::optional<PendingExport>  m_pendingExport;
 
     // ── Test hooks ──────────────────────────────────────────────────────────
     SavePromptHook        m_savePromptHook;

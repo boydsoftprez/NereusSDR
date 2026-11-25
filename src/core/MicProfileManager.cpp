@@ -59,6 +59,12 @@
 //                 escapes); the page can take the refusal of the save an
 //                 export waits on (setStationExportSaveWaiting). J.J. Boyd
 //                 (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-25 - A name is refused only when its keys would not come back
+//                 from the settings file (AppSettings::keySurvivesFile). A
+//                 request carries its command id, and the page claims the
+//                 answer to its own (claimStationRequest, in place of
+//                 setStationExportSaveWaiting). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived handler logic
@@ -1001,6 +1007,23 @@ QString MicProfileManager::normalizedProfileName(QString name)
     return name;
 }
 
+namespace {
+
+// Every key of the profile comes back from the settings file as itself. All
+// are checked, as the last characters of the name meet the "/" and the
+// setting after it. A remote window does not know the Core's radio address,
+// and one hexadecimal address reads as another.
+bool profileNameSurvivesFile(const QString& name)
+{
+    const QString anyRadio = QStringLiteral("00:00:00:00:00:00");
+    const QStringList& fields = liveKeyList();
+    return std::all_of(fields.cbegin(), fields.cend(), [&](const QString& field) {
+        return AppSettings::keySurvivesFile(profileFieldKey(anyRadio, name, field));
+    });
+}
+
+} // namespace
+
 QString MicProfileManager::profileNameRefusal(const QString& name)
 {
     if (name.trimmed().isEmpty()) {
@@ -1029,11 +1052,12 @@ QString MicProfileManager::profileNameRefusal(const QString& name)
         }
     }
     // The settings file spells characters a key cannot hold as words
-    // between two underscores (__plus__, __u0042__; AppSettings
+    // between two double underscores (__plus__, __u0042__; AppSettings
     // encodeXmlKey), and reads any such word back as its character. A name
-    // that already holds one would load as another profile's name.
-    if (name.contains(QLatin1String("__"))) {
-        return QStringLiteral("Use a transmit profile name without two underscores in a row.");
+    // whose keys would not come back as themselves would lose its profile.
+    if (!profileNameSurvivesFile(name)) {
+        return QStringLiteral("A transmit profile name cannot hold these double underscores. "
+                              "Use single underscores instead.");
     }
     return {};
 }
@@ -1551,21 +1575,33 @@ void MicProfileManager::reportStationRequestRefused()
     }
 }
 
-void MicProfileManager::setStationExportSaveWaiting(bool waiting)
+void MicProfileManager::noteStationRequestSent(quint32 commandId)
 {
-    m_stationExportSaveWaiting = waiting;
+    m_lastStationRequestId = commandId;
 }
 
-void MicProfileManager::reportStationRequestFinished(StationRequest request, bool accepted,
-                                                     const QString& reason)
+void MicProfileManager::claimStationRequest(quint32 commandId)
 {
-    if (request == StationRequest::Save) {
-        // StationClient has read it for this answer; the next save is the
-        // page's again only if it says so.
-        m_stationExportSaveWaiting = false;
-    }
+    m_claimedStationRequests.insert(commandId);
+}
+
+void MicProfileManager::releaseStationRequest(quint32 commandId)
+{
+    m_claimedStationRequests.remove(commandId);
+}
+
+void MicProfileManager::releaseAllStationRequests()
+{
+    m_claimedStationRequests.clear();
+}
+
+void MicProfileManager::reportStationRequestFinished(StationRequest request, quint32 commandId,
+                                                     bool accepted, const QString& reason)
+{
+    // StationClient has read the claim for this answer.
+    releaseStationRequest(commandId);
     if (isStationMirror()) {
-        emit stationRequestFinished(request, accepted, reason);
+        emit stationRequestFinished(request, commandId, accepted, reason);
     }
 }
 
