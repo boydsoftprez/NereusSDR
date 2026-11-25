@@ -6,6 +6,8 @@
 # the OpenSSL DLLs by pattern, since MSYS2 moved from OpenSSL 3 to 4.
 # 2026-11-16 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
 # libmpg123-0.dll added, which MSYS2's libmp3lame-0.dll imports.
+# 2026-11-25 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code: keep
+# each test's pass and fail lines in the log.
 # Git Bash adds Git's UCRT C++ runtime ahead of Qt's MinGW runtime. Keep
 # test dependencies explicit instead of inheriting unrelated runner DLLs.
 [CmdletBinding()]
@@ -61,6 +63,10 @@ $manifest = foreach ($group in $groups) {
 }
 if (@($manifest).Count -ne 18) { throw 'Expected exactly eighteen controlled runtime DLLs' }
 $env:PATH = "$runtime;$env:PATH"
+# Without this, Qt Test on Windows sends its PASS and FAIL lines to a debugger
+# instead of stdout, so a failing test's log never says which check failed
+# (tst_station_handover, run 45659204369).
+$env:QT_FORCE_STDERR_LOGGING = '1'
 [ordered]@{ path=$env:PATH; providers=@($manifest) } | ConvertTo-Json -Depth 5 |
     Tee-Object -FilePath (Join-Path $build 'windows-audio-runtime-manifest.json')
 $selection = '^(tst_wasapi_notifier_lifetime(_native)?|tst_wasapi_policy|tst_audio_device_catalog|tst_station_foreign_lock|tst_station_handover)$'
