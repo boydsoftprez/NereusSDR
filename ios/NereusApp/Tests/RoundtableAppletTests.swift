@@ -303,7 +303,7 @@ struct RoundtableAppletTests {
         var decided = false
         let sheet = RoundtableSheet(roundtable: model.roundtable, transmit: model.main.transmit,
                                     slices: model.main.slices,
-                                    detent: Binding(get: { detent }, set: { detent = $0 }),
+                                    detent: Binding(get: { detent }, set: { detent = $0 }), bandHeight: fullHeight,
                                     dialOn: false, linkUp: true, fullHeight: fullHeight,
                                     stationCallsign: "", stationGrid: "", firstRunNoteSeen: .constant(true),
                                     close: {}, back: {}, compactDecided: { decided = true })

@@ -28,6 +28,12 @@
 // 2026-11-03: Overlay redesign card, placement and tags (design D10, D11, D13 to D15,
 // D17 to D20), per-item widths as the desktop's layoutRoundtableTags.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-18: A tag, a +N or the card the Roundtable sheet's top edge would cut is
+// hidden whole, with its tick, until the edge leaves it (RoundtablePanelEdge).
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-18: The card keeps its place while data changes: under or beside is chosen
+// for a full card, and "No readings" and "+N more" each take a reading row's height.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import SwiftUI
 import UIKit
@@ -166,8 +172,12 @@ struct RoundtableCardPlan: Equatable {
     static let captionHeight: CGFloat = 14
     /// A 12 point line, 1 point and the meter.
     static let rowHeight: CGFloat = 16
-    /// A line and 1 point of padding.
-    static let footHeight: CGFloat = 12
+    /// "+N more" takes a reading row's height, so the reading that pushes a row
+    /// out for it leaves the card the same height.
+    static let footHeight: CGFloat = rowHeight
+    /// "No readings" takes a reading row's height, so the first reading leaves the
+    /// card the same height.
+    static let emptyLineHeight: CGFloat = rowHeight
 
     /// How tall the card draws. Every piece is one line of a fixed height.
     var height: CGFloat {
@@ -192,7 +202,7 @@ struct RoundtableCardPlan: Equatable {
         if hasNote { add(Self.noteLine) }
         if hasCaption { add(Self.captionHeight) }
         if rows > 0 { add(CGFloat(rows) * Self.rowHeight + CGFloat(rows - 1) * Self.gap) }
-        if hasEmptyLine { add(Self.noteLine) }
+        if hasEmptyLine { add(Self.emptyLineHeight) }
         if moreRows > 0 && showsMoreRows { add(Self.footHeight) }
         return 2 * Self.border + Self.rail + 2 * Self.padVertical + sum + CGFloat(pieces - 1) * Self.gap
     }
@@ -1308,9 +1318,12 @@ enum RoundtableTagLayout {
         let top = cardTopGap
         guard right - left > 0, foot > top else { return nil }
 
+        // The place is chosen for a full card, not this one: readings arriving and
+        // going, a new talker or a double never move it to the other place.
+        let probe = placeProbe(hz: card.hz)
         let flagFoot = flags.map(\.maxY).max() ?? top
         let underRoom = foot - max(flagFoot + cardEdgeGap, top)
-        let underRows = rowsThatFit(card, width: full, room: underRoom)
+        let underRows = rowsThatFit(probe, width: full, room: underRoom)
 
         // The strip beside the flags: under each thing it could start below (a
         // flag's round buttons end above the flag does), the place that shows the
@@ -1333,7 +1346,7 @@ enum RoundtableTagLayout {
                     : dialX > stretch.upperBound ? dialX - stretch.upperBound : 0
                 let width = min(full, wide)
                 let next = Strip(stretch: stretch, width: width, room: foot - from,
-                                 rows: rowsThatFit(card, width: width, room: foot - from), distance: distance)
+                                 rows: rowsThatFit(probe, width: width, room: foot - from), distance: distance)
                 guard let best = strip else {
                     strip = next
                     continue
@@ -1388,6 +1401,15 @@ enum RoundtableTagLayout {
         // No place shows every lesser line: the one that keeps the most.
         let inFull = cardPlan(card, width: full, room: underRoom, format: format).flatMap(under)
         return [beside(), inFull].compactMap { $0 }.max { $0.rect.height < $1.rect.height }
+    }
+
+    /// What a place is judged by: a talker's card with every reading row it can
+    /// show. Only the pan's geometry (flags, keep-outs, dial, foot, width) then
+    /// decides under or beside, and the strip's width.
+    static func placeProbe(hz: Int64) -> RoundtableCardData {
+        let row = RoundtableCardData.Row(call: "", dbm: meterFloorDbm, age: 0, km: nil, bearing: nil, offsetHz: 0,
+                                         you: false, old: false, peak: nil)
+        return RoundtableCardData(kind: .talking, hz: hz, rows: Array(repeating: row, count: cardRowCap))
     }
 
     /// The card's rect (`.null` when it fits nowhere), its rows, the readings it
@@ -1615,6 +1637,9 @@ struct RoundtableTagLayer: View {
     var panKeepOut: [CGRect] = []
     /// The pan's width less the dBm scale; nil is all of `geometryWidth`.
     var usableWidth: CGFloat? = nil
+    /// The open Roundtable sheet's top edge in this layer's points: a tag, a
+    /// +N or the card it would cut is hidden whole, with its tick. Nil: no sheet.
+    var panelEdge: RoundtablePanelEdge? = nil
     /// Where other slices' full flags stand, each saying what is on its own frequency.
     var otherFlagHz: Set<Int64> = []
     /// iPhone (D17) or iPad (D18); nil goes by the width class and the device.
@@ -1686,13 +1711,21 @@ struct RoundtableTagLayer: View {
                 tags: tags, card: card, cardRoom: activeContext?.id, format: roundtable.signalFormat,
                 spokenHz: roundtable.frequencyAvailable ? otherFlagHz : [], foot: foot, panWidth: usableWidth ?? geometryWidth, hzPerPoint: hzPerPoint,
                 lowHz: lowHz, flags: flagRects, keepOut: panKeepOut, compact: isCompact)
-            let placements = arrangement.placements
             let byId = Dictionary(arrangement.shown.map { ($0.roomId, $0) }, uniquingKeysWith: { first, _ in first })
+            // What the Roundtable sheet's top edge would cut is hidden whole, its
+            // tick too; nothing else moves (RoundtablePanelEdge).
+            let edge = panelEdge
+            let placements = arrangement.placements.filter { placement in
+                !RoundtablePanelEdge.hides(tagRect(placement, byId: byId), under: edge)
+            }
+            let placedCard: RoundtablePlacedCard? = arrangement.card.flatMap { placed in
+                RoundtablePanelEdge.hides(placed.rect, under: edge) ? nil : placed
+            }
             let stale = display == .stale
             let dimmed = display == .dimmed
             ZStack(alignment: .topLeading) {
                 ticks(placements, byId: byId, stale: stale, dimmed: dimmed)
-                if let card, let placed = arrangement.card {
+                if let card, let placed = placedCard {
                     cardTick(card, placed: placed, dimmed: dimmed)
                     cardButton(card, placed: placed, tag: tags.first { $0.roomId == activeContext?.id },
                                dimmed: dimmed)
@@ -1819,6 +1852,12 @@ struct RoundtableTagLayer: View {
             return RoundtableTagLayout.height
         }
         return RoundtableTagLayout.tagHeight(tag)
+    }
+
+    /// Where a tag or a +N stands on the pan, as the layer offsets it: its foot on the row's.
+    private func tagRect(_ placement: RoundtableTagPlacement, byId: [String: RoundtableTag]) -> CGRect {
+        let height = placedHeight(placement, byId: byId)
+        return CGRect(x: CGFloat(placement.left), y: foot - height, width: CGFloat(placement.width), height: height)
     }
 
     @ViewBuilder
@@ -2162,7 +2201,9 @@ struct RoundtableCardView: View {
                     }
                 }
                 if plan.hasEmptyLine {
+                    // Where the first reading's line will stand, in a row's height.
                     noteText(card.note?.hasPrefix("Double ended") == true ? "Waiting for readings" : "No readings")
+                        .frame(height: RoundtableCardPlan.emptyLineHeight, alignment: .topLeading)
                 }
                 if plan.moreRows > 0 && plan.showsMoreRows {
                     Text("+\(plan.moreRows) more \u{203A}")

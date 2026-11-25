@@ -16,6 +16,12 @@
 // 2026-11-05: These run upright on an iPad, where the flag line opens the
 // sheet; on its side it scrolls the column instead. J.J. Boyd (KG4VCF),
 // AI-assisted via Anthropic Claude Code.
+// 2026-11-18: Your own frequency has no Tune and no note. J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code.
+// 2026-11-18: The sheet stays where its handle is let go, down to its smallest height,
+// and a long drag down closes it. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-18: SAVE, a tag, the card and the flag the sheet's top edge would cut are hidden whole,
+// and back at the smallest height. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import XCTest
 
@@ -68,9 +74,9 @@ final class RoundtableUITests: XCTestCase {
         XCTAssertTrue(line.waitForExistence(timeout: 30))
         let before = flag.label
         let sheet = try openSheet(app)
-        XCTAssertTrue(app.descendants(matching: .any)["roundtableViewTuneReason"].waitForExistence(timeout: 10))
-        XCTAssertFalse(app.descendants(matching: .any)["roundtableViewTune"].isEnabled)
-        XCTAssertTrue(app.descendants(matching: .any)["roundtableBox"].exists, "your own keeps its box")
+        XCTAssertTrue(app.descendants(matching: .any)["roundtableBox"].waitForExistence(timeout: 10), "your own keeps its box")
+        XCTAssertFalse(app.descendants(matching: .any)["roundtableViewTune"].exists, "your own has no Tune")
+        XCTAssertFalse(app.descendants(matching: .any)["roundtableViewTuneReason"].exists, "your own has no Tune note")
         try save("roundtable-ui-one-sheet-own")
         line.tap()
         XCTAssertTrue(sheet.waitForNonExistence(timeout: 10), "the same line did not close the sheet")
@@ -108,8 +114,8 @@ final class RoundtableUITests: XCTestCase {
         try save("roundtable-ui-more")
         XCTAssertTrue(app.buttons["Cancel"].exists)
         XCTAssertFalse(app.buttons["Read reports"].exists)
-        // The sheet's own Tune is the only one: the menu has none.
-        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Tune slice'")).count, 1)
+        // Your own frequency has no Tune, and the menu adds none.
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Tune slice'")).count, 0)
         app.buttons["Cancel"].tap()
         XCTAssertTrue(signal.waitForNonExistence(timeout: 10))
     }
@@ -289,7 +295,148 @@ final class RoundtableUITests: XCTestCase {
         XCTAssertTrue(question.exists, "the question closed with no Core to take the answer")
     }
 
+    /// The handle's drag: the sheet stays where it is let go, between its smallest
+    /// height and full. A tap goes to full and back to that height, the sheet opens
+    /// there again, and a drag let go well below its smallest height closes it.
+    @MainActor
+    func testTheSheetStaysWhereTheHandleIsLetGo() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "An iPad shows the applet or the panel")
+        let app = launch(frequency: true)
+        var sheet = try openSheet(app)
+        let handle = app.buttons["roundtableHandle"]
+        XCTAssertTrue(handle.waitForExistence(timeout: 10))
+        let half = sheet.frame.minY
+        // Up 120 points: it stays there, neither half nor full.
+        drag(handle, by: -120)
+        waitUntil("the sheet did not stay where the handle was let go") { abs(sheet.frame.minY - (half - 120)) < 6 }
+        Thread.sleep(forTimeInterval: 0.5)
+        let middle = sheet.frame.minY
+        try save("roundtable-ui-free-height-middle")
+        // A tap goes to full, and the next back to the dragged height.
+        handle.tap()
+        waitUntil("the tap did not make the sheet full height") { sheet.frame.minY < middle - 100 }
+        handle.tap()
+        waitUntil("the tap did not bring back the dragged height") { abs(sheet.frame.minY - middle) < 2 }
+        // Closed and opened again, it opens at the dragged height.
+        app.buttons["roundtableClose"].tap()
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10))
+        sheet = try openSheet(app)
+        waitUntil("the sheet did not open at the dragged height") { abs(sheet.frame.minY - middle) < 2 }
+        // Down in short drags until it stops: its smallest height, still open.
+        var top = sheet.frame.minY
+        for _ in 0..<20 {
+            drag(handle, by: 40)
+            Thread.sleep(forTimeInterval: 0.5)
+            if abs(sheet.frame.minY - top) < 1 {
+                break
+            }
+            top = sheet.frame.minY
+        }
+        XCTAssertTrue(sheet.exists, "short drags closed the sheet")
+        let person = app.descendants(matching: .any)["roundtableViewPerson"].firstMatch
+        let box = app.descendants(matching: .any)["roundtableBox"]
+        XCTAssertTrue(person.exists && box.exists)
+        XCTAssertLessThanOrEqual(person.frame.maxY, box.frame.minY, "the first station row is under the box")
+        XCTAssertGreaterThan(person.frame.minY, sheet.frame.minY, "the first station row is above the sheet")
+        print("Roundtable sheet smallest height: \(sheet.frame.height) points, top \(sheet.frame.minY)")
+        try save("roundtable-ui-free-height-smallest")
+        // Closed and opened again at its smallest height, it still shows that station row.
+        let smallest = sheet.frame.minY
+        app.buttons["roundtableClose"].tap()
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10))
+        sheet = try openSheet(app)
+        waitUntil("the sheet did not open again at its smallest height") { abs(sheet.frame.minY - smallest) < 2 }
+        waitUntil("the reopened sheet hides its first station row") {
+            person.exists && person.frame.maxY <= box.frame.minY && person.frame.minY > sheet.frame.minY
+        }
+        // A drag let go well below the smallest height closes the sheet.
+        drag(handle, by: 200)
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10), "a long drag down did not close the sheet")
+        XCTAssertEqual(holdLog(app), "none")
+    }
+
+    /// What the sheet's top edge would cut on the band (SAVE, a tag, the talker card, the flag)
+    /// is hidden whole while the edge runs through it, and is back at the smallest height.
+    @MainActor
+    func testWhatTheSheetEdgeWouldCutIsHiddenWhole() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "An iPad shows the applet or the panel")
+        let app = launch(frequency: true)
+        // The card on your own frequency carries its room's tag identifier.
+        let card = app.descendants(matching: .any)["roundtableTag.\(Self.ownRoom)"]
+        let tag = app.descendants(matching: .any)["roundtableTag.lsb-7225000"]
+        let saveButton = app.descendants(matching: .any)["dsr.save"]
+        XCTAssertTrue(card.waitForExistence(timeout: 30))
+        XCTAssertTrue(tag.waitForExistence(timeout: 10))
+        XCTAssertTrue(saveButton.waitForExistence(timeout: 10))
+        // Where they stand on the band, before the sheet opens.
+        let cardFrame = card.frame
+        let tagFrame = tag.frame
+        let saveFrame = saveButton.frame
+        let flag = app.descendants(matching: .any)["flagA"]
+        XCTAssertTrue(flag.exists)
+        let flagFrame = flag.frame
+        let sheet = try openSheet(app)
+        let handle = app.buttons["roundtableHandle"]
+        XCTAssertTrue(handle.waitForExistence(timeout: 10))
+        // The edge through SAVE: SAVE is hidden.
+        moveEdge(of: sheet, handle: handle, to: saveFrame.midY)
+        waitUntil("SAVE cut by the sheet's edge is still on the band") { !saveButton.exists }
+        try save("roundtable-ui-edge-save")
+        // Through the tag row: the tag is hidden.
+        moveEdge(of: sheet, handle: handle, to: tagFrame.midY)
+        waitUntil("a tag cut by the sheet's edge is still on the band") { !tag.exists }
+        try save("roundtable-ui-edge-tags")
+        // Through the card's middle: the card is hidden, and the flag stays.
+        moveEdge(of: sheet, handle: handle, to: cardFrame.midY)
+        waitUntil("the card cut by the sheet's edge is still on the band") { !card.exists }
+        XCTAssertTrue(flag.exists)
+        try save("roundtable-ui-edge-card")
+        // Through the flag: the flag and its round buttons are hidden.
+        moveEdge(of: sheet, handle: handle, to: flagFrame.midY)
+        waitUntil("the flag cut by the sheet's edge is still on the band") { !flag.exists }
+        try save("roundtable-ui-edge-flag")
+        // Down in short drags to the smallest height: all three are whole again.
+        var top = sheet.frame.minY
+        for _ in 0..<20 {
+            drag(handle, by: 40)
+            Thread.sleep(forTimeInterval: 0.5)
+            if abs(sheet.frame.minY - top) < 1 {
+                break
+            }
+            top = sheet.frame.minY
+        }
+        XCTAssertTrue(sheet.exists, "short drags closed the sheet")
+        waitUntil("the card did not come back at the smallest height") { card.exists }
+        waitUntil("the tag did not come back at the smallest height") { tag.exists }
+        waitUntil("SAVE did not come back at the smallest height") { saveButton.exists }
+        waitUntil("the flag did not come back at the smallest height") { flag.exists }
+        XCTAssertLessThanOrEqual(card.frame.maxY, sheet.frame.minY, "the card is above the sheet")
+        try save("roundtable-ui-edge-smallest")
+        XCTAssertEqual(holdLog(app), "none")
+    }
+
     // MARK: Helpers
+
+    /// The sheet's top moved to `y` on the screen by a drag on its handle; a
+    /// move too short for the drag to start goes up first and comes back.
+    @MainActor
+    private func moveEdge(of sheet: XCUIElement, handle: XCUIElement, to y: CGFloat) {
+        if abs(y - sheet.frame.minY) < 20 {
+            drag(handle, by: -60)
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        drag(handle, by: y - sheet.frame.minY)
+        waitUntil("the sheet's top did not reach \(y)") { abs(sheet.frame.minY - y) < 6 }
+        Thread.sleep(forTimeInterval: 0.5)
+    }
+
+    /// A slow drag of `dy` points from the middle of `element`, held at its end.
+    @MainActor
+    private func drag(_ element: XCUIElement, by dy: CGFloat) {
+        let start = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: dy)),
+                    withVelocity: 300, thenHoldForDuration: 0.1)
+    }
 
     @MainActor
     private func openSheet(_ app: XCUIApplication, dismissNote: Bool = true) throws -> XCUIElement {

@@ -12,6 +12,29 @@
   tag and the details open over the waterfall, or upward over the spectrum when
   the waterfall is too short.
 
+### iPhone and iPad app
+
+These reach phones and iPads with the app's next build, not with this download.
+
+- **More room in the Roundtable panel on your own frequency.** The grayed
+  **Tune slice A here** button and its **Slice A is already here** note are
+  gone when the slice is already on that frequency, so the list and messages
+  reach down to the message box. Looking at another frequency still shows
+  **Tune slice A here** as before.
+- **The iPhone's Roundtable panel stays where you let go of its grab bar.**
+  Drag the bar to any height, from just one station showing up to full, to
+  see more of the spectrum when only one or two people are on the frequency.
+  A drag well below the smallest height closes the panel. A tap on the bar
+  goes between full and your height, and the panel opens at your height again
+  until the app is closed. A receiver flag, a Roundtable tag, the talker card,
+  LIVE, SAVE or the dBm arrows that the panel's top edge would cut in half are
+  hidden until the edge moves off them. While hidden they take no touch: a
+  drag that starts where a hidden flag stood moves the band there.
+- **The Roundtable talker card on the band stays put on a busy frequency.** It
+  no longer jumps between under the receiver flag and beside it as reports come
+  and go, and it keeps its height when the first report arrives and when a new
+  one turns the last row into **+N more**.
+
 ## [2026.11.1] - 2026-11-08
 
 Changes since desktop/Core 2026.11.0. Update the Core and desktop together.

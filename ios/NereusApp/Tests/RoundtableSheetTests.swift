@@ -28,6 +28,13 @@
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-11-03: Pins follow the overlay redesign truth rules and wording (design D2, D3, D5, D6, D8).
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-18: The sheet's height where the handle is let go: its smallest, the close
+// drag, the tap, the session's memory and the earlier turns at full only.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-18: What the sheet's top edge would cut is hidden whole (RoundtablePanelEdge).
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-18: A hidden flag takes no drag. J.J. Boyd (KG4VCF), AI-assisted via
+// Anthropic Claude Code.
 
 import Foundation
 import NereusBand
@@ -459,6 +466,237 @@ struct RoundtableSheetTests {
         #expect(MainScreen.keepsStrip(.waterfallKnob) && MainScreen.keepsStrip(.thumbwheel))
         #expect(!MainScreen.keepsStrip(.off) && !MainScreen.keepsStrip(.sheetKnob))
         #expect(PttButton.holdDiameter < PttButton.diameter && PttButton.holdClearance == 24)
+    }
+
+    @Test("the smallest height adds the room's top, its first station row, the Tune bar and the box")
+    func sheetSmallest() {
+        #expect(RoundtableSheet.smallest(roomTop: 62, firstStationBottom: 52.4, tuneBar: 0, composer: 75) == 190)
+        #expect(RoundtableSheet.smallest(roomTop: 62, firstStationBottom: 52, tuneBar: 49, composer: 75) == 238)
+    }
+
+    @Test("a drag holds the top between full and the smallest height, and the place never goes under it")
+    func sheetDragClamps() {
+        // A 600-point band, its smallest height 200: the top goes no lower than 400.
+        #expect(RoundtableSheet.dragTop(startTop: 288, translation: -1000, fullHeight: 600, smallest: 200) == 0)
+        #expect(RoundtableSheet.dragTop(startTop: 288, translation: 1000, fullHeight: 600, smallest: 200) == 400)
+        #expect(RoundtableSheet.dragTop(startTop: 288, translation: -88, fullHeight: 600, smallest: 200) == 200)
+        // A height lower than the smallest (one made before the Tune bar came) sits at the smallest.
+        let low = MainScreen.roundtablePlace(bandHeight: 600, detent: .init(top: 0.95), gaugesFoot: nil,
+                                             dialStrip: false, smallest: 200)
+        #expect(low.top == 400 && low.height == 200)
+        // With the dial strip, the smallest height stands on the strip.
+        let strip = MainScreen.roundtablePlace(bandHeight: 600, detent: .init(top: 0.95), gaugesFoot: nil,
+                                               dialStrip: true, smallest: 200)
+        #expect(strip.top == 600 - 92 - 200 && strip.height == 200)
+        // Full and half are as they were.
+        #expect(MainScreen.roundtablePlace(bandHeight: 600, detent: .full, gaugesFoot: nil, dialStrip: false,
+                                           smallest: 200).top == 0)
+        #expect(MainScreen.roundtablePlace(bandHeight: 600, detent: .half, gaugesFoot: nil, dialStrip: false,
+                                           smallest: 200).top == 288)
+    }
+
+    @Test("let go, the sheet stays where it is; let go over 60 points below its smallest height, it closes")
+    func sheetDragEnds() {
+        let stay = RoundtableSheet.dragEnded(startTop: 288, translation: -100, bandHeight: 600, fullHeight: 600,
+                                             smallest: 200)
+        #expect(stay == .stay(.at(top: 188, bandHeight: 600)))
+        #expect(MainScreen.roundtablePlace(bandHeight: 600, detent: .at(top: 188, bandHeight: 600), gaugesFoot: nil,
+                                           dialStrip: false, smallest: 200).top == 188)
+        // Past full it stays at full.
+        #expect(RoundtableSheet.dragEnded(startTop: 288, translation: -400, bandHeight: 600, fullHeight: 600,
+                                          smallest: 200) == .stay(.full))
+        // Under the smallest height by up to 60 points it settles at the smallest...
+        #expect(RoundtableSheet.dragEnded(startTop: 288, translation: 172, bandHeight: 600, fullHeight: 600,
+                                          smallest: 200) == .stay(.at(top: 400, bandHeight: 600)))
+        // ...and by more, it closes.
+        #expect(RoundtableSheet.closeBeyondSmallest == 60)
+        #expect(RoundtableSheet.dragEnded(startTop: 288, translation: 173, bandHeight: 600, fullHeight: 600,
+                                          smallest: 200) == .close)
+    }
+
+    @Test("a tap goes to full and back to the dragged height; never dragged, or dragged near full, back to half")
+    func sheetToggle() {
+        let dragged = RoundtableSheet.Detent.at(top: 150, bandHeight: 600)
+        #expect(RoundtableSheet.toggled(dragged, lastDragged: dragged, bandHeight: 600) == .full)
+        #expect(RoundtableSheet.toggled(.full, lastDragged: dragged, bandHeight: 600) == dragged)
+        // Never dragged: half and full, as before.
+        #expect(RoundtableSheet.toggled(.half, lastDragged: nil, bandHeight: 600) == .full)
+        #expect(RoundtableSheet.toggled(.full, lastDragged: nil, bandHeight: 600) == .half)
+        // Dragged to full, or within a few points of it: back to half.
+        let nearFull = RoundtableSheet.Detent.at(top: 5, bandHeight: 600)
+        #expect(RoundtableSheet.toggled(.full, lastDragged: nearFull, bandHeight: 600) == .half)
+        #expect(RoundtableSheet.toggled(.full, lastDragged: .full, bandHeight: 600) == .half)
+        // Near full counts as full: the tap goes back down.
+        #expect(RoundtableSheet.toggled(nearFull, lastDragged: nearFull, bandHeight: 600) == .half)
+    }
+
+    @Test("the sheet opens at the height last dragged to while the app runs, else half, and saves nothing")
+    func sheetSessionMemory() throws {
+        #expect(RoundtableSheet.opening(lastDragged: nil) == .half)
+        let dragged = RoundtableSheet.Detent.at(top: 150, bandHeight: 600)
+        #expect(RoundtableSheet.opening(lastDragged: dragged) == dragged)
+        // Kept on the app, which a fresh launch makes anew: nothing in the settings.
+        let suite = "roundtable-sheet-memory-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(phoneSettings: PhoneSettings(defaults: defaults))
+        #expect(model.roundtableSheetDragged == nil)
+        let before = Set(defaults.dictionaryRepresentation().keys)
+        model.roundtableSheetDragged = dragged
+        // Closed and opened again, the same height.
+        #expect(RoundtableSheet.opening(lastDragged: model.roundtableSheetDragged) == dragged)
+        #expect(Set(defaults.dictionaryRepresentation().keys) == before)
+        // A new app (a fresh launch) opens at half.
+        #expect(RoundtableSheet.opening(lastDragged: AppModel(phoneSettings: PhoneSettings(defaults: defaults))
+            .roundtableSheetDragged) == .half)
+    }
+
+    @Test("the earlier turns show at full height only, on your own frequency")
+    func sheetEarlierAtFull() {
+        #expect(RoundtableSheet.showsEarlier(.full, bandHeight: 600, viewing: false))
+        #expect(RoundtableSheet.showsEarlier(.at(top: 5, bandHeight: 600), bandHeight: 600, viewing: false))
+        #expect(!RoundtableSheet.showsEarlier(.at(top: 20, bandHeight: 600), bandHeight: 600, viewing: false))
+        #expect(!RoundtableSheet.showsEarlier(.half, bandHeight: 600, viewing: false))
+        #expect(!RoundtableSheet.showsEarlier(.full, bandHeight: 600, viewing: true))
+    }
+
+    // MARK: What the sheet's top edge would cut
+
+    @Test("the sheet's top edge through a thing on the band hides it whole; clear of it, over it or at its edge, it stays")
+    func panelEdgeCuts() {
+        let tag = CGRect(x: 100, y: 300, width: 80, height: 22)
+        // Not touched: the sheet's top is below it.
+        #expect(!RoundtablePanelEdge(top: 400).cuts(tag))
+        // Partly covered: hidden.
+        #expect(RoundtablePanelEdge(top: 311).cuts(tag))
+        #expect(RoundtablePanelEdge(top: 301.5).cuts(tag))
+        #expect(RoundtablePanelEdge(top: 320.5).cuts(tag))
+        // Fully under the sheet: covered by it, as before, not hidden.
+        #expect(!RoundtablePanelEdge(top: 250).cuts(tag))
+        #expect(!RoundtablePanelEdge(top: 0).cuts(tag))
+        // At its edge, or reaching 1 point or less into it: it stays.
+        #expect(RoundtablePanelEdge.tolerance == 1)
+        #expect(!RoundtablePanelEdge(top: 322).cuts(tag))
+        #expect(!RoundtablePanelEdge(top: 321).cuts(tag))
+        #expect(!RoundtablePanelEdge(top: 300).cuts(tag))
+        #expect(!RoundtablePanelEdge(top: 301).cuts(tag))
+        // On its side the sheet is a column: a thing beside it is not cut.
+        #expect(!RoundtablePanelEdge(top: 311, minX: 200, maxX: 700).cuts(tag))
+        #expect(RoundtablePanelEdge(top: 311, minX: 150, maxX: 700).cuts(tag))
+        // No sheet hides nothing.
+        #expect(!RoundtablePanelEdge.hides(tag, under: nil))
+        #expect(RoundtablePanelEdge.hides(tag, under: RoundtablePanelEdge(top: 311)))
+    }
+
+    @Test("the edge runs across the band upright and across the sheet's column on its side")
+    func panelEdgeWidth() {
+        #expect(RoundtableSheet.edge(top: 200, bandWidth: 390, sideways: false, leadingInset: 0, trailingInset: 0,
+                                     sidewaysWidth: MainScreen.roundtableSidewaysWidth)
+                == RoundtablePanelEdge(top: 200, minX: 0, maxX: 390))
+        // On its side: at most 546 wide against the right inset...
+        #expect(RoundtableSheet.edge(top: 0, bandWidth: 844, sideways: true, leadingInset: 47, trailingInset: 47,
+                                     sidewaysWidth: MainScreen.roundtableSidewaysWidth)
+                == RoundtablePanelEdge(top: 0, minX: 797 - 546, maxX: 797))
+        // ...and never left of the left inset.
+        #expect(RoundtableSheet.edge(top: 0, bandWidth: 500, sideways: true, leadingInset: 47, trailingInset: 47,
+                                     sidewaysWidth: MainScreen.roundtableSidewaysWidth)
+                == RoundtablePanelEdge(top: 0, minX: 47, maxX: 453))
+    }
+
+    @Test("a thing the edge cuts at a middle stop is back at the smallest height, and was whole at half")
+    func panelEdgeMiddleAndSmallest() {
+        // A 600-point band, its smallest height 200: the talker card from 160 to 220.
+        let card = CGRect(x: 8, y: 160, width: 176, height: 60)
+        func edge(_ detent: RoundtableSheet.Detent) -> RoundtablePanelEdge {
+            let place = MainScreen.roundtablePlace(bandHeight: 600, detent: detent, gaugesFoot: nil, dialStrip: false,
+                                                   smallest: 200)
+            return RoundtableSheet.edge(top: place.top, bandWidth: 390, sideways: false, leadingInset: 0,
+                                        trailingInset: 0, sidewaysWidth: MainScreen.roundtableSidewaysWidth)
+        }
+        #expect(edge(.at(top: 180, bandHeight: 600)).cuts(card))
+        #expect(!edge(.at(top: 590, bandHeight: 600)).cuts(card), "the smallest height (top 400) leaves it whole")
+        #expect(!edge(.half).cuts(card), "half (top 288) leaves it whole")
+        #expect(!edge(.full).cuts(card), "full covers it, as before")
+    }
+
+    @Test("LIVE, SAVE and the clock: the one the edge runs through is hidden, the rest stay")
+    func panelEdgeRecorderButtons() {
+        // The waterfall from 300 to 600 on a 390-point band: LIVE 305 to 327, SAVE 331 to 353, the clock at the foot.
+        let place = DsrStripPlace(waterfall: CGRect(x: 0, y: 300, width: 390, height: 300), trailingInset: 0)
+        #expect(place.live == CGRect(x: 390 - 44 + 3, y: 305, width: 38, height: 22))
+        #expect(place.save == CGRect(x: 390 - 44 + 3, y: 331, width: 38, height: 22))
+        let throughSave = RoundtablePanelEdge(top: 342, minX: 0, maxX: 390)
+        #expect(throughSave.cuts(place.save))
+        #expect(!throughSave.cuts(place.live), "LIVE above the edge stays")
+        #expect(!throughSave.cuts(place.clock), "the clock under the sheet is covered, not hidden")
+        let throughLive = RoundtablePanelEdge(top: 316, minX: 0, maxX: 390)
+        #expect(throughLive.cuts(place.live) && !throughLive.cuts(place.save))
+        // The smallest height: the edge below both, which stay.
+        let low = RoundtablePanelEdge(top: 500, minX: 0, maxX: 390)
+        #expect(!low.cuts(place.live) && !low.cuts(place.save) && !low.cuts(place.clock))
+    }
+
+    @Test("a flag the edge cuts hides whole with its round buttons, each flag on its own, and is back at the smallest height")
+    func panelEdgeFlags() {
+        // A 600-point band, its smallest height 200.
+        func edge(_ detent: RoundtableSheet.Detent) -> RoundtablePanelEdge {
+            let place = MainScreen.roundtablePlace(bandHeight: 600, detent: detent, gaugesFoot: nil, dialStrip: false,
+                                                   smallest: 200)
+            return RoundtableSheet.edge(top: place.top, bandWidth: 390, sideways: false, leadingInset: 0,
+                                        trailingInset: 0, sidewaysWidth: MainScreen.roundtableSidewaysWidth)
+        }
+        let flag = CGRect(x: 100, y: 4, width: 200, height: 180)
+        let column = CGRect(x: 70, y: 4, width: 26, height: 150)
+        let middle = edge(.at(top: 90, bandHeight: 600))
+        #expect(middle.top == 90)
+        #expect(BandGestureLayer.flagHidden(flag: flag, column: column, under: middle))
+        #expect(BandGestureLayer.flagHidden(flag: flag, column: nil, under: middle))
+        // The smallest height (top 400): whole again.
+        #expect(!BandGestureLayer.flagHidden(flag: flag, column: column, under: edge(.at(top: 590, bandHeight: 600))))
+        // Full covers it, as before; no sheet hides nothing.
+        #expect(!BandGestureLayer.flagHidden(flag: flag, column: column, under: edge(.full)))
+        #expect(!BandGestureLayer.flagHidden(flag: flag, column: column, under: nil))
+        // The edge through its round buttons alone hides the flag too.
+        let short = CGRect(x: 100, y: 4, width: 200, height: 100)
+        #expect(BandGestureLayer.flagHidden(flag: short, column: column, under: RoundtablePanelEdge(top: 130)))
+        // Each flag on its own: one lower down, wholly under the sheet at the middle stop, is covered, not hidden.
+        let lower = CGRect(x: 100, y: 200, width: 200, height: 180)
+        #expect(!BandGestureLayer.flagHidden(flag: lower, column: nil, under: middle))
+    }
+
+    @Test("a drag that starts where a hidden flag stands is the band's there, not that slice's")
+    func panelEdgeHiddenFlagTakesNoDrag() {
+        let geometry = BandGeometry(centerHz: 7_245_000, spanHz: 48_000, size: CGSize(width: 390, height: 300),
+                                    dbmRange: -140 ... -40)
+        // A on lower sideband (its passband left of its line), B on upper.
+        let a = BandSlice(id: 0, frequencyHz: 7_236_400, filterLowHz: -2_900, filterHighHz: -100, colour: "#102030",
+                          lowerSideband: true)
+        let b = BandSlice(id: 1, frequencyHz: 7_255_000, filterLowHz: 100, filterHighHz: 2_900, colour: "#102030",
+                          lowerSideband: false)
+        let placements = FlagLayout.layout(slices: [a, b], activeSliceId: 0, geometry: geometry)
+        let flags = [(id: 0, placement: placements[0]), (id: 1, placement: placements[1])]
+        let flag = placements[0].rect
+        // On A's flag at its far end from A's line, clear of A's passband.
+        let line = CGFloat(geometry.x(forHz: a.frequencyHz))
+        let onFlag = CGPoint(x: flag.midX > line ? flag.maxX - 2 : flag.minX + 2, y: flag.midY)
+        func target(_ placements: [FlagPlacement], at point: CGPoint) -> TuneGestures.DragTarget {
+            TuneGestures.dragTarget(at: point, slices: [a, b], placements: placements, activeSliceId: 0,
+                                    geometry: geometry, tunable: [0, 1])
+        }
+        #expect(target(placements, at: onFlag) == .slice(0), "a shown flag takes the drag")
+        // The sheet's edge through A's flag alone.
+        let edge = RoundtablePanelEdge(top: flag.midY)
+        let hidden = BandGestureLayer.hiddenFlags(flags, columns: [:], under: edge)
+        #expect(hidden == [0])
+        let touch = BandGestureLayer.touchPlacements(flags, hidden: hidden)
+        #expect(touch[1] == placements[1], "the flag the edge does not cut is unchanged")
+        #expect(target(touch, at: onFlag) == .band, "a hidden flag takes no drag")
+        // The passband stays in sight, and a drag on it still tunes its slice.
+        let passband = CGPoint(x: geometry.x(forHz: 7_236_400 - 1_500), y: 280)
+        #expect(target(touch, at: passband) == .slice(0))
+        // No sheet: nothing hidden, every flag takes its drag.
+        #expect(BandGestureLayer.hiddenFlags(flags, columns: [:], under: nil).isEmpty)
+        #expect(BandGestureLayer.touchPlacements(flags, hidden: []) == placements)
     }
 
     @Test("the hold PTT reads Hold where the tap PTT reads Tap")
