@@ -132,6 +132,71 @@ Never choose **TestFlight Internal Only**: App Store Connect keeps such a build
 out of external testing groups, the public TestFlight link and App Store review
 for good, and the only way back is a new archive from a newer commit.
 
+## TestFlight from GitHub Actions
+
+`.github/workflows/ios-testflight.yml` does what `archive.sh` and Organizer do,
+on a GitHub-hosted Mac, so a build can go to TestFlight from any computer.
+Run it from the Actions tab (iOS TestFlight, Run workflow) or:
+
+```sh
+gh workflow run ios-testflight.yml -f ref=main -f group=Me
+```
+
+It numbers the build as `archive.sh` does, checks the number is free in App
+Store Connect, archives it signed for the App Store from
+`project-appstore.yml` (project.yml with manual signing), uploads it with the
+App Store Connect method, and adds it to the group once Apple has processed
+it. A build for an external group is also sent to Beta App Review. Export
+compliance is still answered by hand in App Store Connect for each build
+(`AppStore/export-compliance.md`).
+
+One-time setup, by JJ, with nothing on a Mac. Keep the private key, the .p12,
+its password and the .p8 in a password manager; Apple lets you download the
+.p8 only once.
+
+1. **App Store Connect API key.** App Store Connect, Users and Access,
+   Integrations, App Store Connect API, Team Keys, generate a key with the
+   App Manager role. Note its Key ID and the Issuer ID above the table, and
+   download the `.p8`.
+2. **Apple Distribution certificate.** In Git Bash:
+
+   ```sh
+   openssl genrsa -out nereus-dist.key 2048
+   openssl req -new -key nereus-dist.key -out nereus-dist.csr -subj "/CN=NereusSDR Distribution/C=US"
+   ```
+
+   developer.apple.com, Certificates, +, Apple Distribution, upload
+   `nereus-dist.csr`, download `distribution.cer`. Then:
+
+   ```sh
+   openssl x509 -inform DER -in distribution.cer -out distribution.pem
+   openssl pkcs12 -export -inkey nereus-dist.key -in distribution.pem -out nereus-dist.p12 \
+       -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1
+   ```
+
+   It asks for a password for the .p12. (The older ciphers are the ones
+   macOS's `security import` reads.)
+3. **Two App Store profiles.** developer.apple.com, Profiles, +, App Store
+   Connect, for `com.boydsoftprez.NereusSDR.ios` and again for
+   `com.boydsoftprez.NereusSDR.ios.activity`, each with the certificate from
+   step 2. Download both.
+4. **Seven repository secrets**, in PowerShell in the repository, each `gh`
+   line asking for or reading its value:
+
+   ```powershell
+   gh secret set ASC_KEY_ID
+   gh secret set ASC_ISSUER_ID
+   Get-Content AuthKey_XXXXXXXXXX.p8 -Raw | gh secret set ASC_KEY_P8
+   [Convert]::ToBase64String([IO.File]::ReadAllBytes("nereus-dist.p12")) | gh secret set IOS_DIST_CERT_P12_BASE64
+   gh secret set IOS_DIST_CERT_PASSWORD
+   [Convert]::ToBase64String([IO.File]::ReadAllBytes("NereusSDR_App_Store.mobileprovision")) | gh secret set IOS_APP_PROFILE_BASE64
+   [Convert]::ToBase64String([IO.File]::ReadAllBytes("NereusSDR_Activity_App_Store.mobileprovision")) | gh secret set IOS_ACTIVITY_PROFILE_BASE64
+   ```
+
+The certificate lasts a year and the profiles with it: renew both, then
+replace the four signing secrets. A Mac is still needed only to put a debug
+build on a phone by cable or Wi-Fi from Xcode (`device-install.sh`).
+
 ## Testing
 
 ```sh

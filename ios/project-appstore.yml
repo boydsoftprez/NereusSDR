@@ -1,0 +1,41 @@
+# NereusSDR for iOS: the Xcode project for a TestFlight upload from GitHub Actions
+# SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+#
+# .github/workflows/ios-testflight.yml generates the project from this file
+# instead of project.yml:
+#
+#   xcodegen generate --spec ios/project-appstore.yml --project ios
+#
+# It is project.yml, included whole, with the app and its Live Activity
+# switched to manual signing with the team's Apple Distribution certificate
+# and an App Store provisioning profile each. A runner has no Apple ID
+# signed in to Xcode, so automatic signing, which archive.sh uses on JJ's
+# Mac, cannot run there.
+#
+# The profile names come from the command line (NEREUS_APP_PROFILE and
+# NEREUS_ACTIVITY_PROFILE), read by the workflow from the profiles it
+# installs. They are set here, per target, and not as PROVISIONING_PROFILE_
+# SPECIFIER on the command line, because a command-line setting reaches the
+# NereusKit package's targets too, and Xcode refuses a profile on those.
+#
+# Everything else (bundle identifiers, entitlements, version, team) is
+# project.yml's, so this file never needs to change when project.yml does.
+
+include:
+  - path: project.yml
+    relativePaths: false
+
+targets:
+  NereusSDR:
+    settings:
+      base:
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: Apple Distribution
+        PROVISIONING_PROFILE_SPECIFIER: $(NEREUS_APP_PROFILE)
+
+  NereusActivity:
+    settings:
+      base:
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: Apple Distribution
+        PROVISIONING_PROFILE_SPECIFIER: $(NEREUS_ACTIVITY_PROFILE)
