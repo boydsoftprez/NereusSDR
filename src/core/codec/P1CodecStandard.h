@@ -22,6 +22,10 @@
 //   2026-11-25 - That map covers only codes 14 to 19, and only those three
 //                models (TAPR release notes). J.J. Boyd (KG4VCF),
 //                AI-assisted via Claude Code.
+//   2026-11-26 - hermesPureSignalOnTwoReceivers renamed hermesHasTwoReceivers:
+//                it tells the receiver count. TAPR Hermes v1.x has no
+//                PureSignal feedback. J.J. Boyd (KG4VCF), AI-assisted via
+//                Claude Code / Opus 5.5.
 // =================================================================
 //
 // === Verbatim Thetis ChannelMaster/networkproto1.c header (lines 1-45) ===
@@ -94,7 +98,7 @@ public:
     // has two; v2.0 has four, v2.1 to v2.8 four or five, v2.9 and later four.
     // Below v1.4 the notes give one receiver (v1.3) and five (v0.4), so those
     // codes keep the four-receiver map too.
-    bool hermesPureSignalOnTwoReceivers(HPSDRModel model) const
+    bool hermesHasTwoReceivers(HPSDRModel model) const
     {
         switch (model) {
             case HPSDRModel::HERMES:

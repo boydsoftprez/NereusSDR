@@ -298,13 +298,26 @@ void TestP1DdcLayoutPerModel::early_hermes_firmware_has_two_receivers_data()
     QTest::addColumn<int>("model");
     QTest::addColumn<int>("code");
     QTest::addColumn<int>("receivers");
+    QTest::addColumn<bool>("twoReceiverRule");
     for (const ModelClass& m : kModels) {
+        if (m.model == HPSDRModel::ANAN10E || m.model == HPSDRModel::ANAN100B) {
+            continue;  // listed by hand below
+        }
         const bool ruled = m.model == HPSDRModel::HERMES || m.model == HPSDRModel::ANAN10
             || m.model == HPSDRModel::ANAN100;
         for (const int code : {0, 4, 13, 14, 15, 19, 20, 28, 29}) {
             const bool two = ruled && code >= 14 && code <= 19;
             QTest::addRow("%s code %d", m.name, code)
-                << int(m.model) << code << (two ? 2 : m.nDdc);
+                << int(m.model) << code << (two ? 2 : m.nDdc) << two;
+        }
+    }
+    // ANAN10E and ANAN100B (Hermes II) are already two-receiver radios in
+    // Thetis (console.cs:8461-8531 [v2.10.3.15]). Every code: two receivers,
+    // and the firmware rule is never set.
+    for (const HPSDRModel hm : {HPSDRModel::ANAN10E, HPSDRModel::ANAN100B}) {
+        const char* name = hm == HPSDRModel::ANAN10E ? "ANAN10E" : "ANAN100B";
+        for (const int code : {0, 4, 13, 14, 15, 19, 20, 28, 29}) {
+            QTest::addRow("%s code %d", name, code) << int(hm) << code << 2 << false;
         }
     }
 }
@@ -314,6 +327,7 @@ void TestP1DdcLayoutPerModel::early_hermes_firmware_has_two_receivers()
     QFETCH(int, model);
     QFETCH(int, code);
     QFETCH(int, receivers);
+    QFETCH(bool, twoReceiverRule);
     const HPSDRModel hm = static_cast<HPSDRModel>(model);
     const auto codec = codecFor(hm);
     codec->setProtocol1FirmwareVersion(code);
@@ -342,8 +356,7 @@ void TestP1DdcLayoutPerModel::early_hermes_firmware_has_two_receivers()
     QCOMPARE(a.psRevDdc, receivers - 1);
 
     // What P1RadioConnection logs on: never set for a radio left as it was.
-    QCOMPARE(codec->hermesPureSignalOnTwoReceivers(hm), receivers == 2
-             && hm != HPSDRModel::ANAN10E && hm != HPSDRModel::ANAN100B);
+    QCOMPARE(codec->hermesHasTwoReceivers(hm), twoReceiverRule);
 }
 
 // Slices C and D (streams 2 and 3) take the PureSignal pair's slots in
