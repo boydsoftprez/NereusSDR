@@ -265,7 +265,8 @@ void TstRemotePureSignalArming::coreOffersArmingAtVersionSeven()
     // 8 since parity Task 13; 7 is within it.
     // 14 since the Core owns Prevent transmitting on a different band, 15
     // since a remote window edits the CFC bands, 16 since the CW settings.
-    QCOMPARE(s.server->buildCapabilities().transmitSettingsVersion, 16);
+    QCOMPARE(s.server->buildCapabilities().transmitSettingsVersion,
+             kTransmitSettingsTxProfileFileVersion);
     QVERIFY(s.client->transmitSettingsAvailable(7));
     QVERIFY(s.client->pureSignalArmingOffered());
     PureSignalSessionFacade* facade = s.window.pureSignalFacade();

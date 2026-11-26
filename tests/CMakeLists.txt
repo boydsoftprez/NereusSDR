@@ -2064,6 +2064,9 @@ target_compile_definitions(tst_radio_model_drive_path PRIVATE NEREUS_BUILD_TESTS
 # btnTXProfileSave_Click / btnTXProfileDelete_Click handlers).
 nereus_add_test(tst_mic_profile_manager)
 
+# One transmit profile file: the JSON document, and import into the bank.
+nereus_add_test(tst_tx_profile_file)
+
 # ── AM Mod Monitor: AmModulationAnalyzer + ModMonitorApplet ──
 # Synthetic AM I/Q (carrier + symmetric / asymmetric audio) through the
 # peak-reading analyzer: +/- peak %, carrier tracking, no-carrier, peak

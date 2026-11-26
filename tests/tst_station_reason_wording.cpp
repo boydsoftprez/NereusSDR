@@ -132,6 +132,13 @@
 //                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-22  J.J. Boyd / KG4VCF  txProfile.import's
+//                                    importTxProfileForStation (CI fix);
+//                                    then TxProfileFile.cpp, and
+//                                    MicProfileManager's name and value
+//                                    checks for txProfile.import and save
+//                                    (review fixes), are scanned.
+//                                    AI tooling: Claude Code.
 //   2026-11-16  J.J. Boyd / KG4VCF  workerServeSpectra (the past spectrum's
 //                                    refusal, moved there) is scanned too.
 //                                    AI tooling: Claude Code.
@@ -2059,6 +2066,8 @@ const QList<ReasonSource>& reasonSources()
           QStringLiteral("selectTxProfileForStation"),
           QStringLiteral("saveTxProfileForStation"),
           QStringLiteral("deleteTxProfileForStation"),
+          // transmitSettingsVersion 17: txProfile.import.
+          QStringLiteral("importTxProfileForStation"),
           QStringLiteral("resetRadeVocoderForStation"),
           // R-R3-49 / R-IOS-18: the paProfile verbs.
           QStringLiteral("paProfileActionForStation"),
@@ -2139,6 +2148,10 @@ const QList<ReasonSource>& reasonSources()
           // R-R3-49 / R-IOS-18: paProfileActionForStation's name check, its
           // literals in that function.
           QStringLiteral("nameRefusal(name)"),
+          // PR 809 review: save's and import's name rule,
+          // MicProfileManager::profileNameRefusal (scanned in its entry).
+          QStringLiteral("MicProfileManager::profileNameRefusal( "
+                         "MicProfileManager::normalizedProfileName(trimmed))"),
           QStringLiteral("outcome.reason"), QStringLiteral("kUnknownNotchReason"),
           QStringLiteral("kNotchListBusyReason"),
           // R-R3-49 (parity Task 1): onAirReason, a function of this file
@@ -2195,6 +2208,26 @@ const QList<ReasonSource>& reasonSources()
         {"src/core/ParaEqCurve.cpp", {QStringLiteral("txEqPointsFromCurveJson")}, {}, 7, {},
          // refuse(why): each literal handed to it is scanned here.
          {QStringLiteral("why")}},
+        // PR 809 (transmitSettingsVersion 17): txProfile.import's keysJson
+        // and the profile file's refusals, the whole file.
+        {"src/core/TxProfileFile.cpp", {}, {}, 6, {},
+         // MicProfileManager::profileNameRefusal, scanned in the entry below.
+         {QStringLiteral("MicProfileManager::profileNameRefusal( "
+                         "MicProfileManager::normalizedProfileName(name.toString()))")}},
+        // PR 809 review: the name and value checks txProfile.import and
+        // txProfile.save share. The insert is the switch's own label, a
+        // literal of importKeyChecks().
+        {"src/core/MicProfileManager.cpp",
+         {QStringLiteral("profileNameRefusal"), QStringLiteral("importValuesRefusal"),
+          QStringLiteral("importProfile")},
+         {}, 12, {QStringLiteral("label")},
+         // refuse(text): each literal handed to it is scanned here; range is
+         // TransmitModel::settingRangeRefusal's (scanned below).
+         {QStringLiteral("text"), QStringLiteral("range"),
+          // profileNameRefusal and importValuesRefusal, functions of this
+          // entry.
+          QStringLiteral("profileNameRefusal(name)"),
+          QStringLiteral("importValuesRefusal(portable)")}},
         // R-R3-49 (transmitSettingsVersion 15): cfc.setProfile's refusals.
         {"src/core/CfcProfile.cpp", {QStringLiteral("fromPublishedJson")}, {}, 10, {},
          // refuse(why) and the shared notUnderstood: each literal is scanned here.

@@ -46,6 +46,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-17: requestTxProfileImport. Brian Sutton (W4KZO), AI-assisted
+//               via xAI Grok.
 //   2026-11-05: Band stack plan Task 6: sliceControlledHere.
 //   2026-11-05: Band stack plan Task 4: bandStackAvailable and sendBandStackCommand.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -775,6 +777,11 @@ public:
     virtual CommandOutcome requestTxProfileSave(const QString&)
     { return { false, transmitSettingsUnavailableReason() }; }
     virtual CommandOutcome requestTxProfileDelete(const QString&)
+    { return { false, transmitSettingsUnavailableReason() }; }
+    /// transmitSettingsVersion 17: store the named profile from `keysJson`
+    /// (a JSON object of its settings) and select it. Refused on the air
+    /// the same way select is.
+    virtual CommandOutcome requestTxProfileImport(const QString&, const QString&)
     { return { false, transmitSettingsUnavailableReason() }; }
     /// R-R3-49 (parity Task 3): the RADE applet's Reset vocoder; the Core
     /// clears its RADE transmit vocoder. Keys nothing. Refused on the air.

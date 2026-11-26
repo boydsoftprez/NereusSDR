@@ -7,6 +7,8 @@
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-16: Recordings: the thirty recordings.*, voiceKeyer.* and dsr.* verbs
 //   counted. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-22: txProfile.import (transmitSettingsVersion 17) pinned.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import LinkTestSupport
@@ -128,7 +130,8 @@ import Testing
         // Recordings add ten recordings.* verbs (recordingsVersion 1), ten
         // voiceKeyer.* verbs (3), and eight dsr.* verbs with
         // recordings.saveSoundOnly and recordings.openStretch (4).
-        #expect(commands.count == 238)
+        // Import of one TX profile adds txProfile.import (transmitSettingsVersion 17).
+        #expect(commands.count == 239)
         #expect(Set(commands.compactMap { $0["verb"] as? String }).count == commands.count)
         let expected: [(verb: String, capability: String, version: Int, names: [String], kinds: [String])] = [
             ("diversity.setTarget", "diversityControlVersion", 1,
@@ -166,6 +169,7 @@ import Testing
             ("cw.stop", "remoteCwVersion", 1, [], []),
             ("cw.key", "remoteCwVersion", 1, ["down"], ["bool"]),
             ("cw.paddle", "remoteCwVersion", 3, ["dot", "dash"], ["bool", "bool"]),
+            ("txProfile.import", "transmitSettingsVersion", 17, ["name", "keysJson"], ["utf8", "utf8"]),
         ]
         for entry in expected {
             let command = try #require(commands.first { $0["verb"] as? String == entry.verb })

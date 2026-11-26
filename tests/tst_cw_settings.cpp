@@ -493,10 +493,13 @@ void TstCwSettings::coreOffersTransmitSettingsVersion16()
     QCOMPARE(kTransmitSettingsCwVersion, 16);
     Session s(m_securityDir.path(), this);
     QVERIFY(s.connect());
-    QCOMPARE(s.server->buildCapabilities().transmitSettingsVersion, kTransmitSettingsCwVersion);
-    QCOMPARE(s.client->capabilities().transmitSettingsVersion, kTransmitSettingsCwVersion);
+    QCOMPARE(s.server->buildCapabilities().transmitSettingsVersion,
+             kTransmitSettingsTxProfileFileVersion);
+    QCOMPARE(s.client->capabilities().transmitSettingsVersion,
+             kTransmitSettingsTxProfileFileVersion);
     QVERIFY(s.client->transmitSettingsAvailable(kTransmitSettingsCwVersion));
-    QVERIFY(!s.client->transmitSettingsAvailable(kTransmitSettingsCwVersion + 1));
+    QVERIFY(s.client->transmitSettingsAvailable(kTransmitSettingsTxProfileFileVersion));
+    QVERIFY(!s.client->transmitSettingsAvailable(kTransmitSettingsTxProfileFileVersion + 1));
     // A Core that offers 15 has no CW settings: the window's CW controls
     // read it as unavailable.
     s.client->setTransmitSettingsVersionForTest(kTransmitSettingsCfcProfileVersion);

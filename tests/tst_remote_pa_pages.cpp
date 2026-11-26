@@ -66,6 +66,7 @@
 #include "core/session/IStationLink.h"
 #include "core/session/SessionMessages.h"
 #include "core/session/StationClient.h"
+#include "core/session/StationCapabilities.h"
 #include "core/session/StationServer.h"
 #include "core/session/TransmitStateFacade.h"
 #include "core/settings/SettingsProxy.h"
@@ -328,7 +329,8 @@ void TstRemotePaPages::paKeysAreOnTheOffAirListAtVersion6()
     // within it.
     // 14 since the Core owns Prevent transmitting on a different band, 15
     // since a remote window edits the CFC bands, 16 since the CW settings.
-    QCOMPARE(s.client->capabilities().transmitSettingsVersion, 16);
+    QCOMPARE(s.client->capabilities().transmitSettingsVersion,
+             kTransmitSettingsTxProfileFileVersion);
     QVERIFY(s.client->transmitSettingsAvailable(6));
 }
 

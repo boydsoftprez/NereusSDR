@@ -45,6 +45,26 @@
 //                 Thetis TX profiles carry none (database.cs:4299
 //                 [v2.10.3.15]). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-11-17 - One profile to and from a file: importProfile,
+//                 normalizedProfileName, readStoredProfile and
+//                 liveProfileValues; the station requester carries the
+//                 imported values (StationRequest::Import). Brian Sutton
+//                 (W4KZO), AI-assisted via xAI Grok.
+//   2026-11-22 - Import checks the name (profileNameRefusal, which save
+//                 also uses) and every value (importValuesRefusal), with a
+//                 plain reason; this radio's wiring keys stay as they are
+//                 (radioWiringKeys); a file with no settings is refused; a
+//                 remote window hears the Core's answer. A name with two
+//                 underscores in a row is refused (the settings file's
+//                 escapes); the page can take the refusal of the save an
+//                 export waits on (setStationExportSaveWaiting). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-25 - A name is refused only when its keys would not come back
+//                 from the settings file (AppSettings::keySurvivesFile). A
+//                 request carries its command id, and the page claims the
+//                 answer to its own (claimStationRequest, in place of
+//                 setStationExportSaveWaiting). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived handler logic
@@ -56,9 +76,12 @@
 #include "LogCategories.h"
 #include "models/TransmitModel.h"
 
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QLoggingCategory>
 
 #include <algorithm>
+#include <cmath>
 
 namespace NereusSDR {
 
@@ -955,20 +978,387 @@ void MicProfileManager::writeProfileKeys(const QString& name,
     }
 }
 
-QHash<QString, QVariant> MicProfileManager::readProfileKeys(const QString& name) const
+QHash<QString, QVariant> MicProfileManager::readStoredProfile(const QString& mac,
+                                                             const QString& name)
 {
     QHash<QString, QVariant> out;
-    if (m_mac.isEmpty()) {
+    if (mac.isEmpty() || name.isEmpty()) {
         return out;
     }
     auto& s = AppSettings::instance();
     for (const QString& key : liveKeyList()) {
-        const QString full = profileFieldKey(m_mac, name, key);
+        const QString full = profileFieldKey(mac, name, key);
         if (s.contains(full)) {
             out.insert(key, s.value(full));
         }
     }
     return out;
+}
+
+QHash<QString, QVariant> MicProfileManager::readProfileKeys(const QString& name) const
+{
+    return readStoredProfile(m_mac, name);
+}
+
+QString MicProfileManager::normalizedProfileName(QString name)
+{
+    name = name.trimmed();
+    name.replace(QLatin1Char(','), QLatin1Char('_'));
+    return name;
+}
+
+namespace {
+
+// Every key of the profile comes back from the settings file as itself. All
+// are checked, as the last characters of the name meet the "/" and the
+// setting after it. A remote window does not know the Core's radio address,
+// and one hexadecimal address reads as another.
+bool profileNameSurvivesFile(const QString& name)
+{
+    const QString anyRadio = QStringLiteral("00:00:00:00:00:00");
+    const QStringList& fields = liveKeyList();
+    return std::all_of(fields.cbegin(), fields.cend(), [&](const QString& field) {
+        return AppSettings::keySurvivesFile(profileFieldKey(anyRadio, name, field));
+    });
+}
+
+} // namespace
+
+QString MicProfileManager::profileNameRefusal(const QString& name)
+{
+    if (name.trimmed().isEmpty()) {
+        return QStringLiteral("Give the transmit profile a name.");
+    }
+    // The words carry kMaxProfileNameLength.
+    static_assert(kMaxProfileNameLength == 64);
+    if (name.size() > kMaxProfileNameLength) {
+        return QStringLiteral("Use a transmit profile name of 64 characters or fewer.");
+    }
+    // A name is part of every key of its profile (hardware/<mac>/tx/
+    // profile/<name>/...), and is shown in every profile list.
+    for (qsizetype i = 0; i < name.size(); ++i) {
+        const QChar c = name.at(i);
+        char32_t point = c.unicode();
+        if (c.isHighSurrogate() && i + 1 < name.size() && name.at(i + 1).isLowSurrogate()) {
+            point = QChar::surrogateToUcs4(c, name.at(i + 1));
+            ++i;
+        } else if (c.isSurrogate()) {
+            return QStringLiteral("Use a transmit profile name without tabs, line breaks "
+                                  "or other control characters.");
+        }
+        if (QChar::category(point) == QChar::Other_Control || QChar::isNonCharacter(point)) {
+            return QStringLiteral("Use a transmit profile name without tabs, line breaks "
+                                  "or other control characters.");
+        }
+    }
+    // The settings file spells characters a key cannot hold as words
+    // between two double underscores (__plus__; AppSettings encodeXmlKey),
+    // and reads any such word back as its character, "plan c" among them. A
+    // name whose keys would not come back would lose its profile.
+    if (!profileNameSurvivesFile(name)) {
+        return QStringLiteral("The settings file cannot keep this transmit profile name. "
+                              "Use a different name.");
+    }
+    return {};
+}
+
+const QStringList& MicProfileManager::radioWiringKeys()
+{
+    // How this radio is wired, not how a voice sounds: the mic jack (XLR,
+    // tip/ring), PTT, bias, the line input, the user digital outputs and
+    // the mic source. A profile file from another station must not change
+    // them (maintainer's delegate, PR 809 review, 2026-11-22).
+    static const QStringList kKeys{
+        QStringLiteral("Mic_XLR"),
+        QStringLiteral("Line_Input_On"),
+        QStringLiteral("Mic_TipRing"),
+        QStringLiteral("Mic_Bias"),
+        QStringLiteral("Mic_PTT_Disabled"),
+        QStringLiteral("Mic_UserDigOut"),
+        QStringLiteral("Mic_Source"),
+    };
+    return kKeys;
+}
+
+QHash<QString, QVariant> MicProfileManager::portableValues(const QHash<QString, QVariant>& values)
+{
+    QHash<QString, QVariant> out = values;
+    for (const QString& key : radioWiringKeys()) {
+        out.remove(key);
+    }
+    return out;
+}
+
+QStringList MicProfileManager::unknownProfileKeys(const QHash<QString, QVariant>& values)
+{
+    QStringList out;
+    const QStringList& known = liveKeyList();
+    for (auto it = values.constBegin(); it != values.constEnd(); ++it) {
+        if (!known.contains(it.key())) {
+            out.append(it.key());
+        }
+    }
+    out.sort();
+    return out;
+}
+
+namespace {
+
+// The import checks (importValuesRefusal). A key checked by a TransmitModel
+// property is refused with that property's own words
+// (TransmitModel::settingRangeRefusal, as the link refuses it).
+enum class ImportCheck { Switch, Property, Whole, Real };
+
+struct ImportKeyCheck {
+    const char* key;
+    ImportCheck check;
+    const char* property;  // ImportCheck::Property
+    const char* label;     // ImportCheck::Switch
+};
+
+// TX Profile page's TX Filter spin boxes (TxProfileSetupPage.cpp buildUi):
+// low 0 to 5000 Hz, high 200 to 10000 Hz. NereusSDR-original.
+constexpr int kImportFilterLowHzMin = 0;
+constexpr int kImportFilterLowHzMax = 5000;
+constexpr int kImportFilterHighHzMin = 200;
+constexpr int kImportFilterHighHzMax = 10000;
+// TransmitModel::setLineInGain's clamp, 0 to 31.
+constexpr int kImportLineInGainMin = 0;
+constexpr int kImportLineInGainMax = 31;
+
+const QList<ImportKeyCheck>& importKeyChecks()
+{
+    static const QList<ImportKeyCheck> kChecks{
+        {"MicGain", ImportCheck::Property, "micGainDb", nullptr},
+        {"Mic_Input_Boost", ImportCheck::Switch, nullptr, "mic boost"},
+        {"Line_Input_Level", ImportCheck::Property, "lineInBoost", nullptr},
+        {"Mic_LineInGain", ImportCheck::Whole, nullptr, nullptr},
+        {"Dexp_Threshold", ImportCheck::Property, "voxThresholdDb", nullptr},
+        {"VOX_GainScalar", ImportCheck::Real, nullptr, nullptr},
+        {"VOX_HangTime", ImportCheck::Property, "voxHangTimeMs", nullptr},
+        {"AntiVox_Gain", ImportCheck::Property, "antiVoxGainDb", nullptr},
+        {"MonitorVolume", ImportCheck::Property, "monitorVolume", nullptr},
+        {"TXEQEnabled", ImportCheck::Switch, nullptr, "TX EQ"},
+        {"TXEQPreamp", ImportCheck::Property, "txEqPreamp", nullptr},
+        {"TXParaEQData", ImportCheck::Property, "txEqParaEqData", nullptr},
+        {"EQUseLegacy", ImportCheck::Switch, nullptr, "Legacy EQ"},
+        {"Lev_On", ImportCheck::Switch, nullptr, "leveler"},
+        {"Lev_MaxGain", ImportCheck::Property, "txLevelerMaxGain", nullptr},
+        {"Lev_Decay", ImportCheck::Property, "txLevelerDecay", nullptr},
+        {"ALC_MaximumGain", ImportCheck::Property, "txAlcMaxGain", nullptr},
+        {"ALC_Decay", ImportCheck::Property, "txAlcDecay", nullptr},
+        {"CFCPhaseRotatorEnabled", ImportCheck::Switch, nullptr, "phase rotator"},
+        {"CFCPhaseReverseEnabled", ImportCheck::Switch, nullptr, "phase reverse"},
+        {"CFCPhaseRotatorFreq", ImportCheck::Property, "phaseRotatorFreqHz", nullptr},
+        {"CFCPhaseRotatorStages", ImportCheck::Property, "phaseRotatorStages", nullptr},
+        {"CFCEnabled", ImportCheck::Switch, nullptr, "CFC"},
+        {"CFCPostEqEnabled", ImportCheck::Switch, nullptr, "CFC post-EQ"},
+        {"CFCPreComp", ImportCheck::Property, "cfcPrecompDb", nullptr},
+        {"CFCPostEqGain", ImportCheck::Property, "cfcPostEqGainDb", nullptr},
+        {"CFCParaEQData", ImportCheck::Property, "cfcParaEqData", nullptr},
+        {"CompanderLevel", ImportCheck::Property, "cpdrLevelDb", nullptr},
+        {"AM_Carrier_Level", ImportCheck::Property, "amCarrierLevel", nullptr},
+        {"CESSB_On", ImportCheck::Switch, nullptr, "CESSB"},
+        {"DEXP_Enabled", ImportCheck::Switch, nullptr, "DEXP"},
+        {"DEXP_DetectorTauMs", ImportCheck::Property, "dexpDetectorTauMs", nullptr},
+        {"DEXP_AttackTimeMs", ImportCheck::Property, "dexpAttackTimeMs", nullptr},
+        {"DEXP_ReleaseTimeMs", ImportCheck::Property, "dexpReleaseTimeMs", nullptr},
+        {"DEXP_ExpansionRatioDb", ImportCheck::Property, "dexpExpansionRatioDb", nullptr},
+        {"DEXP_HysteresisRatioDb", ImportCheck::Property, "dexpHysteresisRatioDb", nullptr},
+        {"DEXP_LookAheadEnabled", ImportCheck::Switch, nullptr, "DEXP look-ahead"},
+        {"DEXP_LookAheadMs", ImportCheck::Property, "dexpLookAheadMs", nullptr},
+        {"DEXP_LowCutHz", ImportCheck::Property, "dexpLowCutHz", nullptr},
+        {"DEXP_HighCutHz", ImportCheck::Property, "dexpHighCutHz", nullptr},
+        {"DEXP_SideChannelFilterEnabled", ImportCheck::Switch, nullptr, "VOX trigger filter"},
+    };
+    return kChecks;
+}
+
+// The ten-band keys, checked whole as the link checks the band arrays.
+struct ImportBandCheck {
+    const char* keyFormat;  // %1 is the band number
+    int first;              // 1 for TXEQ1..10, 0 for CFC*0..9
+    const char* property;
+};
+
+const QList<ImportBandCheck>& importBandChecks()
+{
+    static const QList<ImportBandCheck> kChecks{
+        {"TXEQ%1", 1, "txEqBandsJson"},
+        {"TxEqFreq%1", 1, "txEqFreqsJson"},
+        {"CFCPreComp%1", 0, "cfcCompressionJson"},
+        {"CFCPostEqGain%1", 0, "cfcPostEqBandGainJson"},
+        {"CFCEqFreq%1", 0, "cfcEqFreqJson"},
+    };
+    return kChecks;
+}
+
+bool wholeNumberIn(const QString& text, int lo, int hi)
+{
+    bool ok = false;
+    const int v = text.toInt(&ok);
+    return ok && v >= lo && v <= hi;
+}
+
+} // namespace
+
+QString MicProfileManager::importValuesRefusal(const QHash<QString, QVariant>& values)
+{
+    // A fresh model: its range words, and no saved curve of its own for
+    // the CFC band checks to compare against.
+    const TransmitModel ranges;
+    const QHash<QString, QVariant> defaults = defaultProfileValues();
+    const auto text = [&](const QString& key) {
+        const auto it = values.constFind(key);
+        return it != values.constEnd() ? it.value().toString() : defaults.value(key).toString();
+    };
+    for (const ImportKeyCheck& check : importKeyChecks()) {
+        const QString key = QString::fromLatin1(check.key);
+        if (!values.contains(key)) {
+            continue;
+        }
+        const QString value = values.value(key).toString();
+        switch (check.check) {
+        case ImportCheck::Switch:
+            if (value != QLatin1String("True") && value != QLatin1String("False")) {
+                const QString label = QString::fromLatin1(check.label);
+                return QStringLiteral("The transmit profile's %1 setting is not on or off.")
+                    .arg(label);
+            }
+            break;
+        case ImportCheck::Property: {
+            const QString range = ranges.settingRangeRefusal(QByteArray(check.property), value);
+            if (!range.isEmpty()) {
+                return range;
+            }
+            break;
+        }
+        case ImportCheck::Whole:
+            // The words carry kImportLineInGainMin and kImportLineInGainMax.
+            if (!wholeNumberIn(value, kImportLineInGainMin, kImportLineInGainMax)) {
+                return QStringLiteral("Choose a line in gain step from 0 to 31.");
+            }
+            break;
+        case ImportCheck::Real: {
+            bool ok = false;
+            const double v = value.toDouble(&ok);
+            // The words carry TransmitModel::kVoxGainScalarMin and Max.
+            if (!ok || !std::isfinite(v)
+                || v < static_cast<double>(TransmitModel::kVoxGainScalarMin)
+                || v > static_cast<double>(TransmitModel::kVoxGainScalarMax)) {
+                return QStringLiteral("Choose a VOX gain from 0 to 100.");
+            }
+            break;
+        }
+        }
+    }
+    for (const ImportBandCheck& band : importBandChecks()) {
+        bool present = false;
+        QJsonArray array;
+        for (int i = 0; i < 10; ++i) {
+            const QString key = QString::fromLatin1(band.keyFormat).arg(band.first + i);
+            present = present || values.contains(key);
+            bool ok = false;
+            const int v = text(key).toInt(&ok);
+            if (!ok) {
+                // Not a whole number: the band array's own words refuse it.
+                array.append(QStringLiteral("x"));
+            } else {
+                array.append(v);
+            }
+        }
+        if (!present) {
+            continue;
+        }
+        const QString json = QString::fromUtf8(QJsonDocument(array).toJson(QJsonDocument::Compact));
+        const QString range = ranges.settingRangeRefusal(QByteArray(band.property), json);
+        if (!range.isEmpty()) {
+            return range;
+        }
+    }
+    if (values.contains(QStringLiteral("FilterLow")) || values.contains(QStringLiteral("FilterHigh"))) {
+        bool lowOk = false;
+        bool highOk = false;
+        const int low = text(QStringLiteral("FilterLow")).toInt(&lowOk);
+        const int high = text(QStringLiteral("FilterHigh")).toInt(&highOk);
+        // The words carry kImportFilterLowHzMin/Max and kImportFilterHighHzMin/Max.
+        if (!lowOk || low < kImportFilterLowHzMin || low > kImportFilterLowHzMax) {
+            return QStringLiteral("Choose a TX filter low cut from 0 to 5000 Hz.");
+        }
+        if (!highOk || high < kImportFilterHighHzMin || high > kImportFilterHighHzMax) {
+            return QStringLiteral("Choose a TX filter high cut from 200 to 10000 Hz.");
+        }
+        if (low >= high) {
+            return QStringLiteral("Choose a TX filter low cut below its high cut.");
+        }
+    }
+    return {};
+}
+
+QHash<QString, QVariant> MicProfileManager::liveProfileValues(const TransmitModel* tx)
+{
+    return captureLiveValues(tx);
+}
+
+bool MicProfileManager::importProfile(const QString& rawName,
+                                      const QHash<QString, QVariant>& values,
+                                      TransmitModel* tx, QString* reason)
+{
+    const auto refuse = [reason](const QString& text) {
+        if (reason) { *reason = text; }
+        return false;
+    };
+    const QString name = normalizedProfileName(rawName);
+    const QString nameRefusal = profileNameRefusal(name);
+    if (!nameRefusal.isEmpty()) {
+        return refuse(nameRefusal);
+    }
+    // This radio's wiring is not taken from a file.
+    const QHash<QString, QVariant> portable = portableValues(values);
+    const QStringList& known = liveKeyList();
+    const bool anyKnown = std::any_of(portable.keyBegin(), portable.keyEnd(),
+                                      [&known](const QString& key) { return known.contains(key); });
+    if (!anyKnown) {
+        return refuse(QStringLiteral("The transmit profile has no settings."));
+    }
+    const QString valueRefusal = importValuesRefusal(portable);
+    if (!valueRefusal.isEmpty()) {
+        return refuse(valueRefusal);
+    }
+    if (isStationMirror()) {
+        // The Core checks again, keeps the keys it knows and answers
+        // (stationRequestFinished); a request not sent is reported by the
+        // requester.
+        return m_stationRequester(StationRequest::Import, name, portable);
+    }
+    if (m_mac.isEmpty()) {
+        return refuse(QStringLiteral("Connect a radio to import a transmit profile."));
+    }
+
+    QHash<QString, QVariant> merged = defaultProfileValues();
+    if (tx != nullptr) {
+        const QHash<QString, QVariant> live = captureLiveValues(tx);
+        for (const QString& key : radioWiringKeys()) {
+            merged.insert(key, live.value(key));
+        }
+    }
+    for (auto it = portable.constBegin(); it != portable.constEnd(); ++it) {
+        if (known.contains(it.key())) {
+            merged.insert(it.key(), it.value().toString());
+        }
+    }
+    writeProfileKeys(name, merged);
+
+    QStringList names = readManifest();
+    if (!names.contains(name)) {
+        names.append(name);
+        writeManifest(names);
+        emit profileListChanged();
+    }
+    if (!setActiveProfile(name, tx)) {
+        return refuse(QStringLiteral("The transmit profile was stored but could not be selected."));
+    }
+    return true;
 }
 
 void MicProfileManager::removeProfileKeys(const QString& name)
@@ -987,8 +1377,11 @@ bool MicProfileManager::saveProfile(const QString& rawName, const TransmitModel*
     if (isStationMirror()) {
         // R-R3-49 (parity Task 3): the Core saves its own transmit settings
         // under this name (txProfile.save), with the same comma rule.
+        // A name every profile list can show and every settings key can
+        // hold (profileNameRefusal); the page says why before asking.
         return !rawName.isEmpty()
-            && m_stationRequester(StationRequest::Save, rawName);
+            && profileNameRefusal(normalizedProfileName(rawName)).isEmpty()
+            && m_stationRequester(StationRequest::Save, rawName, {});
     }
     if (m_mac.isEmpty() || tx == nullptr) {
         return false;
@@ -1001,6 +1394,11 @@ bool MicProfileManager::saveProfile(const QString& rawName, const TransmitModel*
     name.replace(QLatin1Char(','), QLatin1Char('_'));
 
     if (name.isEmpty()) {
+        return false;
+    }
+    // NereusSDR-original: no control characters and at most
+    // kMaxProfileNameLength characters, as import takes.
+    if (!profileNameRefusal(name).isEmpty()) {
         return false;
     }
 
@@ -1027,7 +1425,7 @@ bool MicProfileManager::deleteProfile(const QString& name)
         if (m_stationNames.size() <= 1) {
             return false;
         }
-        m_stationRequester(StationRequest::Delete, name);
+        m_stationRequester(StationRequest::Delete, name, {});
         return true;
     }
     if (m_mac.isEmpty()) {
@@ -1074,7 +1472,7 @@ bool MicProfileManager::setActiveProfile(const QString& name, TransmitModel* tx)
         // R-R3-49 (parity Task 3): the Core applies it (txProfile.select) and
         // reports its active profile back; nothing changes here until then.
         // Not sent, the combos go back to the Core's profile at once.
-        if (name.isEmpty() || !m_stationRequester(StationRequest::Select, name)) {
+        if (name.isEmpty() || !m_stationRequester(StationRequest::Select, name, {})) {
             emit activeProfileChanged(m_stationActive);
             return false;
         }
@@ -1174,6 +1572,36 @@ void MicProfileManager::reportStationRequestRefused()
 {
     if (isStationMirror()) {
         emit activeProfileChanged(m_stationActive);
+    }
+}
+
+void MicProfileManager::noteStationRequestSent(quint32 commandId)
+{
+    m_lastStationRequestId = commandId;
+}
+
+void MicProfileManager::claimStationRequest(quint32 commandId)
+{
+    m_claimedStationRequests.insert(commandId);
+}
+
+void MicProfileManager::releaseStationRequest(quint32 commandId)
+{
+    m_claimedStationRequests.remove(commandId);
+}
+
+void MicProfileManager::releaseAllStationRequests()
+{
+    m_claimedStationRequests.clear();
+}
+
+void MicProfileManager::reportStationRequestFinished(StationRequest request, quint32 commandId,
+                                                     bool accepted, const QString& reason)
+{
+    // StationClient has read the claim for this answer.
+    releaseStationRequest(commandId);
+    if (isStationMirror()) {
+        emit stationRequestFinished(request, commandId, accepted, reason);
     }
 }
 

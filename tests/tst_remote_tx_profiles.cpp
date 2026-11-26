@@ -22,6 +22,9 @@
 //                                    microphone settings are taken keyed;
 //                                    Reset vocoder is the holder's. AI-assisted via
 //                                    Anthropic Claude Code.
+//   2026-11-26  J.J. Boyd / KG4VCF  PR 809 review: Export... closes with
+//                                    Save and Delete, with their reason.
+//                                    AI-assisted via Claude Code / Opus 5.5.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -526,7 +529,7 @@ void TstRemoteTxProfiles::txProfilePageGatesEachControlOnItsVersion()
     RadioModel window{RadioModel::Role::Remote};
     TxProfileSetupPage page(&window, window.micProfileManager(), &window.transmitModel());
     const QList<QWidget*> profileControls{page.profileCombo(), page.saveButton(),
-                                          page.deleteButton()};
+                                          page.deleteButton(), page.exportButton()};
     // A remote window's page starts closed, with the plain reason, until
     // the Core says it takes them.
     for (QWidget* control : profileControls + QList<QWidget*>{page.filterLowSpin(),
@@ -563,6 +566,8 @@ void TstRemoteTxProfiles::txProfilePageGatesEachControlOnItsVersion()
     // A Core below version 3 says why, in plain words.
     page.setTransmitSettingsPermittedAt(3, false, QString());
     QCOMPARE(page.saveButton()->toolTip(), IStationLink::transmitSettingsUnavailableReason());
+    QVERIFY(!page.exportButton()->isEnabled());
+    QCOMPARE(page.exportButton()->toolTip(), IStationLink::transmitSettingsUnavailableReason());
 }
 
 void TstRemoteTxProfiles::setupOpensTxProfileWithoutRemoteTransmit()

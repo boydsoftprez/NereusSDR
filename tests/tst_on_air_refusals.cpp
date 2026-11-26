@@ -214,6 +214,8 @@ private slots:
             {"txProfile.select", {utf8("name", QStringLiteral("Default"))}},
             {"txProfile.save", {utf8("name", QStringLiteral("Mine"))}},
             {"txProfile.delete", {utf8("name", QStringLiteral("Mine"))}},
+            {"txProfile.import", {utf8("name", QStringLiteral("Mine")),
+                                  utf8("keysJson", QStringLiteral("{\"MicGain\":\"-6\"}"))}},
             {"rade.resetVocoder", {}},
         };
         for (const Verb& verb : verbs) {

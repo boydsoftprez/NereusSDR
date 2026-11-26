@@ -59,6 +59,23 @@
 //                 transmit settings version that carries it
 //                 (setTransmitSettingsPermitted / ...PermittedAt). J.J.
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-17 - Export... and Import... for one transmit profile, with
+//                 their file path and result hooks. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
+//   2026-11-22 - A remote window's import and export wait for the Core's
+//                 answer; Save and Import refuse a name with a reason; the
+//                 export's question and file name; an export keeps the
+//                 edits marked unsaved until its save is done and forgets
+//                 a waiting answer when the link drops. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-25 - Waiting imports and the waiting export are matched by
+//                 command id and released with the page; edits are counted
+//                 so a save never hides a later one. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Claude Code.
+//   2026-11-26 - A remote import the Core accepted clears the unsaved
+//                 mark (the Core's values arrive before its answer);
+//                 Export gates with Save and Delete. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Claude Code / Opus 5.5.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived semantics are
@@ -66,8 +83,12 @@
 
 #include "gui/SetupPage.h"
 
+#include <QHash>
+#include <QPointer>
 #include <QString>
+#include <QVariant>
 #include <functional>
+#include <optional>
 
 class QComboBox;
 class QLabel;
@@ -100,12 +121,14 @@ public:
                                  MicProfileManager* profileMgr,
                                  TransmitModel* tx,
                                  QWidget* parent = nullptr);
-    ~TxProfileSetupPage() override = default;
+    ~TxProfileSetupPage() override;
 
     // ── Test accessors (always-on) ──────────────────────────────────────────
     QComboBox*   profileCombo() const { return m_combo; }
     QPushButton* saveButton()   const { return m_saveBtn; }
     QPushButton* deleteButton() const { return m_deleteBtn; }
+    QPushButton* exportButton() const { return m_exportBtn; }
+    QPushButton* importButton() const { return m_importBtn; }
     QSpinBox*    filterLowSpin()  const { return m_filterLowSpin; }
     QSpinBox*    filterHighSpin() const { return m_filterHighSpin; }
     QSpinBox*    amCarrierSpin()  const { return m_amCarrierSpin; }
@@ -113,7 +136,8 @@ public:
     // R-R3-49 (parity Task 3): in a remote window the page changes the
     // Core's profiles and settings while the Core takes them. The TX filter
     // came with transmitSettingsVersion 1, the AM carrier with 2, and the
-    // profile combo, Save... and Delete with 3; each gates on its own.
+    // profile combo, Save..., Delete and Export... with 3, Import... with
+    // kTransmitSettingsTxProfileFileVersion; each gates on its own.
     void setTransmitSettingsPermitted(bool permitted, const QString& reason) override;
     void setTransmitSettingsPermittedAt(int version, bool permitted,
                                         const QString& reason) override;
@@ -154,6 +178,24 @@ public:
     using UnsavedPromptHook = std::function<UnsavedPromptResult(const QString& currentName)>;
     void setUnsavedPromptHook(UnsavedPromptHook hook);
 
+    // Export and Import file paths. An empty return cancels. When unset,
+    // the page opens the native file dialog.
+    using FilePathHook = std::function<QString()>;
+    void setExportPathHook(FilePathHook hook);
+    void setImportPathHook(FilePathHook hook);
+
+    // The file name Export... suggests: the profile name with every
+    // character Windows forbids (* ? " < > | / \ : and control characters)
+    // made an underscore, a trailing dot or space dropped, an underscore
+    // in front of a name Windows keeps for a device (CON, PRN, AUX, NUL,
+    // COM1 to COM9, LPT1 to LPT9, in any case, with or without an
+    // extension), and the .nereus-tx-profile extension.
+    static QString suggestedExportFileName(const QString& profileName);
+
+    // Replaces the export and import result message.
+    using FileResultHook = std::function<void(bool success, const QString& text)>;
+    void setFileResultHook(FileResultHook hook);
+
     // simulateUserComboChangeForTest: drive a user-equivalent combo change
     // without needing the combo to actually have focus.  Invokes the same
     // unsaved-prompt flow that the focus-gated path runs.  newName must be
@@ -176,6 +218,9 @@ private slots:
     // the verbatim Thetis string via RejectionMessageHook.
     void onDeleteClicked();
 
+    void onExportClicked();
+    void onImportClicked();
+
 private:
     void buildUi();
     void rebuildCombo();
@@ -189,15 +234,35 @@ private:
     // Run the J.4 prompt + branch logic for a switching-to newName.
     // Returns true if the switch should proceed; false on Cancel.
     bool handleUnsavedPrompt(const QString& newName);
+    // The unsaved-changes question; `exporting` words it for Export.
+    UnsavedPromptResult promptUnsaved(bool exporting = false);
+    void showFileResult(bool success, const QString& text);
+    void showSaveRefusal(const QString& text);
+    // Writes `name`'s stored profile (without this radio's wiring keys) to
+    // `path` and says how it went.
+    void writeExportFile(const QString& name, const QString& path);
+    // A remote window: the Core answered an import or a save for export.
+    void onStationRequestFinished(int request, quint32 commandId, bool accepted,
+                                  const QString& reason);
+    // A remote window whose link dropped, or a page that closes: no answer
+    // will come to this page.
+    void clearPendingStationRequests();
+    // The import result, with a note when keys this build does not know
+    // were left out.
+    static QString importedText(const QString& name, int unknownKeys);
+    QString chooseExportPath(const QString& profileName);
+    QString chooseImportPath();
 
     // ── Wiring ──────────────────────────────────────────────────────────────
-    MicProfileManager* m_profileMgr{nullptr};
+    QPointer<MicProfileManager> m_profileMgr;
     TransmitModel*     m_tx{nullptr};
 
     // ── Widgets ─────────────────────────────────────────────────────────────
     QComboBox*   m_combo{nullptr};
     QPushButton* m_saveBtn{nullptr};
     QPushButton* m_deleteBtn{nullptr};
+    QPushButton* m_exportBtn{nullptr};
+    QPushButton* m_importBtn{nullptr};
     QSpinBox*    m_filterLowSpin{nullptr};
     QSpinBox*    m_filterHighSpin{nullptr};
     QSpinBox*    m_amCarrierSpin{nullptr};
@@ -217,12 +282,36 @@ private:
     // user input without needing a real focus event.
     bool m_simulateUserChangeForTest{false};
 
+    // Edits seen so far, and times a profile was loaded over the edits.
+    int m_edits{0};
+    int m_profileLoads{0};
+    // The active profile as the manager last reported it.
+    QString m_knownActiveProfile;
+
+    // A remote window: the imports sent to the Core, by command id, and the
+    // export waiting for the Core's save (m_edits as the save was sent).
+    struct PendingImport {
+        QString name;
+        int     unknownKeys;
+    };
+    struct PendingExport {
+        quint32 commandId;
+        QString name;
+        QString path;
+        int     edits;
+    };
+    QHash<quint32, PendingImport> m_pendingImports;
+    std::optional<PendingExport>  m_pendingExport;
+
     // ── Test hooks ──────────────────────────────────────────────────────────
     SavePromptHook        m_savePromptHook;
     OverwriteConfirmHook  m_overwriteConfirmHook;
     DeleteConfirmHook     m_deleteConfirmHook;
     RejectionMessageHook  m_rejectionMessageHook;
     UnsavedPromptHook     m_unsavedPromptHook;
+    FilePathHook          m_exportPathHook;
+    FilePathHook          m_importPathHook;
+    FileResultHook        m_fileResultHook;
 };
 
 } // namespace NereusSDR

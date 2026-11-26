@@ -43,6 +43,11 @@
 //   2026-10-26  J.J. Boyd / KG4VCF  CW transmit, transmitSettingsVersion
 //                                    16 (the CW settings on `transmit`).
 //                                    AI-assisted via Claude Code.
+//   2026-11-17  Brian Sutton (W4KZO)  transmitSettingsVersion 17
+//                                    (txProfile.import) is offered.
+//                                    AI-assisted via xAI Grok.
+//   2026-11-22  J.J. Boyd / KG4VCF  CI fix: 17 is offered and 18 is not.
+//                                    AI tooling: Claude Code.
 // =================================================================
 
 #include <tuple>
@@ -259,9 +264,12 @@ void TstTransmitSettingsGate::coreOffersTransmitSettingsVersion()
     // settings are taken on the air as a local window takes them, 14 since
     // Prevent TX'ing on a different band became the Core's setting, 15 since
     // a remote window edits the CFC bands (cfcProfile), 16 since the CW
-    // settings are on `transmit`.
-    QCOMPARE(s.server->buildCapabilities().transmitSettingsVersion, 16);
-    QCOMPARE(s.client->capabilities().transmitSettingsVersion, 16);
+    // settings are on `transmit`, 17 since a remote window imports one
+    // transmit profile (txProfile.import).
+    QCOMPARE(s.server->buildCapabilities().transmitSettingsVersion,
+             kTransmitSettingsTxProfileFileVersion);
+    QCOMPARE(s.client->capabilities().transmitSettingsVersion,
+             kTransmitSettingsTxProfileFileVersion);
     QVERIFY(s.client->transmitSettingsAvailable());
     QVERIFY(s.client->transmitSettingsAvailable(1));
     QVERIFY(s.client->transmitSettingsAvailable(2));
@@ -279,7 +287,8 @@ void TstTransmitSettingsGate::coreOffersTransmitSettingsVersion()
     QVERIFY(s.client->transmitSettingsAvailable(14));
     QVERIFY(s.client->transmitSettingsAvailable(15));
     QVERIFY(s.client->transmitSettingsAvailable(16));
-    QVERIFY(!s.client->transmitSettingsAvailable(17));
+    QVERIFY(s.client->transmitSettingsAvailable(17));
+    QVERIFY(!s.client->transmitSettingsAvailable(18));
     QVERIFY(StationServer::isTransmitSettingKeyAcceptedOffAir(
         QStringLiteral("DspOptionsBufferSizePhoneTx")));
     QVERIFY(StationServer::isTransmitSettingKeyAcceptedOffAir(

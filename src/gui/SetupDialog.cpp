@@ -8,6 +8,9 @@
 // behaviour rules consulted while implementing visibility wiring.
 //
 // Modification history (NereusSDR):
+//   2026-11-17 - Diagnostics > Export / Import's Open TX Profile... selects
+//                the TX Profile page. Brian Sutton (W4KZO), AI-assisted via
+//                xAI Grok.
 //   2026-11-16 - Cores > Digital Spectrum Recorder (DsrSetupPage, Core
 //                scope), before Recordings, recording plan Task 26.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -2442,7 +2445,13 @@ void SetupDialog::buildTree()
     registerPage(diagnostics, "Settings Validation", SetupScope::Mixed,
                  [this] { return new SettingsValidationPage(m_model); });
     registerPage(diagnostics, "Export / Import", SetupScope::ThisComputer,
-                 [this] { return new ExportImportConfigPage(m_model); });
+                 [this]() -> QWidget* {
+        auto* page = new ExportImportConfigPage(m_model);
+        connect(page, &ExportImportConfigPage::txProfilePageRequested, this, [this] {
+            selectPage(QStringLiteral("TX Profile"));
+        });
+        return page;
+    });
     // Remote-window parity Task 22 (R-R3-49): in a remote window the page
     // also shows the Core's recent log.
     registerPage(diagnostics, "Logs", SetupScope::ThisComputer,

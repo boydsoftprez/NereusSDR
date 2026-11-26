@@ -66,6 +66,8 @@
 //                 ends, so a background save still writing at exit no
 //                 longer leaves the Windows process waiting forever.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-25 - keySurvivesFile(); how keys are written and read is
+//                 unchanged. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1137,6 +1139,15 @@ QByteArray AppSettings::exportLocalXml(QString* error) const
 QString AppSettings::keyFromXmlTag(const QString& tag)
 {
     return decodeXmlKey(tag);
+}
+
+bool AppSettings::keySurvivesFile(const QString& key)
+{
+    // The element as the loader meets it: a name the XML reader takes, and
+    // one that reads back as this key.
+    const QString tag = encodeXmlKey(key);
+    QXmlStreamReader xml(QStringLiteral("<%1/>").arg(tag));
+    return xml.readNextStartElement() && xml.name() == tag && decodeXmlKey(tag) == key;
 }
 
 bool AppSettings::validateLocalXml(const QByteArray& input, QString* error)

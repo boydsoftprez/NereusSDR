@@ -53,6 +53,9 @@
 //   2026-10-09 - D25: the settings path wraps instead of widening the page
 //                past the Settings window. J.J. Boyd (KG4VCF), AI-assisted
 //                via Anthropic Claude Code.
+//   2026-11-17 - Export / Import's TX Profile section: Open TX Profile...
+//                goes to the page where one profile is imported and
+//                exported. Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 // =================================================================
 
 #include "DiagnosticsPhaseHPages.h"
@@ -425,6 +428,24 @@ void ExportImportConfigPage::buildUI()
             &ExportImportConfigPage::onImportAllClicked);
     connect(m_exportRadioBtn, &QPushButton::clicked, this,
             &ExportImportConfigPage::onExportRadioClicked);
+
+    auto* profileGroup = addSection(QStringLiteral("TX Profile"));
+    auto* profileLayout = qobject_cast<QVBoxLayout*>(profileGroup->layout());
+    m_txProfileBtn = new QPushButton(QStringLiteral("Open TX Profile…"));
+    m_txProfileBtn->setObjectName(QStringLiteral("openTxProfileButton"));
+    m_txProfileBtn->setToolTip(QStringLiteral(
+        "Import or export one transmit profile."));
+    auto* profileRow = new QHBoxLayout;
+    profileRow->addWidget(m_txProfileBtn);
+    profileRow->addStretch();
+    profileLayout->addLayout(profileRow);
+    auto* profileNote = new QLabel(QStringLiteral(
+        "One transmit profile is imported and exported on the TX Profile page."));
+    profileNote->setObjectName(QStringLiteral("txProfileRedirectExplanation"));
+    profileNote->setWordWrap(true);
+    profileLayout->addWidget(profileNote);
+    connect(m_txProfileBtn, &QPushButton::clicked, this,
+            &ExportImportConfigPage::txProfilePageRequested);
 }
 
 void ExportImportConfigPage::onExportAllClicked()

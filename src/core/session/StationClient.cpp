@@ -9,6 +9,17 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-22: The TX profile page hears the Core's answer to every
+//               txProfile.* request (reportStationRequestFinished); an
+//               import's refusal, and that of the save an export waits on,
+//               are shown by the page alone. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
+//   2026-11-25: Only while that page is still open: it claims its own
+//               requests by command id, and a refused import no longer
+//               resets the profile combos. J.J. Boyd (KG4VCF), AI-assisted
+//               via Claude Code.
+//   2026-11-17: requestTxProfileImport (txProfile.import, transmitSettings
+//               Version 17). Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 //   2026-11-16: Recording plan Task 22: the dsr.* verbs (rewind sound) are
 //               sent and answered with the recordings verbs.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -2631,6 +2642,10 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
     if (!m_radioModel.isNull()) {
         // Fix wave GUI-I6: nothing of the retired session is on its way.
         m_radioModel->transmitModel().setTunePowerForTxBandWriteInFlight(false);
+        // Nor the requests the TX Profile page waited on.
+        if (MicProfileManager* profiles = m_radioModel->micProfileManager()) {
+            profiles->releaseAllStationRequests();
+        }
     }
     m_controlTakeBacks.clear();
     m_pendingPs3Display.reset();
@@ -8268,6 +8283,17 @@ StationClient::CommandOutcome StationClient::requestTxProfileDelete(const QStrin
                        QStringLiteral("the transmit profile"));
 }
 
+StationClient::CommandOutcome StationClient::requestTxProfileImport(const QString& name,
+                                                                    const QString& keysJson)
+{
+    if (!transmitSettingsAvailable(kTransmitSettingsTxProfileFileVersion)) {
+        return IStationLink::requestTxProfileImport(name, keysJson);
+    }
+    return sendCommand("txProfile.import", -1,
+                       { stringArgument("name", name), stringArgument("keysJson", keysJson) },
+                       QStringLiteral("the transmit profile"));
+}
+
 StationClient::CommandOutcome StationClient::requestRadeResetVocoder()
 {
     if (!transmitSettingsAvailable(3)) {
@@ -9061,9 +9087,17 @@ void StationClient::handleCommandResult(const SessionMessage& message)
                     : message.reason);
         }
     }
+    // An open TX Profile page shows the refusal of its import, and of the
+    // save its export waits on, itself (onStationRequestFinished, below): no
+    // toast, and no word to the receive chooser. Neither moved a combo, so
+    // the profile combos need no reset.
+    MicProfileManager* const pageProfiles =
+        m_radioModel.isNull() ? nullptr : m_radioModel->micProfileManager();
+    const bool txProfilePageRequest = pending.verb.startsWith("txProfile.") && pageProfiles
+        && pageProfiles->stationRequestClaimed(message.commandId);
     if (!message.accepted && !m_radioModel.isNull() && !ioBoardRequest
         && !filterResponseRequest && !spotRequest && !recordRequest && !radioRequest
-        && !supportRequest
+        && !supportRequest && !txProfilePageRequest
         && !message.commandVerb.startsWith("ps3.") && !message.commandVerb.startsWith("dspAssets.")
         && !message.commandVerb.startsWith("notch.")) {
         // The station's OWN reason, relayed verbatim. Wording a refusal
@@ -9121,6 +9155,20 @@ void StationClient::handleCommandResult(const SessionMessage& message)
             if (AlexAntennaFacade* alex = m_radioModel->alexAntennaFacade()) {
                 alex->reportBandEditRefused();
             }
+        }
+    }
+
+    // PR 809 review (M5, M10): the page that imported a profile, or saved
+    // one to export it, hears the Core's answer, accepted or refused.
+    if (pending.verb.startsWith("txProfile.") && !m_radioModel.isNull()) {
+        if (MicProfileManager* profiles = m_radioModel->micProfileManager()) {
+            using Request = MicProfileManager::StationRequest;
+            const Request request = pending.verb == "txProfile.import" ? Request::Import
+                : pending.verb == "txProfile.save"                     ? Request::Save
+                : pending.verb == "txProfile.delete"                   ? Request::Delete
+                                                                       : Request::Select;
+            profiles->reportStationRequestFinished(request, message.commandId,
+                                                   message.accepted, message.reason);
         }
     }
 

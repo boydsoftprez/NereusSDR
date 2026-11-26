@@ -1261,7 +1261,7 @@ table.
 | `pairingVersion` | 1 |
 | `stationCatalogVersion` | 1 |
 | `displayExtrasVersion` | 4 |
-| `transmitSettingsVersion` | 16 |
+| `transmitSettingsVersion` | 17 |
 | `bandSelectVersion` | 1 |
 | `meterReadingsVersion` | 1 |
 | `dspInfoVersion` | 1 |
@@ -4502,6 +4502,14 @@ Notes on the keys:
   (section 6.1); every other peer's `transmit` schema, snapshot and deltas
   carry none of them, and its write of one is refused "Update this app to
   change the CW settings on this Core.".
+- **`transmitSettingsVersion` 17** (PR 809, one transmit profile from a
+  file). Adds no property; it offers the command `txProfile.import`
+  (section 9.1, "TX profiles and the RADE vocoder"), which stores one
+  profile from Setup > Audio > TX Profile's Import... and selects it. A
+  window against a Core below 17 can still export a profile and leaves
+  Import... disabled, its tooltip the window's transmit settings reason
+  ("This Core does not let this app change transmit settings. Updating the
+  Core may help.").
 - **Why QSK is not offered** (`cwQskUnavailableReason`, `utf8`, outbound,
   after `cwxMemory8`; the CW transmit final fix wave). The Core's reason
   in the words its own CW page shows, for example "The Hermes Lite 2 can't
@@ -6626,6 +6634,7 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `txProfile.select` | `name` utf8 | `transmitSettingsVersion` | 3 | 11 |
 | `txProfile.save` | `name` utf8 | `transmitSettingsVersion` | 3 | 11 |
 | `txProfile.delete` | `name` utf8 | `transmitSettingsVersion` | 3 | 11 |
+| `txProfile.import` | `name` utf8, `keysJson` utf8 | `transmitSettingsVersion` | 17 | 11 |
 | `rade.resetVocoder` | none | `transmitSettingsVersion` | 3 | 11 |
 | `txEq.setCurve` | `curveJson` utf8 | `txEqCurveVersion` | 2 | 11 |
 | `txEq.resetCurve` | none | `txEqCurveVersion` | 2 | 11 |
@@ -7560,6 +7569,45 @@ These command groups need a sentence beyond the table:
   understood." and "The request to reset the RADE vocoder was not
   understood." A peer below agreed minor 11 gets "Update this app to
   change transmit profiles on this Core."
+- **Importing a TX profile** (`transmitSettingsVersion` 17).
+  `txProfile.import` (`name`, `keysJson`) stores one transmit profile on
+  the Core and selects it, as Setup > Audio > TX Profile's Import... does
+  in a local window. `keysJson` is a JSON object of the profile's settings
+  by their saved key names (`MicGain`, `TXEQ1`, `CFCParaEQData` and the
+  rest of the profile's live keys), each value text, as the
+  `.nereus-tx-profile` file's `keys` holds them. A key the Core does not
+  keep in a profile is left out; a live key the object does not carry
+  takes the factory default (`MicProfileManager::defaultProfileValues`).
+  The radio's own wiring keys (`Mic_XLR`, `Line_Input_On`, `Mic_TipRing`,
+  `Mic_Bias`, `Mic_PTT_Disabled`, `Mic_UserDigOut` and `Mic_Source`) are
+  never taken from it: the imported profile keeps the Core's current
+  values for them, and an exported file leaves them out. The name follows
+  save's rules (trimmed, a comma becomes `_`); an existing name is
+  overwritten. It has the gates, the on-air rule and the holder rule of
+  `txProfile.select`. Its refusals: "Give the transmit profile a name.",
+  "Use a transmit profile name of 64 characters or fewer.", "Use a
+  transmit profile name without tabs, line breaks or other control
+  characters.", "The settings file cannot keep this transmit profile
+  name. Use a different name." (a name whose keys the settings file would
+  read back as other keys, such as `plan c` or `Rig__c`; `My__Profile` is
+  taken; the same rules hold for `txProfile.save`), "The transmit profile is too large." (`keysJson` over 256
+  KiB), "The transmit profile was not understood." (`keysJson` not a JSON
+  object), "A setting in the transmit profile is not text.", "The
+  transmit profile has no settings." (no key the Core keeps), a value its
+  setting does not take in that setting's own words (for example "Choose
+  a mic level from -50 to 70 dB.", "The transmit profile's leveler setting
+  is not on or off.", "Choose a TX filter low cut below its high cut." or
+  "The Core could not read that equalizer curve. Save the curve again and
+  retry."), "The Core has no radio to keep transmit profiles for." and
+  "The request for the transmit profile was not understood." The same
+  name rules refuse `txProfile.save`. An accepted import's `command.result`
+  goes out after the deltas of the values it loaded (the asking session's
+  pending deltas are sent first), so the asking window has them when it
+  reads the answer; an import over the active profile names no new
+  `activeTxProfile`, and the answer is the window's word that the profile
+  was loaded. A window does not send it to a Core
+  below `transmitSettingsVersion` 17; its own reason is "This Core does not
+  let this app change transmit settings. Updating the Core may help."
 - **The TX EQ curve.** `txEq.setCurve` (`curveJson`) and
   `txEq.resetCurve` (no arguments) change the TX EQ dialog's parametric
   curve, and are its Reset, from a peer offered `txEqCurveVersion` 2

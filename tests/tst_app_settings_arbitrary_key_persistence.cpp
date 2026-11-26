@@ -132,6 +132,37 @@ private slots:
         QVERIFY(!s.contains(
             QStringLiteral("hardware/AA:BB:CC:DD:EE:FF/sampleRate")));
     }
+
+    // keySurvivesFile says what the file really does: a key it passes
+    // loads back, one it fails does not.
+    void key_survives_file_matches_the_file() {
+        const QString prefix = QStringLiteral("hardware/aa:bb:cc:11:22:33/tx/profile/");
+        QStringList names{QString::fromUcs4(U"Desk \U0001F4FB"), QStringLiteral("Desk\tNight")};
+        for (const char* name : {"Desk", "SSB 2.8k CFC", "D-104+CPDR", "My__Profile", "a__b",
+                                 "Rig__sp", "__u0042__", "plan c", "c", "Rig s", "A lb B",
+                                 "Heil plus gate", "_c_", "Rig__c", "D-104__plus__CPDR"}) {
+            names.append(QString::fromLatin1(name));
+        }
+        int kept = 0;
+        for (const QString& name : names) {
+            const QString key = prefix + name + QStringLiteral("/MicGain");
+            QTemporaryDir tmp;
+            QVERIFY(tmp.isValid());
+            const QString path = tmp.filePath(QStringLiteral("NereusSDR.settings"));
+            {
+                AppSettings s(path);
+                s.setValue(key, QStringLiteral("-5"));
+                s.save();
+            }
+            AppSettings back(path);
+            back.load();
+            const bool loaded = back.value(key).toString() == QLatin1String("-5");
+            QVERIFY2(AppSettings::keySurvivesFile(key) == loaded, qPrintable(name));
+            kept += loaded ? 1 : 0;
+        }
+        QCOMPARE(kept, 7);
+    }
+
 };
 
 QTEST_MAIN(TstAppSettingsArbitraryKeyPersistence)

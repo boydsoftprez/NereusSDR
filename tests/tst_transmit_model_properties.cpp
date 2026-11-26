@@ -55,6 +55,11 @@
 //   2026-10-26  J.J. Boyd / KG4VCF  CW transmit, transmitSettingsVersion
 //                                    16 (the CW settings on `transmit`).
 //                                    AI-assisted via Claude Code.
+//   2026-11-17  Brian Sutton (W4KZO)  transmitSettingsVersion 17
+//                                    (txProfile.import) is offered.
+//                                    AI-assisted via xAI Grok.
+//   2026-11-22  J.J. Boyd / KG4VCF  CI fix: 17 is offered and 18 is not.
+//                                    AI tooling: Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -406,8 +411,10 @@ void TstTransmitModelProperties::coreOffersTransmitSettingsVersion4()
     // calibration); 4 is within it.
     Session s(m_securityDir.path(), this);
     QVERIFY(s.connect());
-    QCOMPARE(s.server->buildCapabilities().transmitSettingsVersion, 16);
-    QCOMPARE(s.client->capabilities().transmitSettingsVersion, 16);
+    QCOMPARE(s.server->buildCapabilities().transmitSettingsVersion,
+             kTransmitSettingsTxProfileFileVersion);
+    QCOMPARE(s.client->capabilities().transmitSettingsVersion,
+             kTransmitSettingsTxProfileFileVersion);
     QVERIFY(s.client->transmitSettingsAvailable(4));
     QVERIFY(s.client->transmitSettingsAvailable(7));
     QVERIFY(s.client->transmitSettingsAvailable(8));
@@ -428,7 +435,9 @@ void TstTransmitModelProperties::coreOffersTransmitSettingsVersion4()
     QVERIFY(s.client->transmitSettingsAvailable(15));
     // 16 since the CW settings are on `transmit` (tst_cw_settings).
     QVERIFY(s.client->transmitSettingsAvailable(16));
-    QVERIFY(!s.client->transmitSettingsAvailable(17));
+    // 17 since a remote window imports one transmit profile (txProfile.import).
+    QVERIFY(s.client->transmitSettingsAvailable(17));
+    QVERIFY(!s.client->transmitSettingsAvailable(18));
 }
 
 // R-R3-49 (parity Task 5): the version 5 properties, after txAlcDecay in

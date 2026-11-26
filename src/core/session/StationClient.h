@@ -208,6 +208,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-17: requestTxProfileImport. Brian Sutton (W4KZO), AI-assisted
+//               via xAI Grok.
 //   2026-11-16: Recording plan Task 11 fix round 2: m_voiceKeyerSelfWireId
 //               and followVoiceMessageSending. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
@@ -1564,6 +1566,9 @@ public:
     CommandOutcome requestTxProfileSelect(const QString& name) override;
     CommandOutcome requestTxProfileSave(const QString& name) override;
     CommandOutcome requestTxProfileDelete(const QString& name) override;
+    // transmitSettingsVersion 17: see IStationLink. Sent only to a Core at
+    // transmitSettingsVersion 17.
+    CommandOutcome requestTxProfileImport(const QString& name, const QString& keysJson) override;
     CommandOutcome requestRadeResetVocoder() override;
     // transmitSettingsVersion 15: see IStationLink. Sent only to a Core at
     // transmitSettingsVersion 15.

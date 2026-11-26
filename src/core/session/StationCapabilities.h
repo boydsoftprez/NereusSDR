@@ -273,6 +273,8 @@
 //               remoteCw 1. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
 //                 AI-assisted via xAI Grok.
+//   2026-11-17 - kTransmitSettingsTxProfileFileVersion (17): txProfile.import.
+//                Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 // =================================================================
 
 #include <QByteArray>
@@ -317,6 +319,12 @@ inline constexpr int kTransmitSettingsCfcProfileVersion = 15;
 /// an older Core a window shows its CW controls disabled with the update
 /// reason.
 inline constexpr int kTransmitSettingsCwVersion = 16;
+
+/// From this transmitSettingsVersion the Core takes txProfile.import: one
+/// transmit profile's keys, stored and selected as Setup > Audio > TX
+/// Profile's Import does. Against an older Core a window can still export
+/// a profile and leaves Import disabled.
+inline constexpr int kTransmitSettingsTxProfileFileVersion = 17;
 
 /// The newest radioAntennaRowsVersion. 1: the one-band Alex edits bound to
 /// the connected radio's MAC. 2: and `rxOnlyAntennas` entries 0..5, Thetis's

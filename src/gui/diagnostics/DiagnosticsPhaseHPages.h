@@ -35,10 +35,17 @@
 //   2026-10-08 - Import All Settings' picker, question and result are
 //                 overridable, as Export's are, for tests. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-17 - The TX Profile section's Open TX Profile... button
+//                 (txProfilePageRequested). Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
+//   2026-11-22 - ExportImportConfigPage is exported from the GUI DLL so a
+//                 test can watch its txProfilePageRequested signal.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #pragma once
 
+#include "gui/NereusGuiExport.h"
 #include "gui/SetupPage.h"
 
 #include <QByteArray>
@@ -109,7 +116,7 @@ private:
 };
 
 // Diagnostics → Export / Import Config (Phase H, functional).
-class ExportImportConfigPage : public SetupPage {
+class NEREUS_GUI_EXPORT ExportImportConfigPage : public SetupPage {
     Q_OBJECT
 public:
     explicit ExportImportConfigPage(RadioModel* model = nullptr, QWidget* parent = nullptr);
@@ -123,6 +130,10 @@ public:
     /// values through its settings proxy.
     static QByteArray connectedRadioXml(const AppSettings& settings, const QString& mac,
                                         QString* error = nullptr);
+
+signals:
+    // Setup > Audio > TX Profile, where one profile is imported and exported.
+    void txProfilePageRequested();
 
 protected:
     // The native picker and message boxes live at the page boundary so the
@@ -158,6 +169,7 @@ private:
     QPushButton* m_exportAllBtn{nullptr};
     QPushButton* m_importAllBtn{nullptr};
     QPushButton* m_exportRadioBtn{nullptr};
+    QPushButton* m_txProfileBtn{nullptr};
     bool         m_stationSettingsAvailable{true};
     QString      m_stationUnavailableReason;
     quint64      m_linkGeneration{0};
