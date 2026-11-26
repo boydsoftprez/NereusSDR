@@ -6259,6 +6259,7 @@ computer, never sent). `classifySettingsKey` (`SettingsScope.cpp`) decides:
 | 2. prefix | `Snb` | station |
 | 2. prefix | `Rade` | station |
 | 2. prefix | `filters/` | station |
+| 2. prefix | `NewSlice/` | station |
 | 2. prefix | `DisplayGridMax_` | station |
 | 2. prefix | `DisplayGridMin_` | station |
 | 2. prefix | `Tci` | operatorLocal |

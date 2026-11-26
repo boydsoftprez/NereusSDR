@@ -1,17 +1,24 @@
 # Changelog
 
-## [Unreleased]
+## [Unreleased, after 2026.11.2]
+
+This section is for the release after 2026.11.2. It joins that release's
+notes when this change merges.
 
 ### Receive
 
 - **Choose how a new slice opens.** Setup > General > New Slice sets the
-  band, mode, filter, AGC, AGC offset, noise reduction, noise blanker, squelch, step, volume,
-  lock, mute, RIT and XIT a new slice starts with. +RX, Ctrl+R and Add slice
-  on the pan use those choices. A row left on its usual choice still copies
-  the slice you are on, and lock, mute, RIT and XIT still start off. The new
-  slice stays on your frequency and keeps the sample rate of the receiver it
-  joins. The choices belong to the Core, so every window on the station
-  shares them.
+  band, mode, filter, AGC, AGC-T, AGC offset, noise reduction, noise blanker,
+  squelch, step, volume, lock, mute, RIT and XIT a new slice starts with.
+  +RX, Ctrl+R and Add slice on the pan use those choices. A row left on its
+  usual choice still copies the slice you are on, and lock, mute, RIT and
+  XIT still start off. The new slice stays on your frequency and keeps the
+  sample rate of the receiver it joins. When a band is chosen and no
+  receiver is free for it, the slice opens on the band you are on and a
+  note says why. The choices belong to the Core, so every window on the
+  Core shares them. Contributed by Brian Sutton.
+
+## [Unreleased]
 
 ### Roundtable
 

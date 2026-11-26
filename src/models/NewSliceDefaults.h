@@ -1,6 +1,6 @@
 #pragma once
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 J.J. Boyd (KG4VCF)
+// Copyright (C) 2026 Brian Sutton (W4KZO)
 // no-port-check: NereusSDR-original.
 // =================================================================
 // src/models/NewSliceDefaults.h  (NereusSDR)
@@ -15,8 +15,12 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-11-24 - The operator's defaults for a slice they open.
-//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                NereusSDR-original. Brian Sutton (W4KZO), AI-assisted via
 //                xAI Grok.
+//   2026-11-26 - AGC-T sets the receive panel's AGC-T (the AGC threshold),
+//                ranges from ControlRanges, a band with no free receiver
+//                is not used, and Follow is -1 for every row. J.J. Boyd
+//                (KG4VCF), AI tooling Claude Code / Opus 5.5.
 // =================================================================
 
 #include "core/ControlRanges.h"
@@ -33,19 +37,22 @@ public:
     // do not: their usual choice is Off.
     static constexpr int kFollowSlice = -1;
 
-    // AGC-T's "follow the slice" value. -1 sits inside the real -20..120
-    // range, so it cannot mean "follow".
+    // AGC-T's "follow the slice" value. AGC-T is the receive panel's AGC-T,
+    // the AGC threshold (SliceModel::agcThreshold). -1 sits inside its
+    // ControlRanges::kAgcThresholdMinDb..kAgcThresholdMaxDb range, so it
+    // cannot mean "follow".
     static constexpr int kAgcTFollow = -999;
 
     // AUTO AGC ± Offset's "follow the slice" value. The real range is
-    // -60..60, so -1 cannot mean "follow".
+    // ControlRanges::kAutoAgcOffsetMinDb..kAutoAgcOffsetMaxDb, so -1 cannot
+    // mean "follow".
     static constexpr int kAutoAgcOffsetFollow = -999;
 
     // The volume and AGC-T rows' "a value I choose" item. Never stored.
     static constexpr int kSpecify = -2;
 
     enum class FilterPolicy : int {
-        FollowSlice = 0,
+        FollowSlice = kFollowSlice,
         ModeDefault = 1,
     };
 
@@ -66,13 +73,12 @@ public:
     static int bandChoice();
     static void setBandChoice(int band);
 
+    // The band's usual frequency in Hz when Band names a band, else 0.
+    static double bandOpeningHz();
+
     // The quick controls for a noise-reduction choice, or nullptr for Off,
     // "same as the slice", and a reducer with no quick controls (BNR).
     static const ControlRanges::NrSlotControls* nrControlsForChoice(int nrSlot);
-
-    // True when the operator asked to set that reducer's own knobs.
-    static bool nrSettingsCustomized(const char* slotKey);
-    static void setNrSettingsCustomized(const char* slotKey, bool on);
 
     // One knob, in the SliceModel property's own units. Absent means the
     // copied slice's value stays.
@@ -134,8 +140,11 @@ public:
 
     // Applies the rows that are not on their usual choice. `seed` is the
     // slice the new one was copied from, or null when there was none.
-    // Frequency and sample rate are left as the caller set them.
-    static void apply(SliceModel& slice, const SliceModel* seed);
+    // Frequency and sample rate are left as the caller set them, unless
+    // Band names a band and `useBand` is true. The caller passes false when
+    // no receiver can be given to that band, so the slice stays where it
+    // was copied to.
+    static void apply(SliceModel& slice, const SliceModel* seed, bool useBand = true);
 };
 
 } // namespace NereusSDR

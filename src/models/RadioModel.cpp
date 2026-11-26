@@ -20,9 +20,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-26 - New Slice's Band is used only when a receiver can be
+//                given to that band; otherwise the slice opens where it was
+//                copied to and newSliceBandNotUsed says why. J.J. Boyd
+//                (KG4VCF), AI tooling Claude Code / Opus 5.5.
 //   2026-11-24 - A new receiver applies Setup > General > New Slice after
 //                the copy. Absent choices keep the copy, and lock, mute,
-//                RIT and XIT off. NereusSDR-original. J.J. Boyd (KG4VCF),
+//                RIT and XIT off. NereusSDR-original. Brian Sutton (W4KZO),
 //                AI-assisted via xAI Grok.
 //   2026-11-16 — Roundtable pauses for a slice playing the past: presence
 //                 keeps the frequency it had live (RecordingService::
@@ -17574,6 +17578,7 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     }
     const bool hasSeed = seedFrom && seedFrom != slice;
     const bool isFreshCreation = !restoreSeed && !restoredSavedState;
+    QString newSliceBandNotice;
     if (isFreshCreation) {
         // A letter with nothing saved opens on this slice's frequency and
         // mode. Either way the new slice takes this slice's noise
@@ -17624,7 +17629,28 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
             // Setup > General > New Slice. A row left on its usual choice
             // keeps the copy above. Lock, mute, RIT and XIT stay off
             // unless the operator said otherwise.
-            NewSliceDefaults::apply(*slice, hasSeed ? seedFrom : nullptr);
+            // A band of its own needs a receiver of its own. When none can
+            // be given, the slice opens where it was copied to, on the
+            // receiver the operator is looking at, so +RX never fails and
+            // never opens out of view because of this choice.
+            bool useBand = true;
+            const double bandHz = NewSliceDefaults::bandOpeningHz();
+            if (bandHz > 0.0 && role() == Role::Local
+                && m_streamAllocator.streamCount() > 0) {
+                const QByteArray owner = m_sliceOwnership->creator();
+                const bool ownPan = !bindRestored && !initialPanId.isEmpty()
+                    && !panHasSlicesFor(initialPanId, owner, slice);
+                useBand = m_streamAllocator.placeSlice(bandHz, ownPan).outcome
+                    != SliceStreamAllocator::Outcome::Rejected;
+                if (!useBand) {
+                    const BandGridEntry* entry =
+                        bandGridEntry(static_cast<Band>(NewSliceDefaults::bandChoice()));
+                    newSliceBandNotice = tr("The new slice opened on the band you are on. "
+                                            "No receiver is free for %1.")
+                        .arg(entry ? QString::fromLatin1(entry->name) : tr("that band"));
+                }
+            }
+            NewSliceDefaults::apply(*slice, hasSeed ? seedFrom : nullptr, useBand);
             if (!currentAdded()) { return -1; }
         }
     }
@@ -17773,6 +17799,12 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
         }
         delete slice;
         return -1;
+    }
+
+    // New Slice's Band was not used. Said once the slice exists.
+    if (!newSliceBandNotice.isEmpty()) {
+        emit newSliceBandNotUsed(index, newSliceBandNotice);
+        if (!currentAdded()) { return -1; }
     }
 
     // A new receiver on a used letter: the old offsets must not return at the

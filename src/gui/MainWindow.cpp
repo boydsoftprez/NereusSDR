@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-26: A new slice that could not open on New Slice's band says
+//               why in a toast (RadioModel::newSliceBandNotUsed). J.J.
+//               Boyd (KG4VCF), AI tooling Claude Code / Opus 5.5.
 //   2026-11-16: Any tune of a pan's slice reaches its DsrRewindLink
 //               (sliceTuned): in the past it plays from the top row, or
 //               says nothing was kept at that frequency then. J.J. Boyd
@@ -12954,6 +12957,12 @@ void MainWindow::buildUI()
         if (m_hostingSlices && m_hostingSlices->invoking()) { return; }
         // A remote window's refusal is the Core's text; shown in user words.
         showToast(OperatorReasonText::forDisplay(reason), ToastSeverity::Warning, 4000);
+    });
+    // Setup > General > New Slice names a band no receiver could be given
+    // to. The slice opened on the band the operator is on; this says why.
+    connect(m_radioModel, &RadioModel::newSliceBandNotUsed, this,
+            [this](int, const QString& reason) {
+        showToast(OperatorReasonText::forDisplay(reason), ToastSeverity::Info, 4000);
     });
     // R-R3-34: a local window (no Core) closes slices a smaller board cannot
     // host when it connects (RadioModel::closeSlicesPastChannelLimit) and

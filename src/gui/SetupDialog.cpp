@@ -10,7 +10,7 @@
 // Modification history (NereusSDR):
 //   2026-11-24 - General > New Slice (NewSliceDefaultsPage, Core scope):
 //                the operator's defaults for a slice they open.
-//                J.J. Boyd (KG4VCF), AI-assisted via xAI Grok.
+//                Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 //   2026-11-16 - Cores > Digital Spectrum Recorder (DsrSetupPage, Core
 //                scope), before Recordings, recording plan Task 26.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1853,7 +1853,7 @@ void SetupDialog::buildTree()
     registerPage(general, "Filters", SetupScope::Core,
                  [this] { return new GeneralFiltersPage(m_model); });
     // The Core mints a slice someone asked for, so the choices live there
-    // and every window on the station opens a new slice the same way.
+    // and every window on the Core opens a new slice the same way.
     registerPage(general, "New Slice", SetupScope::Core,
                  [this] { return new NewSliceDefaultsPage(m_model); });
 

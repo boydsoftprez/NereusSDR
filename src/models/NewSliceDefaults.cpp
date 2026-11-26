@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 J.J. Boyd (KG4VCF)
+// Copyright (C) 2026 Brian Sutton (W4KZO)
 // no-port-check: NereusSDR-original.
 // =================================================================
 // src/models/NewSliceDefaults.cpp  (NereusSDR)
@@ -11,8 +11,12 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-11-24 - The operator's defaults for a slice they open.
-//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                NereusSDR-original. Brian Sutton (W4KZO), AI-assisted via
 //                xAI Grok.
+//   2026-11-26 - AGC-T sets the receive panel's AGC-T (the AGC threshold),
+//                ranges from ControlRanges, a band with no free receiver
+//                is not used, and Follow is -1 for every row. J.J. Boyd
+//                (KG4VCF), AI tooling Claude Code / Opus 5.5.
 // =================================================================
 
 #include "NewSliceDefaults.h"
@@ -31,9 +35,6 @@
 
 namespace NereusSDR {
 namespace {
-
-constexpr int kAgcTMin = -20;
-constexpr int kAgcTMax = 120;
 
 bool validMode(int mode)
 {
@@ -138,15 +139,12 @@ bool validAf(int gain)
 
 bool validAgcT(int db)
 {
-    return db >= kAgcTMin && db <= kAgcTMax;
+    return db >= ControlRanges::kAgcThresholdMinDb && db <= ControlRanges::kAgcThresholdMaxDb;
 }
-
-constexpr int kAutoAgcOffsetMin = -60;
-constexpr int kAutoAgcOffsetMax = 60;
 
 bool validAutoAgcOffset(int db)
 {
-    return db >= kAutoAgcOffsetMin && db <= kAutoAgcOffsetMax;
+    return db >= ControlRanges::kAutoAgcOffsetMinDb && db <= ControlRanges::kAutoAgcOffsetMaxDb;
 }
 
 void writeInt(const QString& key, int value)
@@ -235,6 +233,16 @@ void NewSliceDefaults::setBandChoice(int band)
     writeInt(QStringLiteral("NewSlice/Band"), band);
 }
 
+double NewSliceDefaults::bandOpeningHz()
+{
+    const int band = bandChoice();
+    if (band == kFollowSlice) {
+        return 0.0;
+    }
+    const BandSeed opening = BandDefaults::seedFor(static_cast<Band>(band));
+    return opening.valid ? opening.frequencyHz : 0.0;
+}
+
 const ControlRanges::NrSlotControls* NewSliceDefaults::nrControlsForChoice(int nrSlot)
 {
     const char* key = nrSlotKey(nrSlot);
@@ -247,22 +255,6 @@ const ControlRanges::NrSlotControls* NewSliceDefaults::nrControlsForChoice(int n
         }
     }
     return nullptr;
-}
-
-bool NewSliceDefaults::nrSettingsCustomized(const char* slotKey)
-{
-    if (slotKey == nullptr) {
-        return false;
-    }
-    return AppSettings::instance().value(nrFieldKey(slotKey, "Custom"), 0).toInt() == 1;
-}
-
-void NewSliceDefaults::setNrSettingsCustomized(const char* slotKey, bool on)
-{
-    if (slotKey == nullptr) {
-        return;
-    }
-    writeInt(nrFieldKey(slotKey, "Custom"), on ? 1 : 0);
 }
 
 bool NewSliceDefaults::nrSetting(const char* slotKey, const char* property, double* value)
@@ -528,13 +520,13 @@ void NewSliceDefaults::reset()
     settings.remove(QStringLiteral("NewSlice/Xit"));
 }
 
-void NewSliceDefaults::apply(SliceModel& slice, const SliceModel* seed)
+void NewSliceDefaults::apply(SliceModel& slice, const SliceModel* seed, bool useBand)
 {
     if (seed == &slice) {
         seed = nullptr;
     }
     const int band = bandChoice();
-    if (band != kFollowSlice) {
+    if (useBand && band != kFollowSlice) {
         const BandSeed opening = BandDefaults::seedFor(static_cast<Band>(band));
         if (opening.valid) {
             slice.setFrequency(opening.frequencyHz);
@@ -569,9 +561,11 @@ void NewSliceDefaults::apply(SliceModel& slice, const SliceModel* seed)
         slice.setAutoAgcEnabled(false);
     }
 
+    // The receive panel's AGC-T slider sets the AGC threshold, so this row
+    // does too, and both show the same number.
     const int agcT = agcTChoice();
     if (agcT != kAgcTFollow) {
-        slice.setRfGain(agcT);
+        slice.setAgcThreshold(agcT);
     }
     const int autoOffset = autoAgcOffsetChoice();
     if (autoOffset != kAutoAgcOffsetFollow) {

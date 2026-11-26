@@ -12,8 +12,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-26 - newSliceBandNotUsed: New Slice's Band had no free
+//                receiver. J.J. Boyd (KG4VCF), AI tooling Claude Code /
+//                Opus 5.5.
 //   2026-11-24 - A new receiver applies the Core's New Slice choices
-//                after the copy. NereusSDR-original. J.J. Boyd (KG4VCF),
+//                after the copy. NereusSDR-original. Brian Sutton (W4KZO),
 //                AI-assisted via xAI Grok.
 //   2026-11-05 - A newly added receiver starts with RIT and XIT off, on a
 //                letter used before too; a restored receiver keeps its own.
@@ -6970,6 +6973,10 @@ signals:
     // been reached; `reason` is sliceCapReason()'s words. MainWindow shows
     // it as a toast.
     void sliceAddRejected(QString reason);
+    /// A new slice opened where it was copied to, because Setup > General >
+    /// New Slice names a band no receiver could be given to. The slice was
+    /// added; `reason` is the operator's words. MainWindow shows it.
+    void newSliceBandNotUsed(int sliceId, const QString& reason);
     /// See reportStationBandStackRefused().
     void stationBandStackRefused(const QString& reason);
     /// R-R3-47 / R-R3-22: the Core refused a request for an accessory's own

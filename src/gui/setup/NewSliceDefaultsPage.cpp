@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 J.J. Boyd (KG4VCF)
+// Copyright (C) 2026 Brian Sutton (W4KZO)
 // no-port-check: NereusSDR-original.
 // =================================================================
 // src/gui/setup/NewSliceDefaultsPage.cpp  (NereusSDR)
@@ -11,14 +11,19 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-11-24 - The operator's defaults for a slice they open.
-//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                NereusSDR-original. Brian Sutton (W4KZO), AI-assisted via
 //                xAI Grok.
+//   2026-11-26 - AGC-T uses the receive panel's AGC-T range, ranges from
+//                ControlRanges, "this Core" in the intro, the theme's text
+//                colour for the reducer labels, squelch tooltip reworded.
+//                J.J. Boyd (KG4VCF), AI tooling Claude Code / Opus 5.5.
 // =================================================================
 
 #include "NewSliceDefaultsPage.h"
 
 #include "core/ControlRanges.h"
 #include "core/WdspTypes.h"
+#include "gui/StyleConstants.h"
 #include "models/BandGrid.h"
 #include "models/NewSliceDefaults.h"
 #include "models/SliceModel.h"
@@ -38,8 +43,12 @@
 namespace NereusSDR {
 namespace {
 
-constexpr int kAgcTMin = -20;
-constexpr int kAgcTMax = 120;
+// The reducer labels take the theme's primary text colour.
+QString nrLabelStyle()
+{
+    return QStringLiteral("QLabel { color: %1; font-size: 12px; }")
+        .arg(QLatin1String(Style::kTextPrimary));
+}
 
 void keepComboNarrow(QComboBox* box)
 {
@@ -58,7 +67,7 @@ NewSliceDefaultsPage::NewSliceDefaultsPage(RadioModel* model, QWidget* parent)
            "keeps the sample rate of the receiver it joins. A setting left on "
            "its default choice follows the slice you are on. Lock, mute, RIT "
            "and XIT still start off until you change them. These settings "
-           "belong to the Core, so every window on this station opens a new "
+           "belong to the Core, so every window on this Core opens a new "
            "slice the same way."),
         this);
     intro->setWordWrap(true);
@@ -111,7 +120,8 @@ NewSliceDefaultsPage::NewSliceDefaultsPage(RadioModel* model, QWidget* parent)
     addItem(m_agcOffsetChoice, follow, NewSliceDefaults::kAutoAgcOffsetFollow);
     addItem(m_agcOffsetChoice, tr("This value"), NewSliceDefaults::kSpecify);
     m_agcOffsetChoice->setToolTip(tr("dB shift from noise floor"));
-    m_agcOffset = addLabeledSpinner(tr("± Offset value"), -60, 60, 20);
+    m_agcOffset = addLabeledSpinner(tr("± Offset value"), ControlRanges::kAutoAgcOffsetMinDb,
+                                    ControlRanges::kAutoAgcOffsetMaxDb, 20);
     m_agcOffset->setObjectName(QStringLiteral("newSliceAgcOffset"));
     m_agcOffset->setSuffix(tr(" dB"));
     m_agcOffset->setToolTip(tr("dB shift from noise floor"));
@@ -119,9 +129,14 @@ NewSliceDefaultsPage::NewSliceDefaultsPage(RadioModel* model, QWidget* parent)
     m_agcTChoice = addChoice(tr("AGC-T"), QStringLiteral("newSliceAgcTChoice"));
     addItem(m_agcTChoice, follow, NewSliceDefaults::kAgcTFollow);
     addItem(m_agcTChoice, tr("This value"), NewSliceDefaults::kSpecify);
-    m_agcT = addLabeledSpinner(tr("AGC-T value"), kAgcTMin, kAgcTMax, 80);
+    // The receive panel's AGC-T: the same setting, range and number.
+    m_agcT = addLabeledSpinner(tr("AGC-T value"), ControlRanges::kAgcThresholdMinDb,
+                               ControlRanges::kAgcThresholdMaxDb, -20);
     m_agcT->setObjectName(QStringLiteral("newSliceAgcT"));
+    m_agcT->setSingleStep(ControlRanges::kAgcThresholdStepDb);
     m_agcT->setSuffix(tr(" dB"));
+    m_agcTChoice->setToolTip(tr("The same AGC-T as the receive panel. AUTO AGC moves it "
+                                "with the noise floor."));
 
     m_step = addChoice(tr("Tune step"), QStringLiteral("newSliceStep"));
     addItem(m_step, follow, NewSliceDefaults::kFollowSlice);
@@ -169,7 +184,7 @@ NewSliceDefaultsPage::NewSliceDefaultsPage(RadioModel* model, QWidget* parent)
     m_squelch = addChoice(tr("Squelch"), QStringLiteral("newSliceSquelch"));
     addItem(m_squelch, follow, NewSliceDefaults::kFollowSlice);
     addItem(m_squelch, tr("Off"), static_cast<int>(NewSliceDefaults::SwitchPolicy::Off));
-    m_squelch->setToolTip(tr("Off closes SSB, AM and FM squelch. Their thresholds stay."));
+    m_squelch->setToolTip(tr("Off turns SSB, AM and FM squelch off. Their levels stay as they are."));
 
     addSection(tr("Lock, mute, RIT and XIT"));
     m_lock = addChoice(tr("Lock"), QStringLiteral("newSliceLock"));
@@ -433,7 +448,7 @@ void NewSliceDefaultsPage::installNrDetails()
             } else if (control.kind == ControlRanges::NrControlKind::Choice) {
                 auto* row = new QHBoxLayout;
                 auto* label = new QLabel(QString::fromLatin1(control.label), panel);
-                label->setStyleSheet(QStringLiteral("QLabel { color: #c8d8e8; font-size: 12px; }"));
+                label->setStyleSheet(nrLabelStyle());
                 label->setFixedWidth(160);
                 label->setWordWrap(true);
                 auto* combo = new QComboBox(panel);
@@ -451,7 +466,7 @@ void NewSliceDefaultsPage::installNrDetails()
             } else if (fractional) {
                 auto* row = new QHBoxLayout;
                 auto* label = new QLabel(QString::fromLatin1(control.label), panel);
-                label->setStyleSheet(QStringLiteral("QLabel { color: #c8d8e8; font-size: 12px; }"));
+                label->setStyleSheet(nrLabelStyle());
                 label->setFixedWidth(160);
                 label->setWordWrap(true);
                 auto* spin = new QDoubleSpinBox(panel);
@@ -469,7 +484,7 @@ void NewSliceDefaultsPage::installNrDetails()
             } else {
                 auto* row = new QHBoxLayout;
                 auto* label = new QLabel(QString::fromLatin1(control.label), panel);
-                label->setStyleSheet(QStringLiteral("QLabel { color: #c8d8e8; font-size: 12px; }"));
+                label->setStyleSheet(nrLabelStyle());
                 label->setFixedWidth(160);
                 label->setWordWrap(true);
                 auto* spin = new QSpinBox(panel);

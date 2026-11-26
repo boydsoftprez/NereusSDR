@@ -1,6 +1,6 @@
 #pragma once
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 J.J. Boyd (KG4VCF)
+// Copyright (C) 2026 Brian Sutton (W4KZO)
 // no-port-check: NereusSDR-original.
 // =================================================================
 // src/gui/setup/NewSliceDefaultsPage.h  (NereusSDR)
@@ -12,7 +12,7 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-11-24 - The operator's defaults for a slice they open.
-//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                NereusSDR-original. Brian Sutton (W4KZO), AI-assisted via
 //                xAI Grok.
 // =================================================================
 

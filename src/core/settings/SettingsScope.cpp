@@ -204,10 +204,10 @@
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-24 - LimitFiltersToSidebands is Station scope. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
-//   2026-11-24 - NewSlice/ is the Core's defaults for a slice an operator
-//                opens. J.J. Boyd (KG4VCF), AI-assisted via xAI Grok.
 //   2026-10-31 - Roundtable/SignalFormat is a local reporter-display
 //                preference. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-11-24 - NewSlice/ is the Core's defaults for a slice an operator
+//                opens. Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 // =================================================================
 
 #include "core/settings/SettingsScope.h"
