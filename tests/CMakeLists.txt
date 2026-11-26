@@ -10207,6 +10207,11 @@ nereus_add_test(tst_antenna_kept
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
 target_compile_definitions(tst_antenna_kept PRIVATE NEREUS_BUILD_TESTS)
+# PR 816 final review: New Slice's band notice to the device that added it.
+nereus_add_test(tst_new_slice_band_notice
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_new_slice_band_notice PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_radio_bound_antenna_rows
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)

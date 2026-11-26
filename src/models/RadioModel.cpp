@@ -22,7 +22,9 @@
 // Modification history (NereusSDR):
 //   2026-11-26 - New Slice's Band is used only when a receiver can be
 //                given to that band; otherwise the slice opens where it was
-//                copied to and newSliceBandNotUsed says why. J.J. Boyd
+//                copied to and newSliceBandNotUsed says why, also in a
+//                remote window (reportStationNewSliceBandNotUsed, from the
+//                Core's newSliceBand notice). J.J. Boyd
 //                (KG4VCF), AI tooling Claude Code / Opus 5.5.
 //   2026-11-24 - A new receiver applies Setup > General > New Slice after
 //                the copy. Absent choices keep the copy, and lock, mute,
@@ -11182,6 +11184,14 @@ void RadioModel::reportStationBandStackRefused(const QString& reason)
         return;
     }
     emit stationBandStackRefused(reason);
+}
+
+void RadioModel::reportStationNewSliceBandNotUsed(int sliceId, const QString& reason)
+{
+    if (m_role != Role::Remote || reason.isEmpty()) {
+        return;
+    }
+    emit newSliceBandNotUsed(sliceId, reason);
 }
 
 void RadioModel::reportStationAccessoryRefusal(const QString& device, const QString& reason,

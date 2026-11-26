@@ -13,8 +13,9 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-11-26 - newSliceBandNotUsed: New Slice's Band had no free
-//                receiver. J.J. Boyd (KG4VCF), AI tooling Claude Code /
-//                Opus 5.5.
+//                receiver; a remote window hears it from the Core
+//                (reportStationNewSliceBandNotUsed). J.J. Boyd (KG4VCF),
+//                AI tooling Claude Code / Opus 5.5.
 //   2026-11-24 - A new receiver applies the Core's New Slice choices
 //                after the copy. NereusSDR-original. Brian Sutton (W4KZO),
 //                AI-assisted via xAI Grok.
@@ -1642,6 +1643,10 @@ public:
     /// Band stack plan Task 6: the Core refused a bandStack.* verb. Routed to
     /// stationBandStackRefused, which RemoteBandStackAccess turns into refused().
     void reportStationBandStackRefused(const QString& reason);
+    /// PR 816 final review: the Core's newSliceBand notice, for a slice
+    /// this remote window added. Emits newSliceBandNotUsed, as a local
+    /// window's addSlice does; nothing in a window running its own radio.
+    void reportStationNewSliceBandNotUsed(int sliceId, const QString& reason);
 
     /// R-R3-47 / R-R3-22 / R-R3-48: the Core refused an accessory request,
     /// with its own reason. `device` says what it was about: "pgxl",

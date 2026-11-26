@@ -1,6 +1,10 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-11-26: PR 816 final review: a device whose added slice could not
+//               open on Setup > General > New Slice's band is told why
+//               (notice newSliceBand), as the Core's own window says it.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code / Opus 5.5.
 //   2026-11-16: Recording plan Task 22: the dsr.* verbs (rewind sound)
 //               behind the recordings gate.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -5031,6 +5035,30 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
         // be proceeded (its id may soon be another device's).
         connect(radioModel, &RadioModel::sliceRemoved, this,
                 [this](int sliceId) { dropQuestionsNaming(sliceId); });
+        // PR 816 final review: New Slice's band had no free receiver, so
+        // the slice a device added opened on the band it was copied from.
+        // That device is told why, as the Core's own window shows it
+        // (about its own request: no `by` keys, no Take it back). A slice
+        // of the Core's own position is its window's toast alone.
+        connect(radioModel, &RadioModel::newSliceBandNotUsed, this,
+                [this](int sliceId, const QString& reason) {
+                    // Its owner, or while the add still runs, the device
+                    // it is being made for (SliceOwnership::CreatorScope).
+                    const SliceOwnership* ownership = m_radioModel->sliceOwnership();
+                    QByteArray device = ownership->mark(sliceId).subject();
+                    if (device.isEmpty()) {
+                        device = ownership->creator();
+                    }
+                    if (device.isEmpty() || device == SliceOwnership::stationDevice()) {
+                        return;
+                    }
+                    ConfirmStep::Notice notice;
+                    notice.device = device;
+                    notice.reason = reason;
+                    notice.prompt.kind = QStringLiteral("newSliceBand");
+                    notice.prompt.slices = receiverPlanner().noticeSlicesJson({sliceId});
+                    tellDevice(notice, QByteArray());
+                });
     }
 
     m_heartbeatTimer = new QTimer(this);

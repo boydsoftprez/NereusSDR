@@ -5692,8 +5692,16 @@ the take, so `slices` is `[{sliceId, letter, frequencyHz, mode, band,
 incarnation, controlRevision}]`; a peer below 2 is sent `takeBack` false
 and the entry without `incarnation` and `controlRevision`, exactly as
 before),
-`graceEnded`, `slicesNotRestored`, `antennaKept` and `tuneEnded` (about
-the device's own state: no `by` keys, no Take it back). `tuneEnded`
+`graceEnded`, `slicesNotRestored`, `antennaKept`, `tuneEnded` and
+`newSliceBand` (about the device's own state: no `by` keys, no Take it
+back). `newSliceBand` (PR 816) tells a device that a slice it added
+(`addSlice`, `addSliceOnPan`) opened on the band of the slice it was
+copied from, because Setup > General > New Slice names a band no receiver
+could be given to; its words are the Core window's own ("The new slice
+opened on the band you are on. No receiver is free for 20m."), and its
+`slices` is the new slice. A slice the Core's own window added tells no
+device. A window or phone that does not know the kind shows it as any
+other notice; a Core without it says nothing, as before. `tuneEnded`
 (iPhone app plan Task 77 fix round 4) tells a device that its accepted
 `tx.tunerTune` ended without keying because the Power Genius did not go
 to standby for it (it never reported standby within 1.5 s, or was put
