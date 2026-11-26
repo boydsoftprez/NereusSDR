@@ -653,10 +653,11 @@ PsDdcConfig P1CodecStandard::applyPureSignalDdcConfig(
             // TAPR/OpenHPSDR-Firmware [@e7c6584] "Protocol 1/Hermes/previous
             // Hermes versions/Release notes_v1.3 to v3.1.txt": v1.4 added the
             // second receiver (lines 5-6), v2.0 has four (lines 48-50). v0.4
-            // was a temporary predistortion build with five, the transmit
-            // output on Rx5 (line 82). PureSignal feedback first appears in
-            // the 4 Jun 2014 build, on receivers 3 and 4 (lines 95-97), so
-            // TAPR Hermes v1.x has no PureSignal feedback. Codes 14 to 19 get
+            // was a temporary predistortion build that already "assigned Tx
+            // output to Rx5 input" (line 82). The 4 Jun 2014 build "Moved
+            // PureSignal feedback to receivers 3 & 4 on Tx" (lines 95-97).
+            // Both came after v1.x, so TAPR Hermes v1.x has no PureSignal
+            // feedback. Codes 14 to 19 get
             // the two-receiver map (DDC0 and DDC1) so the frame matches the
             // receivers the radio has.
             if (hermesHasTwoReceivers(model)) {
