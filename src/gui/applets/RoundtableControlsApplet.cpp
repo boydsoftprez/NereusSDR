@@ -15,11 +15,18 @@
 //               do (setStationAvailable), and a reason line under the row
 //               shows the spot source host's Roundtable text and refusals.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code / Opus 5.5.
+//   2026-11-26: PR 819 final review: the reason line takes the theme's
+//               warning colour, and shows only refusals and the reasons
+//               Roundtable cannot run, never its plain stopped or offline
+//               words. J.J. Boyd (KG4VCF), AI-assisted via Claude Code /
+//               Opus 5.5.
 // =================================================================
 
 #include "RoundtableControlsApplet.h"
 
 #include "core/SpotSourceHost.h"
+#include "gui/StyleConstants.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "models/RadioModel.h"
 
 #include <QCheckBox>
@@ -114,7 +121,6 @@ void RoundtableControlsApplet::build()
     m_reason = new QLabel(this);
     m_reason->setObjectName(QStringLiteral("roundtableControlsReason"));
     m_reason->setWordWrap(true);
-    m_reason->setStyleSheet(QStringLiteral("QLabel { color: #e6c200; font-size: 11px; }"));
     m_reason->hide();
     outer->addWidget(m_reason);
 }
@@ -171,15 +177,21 @@ void RoundtableControlsApplet::refresh()
         m_hide->setChecked(m_roundtable && m_roundtable->hidden());
     }
 
-    // The last refusal, else the host's text: why Roundtable stopped (Spot
-    // Hub's Stopped line). Greyed controls say why in their tooltip.
+    // The last refusal, else why Roundtable cannot run: the host's text
+    // while it is off (a start it refused, such as no callsign). Its words
+    // while connecting, running or offline are Spot Hub's to show. Greyed
+    // controls say why in their tooltip.
     QString why = m_refusal;
-    if (why.isEmpty() && !on && m_host) {
+    if (why.isEmpty() && !on && m_host
+        && m_host->state(SpotSourceHost::kRoundtable) == SpotSourceHost::kOff) {
         why = m_host->text(SpotSourceHost::kRoundtable);
     }
     if (!m_available) {
         why.clear();
     }
+    // The theme's warning colour, read each time so a theme change shows.
+    m_reason->setStyleSheet(QStringLiteral("QLabel { color: %1; font-size: 11px; }")
+                                .arg(WorkspacePreview::statusColourName(Style::kAmberWarn, "warn")));
     m_reason->setText(why);
     m_reason->setVisible(!why.isEmpty());
 }

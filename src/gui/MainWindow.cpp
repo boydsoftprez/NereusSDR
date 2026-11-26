@@ -15,7 +15,8 @@
 //               grey with Spot Hub's reasons
 //               (refreshRoundtableControlsAvailability), and its Start asks
 //               "Roundtable is public" first while unanswered
-//               (startRoundtableFromControls). J.J. Boyd (KG4VCF),
+//               (startRoundtableFromControls); a question closed with the
+//               window lets the next Start ask again. J.J. Boyd (KG4VCF),
 //               AI-assisted via Claude Code / Opus 5.5.
 //   2026-11-25: The Roundtable controls applet, Start/Stop and Hide your
 //               status, wired to the same spot source host as Spot Hub.
@@ -20710,6 +20711,10 @@ void MainWindow::startRoundtableFromControls()
                             waiting->startRoundtable();
                         }
                     });
+            // Gone without finishing (the window closing): the next Start
+            // asks again.
+            connect(m_roundtableFirstRun.data(), &QObject::destroyed, this,
+                    [this] { m_startRoundtableAfterFirstRun = false; });
         }
         if (m_roundtableFirstRun->isVisible()) {
             m_roundtableFirstRun->raise();

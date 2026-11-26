@@ -19,6 +19,10 @@
 //   2026-11-26: The constructor's parent argument; the reason line;
 //               greyed with a reason; refusals on the reason line. J.J.
 //               Boyd (KG4VCF), AI-assisted via Claude Code / Opus 5.5.
+//   2026-11-26: PR 819 final review: the Core's offline and connecting
+//               words stay off the reason line; a start it cannot make
+//               shows. J.J. Boyd (KG4VCF), AI-assisted via Claude Code /
+//               Opus 5.5.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -102,6 +106,7 @@ private slots:
     void aRefusedHidePutsTheBoxBack();
     void unavailableGreysBothWithTheReason();
     void aRefusedStartSaysWhy();
+    void onlyReasonsItCannotRunShow();
     void anExistingWorkspaceGainsItUnderRoundtable();
     void firstLaunchPlacesItUnderRoundtable();
 };
@@ -219,6 +224,36 @@ void TstRoundtableControls::aRefusedStartSaysWhy()
     // Running again clears it.
     f.state.applyStationValue("linkState", static_cast<int>(RoundtableModel::LinkState::Live));
     QVERIFY(f.applet->reasonLabel()->isHidden());
+}
+
+// A remote window: the Core's Roundtable state and words. Only the words
+// of an off Roundtable (a start the Core could not make) are a reason.
+void TstRoundtableControls::onlyReasonsItCannotRunShow()
+{
+    Fixture f;
+    SpotSourceHost host(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
+    host.setStationForwarder([](const QByteArray&, const QString&, const QString&, QString*) {
+        return true;
+    });
+    f.applet->setSourceHost(&host);
+
+    host.applyStationValue("roundtableState", SpotSourceHost::kError);
+    host.applyStationValue("roundtableText", QStringLiteral("The Roundtable server is not answering."));
+    QVERIFY(f.applet->reasonLabel()->isHidden());
+
+    host.applyStationValue("roundtableState", SpotSourceHost::kConnecting);
+    host.applyStationValue("roundtableText", QStringLiteral("Connecting to Roundtable"));
+    QVERIFY(f.applet->reasonLabel()->isHidden());
+
+    // Plain stopped: off with nothing to say.
+    host.applyStationValue("roundtableState", SpotSourceHost::kOff);
+    host.applyStationValue("roundtableText", QString());
+    QVERIFY(f.applet->reasonLabel()->isHidden());
+
+    const QString why = QStringLiteral("Enter your callsign in Spot Hub first.");
+    host.applyStationValue("roundtableText", why);
+    QVERIFY(!f.applet->reasonLabel()->isHidden());
+    QCOMPARE(f.applet->reasonLabel()->text(), why);
 }
 
 void TstRoundtableControls::anExistingWorkspaceGainsItUnderRoundtable()
