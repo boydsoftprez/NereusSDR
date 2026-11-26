@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-26: refreshRoundtableControlsAvailability(),
+//               startRoundtableFromControls() and
+//               m_startRoundtableAfterFirstRun. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code / Opus 5.5.
 //   2026-11-25: m_roundtableControlsApplet. Brian Sutton (W4KZO),
 //               AI-assisted via xAI Grok.
 //   2026-11-16: m_voiceKeyerApplet and showVoiceKeyerPanel() (recording plan Task 12).
@@ -1224,6 +1228,9 @@ private slots:
     // Parity Task 19 (R-IOS-25, B7.2): the Spot Hub's Core settings and the
     // station's spot sources, available or disabled with a reason.
     void refreshSpotHubAvailability();
+    // The Roundtable controls panel's Start and Hide your status, greyed
+    // with a reason as Spot Hub's Roundtable tab greys its own.
+    void refreshRoundtableControlsAvailability();
     // iPhone plan Task 22 / parity Task 20 (R-IOS-26): the FreeDV Reporter
     // dialog's Send QSY, Send and Clear, the Core's in a remote window.
     void refreshFreedvReporterAvailability();
@@ -1264,6 +1271,10 @@ private slots:
     /// public") or the one-time note, when RoundtableFirstRunDialog says
     /// this computer should show it. Not modal; one at a time.
     void openRoundtableFirstRunIfNeeded();
+    /// The Roundtable controls panel's Start: while nobody has answered
+    /// "Roundtable is public", asks it first and starts only once it is
+    /// answered; closing the question without an answer starts nothing.
+    void startRoundtableFromControls();
     /// Rotor control plan Task 8: the window's one SpotBeamTurner (made on
     /// first use), behind every pan's spot menu, the Spot Hub and
     /// auto-turn. Its refusals are toasted.
@@ -1961,6 +1972,8 @@ private:
     SpotBeamTurner*                m_spotBeamTurner{nullptr};  // Qt child; rotor plan Task 8
     QPointer<FreeDVReporterDialog> m_freeDVReporterDialog;
     QPointer<RoundtableFirstRunDialog> m_roundtableFirstRun;  // Roundtable plan Task 12
+    // A Roundtable controls Start waits for the first-run answer.
+    bool m_startRoundtableAfterFirstRun{false};
 
     // Status bar widgets (double-height AetherSDR design, 46px)
     //

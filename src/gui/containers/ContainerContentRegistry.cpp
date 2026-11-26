@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-11-25 - The Roundtable controls applet (applet:roundtable_controls),
+//                 placed under Roundtable. Brian Sutton (W4KZO), AI-assisted
+//                 via xAI Grok.
 //   2026-11-06 - A factory widget can report its own free canvas hint and
 //                 minimum, and a type can name a new entry's rect size
 //                 (setNewEntryCanvasSize). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -83,9 +86,6 @@
 //   2026-10-24 - The Roundtable applet (applet:roundtable), Roundtable plan
 //                 Task 13, by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
-//   2026-11-25 - The Roundtable controls applet (applet:roundtable_controls),
-//                 placed under Roundtable. Brian Sutton (W4KZO), AI-assisted
-//                 via xAI Grok.
 //   2026-10-26 - CW transmit, the CWX applet (applet:cwx). J.J. Boyd (KG4VCF),
 //                AI-assisted via Claude Code.
 //   2026-10-22 - Nereus band buttons (NEREUSBAND), the applet-styled band grid.

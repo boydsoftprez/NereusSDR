@@ -253,7 +253,6 @@ const Rename kRenames[] = {
     {"longpath.needle", "Needle meter (Longpath)", "Needle meter"},
     {"longpath.bar", "Bar meter (Longpath)", "Bar meter"},
     {"longpath.filter", "Filter passband (Longpath)", "Filter passband"},
-    {"applet:roundtable_controls", "Roundtable controls", "Roundtable controls (simple)"},
 };
 
 const QVector<ContentGroup> kHeadingOrder{kMeters, kBlocks, kButtons, kPanels, kSections, kLongpath};

@@ -10,11 +10,15 @@
 // and Hide your status. Nothing else. Start and Stop are the Spot Hub
 // signals. Hide your status is the model's setHidden, and a refusal puts
 // the box back. A workspace that already has Roundtable gains this panel
-// directly under it.
+// directly under it. Where Roundtable can't run, Start and Hide grey with
+// the reason; a refused start or hide says why on the line under them.
 //
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-11-25: Created. Brian Sutton (W4KZO), AI-assisted via xAI Grok.
+//   2026-11-26: The constructor's parent argument; the reason line;
+//               greyed with a reason; refusals on the reason line. J.J.
+//               Boyd (KG4VCF), AI-assisted via Claude Code / Opus 5.5.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -28,6 +32,7 @@
 #include <memory>
 
 #include "core/AppSettings.h"
+#include "core/SpotSourceHost.h"
 #include "core/roundtable/RoundtableState.h"
 #include "core/session/IStationLink.h"
 #include "gui/applets/AppletVisibilityController.h"
@@ -69,7 +74,7 @@ struct Fixture {
     Fixture()
     {
         model.attachStation(&link, &state);
-        applet = std::make_unique<RoundtableControlsApplet>(nullptr, &model);
+        applet = std::make_unique<RoundtableControlsApplet>(nullptr, &model, nullptr);
     }
 };
 
@@ -95,6 +100,8 @@ private slots:
     void startAndStopFollowTheLink();
     void hideYourStatusWritesAndFollowsTheCore();
     void aRefusedHidePutsTheBoxBack();
+    void unavailableGreysBothWithTheReason();
+    void aRefusedStartSaysWhy();
     void anExistingWorkspaceGainsItUnderRoundtable();
     void firstLaunchPlacesItUnderRoundtable();
 };
@@ -107,13 +114,15 @@ void TstRoundtableControls::panelHasOnlyTheTwoControls()
     const QList<QPushButton*> buttons =
         applet->findChildren<QPushButton*>(QString(), Qt::FindDirectChildrenOnly);
     const QList<QCheckBox*> boxes = applet->findChildren<QCheckBox*>(QString(), Qt::FindDirectChildrenOnly);
-    QCOMPARE(labels.size(), 1);
+    QCOMPARE(labels.size(), 2);
     QCOMPARE(labels.first()->text(), QStringLiteral("Roundtable"));
+    QCOMPARE(labels.at(1), applet->reasonLabel());
+    QVERIFY(applet->reasonLabel()->isHidden());
     QCOMPARE(buttons.size(), 1);
     QCOMPARE(buttons.first(), applet->startButton());
     QCOMPARE(boxes.size(), 1);
     QCOMPARE(boxes.first()->text(), QStringLiteral("Hide your status"));
-    QCOMPARE(applet->findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly).size(), 3);
+    QCOMPARE(applet->findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly).size(), 4);
 }
 
 void TstRoundtableControls::startAndStopFollowTheLink()
@@ -170,6 +179,46 @@ void TstRoundtableControls::aRefusedHidePutsTheBoxBack()
     QCOMPARE(refused.count(), 1);
     QCOMPARE(refused.first().at(0).toString(), QStringLiteral("setHidden"));
     QVERIFY(!f.applet->hideBox()->isChecked());
+    QVERIFY(!f.applet->reasonLabel()->isHidden());
+    QCOMPARE(f.applet->reasonLabel()->text(), QStringLiteral("Not now"));
+}
+
+void TstRoundtableControls::unavailableGreysBothWithTheReason()
+{
+    Fixture f;
+    const QString why = QStringLiteral("This Core cannot share Roundtable with this app.");
+    f.applet->setStationAvailable(false, why);
+    QVERIFY(!f.applet->startButton()->isEnabled());
+    QVERIFY(!f.applet->hideBox()->isEnabled());
+    QCOMPARE(f.applet->startButton()->toolTip(), why);
+    QCOMPARE(f.applet->hideBox()->toolTip(), why);
+
+    f.applet->setStationAvailable(true, QString());
+    QVERIFY(f.applet->startButton()->isEnabled());
+    QVERIFY(f.applet->hideBox()->isEnabled());
+    QVERIFY(f.applet->startButton()->toolTip().isEmpty());
+    QVERIFY(f.applet->hideBox()->toolTip().isEmpty());
+}
+
+void TstRoundtableControls::aRefusedStartSaysWhy()
+{
+    Fixture f;
+    SpotSourceHost host(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
+    f.applet->setSourceHost(&host);
+    QVERIFY(f.applet->reasonLabel()->isHidden());
+
+    const QString why = QStringLiteral("Enter your callsign in Spot Hub first.");
+    host.reportStationRefusal(SpotSourceHost::kRoundtable, why);
+    QVERIFY(!f.applet->reasonLabel()->isHidden());
+    QCOMPARE(f.applet->reasonLabel()->text(), why);
+
+    // Another source's refusal is not Roundtable's.
+    host.reportStationRefusal(SpotSourceHost::kPota, QStringLiteral("POTA says no"));
+    QCOMPARE(f.applet->reasonLabel()->text(), why);
+
+    // Running again clears it.
+    f.state.applyStationValue("linkState", static_cast<int>(RoundtableModel::LinkState::Live));
+    QVERIFY(f.applet->reasonLabel()->isHidden());
 }
 
 void TstRoundtableControls::anExistingWorkspaceGainsItUnderRoundtable()

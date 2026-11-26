@@ -16,21 +16,30 @@
 //   2026-11-25: Created. Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 //   2026-11-25: The panel is named Roundtable controls (simple). Brian Sutton
 //               (W4KZO), AI-assisted via xAI Grok.
+//   2026-11-26: NEREUS_GUI_EXPORT; Start and Hide your status grey with a
+//               reason when Roundtable can't run here (setStationAvailable,
+//               as Spot Hub does), and a line under them says why a start
+//               or a hide was refused (setSourceHost). J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code / Opus 5.5.
 // =================================================================
 
 #pragma once
 
 #include "AppletWidget.h"
+#include "gui/NereusGuiExport.h"
 #include "models/RoundtableModel.h"
 
 #include <QPointer>
 
 class QCheckBox;
+class QLabel;
 class QPushButton;
 
 namespace NereusSDR {
 
-class RoundtableControlsApplet : public AppletWidget {
+class SpotSourceHost;
+
+class NEREUS_GUI_EXPORT RoundtableControlsApplet : public AppletWidget {
     Q_OBJECT
 
 public:
@@ -46,6 +55,18 @@ public:
 
     QPushButton* startButton() const { return m_start; }
     QCheckBox* hideBox() const { return m_hide; }
+    /// The line under the controls: why Roundtable did not start, or why
+    /// a hide was refused. Hidden while there is nothing to say.
+    QLabel* reasonLabel() const { return m_reason; }
+
+    /// Whether this window can ask for Start and Hide your status, as Spot
+    /// Hub's Roundtable tab: false greys both, with `reason` as their
+    /// tooltip (the Core doesn't run Roundtable, or its spot sources).
+    void setStationAvailable(bool available, const QString& reason);
+    /// The spot source host Start and Stop go to: its Roundtable text and
+    /// refusals ("Enter your callsign in Spot Hub first.") show on the
+    /// reason line. Not owned.
+    void setSourceHost(SpotSourceHost* host);
 
 signals:
     /// Spot Hub's Start. The owner asks the spot source host to start.
@@ -59,8 +80,13 @@ private:
     bool running() const;
 
     QPointer<RoundtableModel> m_roundtable;
+    QPointer<SpotSourceHost> m_host;
     QPushButton* m_start = nullptr;
     QCheckBox* m_hide = nullptr;
+    QLabel* m_reason = nullptr;
+    bool m_available = true;
+    QString m_unavailableReason;
+    QString m_refusal;
 };
 
 } // namespace NereusSDR
