@@ -30,7 +30,9 @@
 #include <QtTest/QtTest>
 
 #include "core/P1RadioConnection.h"
+#include "core/HardwareProfile.h"
 #include "core/codec/CodecContext.h"
+#include "core/codec/P1CodecStandard.h"
 
 using namespace NereusSDR;
 
@@ -358,6 +360,82 @@ private slots:
 
         QVERIFY(conn.forceBank11NextForTest());
         QVERIFY(conn.forceBank0NextForTest());
+    }
+
+    // ── 11. Two-receiver radios set as a HERMES / ANAN-10 / ANAN-100 ────────
+    //
+    // P1CodecStandard::usesTwoReceiverMap (sources there). selectCodec hands
+    // the codec discovery's board byte and firmware code; the codec's
+    // PureSignal config, fed back through applyPsDdcConfig as ReceiverManager
+    // does, must then give the 10E wire: two receivers, both tuned to the TX
+    // frequency while PureSignal transmits (networkproto1.c:484-511
+    // [v2.10.3.15], nddc == 2), the PureSignal bit in bank 11 C2 bit 6
+    // (networkproto1.c:599 [v2.10.3.15]; the 10E firmware's PureSignal_enable,
+    // TAPR Hermes10E_v1.5.qar Hermes.v:1779 [@e7c6584]), and the pair on
+    // frame slots 0 + 1.
+    void twoReceiverRadio_setAsHermesModel_data() {
+        QTest::addColumn<int>("board");
+        QTest::addColumn<int>("code");
+        QTest::addColumn<int>("model");
+        QTest::addColumn<bool>("two");
+        // TAPR ANAN-10E v1.5 firmware reports a Hermes board byte, code 15.
+        QTest::newRow("TAPR 10E v1.5 as HERMES")
+            << int(HPSDRHW::Hermes) << 15 << int(HPSDRModel::HERMES) << true;
+        QTest::newRow("TAPR 10E v1.3 as ANAN-10")
+            << int(HPSDRHW::Hermes) << 13 << int(HPSDRModel::ANAN10) << true;
+        QTest::newRow("TAPR 10E v1.5 as ANAN-10E")
+            << int(HPSDRHW::Hermes) << 15 << int(HPSDRModel::ANAN10E) << true;
+        QTest::newRow("Hermes II board as ANAN-10")
+            << int(HPSDRHW::HermesII) << 103 << int(HPSDRModel::ANAN10) << true;
+        QTest::newRow("Hermes II board as ANAN-100")
+            << int(HPSDRHW::HermesII) << 103 << int(HPSDRModel::ANAN100) << true;
+        QTest::newRow("Hermes II board as ANAN-100B")
+            << int(HPSDRHW::HermesII) << 103 << int(HPSDRModel::ANAN100B) << true;
+        // Four-receiver Hermes firmware keeps Thetis's map.
+        QTest::newRow("Hermes v3.3 as HERMES")
+            << int(HPSDRHW::Hermes) << 33 << int(HPSDRModel::HERMES) << false;
+        QTest::newRow("ANAN-10/100 v3.2b as ANAN-100")
+            << int(HPSDRHW::Hermes) << 32 << int(HPSDRModel::ANAN100) << false;
+        QTest::newRow("Hermes v2.9 as ANAN-10")
+            << int(HPSDRHW::Hermes) << 29 << int(HPSDRModel::ANAN10) << false;
+    }
+
+    void twoReceiverRadio_setAsHermesModel() {
+        QFETCH(int, board);
+        QFETCH(int, code);
+        QFETCH(int, model);
+        QFETCH(bool, two);
+        const auto hm = static_cast<HPSDRModel>(model);
+
+        P1RadioConnection conn;
+        conn.setDiscoveredRadioForTest(static_cast<HPSDRHW>(board), code,
+                                       profileForModel(hm));
+        const auto* codec = dynamic_cast<const P1CodecStandard*>(conn.codecForTest());
+        QVERIFY(codec != nullptr);
+        QCOMPARE(int(codec->discoveredBoard()), board);
+        QCOMPARE(codec->protocol1FirmwareVersion(), code);
+        QCOMPARE(codec->usesTwoReceiverMap(hm), two);
+
+        conn.setReceiverFrequency(0, 14'200'000);
+        conn.setReceiverFrequency(1, 21'300'000);
+        conn.setTxFrequency(7'150'000);
+        conn.setPuresignalRun(true);
+        conn.setMox(true);
+        conn.applyPsDdcConfig(codec->applyPureSignalDdcConfig(
+            hm, /*ps=*/true, /*diversity=*/false, /*mox=*/true,
+            96000, 48000, /*rx2=*/false, 0, 0));
+
+        const int receivers = two ? 2 : 4;
+        QCOMPARE(conn.psNDdcForTest(), receivers);
+        QCOMPARE(conn.activeRxCountForTest(), receivers);
+        // Bank 0 C4 bits 3-5 carry nddc - 1 (networkproto1.c:470 [v2.10.3.15]).
+        const QByteArray bank0 = conn.captureBank0ForTest();
+        QCOMPARE((quint8(bank0[4]) >> 3) & 0x07, receivers - 1);
+        QCOMPARE(readFreqBE(conn.captureBank2ForTest()),
+                 two ? quint64(7'150'000) : quint64(14'200'000));
+        QCOMPARE(readFreqBE(conn.captureBank3ForTest()),
+                 two ? quint64(7'150'000) : quint64(21'300'000));
+        QVERIFY(quint8(conn.captureBank11ForTest()[2]) & 0x40);
     }
 };
 

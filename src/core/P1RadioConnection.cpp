@@ -17,6 +17,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-26 - selectCodec hands the standard codec the discovered board
+//                byte and firmware code, for the two-receiver PureSignal map
+//                of a Hermes II board or two-receiver Hermes-board firmware
+//                set as a HERMES / ANAN-10 / ANAN-100. J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code.
 //   2026-10-26 - Bank 17 carries the Anvelina DX open collector outputs:
 //                ctx.ocExtrasByte from setOcExtrasByte (J.J. Boyd KG4VCF,
 //                AI-assisted: Claude Code).
@@ -4309,6 +4314,24 @@ void P1RadioConnection::selectCodec()
         case HPM::ANVELINAPRO3: m_codec = std::make_unique<P1CodecAnvelinaPro3>(); break;
         case HPM::REDPITAYA:    m_codec = std::make_unique<P1CodecRedPitaya>();    break;
         default:                m_codec = std::make_unique<P1CodecStandard>();     break;
+    }
+    // The receiver map needs what discovery reported as well as the model: a
+    // Hermes II board, or two-receiver Hermes-board firmware, set as a
+    // HERMES, ANAN-10 or ANAN-100 runs two receivers
+    // (P1CodecStandard::usesTwoReceiverMap). m_radioInfo is set at the top of
+    // connectToRadio, before applyBoardQuirks calls this.
+    if (auto* standard = dynamic_cast<P1CodecStandard*>(m_codec.get())) {
+        standard->setDiscoveredBoard(m_radioInfo.boardType);
+        standard->setProtocol1FirmwareVersion(m_radioInfo.firmwareVersion);
+        const HPSDRModel model = m_hardwareProfile.model;
+        const bool thetisAsksForFour = model == HPSDRModel::HERMES
+            || model == HPSDRModel::ANAN10 || model == HPSDRModel::ANAN100;
+        if (thetisAsksForFour && standard->usesTwoReceiverMap(model)) {
+            qCInfo(lcConnection) << "P1: board" << int(m_radioInfo.boardType)
+                                 << "firmware code" << m_radioInfo.firmwareVersion
+                                 << "runs two receivers; using the ANAN-10E/100B"
+                                    " receiver map for model" << int(model);
+        }
     }
     // RadioModel calls setIoBoard() BEFORE the connection thread starts (and
     // therefore before applyBoardQuirks() runs selectCodec()), so the cached
