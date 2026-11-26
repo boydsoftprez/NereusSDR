@@ -21,6 +21,13 @@
 # The next merged-main commit therefore produces 9642, above Apple's
 # uploaded build. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #
+# 2026-11-26: raise the offset from 1003 to 1100. Branch builds up to
+# 10299 (2026.11.1) were uploaded from JJ's Mac while main counted 9215
+# commits, so main's next build (10218) would have been refused. Main now
+# numbers about 10315 and rises from there; the TestFlight workflow checks
+# App Store Connect before archiving. J.J. Boyd (KG4VCF), AI-assisted via
+# Claude Code.
+#
 # Prints the number and a newline, or nothing at all when there is no git
 # repository around the current directory; the caller then leaves
 # CURRENT_PROJECT_VERSION alone and project.yml's value stands, as it does
@@ -28,7 +35,7 @@
 
 set -u
 
-kBuildNumberOffset=1003
+kBuildNumberOffset=1100
 
 if command -v git >/dev/null 2>&1; then
     count=$(git rev-list --count HEAD 2>/dev/null || true)

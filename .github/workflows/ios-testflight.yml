@@ -19,8 +19,9 @@
 #   4. uploads it with the "App Store Connect" method, never TestFlight
 #      Internal Only (see ios/Config/ExportOptions.plist for why);
 #   5. waits for Apple to process it and adds it to the chosen group
-#      (ios/scripts/testflight.py). An external group's build is also sent
-#      to Beta App Review.
+#      (ios/scripts/testflight.py). Me, Deplorables and JJ manual testing
+#      are internal groups; Public Preview is external, so its build is
+#      also sent to Beta App Review.
 #
 # Export compliance is left to JJ, who answers it in App Store Connect for
 # each build (ios/AppStore/export-compliance.md).
@@ -49,6 +50,8 @@ on:
         options:
           - Me
           - Deplorables
+          - JJ manual testing
+          - Public Preview
 
 permissions:
   contents: read
