@@ -39,6 +39,13 @@
 //               all times as Thetis does (networkproto1.c:618-646
 //               [v2.10.3.15]). J.J. Boyd (KG4VCF), AI-assisted via Claude
 //               Code.
+//   2026-11-26 - usesTwoReceiverMap: a HERMES, ANAN-10 or ANAN-100 model on
+//                a Hermes II board, or on Hermes-board firmware codes 12 to
+//                19, takes the ANAN-10E / ANAN-100B receiver map. Facts from
+//                the TAPR firmware archives and piHPSDR, cited at the
+//                function. Builds on PR 812 (Brian Sutton, W4KZO), which
+//                found the code-15 radio. J.J. Boyd (KG4VCF), AI-assisted via
+//                Claude Code.
 // =================================================================
 //
 // === Verbatim Thetis ChannelMaster/networkproto1.c header (lines 1-45) ===
@@ -632,10 +639,21 @@ PsDdcConfig P1CodecStandard::applyPureSignalDdcConfig(
         //   case HPSDRModel.ANAN10:
         //   case HPSDRModel.ANAN100:
         //       P1_rxcount = 4; nddc = 4;  (4-DDC Hermes-class branch)
+        //
+        // NereusSDR differs for HERMES, ANAN10 and ANAN100 when the radio runs
+        // two receivers (usesTwoReceiverMap): Thetis picks this branch from
+        // the model alone and asks such a radio for four.
         case HPSDRModel::HERMES:
-        case HPSDRModel::ANAN_G2E:  // ANAN-G2E (HermesC10) //N1GP G2E added
         case HPSDRModel::ANAN10:
         case HPSDRModel::ANAN100:
+            if (usesTwoReceiverMap(model)) {
+                return psDdcConfigHermesIIClass(psEnabled, diversityEnabled, moxState,
+                                                rx1Rate, rx2Rate, rx2Enabled);
+            }
+            return psDdcConfigHermesClass(psEnabled, diversityEnabled, moxState,
+                                          rx1Rate, rx2Rate, rx2Enabled);
+
+        case HPSDRModel::ANAN_G2E:  // ANAN-G2E (HermesC10) //N1GP G2E added
             return psDdcConfigHermesClass(psEnabled, diversityEnabled, moxState,
                                           rx1Rate, rx2Rate, rx2Enabled);
 
@@ -1125,9 +1143,123 @@ DdcAssignment P1CodecStandard::applyDdcAssignment(
         //   case HPSDRModel.ANAN100:
         //       P1_rxcount = 4;                     // RX4 used for puresignal feedback
         //       nddc = 4;
+        // HERMES, ANAN10 and ANAN100 on a radio that runs two receivers take
+        // the HermesII layout instead (usesTwoReceiverMap, the same test as
+        // applyPureSignalDdcConfig, so the frame count and the pair agree).
+        case HPSDRModel::HERMES:
+        case HPSDRModel::ANAN10:
+        case HPSDRModel::ANAN100:
+            if (usesTwoReceiverMap(ctx.model)) {
+                return ddcAssignmentHermesIIClass(ctx, slices);
+            }
+            return ddcAssignmentHermesClass(ctx, slices);
+
+        // ANAN_G2E (console.cs:8388 above) keeps the four-receiver layout.
         default:
             return ddcAssignmentHermesClass(ctx, slices);
     }
+}
+
+// =================================================================
+// P1CodecStandard::usesTwoReceiverMap - radios that run two receivers
+// =================================================================
+//
+// NereusSDR-original rule; Thetis has none. Thetis picks the receiver map
+// from the model the operator chose (clsHardwareSpecific.cs:87-120
+// [v2.10.3.15] sets HardwareSpecific.Hardware from the model), so HERMES,
+// ANAN10 and ANAN100 always ask for four receivers (console.cs:8387-8392
+// [v2.10.3.15]) and only ANAN10E / ANAN100B ask for two (console.cs:8461-8464
+// [v2.10.3.15]). The discovery board byte only drives a mismatch warning
+// (NetworkIO.cs:160-185 [v2.10.3.15], //[2.10.3.9]MW0LGE added board check,
+// issue icon shown in setup), and that warning accepts a Hermes or a Hermes II
+// board for all four ANAN models.
+//
+// Two-receiver firmware with a HERMES / ANAN10 / ANAN100 model set therefore
+// gets a four-receiver request in Thetis, an upstream bug fixed here. The
+// radio runs only two receivers, so PureSignal reads slots that hold no DAC.
+// Two ways it happens:
+//
+// 1. A Hermes II board (discovery board byte 2) set as an ANAN-10 or ANAN-100.
+//    piHPSDR gives that board byte two receivers with the PureSignal pair on
+//    RX1 and RX2:
+//      From piHPSDR src/old_discovery.c:342-343 [@4aa95c5]
+//        case DEVICE_HERMES2: name "Hermes2 (Anan-10E/100B)"
+//      From piHPSDR src/old_protocol.c:825-826, 864-865, 969-970 [@4aa95c5]
+//        case DEVICE_HERMES2: ret = 0;   (rx feedback channel)
+//        case DEVICE_HERMES2: ret = 1;   (tx feedback channel)
+//        case DEVICE_HERMES2:
+//          ret = 2; // TX feedback hard-wired to RX2
+//
+// 2. ANAN-10E firmware from TAPR reports a HERMES board byte (1), not 2, so
+//    NereusSDR offers it as a HERMES and the operator may keep that, or pick
+//    ANAN-10 / ANAN-100. Each archived 10E build reports its version as the
+//    firmware code, sends 0x01 as the board byte, runs two receivers, and
+//    feeds RX2 from the transmit DAC during PureSignal:
+//      From TAPR OpenHPSDR-Firmware "Protocol 1/ANAN-10E & 100B/
+//      Hermes10E_v1.5.qar" [@e7c6584]
+//        Hermes.v:260   parameter  Hermes_serialno = 8'd15;
+//        Hermes.v:1072  localparam NR = 2; // number of receivers to implement
+//        Hermes.v:1135  assign select_input = (FPGA_PTT & PureSignal_enable) ?  temp_DACD : temp_ADC;
+//        Tx_MAC.v:1058-1059  send 50 x 0x01s *** tidy code, Hermes ID for PC code.
+//      The v1.3 and v1.4 archives in "previous ANAN-10E versions" carry
+//      Hermes_serialno 8'd13 and 8'd14 with the same NR = 2 and the same
+//      board byte. v1.2 ("ANAN-10E release notes.txt":1-2) has no archive;
+//      it follows the same pattern, so it reports 12.
+//    piHPSDR knows this case and gives a Hermes board an "Anan-10E/100B"
+//    switch for it:
+//      From piHPSDR src/radio.c:158-165 [@4aa95c5]
+//        // if anan10E is set, we have a limited-capacity HERMES board
+//        // with 2 RX channels max, and the PureSignal TX DAC feedback
+//        // is hard-coded to RX2, while for the PureSignal RX feedback
+//        // one must use RX1. This is the case for Anan-10E and Anan-100B
+//        // radios.
+//      From piHPSDR src/old_protocol.c:828-830 [@4aa95c5]
+//        case DEVICE_HERMES:
+//          // Note Anan-10E and Anan-100B behave like HERMES2
+//          ret = anan10E ? 0 : 2;
+//    deskHPSDR keeps the same switch (src/old_protocol.c:1351-1353 [@f3d857c]).
+//
+// NereusSDR needs no switch: codes 12 to 19 on a Hermes board byte are all
+// two-receiver firmware or older. TAPR's Hermes notes ("Protocol 1/Hermes/
+// previous Hermes versions/Release notes_v1.3 to v3.1.txt" [@e7c6584]) give
+// v1.3 one receiver (line 3), add the second at v1.4 (lines 5-6), keep two
+// through v1.9 (lines 36-38) and go to four at v2.0 (lines 48-50). No Hermes
+// v1.x has a PureSignal feedback path, so on a real Hermes at those codes the
+// two-receiver map only makes the receive frame match the radio. From code 20
+// up a Hermes board runs four or more receivers and keeps Thetis's map:
+// Hermes v2.9 (Hermes_v2.9.qar, Hermes.v:1240 NR = 4, :1319 the DAC into RX4
+// while PureSignal transmits) and the ANAN-10/100 build v3.2b
+// (Hermes10_v3.2b.qar, Hermes.v:358 code 32, :1305 NR = 4).
+//
+// Both kinds of firmware switch the DAC in only while the PureSignal bit is
+// set (bank 11 C2 bit 6, which bank11 sends from p1PuresignalRun):
+//   From TAPR Hermes10E_v1.5.qar Hermes.v:1779 [@e7c6584]
+//     PureSignal_enable <= IF_Rx_ctrl_2[6];		// decode what data to input to Rx2 during Tx; 0 = temp_ADC, 1 = DACD
+// and need the host to tune both receivers to the transmit frequency, which
+// the nddc == 2 branch of banks 2 and 3 does (networkproto1.c:484-511
+// [v2.10.3.15]).
+//
+// An operator who sets ANAN-10E or ANAN-100B gets the two-receiver map on
+// any board, as in Thetis.
+bool P1CodecStandard::usesTwoReceiverMap(HPSDRModel model) const
+{
+    switch (model) {
+        // From Thetis console.cs:8461-8464 [v2.10.3.15]
+        case HPSDRModel::ANAN10E:
+        case HPSDRModel::ANAN100B:
+            return true;
+        case HPSDRModel::HERMES:
+        case HPSDRModel::ANAN10:
+        case HPSDRModel::ANAN100:
+            break;
+        default:
+            return false;
+    }
+    if (m_discoveredBoard == HPSDRHW::HermesII) {
+        return true;
+    }
+    return m_protocol1FirmwareVersion >= kFirstTwoReceiverHermesCode
+        && m_protocol1FirmwareVersion < kFirstFourReceiverHermesCode;
 }
 
 // -----------------------------------------------------------------

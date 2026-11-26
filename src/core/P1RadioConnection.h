@@ -8,6 +8,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-26 - Test seams setDiscoveredRadioForTest and codecForTest, for
+//                the two-receiver PureSignal map tests. J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code.
 //   2026-10-26 - The OC byte applies the TX pin actions: TUNE and two-tone
 //                reach maskFor through setOcTxModes (J.J. Boyd KG4VCF,
 //                AI-assisted: Claude Code).
@@ -1735,6 +1738,19 @@ public:
         }
         applyBoardQuirks();
     }
+    // Test-only: a radio discovery reported as `board` with `firmwareCode`,
+    // set up as `profile`'s model, built as connectToRadio builds it (caps
+    // from the profile, then applyBoardQuirks and selectCodec), without a
+    // socket. codecForTest is the codec that picked.
+    void setDiscoveredRadioForTest(HPSDRHW board, int firmwareCode,
+                                   const HardwareProfile& profile) {
+        m_radioInfo.boardType = board;
+        m_radioInfo.firmwareVersion = firmwareCode;
+        m_hardwareProfile = profile;
+        m_caps = profile.caps ? profile.caps : &BoardCapsTable::forBoard(board);
+        applyBoardQuirks();
+    }
+    const IP1Codec* codecForTest() const { return m_codec.get(); }
     int currentAttenForTest() const { return m_stepAttn[0]; }
     int currentAttenForAdcForTest(int adc) const
     {

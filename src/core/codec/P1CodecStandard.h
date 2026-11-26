@@ -16,6 +16,13 @@
 //   2026-10-26: CW transmit, bank12CwKeyer (banks 12-14 carry the CW
 //               keyer, networkproto1.c:618-646 [v2.10.3.15]). J.J. Boyd
 //               (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-26: The codec holds what discovery reported (board byte and
+//               firmware code) and picks the two-receiver PureSignal map
+//               for a Hermes II board, or a Hermes board running two-receiver
+//               firmware, whatever Hermes-family model is set
+//               (usesTwoReceiverMap). Supersedes PR 812's firmware rule
+//               (Brian Sutton, W4KZO). J.J. Boyd (KG4VCF), AI-assisted via
+//               Claude Code.
 // =================================================================
 //
 // === Verbatim Thetis ChannelMaster/networkproto1.c header (lines 1-45) ===
@@ -79,6 +86,22 @@ public:
         const CodecContext& ctx,
         const std::array<SliceConfig, 5>& slices) const override;
 
+    // What discovery reported for the radio, set by P1RadioConnection when
+    // the codec is built: the board byte, and the firmware code
+    // (major * 10 + minor, so 15 is v1.5). Unknown and 0 until then.
+    void setDiscoveredBoard(HPSDRHW board) { m_discoveredBoard = board; }
+    HPSDRHW discoveredBoard() const { return m_discoveredBoard; }
+    void setProtocol1FirmwareVersion(int version) { m_protocol1FirmwareVersion = version; }
+    int protocol1FirmwareVersion() const { return m_protocol1FirmwareVersion; }
+
+    // True when the radio runs two receivers, so it takes the ANAN-10E /
+    // ANAN-100B receiver map: two receivers, PureSignal feedback on DDC0 and
+    // the transmit DAC on DDC1. Always true for the ANAN-10E and ANAN-100B
+    // models (Thetis). Also true, where Thetis would ask for four, for a
+    // HERMES, ANAN-10 or ANAN-100 model on a Hermes II board or on firmware
+    // with code 12 to 19. Sources in P1CodecStandard.cpp.
+    bool usesTwoReceiverMap(HPSDRModel model) const;
+
 protected:
     // Helpers exposed so subclasses can call into specific banks they
     // don't override.
@@ -120,6 +143,14 @@ protected:
     DdcAssignment ddcAssignmentOrionClass(
         const CodecContext& ctx, const std::array<SliceConfig, 5>& slices,
         bool redPitaya) const;
+
+    // Firmware codes with two receivers on a Hermes board byte, [12, 20).
+    // Sources at usesTwoReceiverMap in P1CodecStandard.cpp.
+    static constexpr int kFirstTwoReceiverHermesCode  = 12;
+    static constexpr int kFirstFourReceiverHermesCode = 20;
+
+    HPSDRHW m_discoveredBoard{HPSDRHW::Unknown};
+    int     m_protocol1FirmwareVersion{0};
 };
 
 } // namespace NereusSDR

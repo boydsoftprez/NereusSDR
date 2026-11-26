@@ -214,7 +214,115 @@ private slots:
     void slices_c_and_d_use_the_pair_slots_only_in_plain_receive();
     void pair_slots_carry_the_tx_frequency_while_ps_transmits_data();
     void pair_slots_carry_the_tx_frequency_while_ps_transmits();
+    void two_receiver_radios_take_the_10e_map_data();
+    void two_receiver_radios_take_the_10e_map();
 };
+
+// Which radios run two receivers, so take the ANAN-10E / ANAN-100B layout
+// (P1CodecStandard::usesTwoReceiverMap, sources there):
+//   ANAN10E / ANAN100B models: always (Thetis console.cs:8461-8464 [v2.10.3.15]).
+//   HERMES / ANAN10 / ANAN100 models: on a Hermes II board byte (piHPSDR
+//     DEVICE_HERMES2, old_protocol.c:825-826 [@4aa95c5]), or with firmware
+//     code 12 to 19 (TAPR 10E v1.2 to v1.5 and Hermes v1.4 to v1.9, which
+//     report a Hermes board byte; TAPR OpenHPSDR-Firmware [@e7c6584]).
+//   Everything else keeps its own Thetis layout. Code 4 is Hermes v0.4 and
+//   11 is below every two-receiver build; 20, 29, 32 and 33 are Hermes v2.0,
+//   v2.9, ANAN-10/100 v3.2b and Hermes v3.3, all four receivers; 103 is the
+//   lowest Hermes II code Thetis accepts (NetworkIO.cs:136-143 [v2.10.3.15]).
+// Every PureSignal / diversity / MOX / RX2 state is checked, both halves of
+// the codec, against the HermesII or Hermes rows above.
+void TestP1DdcLayoutPerModel::two_receiver_radios_take_the_10e_map_data()
+{
+    QTest::addColumn<int>("model");
+    QTest::addColumn<int>("board");
+    QTest::addColumn<int>("code");
+    QTest::addColumn<bool>("two");
+    const HPSDRModel models[] = {
+        HPSDRModel::HERMES, HPSDRModel::ANAN10, HPSDRModel::ANAN100,
+        HPSDRModel::ANAN10E, HPSDRModel::ANAN100B, HPSDRModel::ANAN_G2E,
+    };
+    struct Report { HPSDRHW board; int code; const char* name; };
+    const Report reports[] = {
+        {HPSDRHW::Unknown,  0,   "unknown"},
+        {HPSDRHW::Hermes,   4,   "hermes code 4"},
+        {HPSDRHW::Hermes,   11,  "hermes code 11"},
+        {HPSDRHW::Hermes,   12,  "hermes code 12"},
+        {HPSDRHW::Hermes,   13,  "hermes code 13"},
+        {HPSDRHW::Hermes,   15,  "hermes code 15"},
+        {HPSDRHW::Hermes,   19,  "hermes code 19"},
+        {HPSDRHW::Hermes,   20,  "hermes code 20"},
+        {HPSDRHW::Hermes,   29,  "hermes code 29"},
+        {HPSDRHW::Hermes,   32,  "hermes code 32"},
+        {HPSDRHW::Hermes,   33,  "hermes code 33"},
+        {HPSDRHW::HermesII, 103, "hermes2 code 103"},
+        {HPSDRHW::HermesII, 15,  "hermes2 code 15"},
+    };
+    for (const HPSDRModel m : models) {
+        const bool tenE = m == HPSDRModel::ANAN10E || m == HPSDRModel::ANAN100B;
+        const bool ruled = m == HPSDRModel::HERMES || m == HPSDRModel::ANAN10
+            || m == HPSDRModel::ANAN100;
+        for (const Report& r : reports) {
+            const bool two = tenE
+                || (ruled && (r.board == HPSDRHW::HermesII || (r.code >= 12 && r.code <= 19)));
+            QTest::addRow("%s %s", displayName(m), r.name)
+                << int(m) << int(r.board) << r.code << two;
+        }
+    }
+}
+
+void TestP1DdcLayoutPerModel::two_receiver_radios_take_the_10e_map()
+{
+    QFETCH(int, model);
+    QFETCH(int, board);
+    QFETCH(int, code);
+    QFETCH(bool, two);
+    const HPSDRModel hm = static_cast<HPSDRModel>(model);
+    P1CodecStandard codec;
+    codec.setDiscoveredBoard(static_cast<HPSDRHW>(board));
+    codec.setProtocol1FirmwareVersion(code);
+    QCOMPARE(codec.usesTwoReceiverMap(hm), two);
+
+    const Row* rows = two ? kHermesII : kHermes;
+    const int count = two ? 2 : 4;
+    for (int i = 0; i < 16; ++i) {
+        const Row& r = rows[i];
+        CodecContext ctx{};
+        ctx.model           = hm;
+        ctx.puresignalRun   = r.ps;
+        ctx.diversity       = r.div;
+        ctx.diversityStream = -1;
+        ctx.mox             = r.mox;
+        ctx.p1AdcCntrl      = kAdc;
+        std::array<SliceConfig, 5> streams{};
+        streams[0].live = true;
+        streams[0].sampleRateHz = R1;
+        streams[1].live = r.rx2;
+        streams[1].sampleRateHz = R2;
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, streams);
+        const QString expected = describe(r.cfg, r.en, r.sync, r.r0, r.r1, r.r2, r.r3,
+                                          r.c1, r.c2, r.s0, r.s1, r.fwd, r.rev, r.p1Div,
+                                          count, count);
+        const QString actual = describe(a.p1DdcConfig, a.ddcEnable, a.syncEnable,
+                                        a.rate[0], a.rate[1], a.rate[2], a.rate[3],
+                                        a.adcCtrl1, a.adcCtrl2,
+                                        a.streamDdc[0], a.streamDdc[1],
+                                        a.psFwdDdc, a.psRevDdc, a.p1Diversity,
+                                        a.p1RxCount, a.nDdc);
+        QCOMPARE(actual, expected);
+
+        const PsDdcConfig cfg = codec.applyPureSignalDdcConfig(
+            hm, r.ps, r.div, r.mox, R1, R2, r.rx2, quint8(C1), quint8(C2));
+        const QString fromPs = describe(cfg.p1DdcConfig, cfg.ddcEnable, cfg.syncEnable,
+                                        int(cfg.rate[0]), int(cfg.rate[1]),
+                                        int(cfg.rate[2]), int(cfg.rate[3]),
+                                        cfg.cntrl1, cfg.cntrl2,
+                                        a.streamDdc[0], a.streamDdc[1],
+                                        cfg.psFbDdc, cfg.txMonDdc, a.p1Diversity,
+                                        cfg.p1RxCount, cfg.nDdc);
+        QCOMPARE(fromPs, actual);
+    }
+}
 
 void TestP1DdcLayoutPerModel::layout_matches_thetis_data()
 {
