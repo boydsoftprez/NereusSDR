@@ -1,6 +1,8 @@
 // no-port-check: NereusSDR-original tests of the container picker's names
 // and headings.
 // Modification history (NereusSDR):
+//   2026-11-25 - The Roundtable controls applet (applet:roundtable_controls).
+//                 Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 //   2026-11-16 - The Voice keyer applet (applet:voice_keyer), recording plan
 //                 Task 12. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
@@ -158,6 +160,7 @@ const Expected kExpected[] = {
     {"applet:cat", "CAT", kPanels},
     {"applet:cwx", "CWX", kPanels},
     {"applet:roundtable", "Roundtable", kPanels},
+    {"applet:roundtable_controls", "Roundtable controls (simple)", kPanels},
     {"applet:recordings", "Recordings", kPanels},
     {"applet:voice_keyer", "Voice keyer", kPanels},
     {"applet:tci", "TCI Server", kPanels},
@@ -250,6 +253,7 @@ const Rename kRenames[] = {
     {"longpath.needle", "Needle meter (Longpath)", "Needle meter"},
     {"longpath.bar", "Bar meter (Longpath)", "Bar meter"},
     {"longpath.filter", "Filter passband (Longpath)", "Filter passband"},
+    {"applet:roundtable_controls", "Roundtable controls", "Roundtable controls (simple)"},
 };
 
 const QVector<ContentGroup> kHeadingOrder{kMeters, kBlocks, kButtons, kPanels, kSections, kLongpath};

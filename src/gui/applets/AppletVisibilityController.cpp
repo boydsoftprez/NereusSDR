@@ -16,6 +16,8 @@
 //                 Claude Code.
 //   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-11-25 - Roundtable controls land directly under Roundtable.
+//                 Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 //
 // =================================================================
 
@@ -273,6 +275,20 @@ bool AppletVisibilityController::placeInWorkspace(WorkspaceDocument& document,
         entry.name = type;
     }
     entry.visible = visible;
+    // Roundtable controls sit directly under Roundtable, wherever that panel
+    // is, unless it is popped out. A popped-out Roundtable keeps the controls
+    // on the panel with the other applets.
+    if (type == QLatin1String("applet:roundtable_controls")) {
+        for (auto& c : document.containers) {
+            if (c.popOutShell) { continue; }
+            for (int i = 0; i < c.contents.size(); ++i) {
+                if (c.contents[i].typeId == QLatin1String("applet:roundtable")) {
+                    c.contents.insert(i + 1, entry);
+                    return true;
+                }
+            }
+        }
+    }
     // The SSB Mod Monitor sits directly under the AM Mod Monitor, wherever
     // that panel is, unless it is popped out.
     if (type == QLatin1String("applet:ssb_mod_monitor")) {

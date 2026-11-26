@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original migration of saved container entries.
 // Modification history (NereusSDR):
+//   2026-11-25 - A saved "Roundtable controls" entry loads as
+//                 "Roundtable controls (simple)". Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 //   2026-10-26 - Final review fix wave (I9): a new frequency instrument
 //                 stores "tx" (the transmit slice); a record saved before
 //                 the pick existed loads as "first", the first other slice
@@ -118,6 +121,7 @@ constexpr LabelRename kLabelRenames[] = {
         {"longpath.needle", "Needle meter (Longpath)", "Needle meter"},
         {"longpath.bar", "Bar meter (Longpath)", "Bar meter"},
         {"longpath.filter", "Filter passband (Longpath)", "Filter passband"},
+        {"applet:roundtable_controls", "Roundtable controls", "Roundtable controls (simple)"},
 };
 
 void migrateDefaultName(ContentEntry& entry)

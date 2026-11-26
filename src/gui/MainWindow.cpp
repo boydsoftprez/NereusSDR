@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-25: The Roundtable controls applet, Start/Stop and Hide your
+//               status, wired to the same spot source host as Spot Hub.
+//               Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 //   2026-11-16: Any tune of a pan's slice reaches its DsrRewindLink
 //               (sliceTuned): in the past it plays from the top row, or
 //               says nothing was kept at that frequency then. J.J. Boyd
@@ -1656,6 +1659,7 @@ warren@wpratt.com
 #include "applets/TunerApplet.h"
 #include "applets/RotorApplet.h"
 #include "applets/RoundtableApplet.h"
+#include "applets/RoundtableControlsApplet.h"
 // Phase 23: TCI server + applets (guarded so non-WebSocket builds still compile)
 #ifdef HAVE_WEBSOCKETS
 #  include "applets/TciApplet.h"
@@ -14017,6 +14021,16 @@ void MainWindow::populateDefaultMeter()
     // Roundtable tab.
     m_roundtableApplet = new RoundtableApplet(m_radioModel);
     panel->addApplet(m_roundtableApplet);
+    // Start, Stop and Hide your status, without opening Spot Hub. Start and
+    // Stop are the Spot Hub buttons; the checkbox writes setHidden.
+    m_roundtableControlsApplet = new RoundtableControlsApplet(m_radioModel);
+    panel->addApplet(m_roundtableControlsApplet);
+    if (SpotSourceHost* host = m_radioModel ? m_radioModel->spotSourceHost() : nullptr) {
+        connect(m_roundtableControlsApplet, &RoundtableControlsApplet::startRequested,
+                host, &SpotSourceHost::startRoundtable);
+        connect(m_roundtableControlsApplet, &RoundtableControlsApplet::stopRequested,
+                host, &SpotSourceHost::stopRoundtable);
+    }
     // This window's own slice, so the label, the stream and Tune agree and a hosting
     // window never moves a slice another device controls. activeSliceChanged is not
     // enough: it stays silent when only this station's choice changes while a phone
@@ -14365,6 +14379,7 @@ void MainWindow::populateDefaultMeter()
     m_appletsById[QStringLiteral("Tuner")]      = m_tunerApplet;
     m_appletsById[QStringLiteral("Rotor")]      = m_rotorApplet;
     m_appletsById[QStringLiteral("Roundtable")] = m_roundtableApplet;
+    m_appletsById[QStringLiteral("RoundtableControls")] = m_roundtableControlsApplet;
     m_appletsById[QStringLiteral("RfKit")]      = m_rfKitApplet;
     m_appletsById[QStringLiteral("Cat")]        = m_catApplet;
     m_appletsById[QStringLiteral("Cwx")]        = m_cwxApplet;
@@ -14429,6 +14444,9 @@ void MainWindow::populateDefaultMeter()
     // Roundtable plan Task 13: shown by default (design 11.2 Panel).
     m_appletVis->registerApplet(QStringLiteral("Roundtable"),
                                 QStringLiteral("Roundtable"),   true);
+    // Start, Stop and Hide your status. Shown by default, under Roundtable.
+    m_appletVis->registerApplet(QStringLiteral("RoundtableControls"),
+                                QStringLiteral("Roundtable controls (simple)"), true);
     m_appletVis->registerApplet(QStringLiteral("Cat"),QStringLiteral("CAT"),true);
     // CWX: placed hidden, as Thetis's CWX form is closed until opened, so
     // no other screen changes; Tools > CWX, the status-bar CWX label and

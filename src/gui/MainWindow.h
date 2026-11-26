@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-25: m_roundtableControlsApplet. Brian Sutton (W4KZO),
+//               AI-assisted via xAI Grok.
 //   2026-11-16: m_voiceKeyerApplet and showVoiceKeyerPanel() (recording plan Task 12).
 //                J.J. Boyd (KG4VCF), AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-15: m_recordingsApplet and openRecordingsWindow() (recording plan Task 7).
@@ -2580,6 +2582,7 @@ private:
     class TunerApplet*      m_tunerApplet{nullptr};
     class RotorApplet*      m_rotorApplet{nullptr};
     class RoundtableApplet* m_roundtableApplet{nullptr};  // Roundtable plan Task 13
+    class RoundtableControlsApplet* m_roundtableControlsApplet{nullptr};
     class RecordingsPanel*  m_recordingsApplet{nullptr};  // Recording plan Task 7
     // Recording plan Task 7: All recordings... on a flag or in the panel,
     // with the recording to select (empty for none).
