@@ -17,6 +17,20 @@
 //                Claude Code. Lifted from P1RadioConnection::composeCcForBank
 //                which previously held the inline ramdor port; now
 //                delegates here.
+//   2026-11-19 - A Hermes (ANAN-10/100) reporting an early discovery
+//                version uses the two-receiver map (DDC0 and DDC1).
+//                Bench-tested on Apple silicon with a radio that reports
+//                code 15. Brian Sutton (W4KZO), AI-assisted via xAI Grok.
+//   2026-11-25 - Narrowed to firmware codes 14 to 19: TAPR's release notes
+//                give codes 20 to 28 four or five receivers. J.J. Boyd
+//                (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-26 - Wording only: the rule is about receiver count. TAPR
+//                Hermes v1.x has two receivers and no PureSignal feedback
+//                (feedback first arrives in the 4 Jun 2014 build). The
+//                code-15 bench radio most likely ran ANAN-10E firmware
+//                (Hermes10E_v1.5 reports 15). Helper renamed to
+//                hermesHasTwoReceivers. J.J. Boyd (KG4VCF), AI-assisted
+//                via Claude Code / Opus 5.5.
 //   2026-09-24 - Plan Task 11: applyDdcAssignment gives every Protocol 1
 //                model Thetis's own receiver layout (Hermes, HermesII and
 //                Orion classes, RedPitaya), from console.cs UpdateDDCs and
@@ -633,9 +647,27 @@ PsDdcConfig P1CodecStandard::applyPureSignalDdcConfig(
         //   case HPSDRModel.ANAN100:
         //       P1_rxcount = 4; nddc = 4;  (4-DDC Hermes-class branch)
         case HPSDRModel::HERMES:
-        case HPSDRModel::ANAN_G2E:  // ANAN-G2E (HermesC10) //N1GP G2E added
         case HPSDRModel::ANAN10:
         case HPSDRModel::ANAN100:
+            // Receiver counts from the TAPR Hermes release notes,
+            // TAPR/OpenHPSDR-Firmware [@e7c6584] "Protocol 1/Hermes/previous
+            // Hermes versions/Release notes_v1.3 to v3.1.txt": v1.4 added the
+            // second receiver (lines 5-6), v2.0 has four (lines 48-50). v0.4
+            // was a temporary predistortion build that already "assigned Tx
+            // output to Rx5 input" (line 82). The 4 Jun 2014 build "Moved
+            // PureSignal feedback to receivers 3 & 4 on Tx" (lines 95-97).
+            // Both came after v1.x, so TAPR Hermes v1.x has no PureSignal
+            // feedback. Codes 14 to 19 get
+            // the two-receiver map (DDC0 and DDC1) so the frame matches the
+            // receivers the radio has.
+            if (hermesHasTwoReceivers(model)) {
+                return psDdcConfigHermesIIClass(psEnabled, diversityEnabled, moxState,
+                                                rx1Rate, rx2Rate, rx2Enabled);
+            }
+            return psDdcConfigHermesClass(psEnabled, diversityEnabled, moxState,
+                                          rx1Rate, rx2Rate, rx2Enabled);
+
+        case HPSDRModel::ANAN_G2E:  // ANAN-G2E (HermesC10) //N1GP G2E added
             return psDdcConfigHermesClass(psEnabled, diversityEnabled, moxState,
                                           rx1Rate, rx2Rate, rx2Enabled);
 
@@ -1125,6 +1157,17 @@ DdcAssignment P1CodecStandard::applyDdcAssignment(
         //   case HPSDRModel.ANAN100:
         //       P1_rxcount = 4;                     // RX4 used for puresignal feedback
         //       nddc = 4;
+        // Firmware v1.4 to v1.9 has two receivers. Same gate as
+        // applyPureSignalDdcConfig, so the frame count and the pair agree.
+        case HPSDRModel::HERMES:
+        case HPSDRModel::ANAN10:
+        case HPSDRModel::ANAN100:
+            if (hermesHasTwoReceivers(ctx.model)) {
+                return ddcAssignmentHermesIIClass(ctx, slices);
+            }
+            return ddcAssignmentHermesClass(ctx, slices);
+
+        // ANAN_G2E (console.cs:8388 above) keeps the four-receiver map.
         default:
             return ddcAssignmentHermesClass(ctx, slices);
     }

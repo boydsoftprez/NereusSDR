@@ -16,6 +16,16 @@
 //   2026-10-26: CW transmit, bank12CwKeyer (banks 12-14 carry the CW
 //               keyer, networkproto1.c:618-646 [v2.10.3.15]). J.J. Boyd
 //               (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-19 - The codec holds the discovery firmware version, for the
+//                two-receiver map of an early Hermes / ANAN-10 / ANAN-100.
+//                Brian Sutton (W4KZO), AI-assisted via xAI Grok.
+//   2026-11-25 - That map covers only codes 14 to 19, and only those three
+//                models (TAPR release notes). J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code.
+//   2026-11-26 - hermesPureSignalOnTwoReceivers renamed hermesHasTwoReceivers:
+//                it tells the receiver count. TAPR Hermes v1.x has no
+//                PureSignal feedback. J.J. Boyd (KG4VCF), AI-assisted via
+//                Claude Code / Opus 5.5.
 // =================================================================
 //
 // === Verbatim Thetis ChannelMaster/networkproto1.c header (lines 1-45) ===
@@ -75,6 +85,32 @@ public:
         quint8 adcCtrl2
     ) const override;
 
+    // Discovery code version (major*10+minor). 0 means unknown. Set by
+    // P1RadioConnection when the codec is built.
+    void setProtocol1FirmwareVersion(int version) { m_protocol1FirmwareVersion = version; }
+    int protocol1FirmwareVersion() const { return m_protocol1FirmwareVersion; }
+    // True for a Hermes, ANAN-10 or ANAN-100 whose firmware has two
+    // receivers. Thetis has no such rule: it asks these models for four
+    // whatever their firmware (console.cs:8387-8392 [v2.10.3.15]). The
+    // receiver counts are from the TAPR release notes, TAPR/OpenHPSDR-Firmware
+    // [@e7c6584] "Protocol 1/Hermes/previous Hermes versions/Release
+    // notes_v1.3 to v3.1.txt": v1.4 added the second receiver and v1.9 still
+    // has two; v2.0 has four, v2.1 to v2.8 four or five, v2.9 and later four.
+    // Below v1.4 the notes give one receiver (v1.3) and five (v0.4), so those
+    // codes keep the four-receiver map too.
+    bool hermesHasTwoReceivers(HPSDRModel model) const
+    {
+        switch (model) {
+            case HPSDRModel::HERMES:
+            case HPSDRModel::ANAN10:
+            case HPSDRModel::ANAN100:
+                return m_protocol1FirmwareVersion >= kFirstTwoReceiverHermesCode
+                    && m_protocol1FirmwareVersion < kFirstFourReceiverHermesCode;
+            default:
+                return false;
+        }
+    }
+
     DdcAssignment applyDdcAssignment(
         const CodecContext& ctx,
         const std::array<SliceConfig, 5>& slices) const override;
@@ -120,6 +156,12 @@ protected:
     DdcAssignment ddcAssignmentOrionClass(
         const CodecContext& ctx, const std::array<SliceConfig, 5>& slices,
         bool redPitaya) const;
+
+    // TAPR Hermes release notes, cited above: v1.4 and v2.0.
+    static constexpr int kFirstTwoReceiverHermesCode  = 14;
+    static constexpr int kFirstFourReceiverHermesCode = 20;
+
+    int m_protocol1FirmwareVersion{0};
 };
 
 } // namespace NereusSDR

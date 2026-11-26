@@ -17,6 +17,16 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-19 - The Hermes codec learns the discovery firmware version
+//                so an early ANAN-10/100 opens on two receivers.
+//                Bench-tested on Apple silicon. Brian Sutton (W4KZO),
+//                AI-assisted via xAI Grok.
+//   2026-11-25 - Only firmware v1.4 to v1.9 on a Hermes, ANAN-10 or
+//                ANAN-100 does so, and only those are logged. J.J. Boyd
+//                (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-26 - The log line names the receiver count, not PureSignal:
+//                TAPR Hermes v1.x has no PureSignal feedback. J.J. Boyd
+//                (KG4VCF), AI-assisted via Claude Code / Opus 5.5.
 //   2026-10-26 - Bank 17 carries the Anvelina DX open collector outputs:
 //                ctx.ocExtrasByte from setOcExtrasByte (J.J. Boyd KG4VCF,
 //                AI-assisted: Claude Code).
@@ -4309,6 +4319,14 @@ void P1RadioConnection::selectCodec()
         case HPM::ANVELINAPRO3: m_codec = std::make_unique<P1CodecAnvelinaPro3>(); break;
         case HPM::REDPITAYA:    m_codec = std::make_unique<P1CodecRedPitaya>();    break;
         default:                m_codec = std::make_unique<P1CodecStandard>();     break;
+    }
+    if (auto* standard = dynamic_cast<P1CodecStandard*>(m_codec.get())) {
+        standard->setProtocol1FirmwareVersion(m_radioInfo.firmwareVersion);
+        if (standard->hermesHasTwoReceivers(m_hardwareProfile.model)) {
+            qCInfo(lcConnection) << "P1: Hermes firmware"
+                                 << m_radioInfo.firmwareVersion
+                                 << "has two receivers; using the two-receiver map";
+        }
     }
     // RadioModel calls setIoBoard() BEFORE the connection thread starts (and
     // therefore before applyBoardQuirks() runs selectCodec()), so the cached
