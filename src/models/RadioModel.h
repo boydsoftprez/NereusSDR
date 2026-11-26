@@ -12,6 +12,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-26 - newSliceBandNotUsed: New Slice's Band had no free
+//                receiver; a remote window hears it from the Core
+//                (reportStationNewSliceBandNotUsed). J.J. Boyd (KG4VCF),
+//                AI tooling Claude Code / Opus 5.5.
+//   2026-11-24 - A new receiver applies the Core's New Slice choices
+//                after the copy. NereusSDR-original. Brian Sutton (W4KZO),
+//                AI-assisted via xAI Grok.
 //   2026-11-05 - A newly added receiver starts with RIT and XIT off, on a
 //                letter used before too; a restored receiver keeps its own.
 //                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
@@ -1636,6 +1643,10 @@ public:
     /// Band stack plan Task 6: the Core refused a bandStack.* verb. Routed to
     /// stationBandStackRefused, which RemoteBandStackAccess turns into refused().
     void reportStationBandStackRefused(const QString& reason);
+    /// PR 816 final review: the Core's newSliceBand notice, for a slice
+    /// this remote window added. Emits newSliceBandNotUsed, as a local
+    /// window's addSlice does; nothing in a window running its own radio.
+    void reportStationNewSliceBandNotUsed(int sliceId, const QString& reason);
 
     /// R-R3-47 / R-R3-22 / R-R3-48: the Core refused an accessory request,
     /// with its own reason. `device` says what it was about: "pgxl",
@@ -3422,7 +3433,10 @@ public:
     // `newReceiver` is for a slice someone asked for (+RX, a device's
     // request). It is a copy of the slice the operator is on, with lock,
     // mute, RIT and XIT off, and reads nothing the letter saved; with no
-    // slice to copy it opens on defaults. The letter's saved RIT and XIT are
+    // slice to copy it opens on defaults. Setup > General > New Slice
+    // (the Core's NewSlice/ settings) replaces any of those choices the
+    // operator has set. Frequency and sample rate stay with the slice
+    // they were on and the receiver they join. The letter's saved RIT and XIT are
     // removed, unless a saved layout is held. Without it a letter's
     // preferences, RIT and XIT come back. The remote client only sends the verb; the Core mints
     // the slice and mirrors it back.
@@ -6964,6 +6978,10 @@ signals:
     // been reached; `reason` is sliceCapReason()'s words. MainWindow shows
     // it as a toast.
     void sliceAddRejected(QString reason);
+    /// A new slice opened where it was copied to, because Setup > General >
+    /// New Slice names a band no receiver could be given to. The slice was
+    /// added; `reason` is the operator's words. MainWindow shows it.
+    void newSliceBandNotUsed(int sliceId, const QString& reason);
     /// See reportStationBandStackRefused().
     void stationBandStackRefused(const QString& reason);
     /// R-R3-47 / R-R3-22: the Core refused a request for an accessory's own

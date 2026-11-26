@@ -18,6 +18,12 @@
 // settings store is the test sandbox's (TestSandboxInit).
 //
 // Modification history (NereusSDR):
+//   2026-11-24 - Setup > General > New Slice replaces the copied choices
+//                an operator has set. A saved receiver ignores them.
+//                Brian Sutton (W4KZO), AI-assisted via xAI Grok.
+//   2026-11-26 - AGC-T is the AGC threshold; a band with no free receiver
+//                opens where it was copied to and says why. J.J. Boyd
+//                (KG4VCF), AI tooling Claude Code / Opus 5.5.
 //   2026-11-05 - A newly added receiver starts with RIT and XIT off, on a
 //                letter used before too; a restored one keeps its own.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
@@ -39,6 +45,8 @@
 #include "core/WdspEngine.h"
 #include "core/WdspTypes.h"
 #include "models/Band.h"
+#include "models/BandDefaults.h"
+#include "models/NewSliceDefaults.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "core/SliceOwnership.h"
@@ -859,6 +867,186 @@ private slots:
         QCOMPARE(seed->ritHz(), 300);
         QVERIFY(seed->xitEnabled());
         QCOMPARE(seed->xitHz(), 400);
+    }
+
+    void aNewReceiversChoicesComeFromNewSliceSettings()
+    {
+        RadioModel radio;
+        SliceModel* seed = radio.sliceById(radio.addSlice());
+        QVERIFY(seed);
+        setSeedValues(*seed);
+        auto& settings = AppSettings::instance();
+        settings.setValue(QStringLiteral("NewSlice/Mode"), static_cast<int>(DSPMode::USB));
+        settings.setValue(QStringLiteral("NewSlice/AgcMode"), static_cast<int>(AGCMode::Fast));
+        settings.setValue(QStringLiteral("NewSlice/AgcT"), -50);
+        settings.setValue(QStringLiteral("NewSlice/AutoAgcOffset"), 15);
+        settings.setValue(QStringLiteral("NewSlice/Nr"), static_cast<int>(NrSlot::Off));
+        settings.setValue(QStringLiteral("NewSlice/Nb"), static_cast<int>(NbMode::Off));
+        settings.setValue(QStringLiteral("NewSlice/Squelch"),
+                          static_cast<int>(NewSliceDefaults::SwitchPolicy::Off));
+        settings.setValue(QStringLiteral("NewSlice/StepHz"), 10);
+        settings.setValue(QStringLiteral("NewSlice/AfGain"), 20);
+        settings.setValue(QStringLiteral("NewSlice/Lock"),
+                          static_cast<int>(NewSliceDefaults::SwitchPolicy::On));
+        settings.setValue(QStringLiteral("NewSlice/Rit"),
+                          static_cast<int>(NewSliceDefaults::SwitchPolicy::FollowSlice));
+
+        SliceModel* slice = radio.sliceById(radio.addSlice(QString(), false, /*newReceiver=*/true));
+        QVERIFY(slice);
+        QCOMPARE(slice->frequency(), seed->frequency());
+        QCOMPARE(slice->dspMode(), DSPMode::USB);
+        // A different mode cannot keep the other mode's filter.
+        QCOMPARE(slice->filterLow(), 100);
+        QCOMPARE(slice->filterHigh(), 3000);
+        QCOMPARE(slice->agcMode(), AGCMode::Fast);
+        QVERIFY(!slice->autoAgcEnabled());
+        // AGC-T is the receive panel's AGC-T, the AGC threshold.
+        QCOMPARE(slice->agcThreshold(), -50);
+        QCOMPARE(slice->autoAgcOffset(), 15.0);
+        QCOMPARE(slice->activeNr(), NrSlot::Off);
+        QCOMPARE(slice->nbMode(), NbMode::Off);
+        QVERIFY(slice->snbEnabled());
+        QVERIFY(!slice->ssqlEnabled());
+        QVERIFY(!slice->amsqEnabled());
+        QVERIFY(!slice->fmsqEnabled());
+        QCOMPARE(slice->ssqlThresh(), 25.0);
+        QCOMPARE(slice->stepHz(), 10);
+        QCOMPARE(slice->afGain(), 20);
+        QVERIFY(slice->locked());
+        QVERIFY(!slice->muted());
+        QVERIFY(slice->ritEnabled());
+        QCOMPARE(slice->ritHz(), 300);
+        QVERIFY(!slice->xitEnabled());
+        QCOMPARE(slice->xitHz(), 0);
+        // A row left alone still comes from the slice you are on.
+        QCOMPARE(slice->rfGain(), seed->rfGain());
+        QCOMPARE(slice->nr2TrainT1(), 0.7);
+        QCOMPARE(seed->dspMode(), DSPMode::LSB);
+        QVERIFY(seed->locked());
+    }
+
+    void aNewReceiverCanTakeTheModesUsualFilter()
+    {
+        RadioModel radio;
+        SliceModel* seed = radio.sliceById(radio.addSlice());
+        QVERIFY(seed);
+        setSeedValues(*seed);
+        AppSettings::instance().setValue(
+            QStringLiteral("NewSlice/Filter"),
+            static_cast<int>(NewSliceDefaults::FilterPolicy::ModeDefault));
+        SliceModel* slice = radio.sliceById(radio.addSlice(QString(), false, /*newReceiver=*/true));
+        QVERIFY(slice);
+        QCOMPARE(slice->dspMode(), DSPMode::LSB);
+        QCOMPARE(slice->filterLow(), -3000);
+        QCOMPARE(slice->filterHigh(), -100);
+        QCOMPARE(slice->frequency(), seed->frequency());
+        QCOMPARE(slice->afGain(), 23);
+    }
+
+    void aSavedReceiverIgnoresNewSliceSettings()
+    {
+        saveLetterCOn20m();
+        if (QTest::currentTestFailed()) { return; }
+        auto& settings = AppSettings::instance();
+        settings.setValue(QStringLiteral("NewSlice/Mode"), static_cast<int>(DSPMode::FM));
+        settings.setValue(QStringLiteral("NewSlice/Lock"),
+                          static_cast<int>(NewSliceDefaults::SwitchPolicy::Off));
+        settings.setValue(QStringLiteral("NewSlice/AfGain"), 5);
+        RadioModel radio;
+        QVERIFY(openSeedOn40m(radio));
+        const int c = radio.addSlice(QString(), /*restoreSavedState=*/true);
+        QCOMPARE(c, 2);
+        SliceModel* slice = radio.sliceById(c);
+        QVERIFY(slice);
+        QCOMPARE(slice->frequency(), kLetterFrequencyHz);
+        QCOMPARE(slice->dspMode(), DSPMode::USB);
+        QCOMPARE(slice->afGain(), kLetterAfGain);
+        QVERIFY(slice->locked());
+        QVERIFY(slice->ritEnabled());
+    }
+
+    void aChosenBandOpensOnThatBandsUsualFrequencyAndMode()
+    {
+        RadioModel radio;
+        SliceModel* seed = radio.sliceById(radio.addSlice());
+        QVERIFY(seed);
+        setSeedValues(*seed);
+        AppSettings::instance().setValue(QStringLiteral("NewSlice/Band"),
+                                         static_cast<int>(Band::Band20m));
+        SliceModel* slice = radio.sliceById(radio.addSlice(QString(), false, /*newReceiver=*/true));
+        QVERIFY(slice);
+        const BandSeed opening = BandDefaults::seedFor(Band::Band20m);
+        QCOMPARE(slice->frequency(), opening.frequencyHz);
+        QCOMPARE(slice->dspMode(), opening.mode);
+        QCOMPARE(slice->filterLow(), 100);
+        QCOMPARE(slice->filterHigh(), 3000);
+        QCOMPARE(seed->frequency(), kSeedFrequencyHz);
+    }
+
+    // Band names a band no receiver can be given to (one receiver, already
+    // in use on another band). +RX still opens a slice: on the band the
+    // operator is on, on the receiver they are looking at, with a note.
+    void aChosenBandWithNoFreeReceiverOpensOnTheSeedsBand()
+    {
+        RadioModel radio;
+        radio.configureStreamPool(/*userDdcCount=*/1, /*maxSlices=*/5, 192000);
+        SliceModel* seed = radio.sliceById(radio.addSlice());
+        QVERIFY(seed);
+        setSeedValues(*seed);
+        QVERIFY(seed->streamIndex() >= 0);
+        AppSettings::instance().setValue(QStringLiteral("NewSlice/Band"),
+                                         static_cast<int>(Band::Band20m));
+        QSignalSpy notUsed(&radio, &RadioModel::newSliceBandNotUsed);
+        QSignalSpy rejected(&radio, &RadioModel::sliceAddRejected);
+        const int id = radio.addSlice(QString(), false, /*newReceiver=*/true);
+        QVERIFY(id >= 0);
+        SliceModel* slice = radio.sliceById(id);
+        QVERIFY(slice);
+        QCOMPARE(slice->frequency(), seed->frequency());
+        QCOMPARE(slice->dspMode(), seed->dspMode());
+        QCOMPARE(slice->streamIndex(), seed->streamIndex());
+        QCOMPARE(rejected.count(), 0);
+        QCOMPARE(notUsed.count(), 1);
+        QCOMPARE(notUsed.at(0).at(0).toInt(), id);
+        QVERIFY(notUsed.at(0).at(1).toString().contains(QStringLiteral("20m")));
+    }
+
+    // With a receiver free, the chosen band is used on that receiver.
+    void aChosenBandWithAFreeReceiverOpensThere()
+    {
+        RadioModel radio;
+        radio.configureStreamPool(/*userDdcCount=*/2, /*maxSlices=*/5, 192000);
+        SliceModel* seed = radio.sliceById(radio.addSlice());
+        QVERIFY(seed);
+        setSeedValues(*seed);
+        AppSettings::instance().setValue(QStringLiteral("NewSlice/Band"),
+                                         static_cast<int>(Band::Band20m));
+        QSignalSpy notUsed(&radio, &RadioModel::newSliceBandNotUsed);
+        SliceModel* slice = radio.sliceById(radio.addSlice(QString(), false, /*newReceiver=*/true));
+        QVERIFY(slice);
+        QCOMPARE(slice->frequency(), BandDefaults::seedFor(Band::Band20m).frequencyHz);
+        QVERIFY(slice->streamIndex() >= 0);
+        QVERIFY(slice->streamIndex() != seed->streamIndex());
+        QCOMPARE(notUsed.count(), 0);
+    }
+
+    void aChosenNoiseReducerCanKeepItsOwnKnobs()
+    {
+        RadioModel radio;
+        SliceModel* seed = radio.sliceById(radio.addSlice());
+        QVERIFY(seed);
+        setSeedValues(*seed);
+        seed->setNr1Taps(80);
+        auto& settings = AppSettings::instance();
+        settings.setValue(QStringLiteral("NewSlice/Nr"), static_cast<int>(NrSlot::NR1));
+        // The Settings box is closed. The tap the operator set is still used.
+        settings.setValue(QStringLiteral("NewSlice/Nr/nr1/nr1Taps"), 200);
+        SliceModel* slice = radio.sliceById(radio.addSlice(QString(), false, /*newReceiver=*/true));
+        QVERIFY(slice);
+        QCOMPARE(slice->activeNr(), NrSlot::NR1);
+        QCOMPARE(slice->nr1Taps(), 200);
+        QCOMPARE(slice->nr1Delay(), seed->nr1Delay());
+        QCOMPARE(seed->nr1Taps(), 80);
     }
 
     void aNewReceiverDoesNotCopyLockMuteRitOrXit()

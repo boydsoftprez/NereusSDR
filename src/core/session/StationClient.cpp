@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-26: PR 816 final review: the Core's newSliceBand notice is this
+//               window's New Slice toast (RadioModel::newSliceBandNotUsed),
+//               as a local window shows it. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code / Opus 5.5.
 //   2026-11-16: Recording plan Task 22: the dsr.* verbs (rewind sound) are
 //               sent and answered with the recordings verbs.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -3509,6 +3513,20 @@ void StationClient::onTransportText(const QByteArray& wire)
         // its carrier keyed; nothing else tells the transmit client.
         if (message.prompt.kind == QLatin1String("tuneEnded")) {
             m_remoteTransmit->tunerTuneEnded();
+        }
+        // PR 816 final review: the slice this window added opened on the
+        // band it was copied from (New Slice's band had no free receiver).
+        // Said as a local window says it, a toast, not a card.
+        if (message.prompt.kind == QLatin1String("newSliceBand")) {
+            if (!m_radioModel.isNull()) {
+                int sliceId = -1;
+                if (message.prompt.slices && !message.prompt.slices->isEmpty()) {
+                    sliceId = message.prompt.slices->first().toObject()
+                                  .value(QStringLiteral("sliceId")).toInt(-1);
+                }
+                m_radioModel->reportStationNewSliceBandNotUsed(sliceId, message.reason);
+            }
+            break;
         }
         if (m_declaredSessionHolder) {
             m_remoteDevices->addNotice(message.prompt, message.reason);

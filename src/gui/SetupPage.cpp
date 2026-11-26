@@ -1275,6 +1275,18 @@ QLineEdit* SetupPage::addLabeledEdit(const QString& label, const QString& placeh
 
 // ── Private row builder ───────────────────────────────────────────────────────
 
+void SetupPage::addToSection(QWidget* widget)
+{
+    if (widget == nullptr) {
+        return;
+    }
+    if (m_activeSectionLayout) {
+        m_activeSectionLayout->addWidget(widget);
+        return;
+    }
+    addContent(widget);
+}
+
 QHBoxLayout* SetupPage::makeLabeledRow(QLayout* parent, const QString& labelText, QWidget* control)
 {
     auto* row = new QHBoxLayout;

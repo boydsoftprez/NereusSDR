@@ -19,6 +19,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-26: AUTO AGC's ± Offset range, for Setup > General > New
+//               Slice. Brian Sutton (W4KZO) wrote the page; the range moved
+//               here by J.J. Boyd (KG4VCF), AI tooling Claude Code / Opus 5.5.
 //   2026-09-29: Slice colours E to H from AetherSDR's theme seed, so a
 //               fifth slice no longer repeats slice A's colour. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -110,6 +113,14 @@ inline constexpr std::array<AgcModeItem, 5> kAgcModes{{
 inline constexpr int kAgcThresholdMinDb = -160;
 inline constexpr int kAgcThresholdMaxDb = 2;
 inline constexpr int kAgcThresholdStepDb = 1;
+
+// AUTO AGC's ± Offset, the dB shift from the noise floor (Setup > DSP >
+// AGC/ALC and Setup > General > New Slice), in dB:
+// From Thetis Project Files/Source/Console/setup.designer.cs:38751-38760 [v2.10.3.15]
+//   this.udRX1AutoAGCOffset.Maximum = new decimal(new int[] { 60, 0, 0, 0});
+//   this.udRX1AutoAGCOffset.Minimum = new decimal(new int[] { 60, 0, 0, -2147483648});
+inline constexpr int kAutoAgcOffsetMinDb = -60;
+inline constexpr int kAutoAgcOffsetMaxDb = 60;
 
 // ── Receive ───────────────────────────────────────────────────────────────
 

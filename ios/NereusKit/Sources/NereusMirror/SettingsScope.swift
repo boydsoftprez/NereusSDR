@@ -3,6 +3,8 @@
 // Modification history (NereusSDR):
 // 2026-10-25: the Roundtable/ prefix and its four device-own keys, as the Core's table.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-26: the NewSlice/ prefix (Setup > General > New Slice, Brian Sutton W4KZO's page),
+//   as the Core's table. J.J. Boyd (KG4VCF), AI tooling Claude Code / Opus 5.5.
 
 /// Whether a setting key is kept by the Core (station-scoped, proxied to
 /// the app) or by each app itself (operator-local, never sent), by the
@@ -95,6 +97,9 @@ public enum SettingsScope: Sendable, Equatable {
         // The Core's filter presets (`filters/<mode>/<slot>/...`), which its
         // catalogue carries.
         Rule(text: "filters/", scope: .station),
+        // Setup > General > New Slice: the Core's choices for a slice an
+        // operator opens.
+        Rule(text: "NewSlice/", scope: .station),
         // Setup > Display > Grid & Scales' dB Max and dB Min per band: the
         // Core's per-band values win (link 8.2, parity ruling C12).
         Rule(text: "DisplayGridMax_", scope: .station),
