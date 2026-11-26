@@ -20,12 +20,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-25 - The window's profile manager learns each request's command
+//                 id. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-22 - PR 809 review: txProfile.save and txProfile.import refuse a
 //                 name with a control character or over 64 characters, and
 //                 import passes on the manager's own reason for a value.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
-//   2026-11-25 - The window's profile manager learns each request's command
-//                 id. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-17 - txProfile.import (importTxProfileForStation) and the
 //                 window's import request to the Core. Brian Sutton
 //                 (W4KZO), AI-assisted via xAI Grok.

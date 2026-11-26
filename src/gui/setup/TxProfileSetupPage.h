@@ -72,6 +72,10 @@
 //                 command id and released with the page; edits are counted
 //                 so a save never hides a later one. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Claude Code.
+//   2026-11-26 - A remote import the Core accepted clears the unsaved
+//                 mark, and the values it brings afterwards are not edits
+//                 (m_importArriving); Export gates with Save and Delete. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Claude Code / Opus 5.5.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived semantics are
@@ -82,6 +86,7 @@
 #include <QHash>
 #include <QPointer>
 #include <QString>
+#include <QVariant>
 #include <functional>
 #include <optional>
 
@@ -131,7 +136,8 @@ public:
     // R-R3-49 (parity Task 3): in a remote window the page changes the
     // Core's profiles and settings while the Core takes them. The TX filter
     // came with transmitSettingsVersion 1, the AM carrier with 2, and the
-    // profile combo, Save... and Delete with 3; each gates on its own.
+    // profile combo, Save..., Delete and Export... with 3, Import... with
+    // kTransmitSettingsTxProfileFileVersion; each gates on its own.
     void setTransmitSettingsPermitted(bool permitted, const QString& reason) override;
     void setTransmitSettingsPermittedAt(int version, bool permitted,
                                         const QString& reason) override;
@@ -287,6 +293,7 @@ private:
     struct PendingImport {
         QString name;
         int     unknownKeys;
+        QHash<QString, QVariant> values;  // the file's values, as sent
     };
     struct PendingExport {
         quint32 commandId;
@@ -296,6 +303,14 @@ private:
     };
     QHash<quint32, PendingImport> m_pendingImports;
     std::optional<PendingExport>  m_pendingExport;
+
+    // A remote window: the settings an import the Core accepted has yet to
+    // bring here. The Core's values arrive after its answer; each one that
+    // brings a setting to its imported value is the import, not an edit.
+    QHash<QString, QVariant> m_importArriving;
+    // Drops from m_importArriving each setting that now holds its imported
+    // value; true when any did.
+    bool takeArrivedImportValues();
 
     // ── Test hooks ──────────────────────────────────────────────────────────
     SavePromptHook        m_savePromptHook;

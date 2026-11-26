@@ -51,6 +51,13 @@
 //                                    stay unsaved; an active profile that
 //                                    changed during the file dialog stops
 //                                    the export. AI tooling: Claude Code.
+//   2026-11-26  J.J. Boyd / KG4VCF  PR 809 review: an import over the
+//                                    active profile that the Core accepted
+//                                    leaves no unsaved edits; the export
+//                                    cases open Export as SetupDialog does
+//                                    (version 3), and say why they share
+//                                    one settings store with the Core.
+//                                    AI tooling: Claude Code / Opus 5.5.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -231,6 +238,7 @@ private slots:
     void anOrdinarySavesAnswerDoesNotCompleteAnExport();
     void editsDuringTheExportsSaveStayUnsaved();
     void aRefusedImportKeepsTheEditsUnsaved();
+    void anAcceptedImportOverTheActiveProfileLeavesNoEdits();
     void aClosedPageLeavesTheRefusalToTheWindow();
     void doubleUnderscoreProfilesSelectAndDelete();
     void importIsDisabledOnACoreAtVersion16();
@@ -705,6 +713,12 @@ TxProfileFile::Document readProfileFile(const QString& path)
 
 }  // namespace
 
+// These export cases run the Core and the window in one process, so both
+// read and write the one AppSettings store: the window's read of the Core's
+// stored profile here does not go through the settings proxy a real remote
+// window reads it from. MicProfileManager reads AppSettings::instance()
+// itself, so the harness cannot give the Core a store of its own; the hand
+// check on a real Core and window covers that path.
 void TstTxProfileSelect::remoteExportReadsTheCoresStoredProfile()
 {
     Session s(m_securityDir.path(), this);
@@ -715,6 +729,8 @@ void TstTxProfileSelect::remoteExportReadsTheCoresStoredProfile()
     QVERIFY(s.connect());
     QTRY_COMPARE(s.windowProfiles().activeProfileName(), QStringLiteral("Desk"));
     TxProfileSetupPage page(&s.window, &s.windowProfiles(), &s.window.transmitModel());
+    // As SetupDialog passes MainWindow's gate on for a Core at version 3.
+    page.setTransmitSettingsPermittedAt(3, true, {});
     QCOMPARE(page.profileCombo()->currentText(), QStringLiteral("Desk"));
     // The Core's live level moves on; its stored profile does not.
     coreTx.setMicGainDb(-2);
@@ -750,6 +766,7 @@ void TstTxProfileSelect::remoteExportYesWaitsForTheCoresSave()
     QVERIFY(s.connect());
     QTRY_COMPARE(s.windowProfiles().activeProfileName(), QStringLiteral("Desk"));
     TxProfileSetupPage page(&s.window, &s.windowProfiles(), &s.window.transmitModel());
+    page.setTransmitSettingsPermittedAt(3, true, {});
     coreTx.setMicGainDb(-2);
     QTRY_COMPARE(s.window.transmitModel().micGainDb(), -2);
     int asked = 0;
@@ -859,6 +876,7 @@ void TstTxProfileSelect::remoteExportSaveRefusalShowsOnThePageAlone()
     QVERIFY(s.connect());
     QTRY_COMPARE(s.windowProfiles().activeProfileName(), QStringLiteral("Desk"));
     TxProfileSetupPage page(&s.window, &s.windowProfiles(), &s.window.transmitModel());
+    page.setTransmitSettingsPermittedAt(3, true, {});
     coreTx.setMicGainDb(-2);
     QTRY_COMPARE(s.window.transmitModel().micGainDb(), -2);
     int asked = 0;
@@ -908,6 +926,7 @@ void TstTxProfileSelect::aDroppedLinkForgetsTheWaitingExport()
     QVERIFY(s.connect());
     QTRY_COMPARE(s.windowProfiles().activeProfileName(), QStringLiteral("Desk"));
     TxProfileSetupPage page(&s.window, &s.windowProfiles(), &s.window.transmitModel());
+    page.setTransmitSettingsPermittedAt(3, true, {});
     coreTx.setMicGainDb(-2);
     QTRY_COMPARE(s.window.transmitModel().micGainDb(), -2);
     page.setUnsavedPromptHook([](const QString&) {
@@ -960,6 +979,7 @@ struct ExportingPage {
         }
         page = std::make_unique<TxProfileSetupPage>(&session.window, &session.windowProfiles(),
                                                     &session.window.transmitModel());
+        page->setTransmitSettingsPermittedAt(3, true, {});
         page->setTransmitSettingsPermittedAt(kTransmitSettingsTxProfileFileVersion, true, {});
         page->setUnsavedPromptHook([this](const QString&) {
             ++asked;
@@ -1103,6 +1123,35 @@ void TstTxProfileSelect::aRefusedImportKeepsTheEditsUnsaved()
     e.answer = TxProfileSetupPage::UnsavedPromptResult::Cancel;
     e.page->exportButton()->click();
     QCOMPARE(e.asked, 2);
+}
+
+// "Desk" imported over the active "Desk": the Core names no new active
+// profile, so the accepted answer alone marks the edits gone.
+void TstTxProfileSelect::anAcceptedImportOverTheActiveProfileLeavesNoEdits()
+{
+    Session s(m_securityDir.path(), this);
+    ExportingPage e(s);
+    QVERIFY(e.open());
+    const QString file = writeProfileFile(e.dir, QStringLiteral("Desk"),
+        QJsonObject{{QStringLiteral("MicGain"), QStringLiteral("-19")}});
+    e.page->setImportPathHook([file] { return file; });
+    e.page->setOverwriteConfirmHook([] { return true; });
+    e.answer = TxProfileSetupPage::UnsavedPromptResult::No;
+    e.page->importButton()->click();
+    QCOMPARE(e.asked, 1);
+    QTRY_COMPARE(e.results, 1);
+    QVERIFY2(e.ok, qPrintable(e.shown));
+    QCOMPARE(s.coreProfiles().activeProfileName(), QStringLiteral("Desk"));
+    QTRY_COMPARE(s.window.transmitModel().micGainDb(), -19);
+    // Let any later word from the Core arrive.
+    QTest::qWait(100);
+    QCOMPARE(s.windowProfiles().activeProfileName(), QStringLiteral("Desk"));
+    // Export asks nothing: no edits are left unsaved.
+    e.page->exportButton()->click();
+    QCOMPARE(e.asked, 1);
+    QCOMPARE(e.results, 2);
+    QVERIFY2(e.ok, qPrintable(e.shown));
+    QCOMPARE(readProfileFile(e.path()).keys.value(QStringLiteral("MicGain")), QStringLiteral("-19"));
 }
 
 // Setup closes while its page waits: the refusal goes to the window's
