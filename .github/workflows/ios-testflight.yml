@@ -1,0 +1,337 @@
+# NereusSDR for iPhone and iPad: build the app and send it to TestFlight.
+#
+# Run by hand from the Actions tab (or `gh workflow run ios-testflight.yml`),
+# choosing the branch or tag to build and the TestFlight group. It does on a
+# GitHub-hosted Mac what ios/scripts/archive.sh and Organizer did on JJ's
+# Mac, so the phone app can go to TestFlight from any computer:
+#
+#   1. numbers the build as archive.sh does: version from ios/project.yml
+#      (MARKETING_VERSION, the phone's own, apart from the desktop's
+#      CMakeLists.txt), build number from build-number.sh (commit count of
+#      the commit plus the offset there), name from build-tag.sh
+#      (<branch>@<sha>, or none on a tag). A phone release tag, ios-v<version>,
+#      must carry the version project.yml has at that tag;
+#   2. asks App Store Connect whether that number is free, before the
+#      quarter hour the archive takes;
+#   3. archives the Release build signed with the team's Apple Distribution
+#      certificate and the two App Store profiles (app and Live Activity),
+#      from ios/project-appstore.yml, and checks the privacy manifest;
+#   4. uploads it with the "App Store Connect" method, never TestFlight
+#      Internal Only (see ios/Config/ExportOptions.plist for why);
+#   5. waits for Apple to process it and adds it to the chosen group
+#      (ios/scripts/testflight.py). Me, Deplorables and JJ manual testing
+#      are internal groups; Public Preview is external, so its build is
+#      also sent to Beta App Review.
+#
+# Export compliance is left to JJ, who answers it in App Store Connect for
+# each build (ios/AppStore/export-compliance.md).
+#
+# Secrets (repository secrets, added by JJ; the one-time setup is in
+# ios/README.md, "TestFlight from GitHub Actions"):
+#   ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8      App Store Connect API key
+#   IOS_DIST_CERT_P12_BASE64, IOS_DIST_CERT_PASSWORD
+#                                              Apple Distribution certificate
+#   IOS_APP_PROFILE_BASE64                     App Store profile, com.boydsoftprez.NereusSDR.ios
+#   IOS_ACTIVITY_PROFILE_BASE64                App Store profile, com.boydsoftprez.NereusSDR.ios.activity
+name: iOS TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch or tag to build (TestFlight builds normally come from main)
+        required: true
+        default: main
+      group:
+        description: TestFlight group that gets the build
+        required: true
+        type: choice
+        default: Me
+        options:
+          - Me
+          - Deplorables
+          - JJ manual testing
+          - Public Preview
+
+permissions:
+  contents: read
+
+concurrency:
+  # One upload at a time: two runs could pick the same build number.
+  group: ios-testflight
+  cancel-in-progress: false
+
+env:
+  BUNDLE_ID: com.boydsoftprez.NereusSDR.ios
+  ACTIVITY_BUNDLE_ID: com.boydsoftprez.NereusSDR.ios.activity
+
+jobs:
+  testflight:
+    # Xcode 27 is on its own hosted image, as in ios.yml.
+    runs-on: xcode-27
+    name: Build ${{ inputs.ref }} for TestFlight (${{ inputs.group }})
+    timeout-minutes: 120
+    steps:
+      - name: Check the secrets are set
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          IOS_DIST_CERT_P12_BASE64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
+          IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          IOS_APP_PROFILE_BASE64: ${{ secrets.IOS_APP_PROFILE_BASE64 }}
+          IOS_ACTIVITY_PROFILE_BASE64: ${{ secrets.IOS_ACTIVITY_PROFILE_BASE64 }}
+        shell: bash
+        run: |
+          missing=
+          for name in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8 IOS_DIST_CERT_P12_BASE64 \
+                      IOS_DIST_CERT_PASSWORD IOS_APP_PROFILE_BASE64 IOS_ACTIVITY_PROFILE_BASE64; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error title=TestFlight secrets::Not set:$missing (see ios/README.md, TestFlight from GitHub Actions)"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          # The build number is the commit count, and the build name looks
+          # for a tag on HEAD: both need the whole history and the tags.
+          fetch-depth: 0
+
+      - name: Select Xcode 27
+        run: |
+          xcode=$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -n 1)
+          if [ -z "$xcode" ]; then
+            echo "This runner image has no Xcode 27" >&2
+            ls -d /Applications/Xcode*.app >&2
+            exit 1
+          fi
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+
+      - name: Number and name the build
+        id: number
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd ios
+          number=$(scripts/build-number.sh)
+          [ -n "$number" ] || { echo "::error::build-number.sh printed no number"; exit 1; }
+          # The same read of MARKETING_VERSION as archive.sh.
+          version=$(sed -n 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*"\{0,1\}\([0-9][0-9.]*\)"\{0,1\}[[:space:]]*$/\1/p' \
+              project.yml | head -n 1)
+          [ -n "$version" ] || { echo "::error::could not read MARKETING_VERSION from ios/project.yml"; exit 1; }
+          # A phone release tag names the phone's version; the desktop's
+          # v-tags and CMakeLists.txt play no part here.
+          for t in $(git tag --points-at HEAD 'ios-v*'); do
+            if [ "$t" != "ios-v$version" ]; then
+              echo "::error::HEAD carries $t but ios/project.yml says $version"
+              exit 1
+            fi
+          done
+          tag=$(scripts/build-tag.sh)
+          echo "NereusSDR for iOS $version ($number), build name '${tag:-none}'"
+          {
+            echo "number=$number"
+            echo "version=$version"
+            echo "tag=$tag"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up the App Store Connect helper
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/asc-venv"
+          "$RUNNER_TEMP/asc-venv/bin/pip" install --quiet pyjwt cryptography
+          umask 077
+          printf '%s\n' "$ASC_KEY_P8" > "$RUNNER_TEMP/asc-key.p8"
+          echo "ASC_KEY_PATH=$RUNNER_TEMP/asc-key.p8" >> "$GITHUB_ENV"
+          echo "ASC_PYTHON=$RUNNER_TEMP/asc-venv/bin/python" >> "$GITHUB_ENV"
+
+      - name: Check the build number is free in App Store Connect
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          "$ASC_PYTHON" ios/scripts/testflight.py check --bundle-id "$BUNDLE_ID" \
+            --version "${{ steps.number.outputs.version }}" --build "${{ steps.number.outputs.number }}"
+
+      - name: Install the signing certificate and profiles
+        id: signing
+        env:
+          IOS_DIST_CERT_P12_BASE64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
+          IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          IOS_APP_PROFILE_BASE64: ${{ secrets.IOS_APP_PROFILE_BASE64 }}
+          IOS_ACTIVITY_PROFILE_BASE64: ${{ secrets.IOS_ACTIVITY_PROFILE_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          team=$(sed -n 's/^[[:space:]]*DEVELOPMENT_TEAM[[:space:]]*=[[:space:]]*\([A-Z0-9]*\).*/\1/p' ios/Config/Team.xcconfig)
+          [ -n "$team" ] || { echo "::error::no DEVELOPMENT_TEAM in ios/Config/Team.xcconfig"; exit 1; }
+          umask 077
+
+          # A keychain of its own, deleted at the end of the job.
+          kc="$RUNNER_TEMP/nereus-signing.keychain-db"
+          kcpw=$(openssl rand -base64 24)
+          security create-keychain -p "$kcpw" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$kcpw" "$kc"
+          printf '%s' "$IOS_DIST_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/dist.p12"
+          security import "$RUNNER_TEMP/dist.p12" -k "$kc" -P "$IOS_DIST_CERT_PASSWORD" \
+            -f pkcs12 -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$RUNNER_TEMP/dist.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$kcpw" "$kc" >/dev/null
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          if ! security find-identity -v -p codesigning "$kc" | grep -q "Apple Distribution: .*($team)"; then
+            echo "::error::the certificate is not an Apple Distribution certificate of team $team:"
+            security find-identity -v -p codesigning "$kc"
+            exit 1
+          fi
+          echo "keychain=$kc" >> "$GITHUB_OUTPUT"
+
+          # Each profile must be an App Store profile for its own bundle ID.
+          install_profile() {
+            local secret=$1 bundle=$2 out=$3
+            local file="$RUNNER_TEMP/$out.mobileprovision" plist="$RUNNER_TEMP/$out.plist"
+            printf '%s' "$secret" | base64 --decode > "$file"
+            security cms -D -i "$file" > "$plist"
+            local name uuid appid
+            name=$(/usr/libexec/PlistBuddy -c 'Print :Name' "$plist")
+            uuid=$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$plist")
+            appid=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$plist")
+            if [ "$appid" != "$team.$bundle" ]; then
+              echo "::error::profile '$name' is for $appid, not $team.$bundle"
+              exit 1
+            fi
+            if /usr/libexec/PlistBuddy -c 'Print :ProvisionedDevices' "$plist" >/dev/null 2>&1; then
+              echo "::error::profile '$name' lists devices: it is a development or ad hoc profile, not App Store"
+              exit 1
+            fi
+            for dir in "$HOME/Library/MobileDevice/Provisioning Profiles" \
+                       "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"; do
+              mkdir -p "$dir"
+              cp "$file" "$dir/$uuid.mobileprovision"
+            done
+            echo "Installed '$name' ($uuid) for $bundle"
+            echo "$out=$name" >> "$GITHUB_OUTPUT"
+          }
+          install_profile "$IOS_APP_PROFILE_BASE64" "$BUNDLE_ID" app_profile
+          install_profile "$IOS_ACTIVITY_PROFILE_BASE64" "$ACTIVITY_BUNDLE_ID" activity_profile
+          echo "team=$team" >> "$GITHUB_OUTPUT"
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate the Xcode project for App Store signing
+        run: xcodegen generate --spec ios/project-appstore.yml --project ios
+
+      - name: Archive
+        env:
+          NUMBER: ${{ steps.number.outputs.number }}
+          VERSION: ${{ steps.number.outputs.version }}
+          TAG: ${{ steps.number.outputs.tag }}
+          APP_PROFILE: ${{ steps.signing.outputs.app_profile }}
+          ACTIVITY_PROFILE: ${{ steps.signing.outputs.activity_profile }}
+          KEYCHAIN: ${{ steps.signing.outputs.keychain }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/NereusSDR $VERSION ($NUMBER).xcarchive"
+          xcodebuild \
+            -project ios/NereusSDR.xcodeproj \
+            -scheme NereusSDR \
+            -configuration Release \
+            -destination generic/platform=iOS \
+            -derivedDataPath "$RUNNER_TEMP/archive-dd" \
+            -archivePath "$archive" \
+            NEREUS_BUILD_TAG="$TAG" \
+            MARKETING_VERSION="$VERSION" \
+            CURRENT_PROJECT_VERSION="$NUMBER" \
+            NEREUS_APP_PROFILE="$APP_PROFILE" \
+            NEREUS_ACTIVITY_PROFILE="$ACTIVITY_PROFILE" \
+            OTHER_CODE_SIGN_FLAGS="--keychain $KEYCHAIN" \
+            archive
+          # As archive.sh: App Store Connect refuses an app without its
+          # privacy manifest (ITMS-91053).
+          app="$archive/Products/Applications/NereusSDR.app"
+          [ -f "$app/PrivacyInfo.xcprivacy" ] || {
+            echo "::error::the archived app has no PrivacyInfo.xcprivacy"
+            exit 1
+          }
+          echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
+
+      - name: Upload to App Store Connect
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          TEAM: ${{ steps.signing.outputs.team }}
+          APP_PROFILE: ${{ steps.signing.outputs.app_profile }}
+          ACTIVITY_PROFILE: ${{ steps.signing.outputs.activity_profile }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # ios/Config/ExportOptions.plist with manual signing: the
+          # "App Store Connect" method, uploaded, never internal-only, the
+          # build number left as archived.
+          options="$RUNNER_TEMP/ExportOptions.plist"
+          cat > "$options" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>method</key><string>app-store-connect</string>
+              <key>destination</key><string>upload</string>
+              <key>testFlightInternalTestingOnly</key><false/>
+              <key>teamID</key><string>$TEAM</string>
+              <key>signingStyle</key><string>manual</string>
+              <key>signingCertificate</key><string>Apple Distribution</string>
+              <key>provisioningProfiles</key>
+              <dict>
+                  <key>$BUNDLE_ID</key><string>$APP_PROFILE</string>
+                  <key>$ACTIVITY_BUNDLE_ID</key><string>$ACTIVITY_PROFILE</string>
+              </dict>
+              <key>manageAppVersionAndBuildNumber</key><false/>
+              <key>uploadSymbols</key><true/>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath "$ARCHIVE" \
+            -exportOptionsPlist "$options" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+      - name: Add the build to ${{ inputs.group }}
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          "$ASC_PYTHON" ios/scripts/testflight.py distribute --bundle-id "$BUNDLE_ID" \
+            --version "${{ steps.number.outputs.version }}" --build "${{ steps.number.outputs.number }}" \
+            --group "${{ inputs.group }}"
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### NereusSDR for iOS ${{ steps.number.outputs.version }} (${{ steps.number.outputs.number }})"
+            echo
+            echo "- Built from \`${{ inputs.ref }}\`, build name \`${{ steps.number.outputs.tag || 'none' }}\`"
+            echo "- TestFlight group: ${{ inputs.group }}"
+            echo "- Export compliance: answer it in App Store Connect for this build (YES, ios/AppStore/export-compliance.md)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove the signing keychain and key
+        if: always()
+        shell: bash
+        run: |
+          [ -z "${{ steps.signing.outputs.keychain }}" ] || security delete-keychain "${{ steps.signing.outputs.keychain }}" || true
+          rm -f "$RUNNER_TEMP/asc-key.p8" "$RUNNER_TEMP"/*.mobileprovision "$RUNNER_TEMP"/*_profile.plist
