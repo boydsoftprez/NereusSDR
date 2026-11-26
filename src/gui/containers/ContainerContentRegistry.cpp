@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-11-25 - The Roundtable controls applet (applet:roundtable_controls),
+//                 placed under Roundtable. Brian Sutton (W4KZO), AI-assisted
+//                 via xAI Grok.
 //   2026-11-06 - A factory widget can report its own free canvas hint and
 //                 minimum, and a type can name a new entry's rect size
 //                 (setNewEntryCanvasSize). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -271,9 +274,9 @@ ContainerContentRegistry::~ContainerContentRegistry()
 }
 // The Main Panel's first-launch order: the S-Meter first, the Mod Monitor
 // second at the time it is placed, the SSB Mod Monitor directly under it,
-// every other applet after the ones already there. The first launch and
-// Reset Default Layout both place through this, so a reset draws what a
-// first launch draws.
+// Roundtable controls directly under Roundtable, every other applet after
+// the ones already there. The first launch and Reset Default Layout both
+// place through this, so a reset draws what a first launch draws.
 void ContainerContentRegistry::placeFirstLaunchApplet(QVector<ContentEntry>& contents,
                                                       const ContentEntry& entry)
 {
@@ -284,6 +287,14 @@ void ContainerContentRegistry::placeFirstLaunchApplet(QVector<ContentEntry>& con
     } else if (entry.typeId == QLatin1String("applet:ssb_mod_monitor")) {
         for (int i = 0; i < contents.size(); ++i) {
             if (contents[i].typeId == QLatin1String("applet:mod_monitor")) {
+                contents.insert(i + 1, entry);
+                return;
+            }
+        }
+        contents.append(entry);
+    } else if (entry.typeId == QLatin1String("applet:roundtable_controls")) {
+        for (int i = 0; i < contents.size(); ++i) {
+            if (contents[i].typeId == QLatin1String("applet:roundtable")) {
                 contents.insert(i + 1, entry);
                 return;
             }
@@ -315,7 +326,7 @@ QString ContainerContentRegistry::appletTypeForVisibilityId(const QString& id)
         {"Rx","rx"},{"Display","Display"},{"Tx","TX"},{"PhoneCw","PHCW"},
         {"Rade","RADE"},{"Vax","vax"},{"PureSignal","pure_signal"},
         {"ModMon","mod_monitor"},{"SsbModMon","ssb_mod_monitor"},{"Tci","tci"},{"ClientChain","tci_clients"},
-        {"Cat","cat"},{"Cwx","cwx"},{"Amp","amp"},{"Tuner","tuner"},{"Rotor","rotor"},{"Roundtable","roundtable"},{"Recordings","recordings"},{"VoiceKeyer","voice_keyer"},{"RfKit","RfKit"},
+        {"Cat","cat"},{"Cwx","cwx"},{"Amp","amp"},{"Tuner","tuner"},{"Rotor","rotor"},{"Roundtable","roundtable"},{"RoundtableControls","roundtable_controls"},{"Recordings","recordings"},{"VoiceKeyer","voice_keyer"},{"RfKit","RfKit"},
         {"SMeter","s_meter"}};
     return aliases.contains(id) ? QStringLiteral("applet:") + aliases.value(id) : QString();
 }
@@ -509,6 +520,7 @@ QVector<ContentDescriptor> ContainerContentRegistry::descriptors() const {
     add(QStringLiteral("applet:tuner"), QStringLiteral("4O3A Tuner Genius"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:rotor"), QStringLiteral("Rotor"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:roundtable"), QStringLiteral("Roundtable"), ContentGroup::Panels, true);
+    add(QStringLiteral("applet:roundtable_controls"), QStringLiteral("Roundtable controls (simple)"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:recordings"), QStringLiteral("Recordings"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:voice_keyer"), QStringLiteral("Voice keyer"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:RfKit"), QStringLiteral("RF-Kit RF2K-S"), ContentGroup::Panels, true);

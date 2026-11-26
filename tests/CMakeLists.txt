@@ -10325,6 +10325,10 @@ nereus_add_test(tst_roundtable_model)
 nereus_add_test(tst_roundtable_spothub)
 target_compile_definitions(tst_roundtable_spothub PRIVATE
     NEREUS_ROUNDTABLE_CONFORMANCE_DIR="${CMAKE_SOURCE_DIR}/roundtable/conformance/v1")
+# The small Roundtable controls panel: Start/Stop, Hide your status, both
+# greyed with a reason, the refusal line, and where an existing workspace
+# and a first launch place it.
+nereus_add_test(tst_roundtable_controls)
 # Roundtable plan Task 13 (design 11.1, 11.2 Panel): the room panel the
 # applet and the pop-out show: its order, readings, earlier turns and Name,
 # the read bar, keyed, the connection line, drafts, the counter, Not sent,

@@ -11,6 +11,16 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-26: The Roundtable controls applet's Start and Hide your status
+//               grey with Spot Hub's reasons
+//               (refreshRoundtableControlsAvailability), and its Start asks
+//               "Roundtable is public" first while unanswered
+//               (startRoundtableFromControls); a question closed with the
+//               window lets the next Start ask again. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code / Opus 5.5.
+//   2026-11-25: The Roundtable controls applet, Start/Stop and Hide your
+//               status, wired to the same spot source host as Spot Hub.
+//               Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 //   2026-11-16: Any tune of a pan's slice reaches its DsrRewindLink
 //               (sliceTuned): in the past it plays from the top row, or
 //               says nothing was kept at that frequency then. J.J. Boyd
@@ -1656,6 +1666,7 @@ warren@wpratt.com
 #include "applets/TunerApplet.h"
 #include "applets/RotorApplet.h"
 #include "applets/RoundtableApplet.h"
+#include "applets/RoundtableControlsApplet.h"
 // Phase 23: TCI server + applets (guarded so non-WebSocket builds still compile)
 #ifdef HAVE_WEBSOCKETS
 #  include "applets/TciApplet.h"
@@ -14017,6 +14028,20 @@ void MainWindow::populateDefaultMeter()
     // Roundtable tab.
     m_roundtableApplet = new RoundtableApplet(m_radioModel);
     panel->addApplet(m_roundtableApplet);
+    // Start, Stop and Hide your status, without opening Spot Hub. Start and
+    // Stop are the Spot Hub buttons; the checkbox writes setHidden.
+    m_roundtableControlsApplet = new RoundtableControlsApplet(m_radioModel);
+    panel->addApplet(m_roundtableControlsApplet);
+    if (SpotSourceHost* host = m_radioModel ? m_radioModel->spotSourceHost() : nullptr) {
+        // Start asks "Roundtable is public" first, as Spot Hub's tab and
+        // the Roundtable flag do.
+        connect(m_roundtableControlsApplet, &RoundtableControlsApplet::startRequested,
+                this, &MainWindow::startRoundtableFromControls);
+        connect(m_roundtableControlsApplet, &RoundtableControlsApplet::stopRequested,
+                host, &SpotSourceHost::stopRoundtable);
+        m_roundtableControlsApplet->setSourceHost(host);
+    }
+    refreshRoundtableControlsAvailability();
     // This window's own slice, so the label, the stream and Tune agree and a hosting
     // window never moves a slice another device controls. activeSliceChanged is not
     // enough: it stays silent when only this station's choice changes while a phone
@@ -14365,6 +14390,7 @@ void MainWindow::populateDefaultMeter()
     m_appletsById[QStringLiteral("Tuner")]      = m_tunerApplet;
     m_appletsById[QStringLiteral("Rotor")]      = m_rotorApplet;
     m_appletsById[QStringLiteral("Roundtable")] = m_roundtableApplet;
+    m_appletsById[QStringLiteral("RoundtableControls")] = m_roundtableControlsApplet;
     m_appletsById[QStringLiteral("RfKit")]      = m_rfKitApplet;
     m_appletsById[QStringLiteral("Cat")]        = m_catApplet;
     m_appletsById[QStringLiteral("Cwx")]        = m_cwxApplet;
@@ -14429,6 +14455,9 @@ void MainWindow::populateDefaultMeter()
     // Roundtable plan Task 13: shown by default (design 11.2 Panel).
     m_appletVis->registerApplet(QStringLiteral("Roundtable"),
                                 QStringLiteral("Roundtable"),   true);
+    // Start, Stop and Hide your status. Shown by default, under Roundtable.
+    m_appletVis->registerApplet(QStringLiteral("RoundtableControls"),
+                                QStringLiteral("Roundtable controls (simple)"), true);
     m_appletVis->registerApplet(QStringLiteral("Cat"),QStringLiteral("CAT"),true);
     // CWX: placed hidden, as Thetis's CWX form is closed until opened, so
     // no other screen changes; Tools > CWX, the status-bar CWX label and
@@ -20602,6 +20631,8 @@ void MainWindow::refreshSpotHubAvailability()
     // every source itself. A remote window's Spot Hub edits the Core's
     // settings (Setup's words while there is no Core session) and asks the
     // Core to run the station's sources.
+    // The Roundtable controls panel follows the same Core.
+    refreshRoundtableControlsAvailability();
     if (!m_spotHubDialog || m_radioModel == nullptr) {
         return;
     }
@@ -20625,6 +20656,77 @@ void MainWindow::refreshSpotHubAvailability()
     const bool roundtable = m_stationClient != nullptr && m_stationClient->roundtableAvailable();
     m_spotHubDialog->setStationRoundtableAvailable(
         roundtable, IStationLink::roundtableUnavailableReason());
+}
+
+void MainWindow::refreshRoundtableControlsAvailability()
+{
+    // Spot Hub's Roundtable actions (SpotHubDialog::applyRoundtableAvailability):
+    // a Core that runs Roundtable and runs the station's spot sources. A
+    // window running its own radio runs both itself.
+    if (!m_roundtableControlsApplet || m_radioModel == nullptr) {
+        return;
+    }
+    if (m_radioModel->ownsLocalDsp()) {
+        m_roundtableControlsApplet->setStationAvailable(true, QString());
+        return;
+    }
+    const bool roundtable = m_stationClient != nullptr && m_stationClient->roundtableAvailable();
+    const bool sources = m_stationClient != nullptr && m_stationClient->spotSourcesAvailable();
+    QString reason;
+    if (!roundtable) {
+        reason = IStationLink::roundtableUnavailableReason();
+    } else if (!sources) {
+        reason = stationSettingsAvailable() ? IStationLink::spotSourcesUnavailableReason()
+                                            : stationSettingsReason();
+    }
+    m_roundtableControlsApplet->setStationAvailable(roundtable && sources, reason);
+}
+
+void MainWindow::startRoundtableFromControls()
+{
+    SpotSourceHost* host = m_radioModel ? m_radioModel->spotSourceHost() : nullptr;
+    if (host == nullptr) {
+        return;
+    }
+    RoundtableModel* model = m_radioModel->roundtableModel();
+    // Nobody has answered "Roundtable is public": ask first, and start
+    // only once it is answered (Stay hidden starts hidden). Closing the
+    // question without an answer starts nothing.
+    if (model != nullptr && model->available() && !model->firstRunAnswered()) {
+        if (!m_roundtableFirstRun) {
+            QWidget* parent = m_spotHubDialog && m_spotHubDialog->isVisible()
+                ? static_cast<QWidget*>(m_spotHubDialog.data())
+                : static_cast<QWidget*>(this);
+            m_roundtableFirstRun = new RoundtableFirstRunDialog(model, parent);
+            m_roundtableFirstRun->setAttribute(Qt::WA_DeleteOnClose);
+        }
+        if (!m_startRoundtableAfterFirstRun) {
+            m_startRoundtableAfterFirstRun = true;
+            QPointer<SpotSourceHost> waiting(host);
+            QPointer<RoundtableModel> asked(model);
+            connect(m_roundtableFirstRun.data(), &QDialog::finished, this,
+                    [this, waiting, asked] {
+                        m_startRoundtableAfterFirstRun = false;
+                        if (waiting && asked && asked->firstRunAnswered()) {
+                            waiting->startRoundtable();
+                        }
+                    });
+            // Gone without finishing (the window closing): the next Start
+            // asks again.
+            connect(m_roundtableFirstRun.data(), &QObject::destroyed, this,
+                    [this] { m_startRoundtableAfterFirstRun = false; });
+        }
+        if (m_roundtableFirstRun->isVisible()) {
+            m_roundtableFirstRun->raise();
+            m_roundtableFirstRun->activateWindow();
+        } else {
+            m_roundtableFirstRun->open();
+        }
+        return;
+    }
+    // Answered: another device's answer gets its one-time note here.
+    openRoundtableFirstRunIfNeeded();
+    host->startRoundtable();
 }
 
 void MainWindow::openRoundtableFirstRunIfNeeded()
