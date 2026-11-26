@@ -73,8 +73,8 @@
 //                 so a save never hides a later one. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Claude Code.
 //   2026-11-26 - A remote import the Core accepted clears the unsaved
-//                 mark, and the values it brings afterwards are not edits
-//                 (m_importArriving); Export gates with Save and Delete. J.J. Boyd
+//                 mark (the Core's values arrive before its answer);
+//                 Export gates with Save and Delete. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Claude Code / Opus 5.5.
 // =================================================================
 
@@ -293,7 +293,6 @@ private:
     struct PendingImport {
         QString name;
         int     unknownKeys;
-        QHash<QString, QVariant> values;  // the file's values, as sent
     };
     struct PendingExport {
         quint32 commandId;
@@ -303,14 +302,6 @@ private:
     };
     QHash<quint32, PendingImport> m_pendingImports;
     std::optional<PendingExport>  m_pendingExport;
-
-    // A remote window: the settings an import the Core accepted has yet to
-    // bring here. The Core's values arrive after its answer; each one that
-    // brings a setting to its imported value is the import, not an edit.
-    QHash<QString, QVariant> m_importArriving;
-    // Drops from m_importArriving each setting that now holds its imported
-    // value; true when any did.
-    bool takeArrivedImportValues();
 
     // ── Test hooks ──────────────────────────────────────────────────────────
     SavePromptHook        m_savePromptHook;

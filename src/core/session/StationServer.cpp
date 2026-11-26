@@ -1,6 +1,10 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-11-26: PR 809 review: an accepted txProfile.import answers after
+//               the values it loaded, so the asking window's TX Profile
+//               page clears its unsaved mark once they are in. J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code / Opus 5.5.
 //   2026-11-17: transmitSettingsVersion 17 (txProfile.import). Brian
 //               Sutton (W4KZO), AI-assisted via xAI Grok.
 //   2026-11-16: Recording plan Task 22: the dsr.* verbs (rewind sound)
@@ -4154,6 +4158,20 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                             m_resultRoutes.remove(key);
                             break;
                         }
+                    }
+                }
+                // PR 809 review: an accepted import loaded a profile here,
+                // perhaps under the active name, which then brings no new
+                // active profile. Its values go to the asking window ahead
+                // of the answer, so the answer is the window's word that
+                // the load is in (TxProfileSetupPage clears its unsaved
+                // mark on it) and none of the import arrives after it.
+                if (to && result.accepted && key.verb == "txProfile.import") {
+                    const auto peer = m_peers.constFind(to.data());
+                    if (peer != m_peers.constEnd() && !peer->view.isNull()
+                        && peer->view->isAttached()) {
+                        const QPointer<MirrorView> view = peer->view;
+                        view->flush();
                     }
                 }
                 if (to && hasReplySession(to, key.sessionId)) {

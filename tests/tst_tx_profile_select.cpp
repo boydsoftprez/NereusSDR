@@ -58,6 +58,14 @@
 //                                    (version 3), and say why they share
 //                                    one settings store with the Core.
 //                                    AI tooling: Claude Code / Opus 5.5.
+//   2026-11-26  J.J. Boyd / KG4VCF  PR 809 final review: the import's
+//                                    values are in when its answer comes
+//                                    (with a TX EQ curve and a monitor level in
+//                                    the file); a later change from the
+//                                    Core, not a fixed wait, shows nothing
+//                                    more arrives; an edit after the
+//                                    import to an imported value counts.
+//                                    AI tooling: Claude Code / Opus 5.5.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -77,6 +85,7 @@
 #include "core/HardwareProfile.h"
 #include "core/MicProfileManager.h"
 #include "core/MoxController.h"
+#include "core/ParaEqCurve.h"
 #include "core/TxChannel.h"
 #include "core/session/IStationLink.h"
 #include "core/session/MirrorPolicy.h"
@@ -239,6 +248,7 @@ private slots:
     void editsDuringTheExportsSaveStayUnsaved();
     void aRefusedImportKeepsTheEditsUnsaved();
     void anAcceptedImportOverTheActiveProfileLeavesNoEdits();
+    void anEditAfterAnAcceptedImportIsUnsaved();
     void aClosedPageLeavesTheRefusalToTheWindow();
     void doubleUnderscoreProfilesSelectAndDelete();
     void importIsDisabledOnACoreAtVersion16();
@@ -1132,8 +1142,11 @@ void TstTxProfileSelect::anAcceptedImportOverTheActiveProfileLeavesNoEdits()
     Session s(m_securityDir.path(), this);
     ExportingPage e(s);
     QVERIFY(e.open());
+    const QString curve = ParaEqCurve::txEqParaEqDataFromPoints(ParaEqCurve::defaultTxEqPoints());
     const QString file = writeProfileFile(e.dir, QStringLiteral("Desk"),
-        QJsonObject{{QStringLiteral("MicGain"), QStringLiteral("-19")}});
+        QJsonObject{{QStringLiteral("MicGain"), QStringLiteral("-19")},
+                    {QStringLiteral("MonitorVolume"), QStringLiteral("0.37")},
+                    {QStringLiteral("TXParaEQData"), curve}});
     e.page->setImportPathHook([file] { return file; });
     e.page->setOverwriteConfirmHook([] { return true; });
     e.answer = TxProfileSetupPage::UnsavedPromptResult::No;
@@ -1142,9 +1155,15 @@ void TstTxProfileSelect::anAcceptedImportOverTheActiveProfileLeavesNoEdits()
     QTRY_COMPARE(e.results, 1);
     QVERIFY2(e.ok, qPrintable(e.shown));
     QCOMPARE(s.coreProfiles().activeProfileName(), QStringLiteral("Desk"));
-    QTRY_COMPARE(s.window.transmitModel().micGainDb(), -19);
-    // Let any later word from the Core arrive.
-    QTest::qWait(100);
+    // The Core sent what it loaded ahead of its answer.
+    QCOMPARE(s.window.transmitModel().micGainDb(), -19);
+    QCOMPARE(s.window.transmitModel().monitorVolume(), 0.37f);
+    QCOMPARE(s.window.transmitModel().txEqParaEqData(),
+             s.core->transmitModel().txEqParaEqData());
+    // A later change from the Core (a setting the page does not track)
+    // comes after anything the import still had on the way.
+    s.core->transmitModel().setCpdrLevelDb(7);
+    QTRY_COMPARE(s.window.transmitModel().cpdrLevelDb(), 7);
     QCOMPARE(s.windowProfiles().activeProfileName(), QStringLiteral("Desk"));
     // Export asks nothing: no edits are left unsaved.
     e.page->exportButton()->click();
@@ -1152,6 +1171,29 @@ void TstTxProfileSelect::anAcceptedImportOverTheActiveProfileLeavesNoEdits()
     QCOMPARE(e.results, 2);
     QVERIFY2(e.ok, qPrintable(e.shown));
     QCOMPARE(readProfileFile(e.path()).keys.value(QStringLiteral("MicGain")), QStringLiteral("-19"));
+}
+
+// After the import is in, the operator sets the gain away and back to the
+// imported value: that is an edit, and Export asks about it.
+void TstTxProfileSelect::anEditAfterAnAcceptedImportIsUnsaved()
+{
+    Session s(m_securityDir.path(), this);
+    ExportingPage e(s);
+    QVERIFY(e.open());
+    const QString file = writeProfileFile(e.dir, QStringLiteral("Desk"),
+        QJsonObject{{QStringLiteral("MicGain"), QStringLiteral("-19")}});
+    e.page->setImportPathHook([file] { return file; });
+    e.page->setOverwriteConfirmHook([] { return true; });
+    e.answer = TxProfileSetupPage::UnsavedPromptResult::No;
+    e.page->importButton()->click();
+    QTRY_COMPARE(e.results, 1);
+    QVERIFY2(e.ok, qPrintable(e.shown));
+    s.window.transmitModel().setMicGainDb(-4);
+    s.window.transmitModel().setMicGainDb(-19);
+    e.answer = TxProfileSetupPage::UnsavedPromptResult::Cancel;
+    e.page->exportButton()->click();
+    QCOMPARE(e.asked, 2);
+    QCOMPARE(e.results, 1);
 }
 
 // Setup closes while its page waits: the refusal goes to the window's

@@ -7600,7 +7600,12 @@ These command groups need a sentence beyond the table:
   "The Core could not read that equalizer curve. Save the curve again and
   retry."), "The Core has no radio to keep transmit profiles for." and
   "The request for the transmit profile was not understood." The same
-  name rules refuse `txProfile.save`. A window does not send it to a Core
+  name rules refuse `txProfile.save`. An accepted import's `command.result`
+  goes out after the deltas of the values it loaded (the asking session's
+  pending deltas are sent first), so the asking window has them when it
+  reads the answer; an import over the active profile names no new
+  `activeTxProfile`, and the answer is the window's word that the profile
+  was loaded. A window does not send it to a Core
   below `transmitSettingsVersion` 17; its own reason is "This Core does not
   let this app change transmit settings. Updating the Core may help."
 - **The TX EQ curve.** `txEq.setCurve` (`curveJson`) and

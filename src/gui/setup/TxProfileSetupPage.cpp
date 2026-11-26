@@ -46,9 +46,10 @@
 //                 do edits behind a refused import. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Claude Code.
 //   2026-11-26 - PR 809 review: a remote import the Core accepted clears
-//                 the unsaved mark, also over the active profile, and the
-//                 imported values that reach the window after the Core's
-//                 answer are not counted as edits; Export
+//                 the unsaved mark, also over the active profile. The Core
+//                 sends the imported values ahead of its answer, so the
+//                 answer reports the load and the page no longer matches
+//                 arriving values against a copy of the import; Export
 //                 closes with Save and Delete when the Core closes them,
 //                 with the same reason. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Claude Code / Opus 5.5.
@@ -83,8 +84,6 @@
 #include <QSpinBox>
 #include <QVBoxLayout>
 
-#include <algorithm>
-#include <cmath>
 
 namespace NereusSDR {
 
@@ -134,7 +133,6 @@ TxProfileSetupPage::TxProfileSetupPage(RadioModel* model,
             m_knownActiveProfile = name;
             if (loaded) {
                 ++m_profileLoads;
-                m_importArriving.clear();
                 clearDirty();
             }
         });
@@ -179,7 +177,6 @@ void TxProfileSetupPage::clearPendingStationRequests()
     }
     m_pendingImports.clear();
     m_pendingExport.reset();
-    m_importArriving.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -372,8 +369,6 @@ void TxProfileSetupPage::wireDirtyTracking()
 
     auto markDirty = [this]() {
         if (m_seedingFromModel) { return; }
-        // A remote window: a value the accepted import brought.
-        if (!m_importArriving.isEmpty() && takeArrivedImportValues()) { return; }
         m_dirty = true;
         ++m_edits;
     };
@@ -411,32 +406,6 @@ void TxProfileSetupPage::wireDirtyTracking()
 void TxProfileSetupPage::clearDirty()
 {
     m_dirty = false;
-}
-
-bool TxProfileSetupPage::takeArrivedImportValues()
-{
-    const QHash<QString, QVariant> live = MicProfileManager::liveProfileValues(m_tx);
-    bool took = false;
-    for (auto it = m_importArriving.begin(); it != m_importArriving.end();) {
-        const QString now = live.value(it.key()).toString();
-        const QString imported = it.value().toString();
-        bool nowNumber = false;
-        bool importedNumber = false;
-        const double nowValue = now.toDouble(&nowNumber);
-        const double importedValue = imported.toDouble(&importedNumber);
-        // A float setting reads back with float precision.
-        const bool same = (nowNumber && importedNumber)
-            ? std::abs(nowValue - importedValue)
-                  <= 1e-5 * std::max({1.0, std::abs(nowValue), std::abs(importedValue)})
-            : now.compare(imported, Qt::CaseInsensitive) == 0;
-        if (same) {
-            it = m_importArriving.erase(it);
-            took = true;
-        } else {
-            ++it;
-        }
-    }
-    return took;
 }
 
 // ---------------------------------------------------------------------------
@@ -964,25 +933,11 @@ void TxProfileSetupPage::onStationRequestFinished(int request, quint32 commandId
             // The Core loaded the imported profile over the edits, as a
             // local import does. An import over the active profile keeps
             // its name, so the Core reports no new active profile and only
-            // this answer can mark the edits gone.
+            // this answer can mark the edits gone. The Core sends the
+            // values it loaded ahead of this answer (StationServer), so
+            // they are here already and nothing of the import comes later.
             ++m_profileLoads;
             clearDirty();
-            // What the Core loaded, as MicProfileManager::importProfile
-            // stores it: the defaults, then the file's settings; this
-            // radio's wiring stays as it is.
-            m_importArriving = MicProfileManager::defaultProfileValues();
-            for (const QString& key : MicProfileManager::radioWiringKeys()) {
-                m_importArriving.remove(key);
-            }
-            const QHash<QString, QVariant> portable =
-                MicProfileManager::portableValues(imported.values);
-            for (auto it = portable.constBegin(); it != portable.constEnd(); ++it) {
-                if (m_importArriving.contains(it.key())) {
-                    m_importArriving.insert(it.key(), it.value());
-                }
-            }
-            // Settings that already hold their value bring no change.
-            takeArrivedImportValues();
             showFileResult(true, importedText(imported.name, imported.unknownKeys));
         } else {
             showFileResult(false, reason.isEmpty()
@@ -1070,7 +1025,7 @@ void TxProfileSetupPage::onImportClicked()
     if (m_profileMgr->isStationMirror()) {
         // Sent: the Core's answer says how it went (onStationRequestFinished).
         const quint32 commandId = m_profileMgr->lastStationRequestId();
-        m_pendingImports.insert(commandId, PendingImport{name, unknownKeys, values});
+        m_pendingImports.insert(commandId, PendingImport{name, unknownKeys});
         m_profileMgr->claimStationRequest(commandId);
         return;
     }
