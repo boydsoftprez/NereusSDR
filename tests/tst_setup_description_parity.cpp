@@ -5,6 +5,10 @@
 // 2026-10-26: CW transmit, a named desktop-only list for the CW page's new
 // rows, so the phone's described DSP > CW page keeps only the APF (R-CW-50).
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-17: Grid Text Color's desktop default is the workspace's
+// white-grey (the slim frequency row); the description keeps the phone's own
+// yellow default, which phones validate exactly. J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 
 #include "core/setup/SetupDescriptionService.h"
@@ -330,8 +334,16 @@ void compareControl(QWidget& page, const QJsonObject& control)
     } else if (kind == "colour") {
         auto* swatch = qobject_cast<ColorSwatchButton*>(object);
         QVERIFY2(swatch != nullptr, qPrintable(id));
-        QCOMPARE(ColorSwatchButton::colorToHex(swatch->color()).toUpper(),
-                 control.value("default").toString());
+        // The one exception: since 2026-11-17 the desktop's grid text
+        // defaults to white-grey (#DCDCE1), the maintainer's slim frequency
+        // row. The row is phone-owned, and the description's default is the
+        // phone's own (still yellow), which phones check exactly.
+        const QString expected = id == QLatin1String("appearance.colorsTheme.gridTextColor")
+            ? QStringLiteral("#DCDCE1FF") : control.value("default").toString();
+        if (id == QLatin1String("appearance.colorsTheme.gridTextColor")) {
+            QCOMPARE(control.value("default").toString(), QStringLiteral("#FFFF00FF"));
+        }
+        QCOMPARE(ColorSwatchButton::colorToHex(swatch->color()).toUpper(), expected);
     }
     if (auto* widget = qobject_cast<QWidget*>(object)) {
         // The described tooltip is the control's own: the one it shows

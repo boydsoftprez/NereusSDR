@@ -172,7 +172,7 @@ const QList<SharedAppearanceColor>& sharedAppearanceColors()
         {u"DisplayGridColor"_s, &SpectrumWidget::setGridColor, &SpectrumWidget::gridColor, QColor(255, 255, 255, 40)},
         {u"DisplayGridFineColor"_s, &SpectrumWidget::setGridFineColor, &SpectrumWidget::gridFineColor, QColor(255, 255, 255, 20)},
         {u"DisplayHGridColor"_s, &SpectrumWidget::setHGridColor, &SpectrumWidget::hGridColor, QColor(255, 255, 255, 40)},
-        {u"DisplayGridTextColor"_s, &SpectrumWidget::setGridTextColor, &SpectrumWidget::gridTextColor, QColor(255, 255, 0)},
+        {u"DisplayGridTextColor"_s, &SpectrumWidget::setGridTextColor, &SpectrumWidget::gridTextColor, QColor(0xdc, 0xdc, 0xe1)},
         {u"DisplayBandEdgeColor"_s, &SpectrumWidget::setBandEdgeColor, &SpectrumWidget::bandEdgeColor, QColor(255, 0, 0)},
         {u"DisplayRxZeroLineColor"_s, &SpectrumWidget::setRxZeroLineColor, &SpectrumWidget::rxZeroLineColor, QColor(255, 0, 0)},
         {u"DisplayTxZeroLineColor"_s, &SpectrumWidget::setTxZeroLineColor, &SpectrumWidget::txZeroLineColor, QColor(255, 184, 0)},

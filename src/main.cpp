@@ -376,6 +376,14 @@ int main(int argc, char* argv[])
     NereusSDR::AppSettings::clearUncalibratedClarityFloors(
         NereusSDR::AppSettings::instance());
 
+    // The stored grid text colour, removed once where it is the old yellow
+    // default, so the frequency row's new white-grey numbers reach everyone
+    // who never chose a colour (2026-11-17). Same reasons as the three
+    // above: before any pan reads it, the window's keys only, its own
+    // marker key.
+    NereusSDR::AppSettings::forgetOldDefaultGridTextColor(
+        NereusSDR::AppSettings::instance());
+
     qDebug() << "Starting NereusSDR" << app.applicationVersion();
     if (!activeProfile.isEmpty()) {
         const QString logDir = NereusSDR::AppSettings::resolveConfigDir(activeProfile);

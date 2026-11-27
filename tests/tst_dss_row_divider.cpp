@@ -20,9 +20,9 @@
 // tst_dss_row_tee.cpp's stopOnTx_freezesBothPanesTogether, which
 // documents the same trap).
 //
-// A 400x200 widget's waterfall image lands at 88 px tall with the
-// default 0.40 spectrum split (int(200*0.6) - kFreqScaleH(28) -
-// kDividerH(4) = 88), so qRound(88/96.0) clamps to an automatic divider
+// A 400x200 widget's waterfall image lands at about 100 px tall with the
+// default 0.40 spectrum split (int(200*0.6) - kFreqScaleH(16, 28 before
+// 2026-11-17) - kDividerH(4) = 100), so qRound(100/96.0) gives an automatic divider
 // of 1 -- every test below that wants a MANUAL divider therefore calls
 // setDssRowDivider() explicitly rather than relying on that widget size
 // to produce anything but Match's default 1:1 behaviour.

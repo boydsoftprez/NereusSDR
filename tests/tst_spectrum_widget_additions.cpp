@@ -16,7 +16,8 @@
 // What is pinned here:
 //   - Auto spacing draws the steps it drew before the fixed spacing existed,
 //     on the grid and on the scale (they are two ladders and differ);
-//   - the scale strip is 28 px tall and its text is the 10 px it was;
+//   - the scale strip is 16 px tall (28 until 2026-11-17) and its text is
+//     the 10 px it was, whole under the row's ticks;
 //   - NB Blank off changes no row; on, it judges a row by the median of
 //     its pixels in dB (since 2026-10-22), replaces a row risen more than
 //     the threshold and keeps one risen less, and stands still while the
@@ -57,6 +58,10 @@
 // around every slot (as tst_pan_display_settings_inherit does).
 //
 // Modification history (NereusSDR):
+//   2026-11-17  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//                 the slim frequency row: 16 px, short ticks along its top
+//                 edge, plain white-grey numbers by default; a stored colour
+//                 is kept and the old yellow default is forgotten once.
 //   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
 //                 (Claude Opus 5.5): NB Blank's rows are risen across the
 //                 whole row (a median-judged blanker ignores one bright
@@ -65,6 +70,7 @@
 // =================================================================
 
 #include <QtTest/QtTest>
+#include <QFile>
 #include <QImage>
 #include <QPainter>
 #include <QRegularExpression>
@@ -183,6 +189,11 @@ QImage renderScale(SpectrumWidget& w)
     p.end();
     return img;
 }
+
+// The scale row's own background (drawFreqScale's fill) and its ticks'
+// height (SpectrumWidget::kFreqScaleTickH): the numbers start under them.
+const QRgb kScaleBackground = qRgb(0x10, 0x15, 0x20);
+constexpr int kTickH = 2;
 
 // First and last image row holding a pixel that is not `background`, or
 // {-1, -1}.
@@ -431,13 +442,123 @@ private slots:
         QCOMPARE(w.dbGridLinesForTest(), lines);
     }
 
-    // ── The scale strip is 28 px tall ───────────────────────────────────
-    void scaleStrip_is28pxTall()
+    // ── The scale strip is 16 px tall (28 until 2026-11-17) ─────────────
+    void scaleStrip_is16pxTall()
     {
         SpectrumWidget w;
         w.resize(800, 400);
-        QCOMPARE(w.freqScaleRectForTest().height(), 28);
-        QCOMPARE(w.freqScaleHeight(), 28);
+        QCOMPARE(w.freqScaleRectForTest().height(), 16);
+        QCOMPARE(w.freqScaleHeight(), 16);
+    }
+
+    // ── Ticks along the top edge ────────────────────────────────────────
+    //
+    // 10 kHz labels 80 px apart on 800 px at 100 kHz: none thinned, so a
+    // tick every 2 kHz (five per label step), 2 px tall, on the top edge.
+    void scaleTicks_atLabelsAndBetween()
+    {
+        SpectrumWidget w;
+        w.resize(800, 400);
+        w.setFrequencyRange(kCenterHz, 100'000.0);
+        w.setFreqGridSpacingHz(10000);
+        const QImage img = renderScale(w);
+        const int width = w.freqScaleRectForTest().width();
+        const auto xAt = [width](double hz) {
+            return static_cast<int>((hz - (kCenterHz - 50'000.0)) / 100'000.0 * width);
+        };
+        // A label's position (14.200 MHz) and an in-between one (+2 kHz):
+        // both ticked, the same 2 px, under them the row is plain.
+        for (const double hz : {kCenterHz, kCenterHz + 2'000.0}) {
+            const int x = xAt(hz);
+            for (int y = kPad; y < kPad + kTickH; ++y) {
+                QVERIFY2(img.pixel(x, y) != kScaleBackground,
+                         qPrintable(QStringLiteral("no tick at x %1 y %2").arg(x).arg(y - kPad)));
+                QVERIFY2(qGray(img.pixel(x, y)) > qGray(kScaleBackground),
+                         qPrintable(QStringLiteral("tick at x %1 is not lighter").arg(x)));
+            }
+        }
+        // Between ticks (+1 kHz, 8 px from either) the top edge is plain.
+        const int between = xAt(kCenterHz + 1'000.0);
+        QCOMPARE(img.pixel(between, kPad), kScaleBackground);
+        QCOMPARE(img.pixel(between, kPad + 1), kScaleBackground);
+        // The in-between tick's first row under it is plain: 2 px, no more.
+        QCOMPARE(img.pixel(xAt(kCenterHz + 2'000.0), kPad + kTickH), kScaleBackground);
+
+        // Label alignment Off leaves the row empty, ticks included.
+        w.setFreqLabelAlign(FreqLabelAlign::Off);
+        const QImage off = renderScale(w);
+        QCOMPARE(inkRows(off, kScaleBackground, kPad, kPad + w.freqScaleHeight()).first, -1);
+    }
+
+    // ── The numbers' colour and weight ──────────────────────────────────
+    //
+    // Nothing stored: the workspace's white-grey (#dcdce1), no longer
+    // yellow. A colour the operator stored is kept.
+    void gridTextColor_defaultsToWhiteGrey_storedIsKept()
+    {
+        {
+            SpectrumWidget w;
+            w.loadSettings();
+            QCOMPARE(w.gridTextColor(), QColor(0xdc, 0xdc, 0xe1));
+        }
+        AppSettings::instance().setValue(u"DisplayGridTextColor"_s, u"#ff00ff00"_s);
+        {
+            SpectrumWidget w;
+            w.loadSettings();
+            QCOMPARE(w.gridTextColor(), QColor(0, 255, 0));
+        }
+    }
+
+    // The old yellow default, stored by Setup's Reset or the per-pan key
+    // retirement, is forgotten once; any other colour stays, and a yellow
+    // stored after the first run is the operator's and is kept.
+    void oldYellowDefault_isForgottenOnce()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(u"NereusSDR.settings"_s);
+        const QString marker = u"DisplayGridTextColorDefaultReset"_s;
+        AppSettings s(path);
+        s.setValue(u"DisplayGridTextColor"_s, u"#ffffff00"_s);
+        s.setValue(u"DisplayGridTextColor_0"_s, u"#FFFF00"_s);
+        s.setValue(u"DisplayGridTextColor_1"_s, u"#ff00ff00"_s);
+        s.setValue(u"DisplayGridColor"_s, u"#ffffff00"_s);
+        AppSettings::forgetOldDefaultGridTextColor(s);
+        QVERIFY(!s.contains(u"DisplayGridTextColor"_s));
+        QVERIFY(!s.contains(u"DisplayGridTextColor_0"_s));
+        QCOMPARE(s.value(u"DisplayGridTextColor_1"_s).toString(), u"#ff00ff00"_s);
+        QCOMPARE(s.value(u"DisplayGridColor"_s).toString(), u"#ffffff00"_s);
+        QCOMPARE(s.value(marker).toString(), u"True"_s);
+        s.setValue(u"DisplayGridTextColor"_s, u"#ffffff00"_s);
+        AppSettings::forgetOldDefaultGridTextColor(s);
+        QCOMPARE(s.value(u"DisplayGridTextColor"_s).toString(), u"#ffffff00"_s);
+        s.save();
+        AppSettings reloaded(path);
+        reloaded.load();
+        AppSettings::forgetOldDefaultGridTextColor(reloaded);
+        QCOMPARE(reloaded.value(u"DisplayGridTextColor"_s).toString(), u"#ffffff00"_s);
+    }
+
+    // The window forgets the yellow before any pan reads it; the Core never.
+    void onlyTheWindowForgetsTheOldYellow()
+    {
+        const auto read = [](const QString& relative) {
+            QFile file(QStringLiteral(NEREUS_SOURCE_DIR "/") + relative);
+            return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString();
+        };
+        const QString call = u"forgetOldDefaultGridTextColor"_s;
+        const QString window = read(u"src/main.cpp"_s);
+        const QString core = read(u"src/server_main.cpp"_s);
+        const QString coreInit = read(u"src/core/CoreInit.cpp"_s);
+        QVERIFY(!window.isEmpty() && !core.isEmpty() && !coreInit.isEmpty());
+        QVERIFY(!core.contains(call));
+        QVERIFY(!coreInit.contains(call));
+        const qsizetype loaded = window.indexOf(u"CoreInit::initialize(activeProfile)"_s);
+        const qsizetype forgot = window.indexOf(call);
+        const qsizetype windows = window.indexOf(u"GuiConnectionController connections"_s);
+        QVERIFY(loaded >= 0);
+        QVERIFY(forgot > loaded);
+        QVERIFY(windows > forgot);
     }
 
     // ── Defaults ────────────────────────────────────────────────────────
@@ -578,13 +699,13 @@ private slots:
         w.setFrequencyRange(kCenterHz, 384'000.0);
         const QImage img = renderScale(w);
         const int drawn = w.freqScaleLabelsDrawnForTest();
-        const QRgb background = img.pixel(0, kPad + 1);
         int runs = 0;
         int gap = 1000;
+        // The labels' ink, under the ticks along the top edge.
         for (int x = 0; x < img.width(); ++x) {
             bool ink = false;
-            for (int y = kPad; y < img.height() - kPad && !ink; ++y) {
-                ink = img.pixel(x, y) != background;
+            for (int y = kPad + kTickH; y < img.height() - kPad && !ink; ++y) {
+                ink = img.pixel(x, y) != kScaleBackground;
             }
             if (ink) {
                 if (gap >= 6) { ++runs; }
@@ -601,8 +722,8 @@ private slots:
 
     // ── Scale text ──────────────────────────────────────────────────────
     //
-    // 10 px is what an untouched pan draws. 14 px is taller, and all of it
-    // lands inside the strip.
+    // 10 px is what an untouched pan draws, whole in the 16 px row under
+    // the ticks. 14 px is taller, grows the row, and all of it lands inside.
     void scaleText_10pxIsTheDefault_14pxFits()
     {
         SpectrumWidget w;
@@ -611,10 +732,14 @@ private slots:
 
         const QImage untouched = renderScale(w);
         const int h10 = w.freqScaleRectForTest().height();
-        QCOMPARE(h10, 28);
-        const QRgb background = untouched.pixel(0, kPad + 1);
-        const auto ink10 = inkRows(untouched, background, kPad, kPad + h10);
+        QCOMPARE(h10, 16);
+        const QRgb background = kScaleBackground;
+        const auto ink10 = inkRows(untouched, background, kPad + kTickH, kPad + h10);
         QVERIFY2(ink10.first >= 0, "no scale labels were drawn");
+        // Whole: not into the last row of the strip, nothing past it.
+        QVERIFY2(ink10.second < kPad + h10 - 1, "10 px text touches the bottom of the strip");
+        QCOMPARE(inkRows(untouched, qRgba(0, 0, 0, 0), kPad + h10, untouched.height()).first, -1);
+        QCOMPARE(inkRows(untouched, qRgba(0, 0, 0, 0), 0, kPad).first, -1);
 
         // Setting the default explicitly changes nothing.
         w.setFreqScaleFontPx(10);
@@ -623,7 +748,7 @@ private slots:
         w.setFreqScaleFontPx(14);
         const int h14 = w.freqScaleRectForTest().height();
         QCOMPARE(h14, w.freqScaleHeight());
-        QVERIFY(h14 >= 28);
+        QVERIFY(h14 > 16);
         {
             QFont f = w.font();
             f.setPixelSize(14);
@@ -631,13 +756,13 @@ private slots:
                      "the strip is shorter than a line of its own text");
         }
         const QImage big = renderScale(w);
-        const auto ink14 = inkRows(big, background, kPad, kPad + h14);
+        const auto ink14 = inkRows(big, background, kPad + kTickH, kPad + h14);
         QVERIFY(ink14.first >= 0);
         QVERIFY2((ink14.second - ink14.first) > (ink10.second - ink10.first),
                  "14 px text is no taller than 10 px text");
         // Not clipped: no ink in the first or last row of the strip, and
         // none outside it (the padding is still transparent).
-        QVERIFY2(ink14.first > kPad, "text touches the top of the strip");
+        QVERIFY2(ink14.first > kPad + kTickH, "text touches the ticks");
         QVERIFY2(ink14.second < kPad + h14 - 1, "text touches the bottom of the strip");
         const auto above = inkRows(big, qRgba(0, 0, 0, 0), 0, kPad);
         const auto below = inkRows(big, qRgba(0, 0, 0, 0), kPad + h14, big.height());

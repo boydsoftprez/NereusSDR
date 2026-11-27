@@ -89,11 +89,12 @@ constexpr int kNotchHandleHalfWidthPxForTest = 5;
 // keeps a sub-2-pixel notch grabbable.
 constexpr int kNotchMinHalfWidthPxForTest = 2;
 
-// Mirrors the private SpectrumWidget chrome constants kFreqScaleH (28) and
+// Mirrors the private SpectrumWidget chrome constants kFreqScaleH (16 since
+// the 2026-11-17 slim frequency row, was 28) and
 // kDividerH (4) plus the m_spectrumFrac default (0.40f), which together
 // give notchSpecRect() its height.  Restated because all three sit in the
 // private section of src/gui/SpectrumWidget.h.
-constexpr int   kFreqScaleHForTest   = 28;
+constexpr int   kFreqScaleHForTest   = 16;
 constexpr int   kDividerHForTest     = 4;
 constexpr float kSpectrumFracForTest = 0.40f;
 

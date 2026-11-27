@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-11-26  J.J. Boyd / KG4VCF  The frequency-scale drags aim at the widget's own
+//               frequency row (freqScaleRectForTest), not the 28 px row's old
+//               numbers; AI-assisted via Claude Code / Opus 5.5.
 //   2026-11-06  J.J. Boyd / KG4VCF  A remote listener's wide view: the Core raises no
 //               wideband, the span collapses to the receiver's rate, and control
 //               returning reopens it. AI-assisted via Claude Code.
@@ -3348,12 +3351,14 @@ private slots:
         QSignalSpy centres(widget, &SpectrumWidget::centerChanged);
         QSignalSpy finishes(&client, &StationClient::streamCentreFinished);
         QSignalSpy notices(&remote, &RadioModel::sliceAddRejected);
-        const int gpuDivider = static_cast<int>((widget->height() - 32) * 0.40);
-        const int cpuDivider = static_cast<int>(widget->height() * 0.40);
-        const int scaleTop = std::max(gpuDivider, cpuDivider) + 4 + 6;
-        const int scaleBottom = std::min(gpuDivider, cpuDivider) + 4 + 28;
+        // The widget's own frequency row (both render paths share it), past
+        // the divider's 6 px grab under its bar. The row's height follows the
+        // text size (16 px at the default since the 2026-11-17 slim row).
+        const QRect scaleRow = widget->freqScaleRectForTest();
+        const int scaleTop = scaleRow.top() + 6;
+        const int scaleBottom = scaleRow.bottom();
         QVERIFY(scaleTop < scaleBottom);
-        const QPointF onScale(widget->width() * 0.5, (scaleTop + scaleBottom) / 2);
+        const QPointF onScale(widget->width() * 0.5, (scaleTop + scaleBottom + 1) / 2);
         const auto sendMouse = [&](QEvent::Type type, QPointF at, Qt::MouseButtons held) {
             QMouseEvent mouse(type, at, widget->mapToGlobal(at),
                 type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
@@ -3561,15 +3566,15 @@ private slots:
         }
         // Frequency-scale drag zoom.
         widget->setDisplayWindowPreservingHistory(centre, widget->bandwidth());
-        // The frequency scale sits under the spectrum/waterfall divider; the
-        // GPU and CPU layouts place the divider a little differently, so aim
-        // at the band both put inside the scale (past the divider grab).
-        const int gpuDivider = static_cast<int>((widget->height() - 32) * 0.40);
-        const int cpuDivider = static_cast<int>(widget->height() * 0.40);
-        const int scaleTop = std::max(gpuDivider, cpuDivider) + 4 + 6;
-        const int scaleBottom = std::min(gpuDivider, cpuDivider) + 4 + 28;
+        // The frequency scale sits under the spectrum/waterfall divider.
+        // The widget's own frequency row (both render paths share it), past
+        // the divider's 6 px grab under its bar. The row's height follows the
+        // text size (16 px at the default since the 2026-11-17 slim row).
+        const QRect scaleRow = widget->freqScaleRectForTest();
+        const int scaleTop = scaleRow.top() + 6;
+        const int scaleBottom = scaleRow.bottom();
         QVERIFY(scaleTop < scaleBottom);
-        const QPointF onScale(widget->width() * 0.5, (scaleTop + scaleBottom) / 2);
+        const QPointF onScale(widget->width() * 0.5, (scaleTop + scaleBottom + 1) / 2);
         const auto sendMouse = [&](QEvent::Type type, QPointF at, Qt::MouseButtons held) {
             QMouseEvent event(type, at, widget->mapToGlobal(at), Qt::LeftButton, held,
                               Qt::NoModifier);

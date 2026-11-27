@@ -36,6 +36,10 @@
 //   2026-11-16 - A tune in the past plays from the top row; outside what
 //                 was kept, the waterfall says so. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-11-17 - The hours-map case is rewound at the picture's top, inside
+//                 the window's own rows at any picture height (the 16 px
+//                 frequency row made the waterfall taller). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -687,7 +691,12 @@ private slots:
         QVERIFY(map->x() + map->width() <= w.waterfallTimeScaleRectForTest().left());
 
         // Rewound, then a click on the map two hours back.
-        fake.setDocument(dsrDocument(true, rewoundSlice(0, kNowMs - 3000, 7190000, 7185000)));
+        // Rewound at the picture's top, inside this window's own rows, so
+        // nothing is asked of the Core before the click: an ask in flight
+        // holds back the jump's ask. Three seconds back put the picture's
+        // bottom past this window's rows once the waterfall grew taller.
+        fake.setDocument(dsrDocument(true, rewoundSlice(0, w.waterfallTopUtcMs(), 7190000, 7185000)));
+        QCOMPARE(callsOf(fake, QStringLiteral("requestPastRows")).size(), 0);
         const int y = map->yForUtcMs(kNowMs - 7200000);
         click(map, QPoint(map->width() / 2, y));
         const qint64 expected = map->utcMsAtY(y);

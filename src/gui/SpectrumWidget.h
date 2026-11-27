@@ -1,4 +1,7 @@
 // Modification history (NereusSDR):
+//   2026-11-17: kFreqScaleH 16 (was 28) and the row's tick constants; the
+//               grid text colour defaults to white-grey. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: dsrPlayFromTop is public: any tune of the slice in the past
 //               plays from the top row (DsrRewindLink::sliceTuned). J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -4369,7 +4372,17 @@ private:
     // Height of the frequency scale bar at the default 8 pt label size.
     // Use freqScaleH() in layout code — it grows with the user's label
     // font so larger text never clips (#3501).
-    static constexpr int kFreqScaleH = 28;  // Taller for easier grab target
+    // NereusSDR differs here by the maintainer's design choice (2026-11-17):
+    // a slim 16 px row (was 28, "taller for easier grab target") with short
+    // ticks along its top edge; freqScaleHeight() still grows it for larger
+    // text and never lets it clip the numbers.
+    static constexpr int kFreqScaleH = 16;
+    // The row's ticks: 1 px wide, kFreqScaleTickH tall, at every label
+    // position and evenly between (kFreqScaleTicksPerLabel per label step),
+    // in the label colour at kFreqScaleTickAlpha.
+    static constexpr int kFreqScaleTickH = 2;
+    static constexpr int kFreqScaleTicksPerLabel = 5;
+    static constexpr int kFreqScaleTickAlpha = 128;
     static constexpr int kDividerH = 4;
     static constexpr int kDbmStripW = 36;
     // Height of each arrow button at the top of the dBm strip.
@@ -4934,7 +4947,9 @@ private:
     static constexpr int kMinDbGridStep = 1;
     static constexpr int kMaxDbGridStep = 40;
     int    m_dbGridStep{kDefaultDbGridStep};     // dB between horizontal grid lines
-    QColor m_gridTextColor{255, 255, 0};         // yellow text default
+    // Workspace::kTextPrimary (#dcdce1); yellow (Thetis display.cs:2003)
+    // until 2026-11-17, see kPanDefaultGridTextColor.
+    QColor m_gridTextColor{0xdc, 0xdc, 0xe1};
     // Plan 4 D9c-1: split zero-line color into RX + TX.
     QColor m_rxZeroLineColor{255, 0, 0};         // red default (Thetis convention)
     QColor m_txZeroLineColor{255, 184, 0};       // amber default (NereusSDR-original)

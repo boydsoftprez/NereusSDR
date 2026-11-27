@@ -27,9 +27,10 @@ using namespace NereusSDR;
 namespace {
 
 // The default bottom-left place (SpectrumOverlayPanel::repositionZoomButtons:
-// 4 px margin, 32 px left for the frequency scale).
+// 4 px margin, the frequency scale's height plus 4 px left for it; 20 px
+// at the default text since the 2026-11-17 slim row, was 32).
 constexpr int kMargin = 4;
-constexpr int kFreqScaleH = 32;
+constexpr int kFreqScaleH = 20;
 
 // Offscreen there is no GPU: a SpectrumWidget says so once. This hides that
 // line while it lives and puts the test's own handler back when it goes, an
@@ -174,7 +175,9 @@ private slots:
         };
 
         widget.setRoundtableStripShown(true);
-        widget.setSpectrumFrac(0.85f);
+        // 0.88 (0.85 before the 2026-11-17 slim frequency row gave the
+        // waterfall 12 px more): about 40 px of waterfall under the strip.
+        widget.setSpectrumFrac(0.88f);
         QVERIFY(widget.roundtableStripLaidOut());
         // The usual place would reach up into the strip: the row stays under it.
         QVERIFY(fromBottom() < widget.waterfallTop() + kMargin);

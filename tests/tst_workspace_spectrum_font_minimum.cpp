@@ -1,6 +1,8 @@
 // no-port-check: NereusSDR-original actual paint-device typography checks.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex, 2026-10-12.
 // 2026-10-12: J.J. Boyd (KG4VCF), OpenAI Codex: guard GPU-only cache checks.
+// 2026-11-17: J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code: the
+// 16 px frequency row; its numbers are plain weight after a bold painter.
 #include <QtTest>
 #include <QDir>
 #include <QFontMetricsF>
@@ -61,7 +63,7 @@ private:
         spectrum.m_vfoHz = spectrum.m_centerHz;
     }
     void layers(SpectrumWidget& spectrum, QPainter& painter) {
-        spectrum.drawFreqScale(painter, QRect(36, 0, 784, 28));
+        spectrum.drawFreqScale(painter, QRect(36, 0, 784, 16));
         spectrum.drawDbmScale(painter, QRect(0, 30, 36, 230));
         spectrum.drawBandPlan(painter, QRect(36, 30, 784, 230));
         spectrum.drawTxFilterOverlay(painter, QRect(36, 30, 784, 230));
@@ -103,6 +105,27 @@ private slots:
                 if (run.font.pointSizeF() == 10.0 && run.font.bold()) { foundBandLabel = true; }
             }
             QVERIFY(foundBandLabel);
+        }
+    }
+    // The band plan leaves the painter bold; the frequency row's numbers
+    // are drawn plain all the same, at the readable minimum or more.
+    void freqScaleNumbersArePlainAfterABoldPainter() {
+        BandPlanManager plans;
+        plans.loadPlans();
+        SpectrumWidget spectrum;
+        pose(spectrum, plans);
+        WorkspacePreview::setEnabledForTest(true);
+        TextDevice device(96);
+        QPainter painter(&device);
+        QFont bold = painter.font();
+        bold.setBold(true);
+        painter.setFont(bold);
+        spectrum.drawFreqScale(painter, QRect(36, 0, 784, 16));
+        painter.end();
+        QVERIFY(!device.runs().isEmpty());
+        for (const TextDevice::Run& run : device.runs()) {
+            QVERIFY2(!run.font.bold(), qPrintable(run.text));
+            QVERIFY2(run.font.pixelSize() >= 11, qPrintable(run.text));
         }
     }
     void cachedGpuGeometryAndCpuRasterUseMatchingFonts_data() {

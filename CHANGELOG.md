@@ -12,6 +12,15 @@
   tag and the details open over the waterfall, or upward over the spectrum when
   the waterfall is too short.
 
+### Display
+
+- **A slimmer frequency scale.** The row of frequency numbers under the
+  spectrum is now 16 px tall instead of 28, with short tick marks along its
+  top edge, and its numbers are plain bright white-grey instead of bold
+  yellow. The room it frees goes to the spectrum and waterfall. A grid text
+  color you chose in Setup is kept; larger label sizes still make the row
+  taller.
+
 ## [2026.11.1] - 2026-11-08
 
 Changes since desktop/Core 2026.11.0. Update the Core and desktop together.

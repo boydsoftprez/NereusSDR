@@ -56,6 +56,11 @@
 //                 ends, so a background save still writing at exit no
 //                 longer leaves the Windows process waiting forever.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-17 - forgetOldDefaultGridTextColor(): the stored grid text
+//                 colour equal to the old yellow default is forgotten once,
+//                 so the new white-grey default reaches everyone who never
+//                 chose one. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-22 - Slice<N>/RfGain documented as -20..120, the AGC-T range
 //                SliceModel::setRfGain now keeps. J.J. Boyd (KG4VCF), with
 //                AI-assisted transformation via Claude Code.
@@ -947,6 +952,21 @@ public:
     // computer's keys: the window calls this (src/main.cpp), the Core never
     // does, and SettingsSchemaVersion is not involved.
     static void clearUncalibratedClarityFloors(AppSettings& settings);
+
+    // 2026-11-17, the maintainer's slim frequency row: the grid text colour
+    // (the frequency row's numbers, and the fps and bin width readouts)
+    // defaults to the workspace's white-grey instead of yellow. A stored
+    // value is not proof of a choice: Setup's colour Reset stored the
+    // yellow default and the per-pan key retirement wrote it to the Setup
+    // default. So the Setup default (DisplayGridTextColor) and every pan's
+    // own value (DisplayGridTextColor_<N>) that equal the old yellow
+    // (#ffffff00 or #ffff00, any case) are removed once; any other colour
+    // stays. Records DisplayGridTextColorDefaultReset = "True" and never
+    // runs twice on one settings file, so yellow picked afterwards is kept;
+    // a file with none of these keys gets only the marker. These are this
+    // computer's keys: the window calls this (src/main.cpp), the Core never
+    // does, and SettingsSchemaVersion is not involved.
+    static void forgetOldDefaultGridTextColor(AppSettings& settings);
 
 private:
     // Private default constructor — used only by instance().
