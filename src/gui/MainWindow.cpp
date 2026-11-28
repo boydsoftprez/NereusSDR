@@ -11,6 +11,16 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-28: File > Settings and Quit keep NoRole before they join the
+//               menu. On macOS the default text rule had already moved
+//               "Settings..." out of File, and a later setMenuRole did not
+//               put it back. Brian Sutton (W4KZO), AI-assisted via xAI Grok.
+//   2026-11-28: Startup attaches every applet and registers every container
+//               factory in one batch (ContainerContentRegistry::
+//               beginRuntimeChanges). Each change was rebuilding the whole
+//               workspace, about 18 s. The pan is also shown before that
+//               build (presentStartupFrame). Brian Sutton (W4KZO),
+//               AI-assisted via xAI Grok.
 //   2026-11-16: Any tune of a pan's slice reaches its DsrRewindLink
 //               (sliceTuned): in the past it plays from the top row, or
 //               says nothing was kept at that frequency then. J.J. Boyd
@@ -1715,6 +1725,7 @@ warren@wpratt.com
 #include "core/audio/RealtimeAudioPriority.h"
 
 #include <QApplication>
+#include <QEventLoop>
 #include <QGuiApplication>
 #include <QScreen>
 #include <QSlider>
@@ -10785,6 +10796,24 @@ bool MainWindow::restoreMainWindowGeometry()
     return true;
 }
 
+void MainWindow::presentStartupFrame()
+{
+    // The saved workspace is built on this thread after the pan exists.
+    // Leaving the window hidden until the constructor returned kept it
+    // invisible for that whole build. Show the pan and draw the frame,
+    // then keep building. User input and sockets stay queued: nothing
+    // connected yet, and a click during construction has nowhere to land.
+    // A test run never shows a window from the constructor.
+    if (m_startupFramePresented || firstRunPromptsBarredForTestRun()) {
+        return;
+    }
+    m_startupFramePresented = true;
+    restoreMainWindowGeometry();
+    show();
+    QApplication::processEvents(QEventLoop::ExcludeUserInputEvents
+                                | QEventLoop::ExcludeSocketNotifiers);
+}
+
 void MainWindow::buildUI()
 {
     m_clarityRegistry = new PanClarityRegistry(m_radioModel, this);
@@ -11150,6 +11179,19 @@ void MainWindow::buildUI()
         });
     }
 
+    // The pan is in the window. Show it and draw that frame before the
+    // overlay, the meters and the saved workspace, which are what hold the
+    // constructor. A later restoreMainWindowGeometry() applies the same
+    // saved frame again once the rest of the window exists.
+    m_mainSplitter->addWidget(spectrumPane);
+    if (WorkspacePreview::enabled()) {
+        m_edgeDockArea = new EdgeDockArea(m_mainSplitter, spectrumPane, this);
+        setCentralWidget(m_edgeDockArea);
+    } else {
+        setCentralWidget(m_mainSplitter);
+    }
+    presentStartupFrame();
+
     // Phase 3F Sub-Epic E Task 3: the badge clicks are armed for every pan
     // from the countChanged hook above, alongside the status-overlay
     // triggers. See wirePanBadgeHandlers.
@@ -11272,16 +11314,8 @@ void MainWindow::buildUI()
     syncZoomBarToActivePan();
     QTimer::singleShot(0, this, [this]() { syncZoomBarToActivePan(); });
 
-    m_mainSplitter->addWidget(spectrumPane);
-
-    // Right side: Container #0 will be added by ContainerManager
-    if (WorkspacePreview::enabled()) {
-        // Workspace preview: strips on all four edges around the spectrum.
-        m_edgeDockArea = new EdgeDockArea(m_mainSplitter, spectrumPane, this);
-        setCentralWidget(m_edgeDockArea);
-    } else {
-        setCentralWidget(m_mainSplitter);
-    }
+    // The splitter is already the central widget (presentStartupFrame).
+    // Container #0 is added by ContainerManager below.
 
     // --- Container Infrastructure (Phase 3G-1) ---
     m_containerManager = new ContainerManager(m_panColumn, m_mainSplitter, this);
@@ -14481,6 +14515,9 @@ void MainWindow::populateDefaultMeter()
     const bool rfKitOn = m_radioModel && m_radioModel->rfKitEnabled();
     m_appletVis->setAvailable(QStringLiteral("RfKit"), rfKitOn, appletUnavailableReason(QStringLiteral("RfKit")));
 
+    // One workspace rebuild for every availability change and factory
+    // registered below. Each one on its own rebuilds every container.
+    m_containerManager->contentRegistry()->beginRuntimeChanges();
     // Apply initial visibility state from the controller (in case
     // AppSettings already had values from a prior session).
     // Uses effective visibility (user pref AND available).
@@ -14624,6 +14661,7 @@ void MainWindow::populateDefaultMeter()
         // entry, and opens on the page that entry names.
         registerPhoneCwSectionContent(*registry, m_phoneCwApplet);
     }
+    registry->endRuntimeChanges();
     if (auto* host = m_containerManager->contentHost(c0->id())) { host->setBannerMenu(m_bannerAppletsMenu); }
     if (!m_containerManager->storageError().isEmpty()) {
         showToast(tr("Container layout is read-only: %1").arg(m_containerManager->storageError()), ToastSeverity::Warning, 6000);
@@ -14739,17 +14777,22 @@ void MainWindow::buildMenuBar()
     QMenu* fileMenu = menuBar()->addMenu(QStringLiteral("&File"));
 
     {
-        QAction* settingsAction = fileMenu->addAction(QStringLiteral("&Settings..."),
-            this, [this]() {
-                auto* dialog = createSetupDialog();
-                if (dialog == nullptr) {
-                    return;  // the gate refused and has already said why
-                }
-                dialog->show();
-            });
+        // Role before the action joins the menu bar. The default role reads
+        // the text, treats "Settings..." as the application preferences item,
+        // and on macOS removes it from File. Setting NoRole afterwards does
+        // not put it back.
+        auto* settingsAction = new QAction(QStringLiteral("&Settings..."), this);
+        settingsAction->setMenuRole(QAction::NoRole);
         settingsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Comma));
-        settingsAction->setMenuRole(QAction::NoRole);  // Keep in File menu, don't let macOS move it
         settingsAction->setToolTip(QStringLiteral("Open application settings"));
+        connect(settingsAction, &QAction::triggered, this, [this]() {
+            auto* dialog = createSetupDialog();
+            if (dialog == nullptr) {
+                return;  // the gate refused and has already said why
+            }
+            dialog->show();
+        });
+        fileMenu->addAction(settingsAction);
     }
 
     {
@@ -14779,8 +14822,13 @@ void MainWindow::buildMenuBar()
 
     fileMenu->addSeparator();
 
-    fileMenu->addAction(QStringLiteral("&Quit"), QKeySequence(Qt::CTRL | Qt::Key_Q),
-                        qApp, &QApplication::quit);
+    // Same text rule as Settings: "Quit" is taken for the application menu
+    // unless the role is set before the action is added.
+    auto* quitAction = new QAction(QStringLiteral("&Quit"), this);
+    quitAction->setMenuRole(QAction::NoRole);
+    quitAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Q));
+    connect(quitAction, &QAction::triggered, qApp, &QApplication::quit);
+    fileMenu->addAction(quitAction);
 
     // =========================================================================
     // RADIO

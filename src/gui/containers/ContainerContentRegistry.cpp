@@ -339,10 +339,10 @@ void ContainerContentRegistry::attachSingleton(const QString& typeId, QWidget* w
             m_originalParents.remove(widget); m_nativeSizes.remove(widget);
             if (m_attachedIdentities.value(typeId) != widget) { return; }
             m_singletons.remove(typeId); m_attachedIdentities.remove(typeId);
-            ++m_generation; emit runtimeChanged();
+            ++m_generation; notifyRuntimeChanged();
         });
     }
-    ++m_generation; emit runtimeChanged();
+    ++m_generation; notifyRuntimeChanged();
 }
 QWidget* ContainerContentRegistry::singletonView(const QString& typeId) const { return m_singletons.value(typeId); }
 QSize ContainerContentRegistry::singletonCanvasMinimum(const QString& typeId) const {return m_nativeSizes.value(singletonView(typeId)).editMinimum.expandedTo(QSize(24,24));}
@@ -376,7 +376,7 @@ void ContainerContentRegistry::setAvailable(const QString& typeId, bool availabl
     const QString value = available ? QString() : (reason.isEmpty() ? QStringLiteral("This capability is unavailable") : reason);
     if (m_unavailable.value(typeId) == value) { return; }
     if (available) { m_unavailable.remove(typeId); } else { m_unavailable[typeId] = value; }
-    ++m_generation; emit runtimeChanged();
+    ++m_generation; notifyRuntimeChanged();
 }
 bool ContainerContentRegistry::isAvailable(const QString& typeId) const
 {
@@ -696,6 +696,27 @@ void ContainerContentRegistry::registerWidgetFactory(const QString& typeId, cons
     if (!m_widgetFactories.contains(typeId)) { m_widgetFactoryOrder.append(typeId); }
     m_widgetFactories.insert(typeId, {stored, std::move(factory), properties, {}});
     ++m_generation;
+    notifyRuntimeChanged();
+}
+void ContainerContentRegistry::beginRuntimeChanges()
+{
+    ++m_runtimeDeferral;
+}
+void ContainerContentRegistry::endRuntimeChanges()
+{
+    if (m_runtimeDeferral == 0) { return; }
+    --m_runtimeDeferral;
+    if (m_runtimeDeferral == 0 && m_runtimeChangePending) {
+        m_runtimeChangePending = false;
+        emit runtimeChanged();
+    }
+}
+void ContainerContentRegistry::notifyRuntimeChanged()
+{
+    if (m_runtimeDeferral > 0) {
+        m_runtimeChangePending = true;
+        return;
+    }
     emit runtimeChanged();
 }
 void ContainerContentRegistry::unregisterWidgetFactory(const QString& typeId)
@@ -703,7 +724,7 @@ void ContainerContentRegistry::unregisterWidgetFactory(const QString& typeId)
     if (!m_widgetFactories.remove(typeId)) { return; }
     m_widgetFactoryOrder.removeAll(typeId);
     ++m_generation;
-    emit runtimeChanged();
+    notifyRuntimeChanged();
 }
 bool ContainerContentRegistry::hasWidgetFactory(const QString& typeId) const { return m_widgetFactories.contains(typeId); }
 QVector<ContentProperty> ContainerContentRegistry::declaredProperties(const QString& typeId) const
