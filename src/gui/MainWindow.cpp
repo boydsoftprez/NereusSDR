@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-28: File > Settings and Quit keep NoRole before they join the
+//               menu. On macOS the default text rule had already moved
+//               "Settings..." out of File, and a later setMenuRole did not
+//               put it back. Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 //   2026-11-28: Startup attaches every applet and registers every container
 //               factory in one batch (ContainerContentRegistry::
 //               beginRuntimeChanges). Each change was rebuilding the whole
@@ -14773,17 +14777,22 @@ void MainWindow::buildMenuBar()
     QMenu* fileMenu = menuBar()->addMenu(QStringLiteral("&File"));
 
     {
-        QAction* settingsAction = fileMenu->addAction(QStringLiteral("&Settings..."),
-            this, [this]() {
-                auto* dialog = createSetupDialog();
-                if (dialog == nullptr) {
-                    return;  // the gate refused and has already said why
-                }
-                dialog->show();
-            });
+        // Role before the action joins the menu bar. The default role reads
+        // the text, treats "Settings..." as the application preferences item,
+        // and on macOS removes it from File. Setting NoRole afterwards does
+        // not put it back.
+        auto* settingsAction = new QAction(QStringLiteral("&Settings..."), this);
+        settingsAction->setMenuRole(QAction::NoRole);
         settingsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Comma));
-        settingsAction->setMenuRole(QAction::NoRole);  // Keep in File menu, don't let macOS move it
         settingsAction->setToolTip(QStringLiteral("Open application settings"));
+        connect(settingsAction, &QAction::triggered, this, [this]() {
+            auto* dialog = createSetupDialog();
+            if (dialog == nullptr) {
+                return;  // the gate refused and has already said why
+            }
+            dialog->show();
+        });
+        fileMenu->addAction(settingsAction);
     }
 
     {
@@ -14813,8 +14822,13 @@ void MainWindow::buildMenuBar()
 
     fileMenu->addSeparator();
 
-    fileMenu->addAction(QStringLiteral("&Quit"), QKeySequence(Qt::CTRL | Qt::Key_Q),
-                        qApp, &QApplication::quit);
+    // Same text rule as Settings: "Quit" is taken for the application menu
+    // unless the role is set before the action is added.
+    auto* quitAction = new QAction(QStringLiteral("&Quit"), this);
+    quitAction->setMenuRole(QAction::NoRole);
+    quitAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Q));
+    connect(quitAction, &QAction::triggered, qApp, &QApplication::quit);
+    fileMenu->addAction(quitAction);
 
     // =========================================================================
     // RADIO
