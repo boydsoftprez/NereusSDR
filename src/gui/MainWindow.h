@@ -1678,6 +1678,9 @@ private:
     // on the primary screen at the default size.
     void saveMainWindowGeometry();
     bool restoreMainWindowGeometry();
+    // Show the pan and draw that frame before the saved workspace is built.
+    // A test run does not show a window from the constructor.
+    void presentStartupFrame();
 
     // Task A8 fix round 1 shipped reapplyHardwarePresenceGates(), a second
     // pass ANDing a live hardware query on top of m_chromeBar's fold
@@ -1903,6 +1906,7 @@ private:
     int m_offlineEditsToastCount{0};
     bool m_stationDisconnectRequested{false};
     bool m_initialConnectionStarted{false};
+    bool m_startupFramePresented{false};
     bool m_retiringSession{false};
     bool m_connectionPickerManaged{false};
 

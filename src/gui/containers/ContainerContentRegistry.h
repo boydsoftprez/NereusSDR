@@ -166,6 +166,11 @@ public:
     // meters; any other prefix keeps the descriptor's own group.
     void registerWidgetFactory(const QString& typeId, const ContentDescriptor& descriptor, WidgetFactory factory,
                                const QVector<ContentProperty>& properties = {});
+    // Hold runtimeChanged until the matching end. Startup attaches every
+    // applet and registers every widget factory; each change otherwise
+    // rebuilds the whole workspace.
+    void beginRuntimeChanges();
+    void endRuntimeChanges();
     // The properties a widget type declared; empty for every other type.
     QVector<ContentProperty> declaredProperties(const QString& typeId) const;
     // A widget type whose default free canvas size isn't the usual one. The
@@ -194,6 +199,9 @@ private:
     QStringList m_widgetFactoryOrder;
     QWidget* m_parking = nullptr;
     quint64 m_generation = 0;
+    int m_runtimeDeferral = 0;
+    bool m_runtimeChangePending = false;
+    void notifyRuntimeChanged();
 };
 } // namespace NereusSDR
 Q_DECLARE_METATYPE(NereusSDR::ContentEntry)
